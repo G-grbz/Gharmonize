@@ -1,13 +1,9 @@
 # 🎵 Groovify – YouTube / Spotify Downloader & Converter
 
-
 <img width="1727" height="926" alt="groovify" src="https://github.com/user-attachments/assets/06cc8078-592e-4741-9025-66ab0f508e99" />
 
 
-> **(English + Türkçe)**
-
-
-# 🇬🇧 English Version
+# 🇬🇧 English
 
 ## 📘 Table of Contents
 
@@ -178,7 +174,7 @@ This software is provided “as is”, without warranty of any kind. Use it at y
 
 ---
 
-# 🇹🇷 Türkçe Versiyon
+# 🇹🇷 Türkçe
 
 ## 📘 İçindekiler
 
