@@ -1,7 +1,6 @@
 # 🎵 Gharmonize – YouTube / Spotify Downloader & Converter
 
-<img width="1897" height="972" alt="1" src="https://github.com/user-attachments/assets/d7544c0d-9fe9-4044-91bb-92af5a28240b" />
-
+<img width="1698" height="930" alt="1" src="https://github.com/user-attachments/assets/65d49371-7844-471f-9486-3680fe2a763e" />
 
 
 # 🇬🇧 English
