@@ -83,9 +83,6 @@ function qualityToHeight(q) {
   return 1080;
 }
 
-/**
- * MP4 işler için convert atlanır; temp'e inen dosyalar başlık adıyla outputs'a taşınır.
- */
 export async function processYouTubeVideoJob(job, {
   OUTPUT_DIR = path.resolve(process.cwd(), "outputs"),
   TEMP_DIR   = path.resolve(process.cwd(), "temp"),

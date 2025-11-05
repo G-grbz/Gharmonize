@@ -4,12 +4,13 @@ import fs from "fs";
 import crypto from "crypto";
 import multer from "multer";
 import { sendOk, sendError, ERR, isDirectMediaUrl } from "../modules/utils.js";
-import { jobs, spotifyMapTasks, killJobProcesses  } from "../modules/store.js";
+import { jobs, spotifyMapTasks, killJobProcesses, createJob } from "../modules/store.js";
 import { processJob } from "../modules/processor.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import { idsToMusicUrls, searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js";
+import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
 import {
   isYouTubeUrl,
   isYouTubePlaylist,
@@ -91,7 +92,46 @@ router.post("/api/jobs/:id/cancel", (req, res) => {
   job.error = null;
   try { killJobProcesses(id); } catch {}
 
+  try {
+   const TEMP_DIR = path.resolve(process.cwd(), "temp");
+   const jobDir = path.join(TEMP_DIR, id);
+   if (fs.existsSync(jobDir)) fs.rmSync(jobDir, { recursive: true, force: true });
+ } catch {}
+
   return sendOk(res, { id, status: "canceled" });
+});
+
+router.post("/api/debug/lyrics", async (req, res) => {
+  try {
+    const { artist, title } = req.body;
+
+    if (!artist || !title) {
+      return res.status(400).json({ error: "Artist ve title gerekli" });
+    }
+
+    console.log(`🔍 Test şarkı sözü araması: "${artist}" - "${title}"`);
+
+    const lyricsPath = await lyricsFetcher.downloadLyrics(
+      artist,
+      title,
+      null,
+      path.join(process.cwd(), "test_output")
+    );
+
+    if (lyricsPath) {
+      const content = fs.readFileSync(lyricsPath, 'utf8');
+      return res.json({
+        success: true,
+        path: lyricsPath,
+        content: content.substring(0, 500) + "..."
+      });
+    } else {
+      return res.json({ success: false, message: "Şarkı sözü bulunamadı" });
+    }
+  } catch (error) {
+    console.error("Test şarkı sözü hatası:", error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 router.post("/api/jobs", upload.single("file"), async (req, res) => {
@@ -100,11 +140,26 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       url,
       format = "mp3",
       bitrate = "192k",
+      sampleRate = "48000",
+      sampleRateHz,
       isPlaylist = false,
       selectedIndices,
       clientBatch,
-      spotifyMapId
+      spotifyMapId,
+      includeLyrics = false
     } = req.body || {};
+
+    const parseSR = (v) => {
+      if (v == null) return NaN;
+      const s = String(v).trim().toLowerCase();
+      const m = s.match(/^(\d+(?:\.\d+)?)\s*k(?:hz)?$/i);
+      if (m) return Math.round(parseFloat(m[1]) * 1000);
+      const n = Number(s.replace(/[^0-9.]/g, ""));
+      return Number.isFinite(n) ? Math.round(n) : NaN;
+    };
+    const pickedSR = Number.isFinite(parseSR(sampleRate)) ? parseSR(sampleRate)
+                     : Number.isFinite(parseSR(sampleRateHz)) ? parseSR(sampleRateHz)
+                     : 48000;
 
     const supported = ["mp3","flac","wav","ogg","mp4"];
     if (!supported.includes(format)) {
@@ -260,20 +315,21 @@ else if (isYouTubeUrl(url)) {
       return sendError(res, ERR.URL_OR_FILE_REQUIRED, "A valid URL or file is required", 400);
     }
 
-    const jobId = crypto.randomBytes(8).toString("hex");
-    const job = {
-      id: jobId,
+    const job = createJob({
       status: "queued",
       progress: 0,
       format,
       bitrate,
-      metadata,
-      createdAt: new Date(),
+      sampleRate: pickedSR,
+      metadata: {
+        ...metadata,
+        includeLyrics: includeLyrics === true || includeLyrics === "true"
+      },
       resultPath: null,
       error: null,
       clientBatch: clientBatch || null,
-    };
-    jobs.set(jobId, job);
+    });
+    const jobId = job.id;
 
     let batchTotal = null;
     if (clientBatch && metadata.isPlaylist && metadata.selectedIndices && metadata.selectedIndices !== "all") {
@@ -288,6 +344,7 @@ else if (isYouTubeUrl(url)) {
       status: job.status,
       format,
       bitrate,
+      sampleRate: job.sampleRate,
       source: metadata.source,
       isPlaylist: metadata.isPlaylist,
       isAutomix: metadata.isAutomix,
@@ -365,6 +422,7 @@ router.get("/api/jobs", requireAuth, (req, res) => {
       resultPath: j.resultPath || null,
       zipPath: j.zipPath || null,
       playlist: j.playlist || null,
+      lastLog: j.lastLog || null,
       metadata: {
         source: j.metadata?.source,
         isPlaylist: !!j.metadata?.isPlaylist,
@@ -373,8 +431,14 @@ router.get("/api/jobs", requireAuth, (req, res) => {
         extracted: j.metadata?.extracted || null,
         spotifyTitle: j.metadata?.spotifyTitle || null,
         originalName: j.metadata?.originalName || null,
+        includeLyrics: !!j.metadata?.includeLyrics,
+        lyricsStats: j.metadata?.lyricsStats || null,
         frozenEntries: Array.isArray(j.metadata?.frozenEntries)
-        ? j.metadata.frozenEntries.map(e => ({ index: e.index, title: e.title })).slice(0, 500)
+        ? j.metadata.frozenEntries.map(e => ({
+            index: e.index,
+            title: e.title,
+            hasLyrics: false
+          })).slice(0, 500)
         : null,
       },
     });
@@ -410,6 +474,7 @@ router.get("/api/stream", requireAuth, (req, res) => {
       zipPath: j.zipPath || null,
       createdAt: j.createdAt,
       playlist: j.playlist || null,
+      lastLog: j.lastLog || null,
       metadata: {
         source: j.metadata?.source,
         isPlaylist: !!j.metadata?.isPlaylist,
@@ -418,6 +483,8 @@ router.get("/api/stream", requireAuth, (req, res) => {
         extracted: j.metadata?.extracted || null,
         spotifyTitle: j.metadata?.spotifyTitle || null,
         originalName: j.metadata?.originalName || null,
+        includeLyrics: !!j.metadata?.includeLyrics,
+        lyricsStats: j.metadata?.lyricsStats || null,
         frozenEntries: Array.isArray(j.metadata?.frozenEntries)
          ? j.metadata.frozenEntries.map(e => ({ index: e.index, title: e.title })).slice(0, 500)
          : null,

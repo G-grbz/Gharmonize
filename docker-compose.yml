@@ -3,9 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: groovify:prod
+    image: gharmonize:prod
     pull_policy: never
-    container_name: Groovify
+    container_name: Gharmonize
     env_file: .env
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:

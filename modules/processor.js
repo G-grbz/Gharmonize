@@ -7,11 +7,9 @@ import { jobs, registerJobProcess, killJobProcesses } from "./store.js";
 import { sendError, sanitizeFilename, toNFC } from "./utils.js";
 import { processYouTubeVideoJob } from "./video.js";
 import { isYouTubeAutomix, fetchYtMetadata, downloadYouTubeVideo, buildEntriesMap, parsePlaylistIndexFromPath } from "./yt.js";
-
-import {
-  convertMedia,
-  downloadThumbnail,
-} from "./media.js";
+import { attachLyricsToMedia } from "./lyrics.js";
+import { convertMedia, downloadThumbnail } from "./media.js";
+import { buildId3FromYouTube } from "./tags.js";
 
 const OUTPUT_DIR = path.resolve(process.cwd(), "outputs");
 const TEMP_DIR   = path.resolve(process.cwd(), "temp");
@@ -20,8 +18,14 @@ fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 export async function processJob(jobId, inputPath, format, bitrate) {
+  try { killJobProcesses(jobId); } catch {}
+
   const job = jobs.get(jobId);
   if (!job) return;
+
+  job.canceled = false;
+
+  const sampleRate = job.sampleRate || 48000;
 
   try {
     job.status = "running";
@@ -41,7 +45,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           job.zipPath = await makeZipFromOutputs(jobId, job.resultPath, titleHint || "playlist");
         }
       } catch {}
-      cleanupTempFiles(jobId, inputPath, /* downloadedPath */ null);
+      cleanupTempFiles(jobId, inputPath, null);
       return;
     }
 
@@ -68,12 +72,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         (progress) => {
           job.downloadProgress = 20 + (progress * 0.8);
           job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-          if (job.canceled) throw new Error("CANCELED");
         },
         {
           video: (format === "mp4"),
           maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
-        }
+        },
+        { isCanceled: () => !!job.canceled }
       );
 
       job.downloadProgress = 100;
@@ -127,20 +131,33 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
         } else {
           r = await convertMedia(
-            filePath, format, bitrate, `${jobId}_${i}`,
-            (progress)=>{
-              const fileProgress = (i / sorted.length) * 100;
-              const cur = (progress / 100) * (100 / sorted.length);
-              job.convertProgress = Math.floor(fileProgress + cur);
-              job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-              if (job.canceled) throw new Error("CANCELED");
-            },
-            fileMeta, itemCover, (format === "mp4"),
-            OUTPUT_DIR, TEMP_DIR,
-            { onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} } }
-          );
+      filePath, format, bitrate, `${jobId}_${i}`,
+      (progress) => {
+        const fileProgress = (i / sorted.length) * 100;
+        const cur = (progress / 100) * (100 / sorted.length);
+        job.convertProgress = Math.floor(fileProgress + cur);
+        job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+      },
+      fileMeta, itemCover, (format === "mp4"),
+      OUTPUT_DIR, TEMP_DIR,
+      {
+        onProcess: (child) => {
+          try { registerJobProcess(jobId, child); } catch {}
+        },
+       includeLyrics: job.metadata.includeLyrics,
+       sampleRate: sampleRate,
+       isCanceled: () => !!jobs.get(jobId)?.canceled
+      }
+    );
         }
-        results.push(r);
+        if (job.metadata.includeLyrics) {
+            if (r && r.lyricsPath) {
+              job.lastLog = `🎼 Şarkı sözü eklendi: ${path.basename(r.lyricsPath)}`;
+            } else {
+              job.lastLog = `🎼 Şarkı sözü bulunamadı`;
+            }
+          }
+ results.push(r);
         job.playlist.done = i + 1;
       }
 
@@ -151,7 +168,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         if (!job.clientBatch) {
           try {
             const zipTitle = job.metadata.spotifyTitle || "Spotify Playlist";
-            job.zipPath = await makeZipFromOutputs(jobId, results, zipTitle);
+            job.zipPath = await makeZipFromOutputs(jobId, results, zipTitle, job.metadata.includeLyrics);
           } catch(e){}
         }
       }
@@ -199,6 +216,20 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       };
       job.metadata.extracted = flat;
 
+       try {
+       const id3Guess = buildId3FromYouTube({
+         title: flat.title,
+         uploader: flat.uploader,
+         thumbnail: flat.thumbnail,
+         webpage_url: flat.webpage_url,
+       });
+       if (id3Guess) {
+         flat.artist = id3Guess.artist || flat.artist || "";
+         flat.title  = id3Guess.title  || flat.title  || "";
+         flat.track  = id3Guess.track  || flat.title  || "";
+       }
+     } catch {}
+
       if (flat.thumbnail && !isAutomix) {
         const thumbBase = path.join(TEMP_DIR, `${jobId}.cover`);
         coverPath = await downloadThumbnail(flat.thumbnail, thumbBase);
@@ -206,10 +237,23 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
       if (job.metadata.isPlaylist || isAutomix) {
         job.downloadProgress = 10;
+        const selectedIndicesVar = (job.metadata.selectedIndices === "all" || !job.metadata.selectedIndices)
+          ? null
+          : job.metadata.selectedIndices;
+        const selectedIdsVar = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : null;
 
-        const selected = job.metadata.selectedIndices;
-        const indices = (selected === "all" || !selected) ? null : selected;
-        const selectedIds = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : null;
+        const totalGuess =
+          (selectedIdsVar && selectedIdsVar.length) ? selectedIdsVar.length :
+          (selectedIndicesVar && selectedIndicesVar.length) ? selectedIndicesVar.length :
+          (Number.isFinite(ytMeta?.n_entries) ? ytMeta.n_entries :
+            Number.isFinite(ytMeta?.playlist_count) ? ytMeta.playlist_count :
+          (Array.isArray(ytMeta?.entries) ? ytMeta.entries.length : null));
+          if (Number.isFinite(totalGuess) && totalGuess > 0) {
+          job.playlist = { total: totalGuess, done: 0 };
+        }
+
+        const indices = selectedIndicesVar;
+        const selectedIds = selectedIdsVar;
         const files = await downloadYouTubeVideo(
           job.metadata.url,
           jobId,
@@ -221,12 +265,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           (progress) => {
             job.downloadProgress = 10 + (progress * 0.9);
             job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-            if (job.canceled) throw new Error("CANCELED");
           },
         {
-          video: (format === "mp4"),
-          maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
-        }
+            video: (format === "mp4"),
+            maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
+          },
+          { isCanceled: () => !!job.canceled }
         );
 
         job.downloadProgress = 100;
@@ -335,17 +379,24 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             if (job.canceled) throw new Error("CANCELED");
           } else {
             r = await convertMedia(
-              filePath, format, bitrate, `${jobId}_${i}`,
-              (progress)=>{
-                const fileProgress = (i / sorted.length) * 100;
-                const cur = (progress / 100) * (100 / sorted.length);
-                job.convertProgress = Math.floor(fileProgress + cur);
-                job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-              },
-              fileMeta, itemCover, (format === "mp4"),
-              OUTPUT_DIR, TEMP_DIR,
-              { onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} } }
-            );
+      filePath, format, bitrate, `${jobId}_${i}`,
+      (progress) => {
+        const fileProgress = (i / sorted.length) * 100;
+        const cur = (progress / 100) * (100 / sorted.length);
+        job.convertProgress = Math.floor(fileProgress + cur);
+        job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+      },
+      fileMeta, itemCover, (format === "mp4"),
+      OUTPUT_DIR, TEMP_DIR,
+      {
+        onProcess: (child) => {
+          try { registerJobProcess(jobId, child); } catch {}
+        },
+       includeLyrics: job.metadata.includeLyrics,
+       sampleRate: sampleRate,
+       isCanceled: () => !!jobs.get(jobId)?.canceled
+      }
+    );
           }
           results.push(r);
           job.playlist.done = i + 1;
@@ -358,7 +409,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           if (!job.clientBatch) {
             try {
               const zipTitle = ytMeta?.title || ytMeta?.playlist_title || (isAutomix ? "YouTube Automix" : "Playlist");
-              job.zipPath = await makeZipFromOutputs(jobId, results, zipTitle);
+              job.zipPath = await makeZipFromOutputs(jobId, results, zipTitle, job.metadata.includeLyrics);
             } catch(e){}
           }
         }
@@ -383,12 +434,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         (progress) => {
           job.downloadProgress = progress;
           job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-          if (job.canceled) throw new Error("CANCELED");
         },
         {
           video: (format === "mp4"),
           maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
-        }
+        },
+        { isCanceled: () => !!job.canceled }
       );
 
       job.downloadProgress = 100;
@@ -411,7 +462,6 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           (p)=>{
             job.convertProgress = Math.floor(p);
             job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-            if (job.canceled) throw new Error("CANCELED");
           },
           {
             ...(job.metadata.extracted || {}),
@@ -419,10 +469,20 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           },
           coverPath, isVideo,
           OUTPUT_DIR, TEMP_DIR,
-          { onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} } }
+          {
+            onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
+            includeLyrics: !!job.metadata.includeLyrics,
+            sampleRate: sampleRate,
+            isCanceled: () => !!jobs.get(jobId)?.canceled
+          }
         );
 
-    job.resultPath = r.outputPath;
+      job.resultPath = r;
+      if (job.metadata?.includeLyrics) {
+      job.lastLog = r.lyricsPath
+     ? `🎼 Şarkı sözü eklendi: ${path.basename(r.lyricsPath)}`
+     : `🎼 Şarkı sözü bulunamadı`;
+  }
     job.status = "completed";
     job.progress = 100;
     job.downloadProgress = 100;
@@ -461,7 +521,7 @@ function findExistingOutput(idPrefix, format, outDir) {
   } catch { return null; }
 }
 
-async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist") {
+async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includeLyrics = false) {
   const safeBase = sanitizeFilename(`${titleHint || 'playlist'}_${jobId}`).normalize("NFC");
   const zipName = `${safeBase}.zip`;
   const zipAbs  = path.join(OUTPUT_DIR, zipName);
@@ -482,9 +542,15 @@ async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist") {
       if (fs.existsSync(abs)) {
         const nfcName = path.basename(abs).normalize("NFC");
         archive.file(abs, { name: nfcName });
+        if (includeLyrics) {
+           const lrcPath = abs.replace(/\.[^/.]+$/, "") + ".lrc";
+           if (fs.existsSync(lrcPath)) {
+             const lrcName = path.basename(lrcPath).normalize("NFC");
+             archive.file(lrcPath, { name: lrcName });
+           }
+         }
       }
     }
-
     archive.finalize();
   });
 }

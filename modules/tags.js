@@ -42,7 +42,7 @@ function sanitizeYouTubeArtist(a=""){
   return /^(youtube|youtube\s+mix)$/i.test(a.trim()) ? "" : a;
 }
 
-function buildId3FromYouTube(ytLikeMeta){
+export function buildId3FromYouTube(ytLikeMeta){
   const spl = splitArtistTitle(ytLikeMeta?.title, ytLikeMeta?.uploader);
   const artist = sanitizeYouTubeArtist(spl.artist);
   const title  = stripTailAfterDelims(spl.title);

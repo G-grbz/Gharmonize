@@ -1,3 +1,5 @@
+import { uniqueId } from "./utils.js";
+
 export const jobs = new Map();
 export const spotifyMapTasks = new Map();
 export const spotifyDownloadTasks = new Map();
@@ -5,6 +7,30 @@ export const spotifyDownloadTasks = new Map();
 const GC_INTERVAL_MS = 60 * 60 * 1000;
 const JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const procByJob = new Map();
+
+export function createJob(initial = {}) {
+  const id = uniqueId("job");
+  const job = {
+    id,
+    status: "queued",
+    canceled: false,
+    progress: 0,
+    downloadProgress: 0,
+    convertProgress: 0,
+    currentPhase: "queued",
+    createdAt: new Date(),
+    metadata: {},
+    resultPath: null,
+    error: null,
+    ...initial,
+    id,
+    createdAt: initial.createdAt || new Date(),
+  };
+  jobs.set(id, job);
+  return job;
+}
+
+export function getJob(id) { return jobs.get(id); }
 
 export function registerJobProcess(jobId, child) {
   if (!jobId || !child) return;

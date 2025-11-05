@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 
 export const ERR = {
   INVALID_FORMAT: 'INVALID_FORMAT',
@@ -59,4 +60,14 @@ export function makeT(req) {
   };
   if (req && typeof req.t === 'function') return req.t;
   return fallback;
+}
+
+export function uniqueId(prefix) {
+  try {
+    const id = randomUUID();
+    return prefix ? `${prefix}_${id}` : id;
+  } catch {
+    const fallback = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    return prefix ? `${prefix}_${fallback}` : fallback;
+  }
 }

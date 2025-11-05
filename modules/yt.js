@@ -11,6 +11,8 @@ export const YT_USE_MUSIC = FLAGS.USE_MUSIC;
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_USER_AGENT = getUserAgent();
 const DEFAULT_HEADERS = getYouTubeHeaders();
+const SKIP_RE = /(private|members\s*only|copyright|blocked|region|geo|not\s+available|unavailable|age[-\s]?restricted|signin|sign\s*in|skipp?ed|removed)/i;
+const ERROR_WORD = /\berror\b/i;
 
 function headersToArgs(headersObj) {
   const out = [];
@@ -19,6 +21,15 @@ function headersToArgs(headersObj) {
     if (val) out.push("--add-header", `${key}: ${val}`);
   }
   return out;
+}
+
+function emitEvent(progressCallback, opts, payload) {
+  if (opts && typeof opts.onEvent === "function") {
+    try { opts.onEvent(payload); } catch {}
+  }
+  if (typeof progressCallback === "function") {
+    try { progressCallback({ __event: true, ...payload }); } catch {}
+  }
 }
 
 export function normalizeYouTubeUrl(input) {
@@ -438,7 +449,8 @@ export async function downloadYouTubeVideo(
   selectedIds = null,
   TEMP_DIR = path.resolve(process.cwd(), "temp"),
   progressCallback = null,
-  opts = {}
+  opts = {},
+  ctrl = {}
 ) {
   try {
     fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -453,14 +465,22 @@ export async function downloadYouTubeVideo(
       jobId,
       TEMP_DIR,
       progressCallback,
-      opts
+      opts,
+      ctrl
     );
   }
 
-  return downloadStandard(YTDLP_BIN, url, jobId, isPlaylist, isAutomix, playlistItems, TEMP_DIR, opts);
+  return downloadStandard(
+    YTDLP_BIN, url, jobId,
+    isPlaylist, isAutomix, playlistItems,
+    TEMP_DIR,
+    progressCallback,
+    opts,
+    ctrl
+  );
 }
 
-async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progressCallback, opts = {}) {
+async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progressCallback, opts = {}, ctrl = {}) {
   const listFile = path.join(tempDir, `${jobId}.urls.txt`);
   const urls = idsToWatchUrls(selectedIds);
 
@@ -476,6 +496,27 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
   }
 
   let args;
+  let skippedCount = 0;
+  let errorsCount = 0;
+
+  const bumpSkip = (line) => {
+    if (SKIP_RE.test(line)) {
+      skippedCount++;
+      emitEvent(progressCallback, opts, {
+        type: "skip-hint",
+        skippedCount,
+        errorsCount,
+        lastLogKey: "log.skippedItem",
+        raw: line
+      });
+      try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
+    }
+    if (ERROR_WORD.test(line)) {
+      errorsCount++;
+      try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
+    }
+  };
+
   if (opts.video) {
     const h = (opts.maxHeight && Number.isFinite(opts.maxHeight)) ? opts.maxHeight : 1080;
     args = [
@@ -485,6 +526,7 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
       "--user-agent", DEFAULT_USER_AGENT,
       ...headersToArgs(DEFAULT_HEADERS),
       "--no-playlist", "-N", "2",
+      "--ignore-errors", "--no-abort-on-error",
       "--http-chunk-size", "16M", "--concurrent-fragments", "2",
       "--write-thumbnail", "--convert-thumbnails", "jpg",
       "--continue", "--no-overwrites",
@@ -508,6 +550,7 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
       "--user-agent", DEFAULT_USER_AGENT,
       ...headersToArgs(DEFAULT_HEADERS),
       "--no-playlist", "-N", "2",
+      "--ignore-errors", "--no-abort-on-error",
       "--http-chunk-size", "16M", "--concurrent-fragments", "2",
       "--write-thumbnail", "--convert-thumbnails", "jpg",
       "--continue", "--no-overwrites",
@@ -528,11 +571,21 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
     const child = spawn(ytDlpBin, args);
     try { registerJobProcess(jobId, child); } catch {}
 
+    const abortIfCanceled = () => {
+      if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
+        try { child.kill('SIGTERM'); } catch {}
+        return true;
+      }
+      return false;
+    };
+
     let downloadedCount = 0;
     const totalCount = selectedIds.length;
 
     child.stdout.on('data', (data) => {
+      if (abortIfCanceled()) return;
       const line = data.toString();
+      if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
       if (line.includes('[download]') && line.includes('%')) {
         const percentMatch = line.match(/(\d+\.\d+)%/);
         if (percentMatch) {
@@ -548,8 +601,10 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
     });
 
     child.stderr.on('data', (data) => {
+      if (abortIfCanceled()) return;
       const line = data.toString();
       stderrBuf += line;
+      if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
       if (line.includes('[download]') && line.includes('%')) {
         const percentMatch = line.match(/(\d+\.\d+)%/);
         if (percentMatch) {
@@ -561,24 +616,27 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
     });
 
     child.on('close', (code, signal) => {
+      try { process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`); } catch {}
+      emitEvent(progressCallback, opts, {
+        type: "summary",
+        skippedCount,
+        errorsCount,
+        lastLogKey: "log.skipSummary",
+        lastLogVars: { skipped: skippedCount, errors: errorsCount }
+      });
       if (signal === 'SIGTERM' || signal === 'SIGKILL') {
         return reject(new Error('CANCELED'));
       }
       if (code === null && /terminated|killed|aborted|SIGTERM|SIGKILL/i.test(stderrBuf)) {
         return reject(new Error('CANCELED'));
       }
-      if (code === 0) {
-        const files = getDownloadedFiles(playlistDir, true);
-        if (files.length > 0) {
-          if (progressCallback) progressCallback(100);
-          resolve(files);
-        } else {
-          reject(new Error("Seçilen ID'ler indirildi ama dosya bulunamadı"));
-        }
-      } else {
-        const errorTail = String(stderrBuf).split("\n").slice(-20).join("\n");
-        reject(new Error(`yt-dlp hatası (selected-ids): ${code}\n${errorTail}`));
+      const files = getDownloadedFiles(playlistDir, true);
+      if (files.length > 0) {
+      if (progressCallback) progressCallback(100);
+        return resolve(files);
       }
+      const errorTail = String(stderrBuf).split("\n").slice(-20).join("\n");
+      return reject(new Error(`yt-dlp hatası (selected-ids): ${code}\n${errorTail}`));
     });
 
     child.on('error', (error) => {
@@ -587,7 +645,14 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
   });
 }
 
-async function downloadStandard(ytDlpBin, url, jobId, isPlaylist, isAutomix, playlistItems, tempDir, opts = {}) {
+async function downloadStandard(
+  ytDlpBin, url, jobId,
+  isPlaylist, isAutomix, playlistItems,
+  tempDir,
+  progressCallback = null,
+  opts = {},
+  ctrl = {}
+) {
   const H = (opts.maxHeight && Number.isFinite(opts.maxHeight)) ? opts.maxHeight : 1080;
   const outputTemplate = path.join(
     tempDir,
@@ -619,6 +684,7 @@ async function downloadStandard(ytDlpBin, url, jobId, isPlaylist, isAutomix, pla
       "--add-header", `Referer: ${DEFAULT_HEADERS["Referer"]}`,
       "--add-header", `Origin: ${DEFAULT_HEADERS["Origin"]}`,
       "--add-header", `Accept-Language: ${DEFAULT_HEADERS["Accept-Language"]}`,
+      "--progress", "--newline",
       "-f",
       `b[ext=mp4][height<=${H}]/b[height<=${H}] / (bv*[height<=${H}][ext=mp4]/bv*[height<=${H}] + ba[ext=m4a]/ba) / b`,
       "--merge-output-format", "mp4",
@@ -628,6 +694,7 @@ async function downloadStandard(ytDlpBin, url, jobId, isPlaylist, isAutomix, pla
     if (geoNetArgs.length) args.push(...geoNetArgs);
   } else {
     args = [
+      "--progress", "--newline",
       "-f", "bestaudio/best",
       "--ignore-config", "--no-warnings",
       "--socket-timeout", "15",
@@ -682,42 +749,148 @@ async function downloadStandard(ytDlpBin, url, jobId, isPlaylist, isAutomix, pla
 
   args.push(url);
 
-  const finalArgs = opts.video ? withYT403Workarounds(args, { stripCookies: true }) : args;
+  const finalArgs = opts.video
+    ? withYT403Workarounds(args, { stripCookies: true })
+    : args;
 
   return new Promise((resolve, reject) => {
-    const child = execFile(ytDlpBin, finalArgs, { maxBuffer: 1024 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) {
-        if (error.killed || error.signal === 'SIGTERM' || error.signal === 'SIGKILL') {
-          return reject(new Error('CANCELED'));
-        }
-        const body = (stderr || stdout || "");
-        if (/terminated|killed|aborted|SIGTERM|SIGKILL/i.test(body)) {
-          return reject(new Error('CANCELED'));
-        }
-        const errorTail = (stderr || "").split("\n").slice(-20).join("\n");
-        return reject(new Error(`yt-dlp hatası: ${error.code}\n${errorTail}`));
-      }
-
-      if (isPlaylist || isAutomix) {
-        const playlistDir = path.join(tempDir, jobId);
-        const files = getDownloadedFiles(playlistDir, true);
-
-        if (files.length > 0) {
-          resolve(files);
-        } else {
-          reject(new Error("Playlist klasörü oluştu ama dosya bulunamadı"));
-        }
-      } else {
-        const files = getDownloadedFiles(tempDir, false, jobId);
-
-        if (files.length > 0) {
-          resolve(files[0]);
-        } else {
-          reject(new Error("İndirme başarılı görünüyor ama dosya bulunamadı"));
-        }
-      }
-    });
+    const child = spawn(ytDlpBin, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
     try { registerJobProcess(jobId, child); } catch {}
+
+    const abortIfCanceled = () => {
+      if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
+        try { child.kill('SIGTERM'); } catch {}
+        return true;
+      }
+      return false;
+    };
+
+    if (abortIfCanceled()) {
+      return reject(new Error("CANCELED"));
+    }
+    const cancelTick = setInterval(() => { abortIfCanceled(); }, 250);
+
+    let stderrBuf = "";
+    let skippedCount = 0;
+    let errorsCount = 0;
+    let seenTotal = null;
+    let seenIndex = 0;
+    let curFilePct = 0;
+
+    const bumpProgress = () => {
+      if (!progressCallback) return;
+      if (isPlaylist || isAutomix) {
+        const total = seenTotal || (Array.isArray(playlistItems) && playlistItems.length) || 100;
+        const overall = Math.max(0, Math.min(100, ((seenIndex + curFilePct / 100) / total) * 100));
+        progressCallback(overall);
+      } else {
+        progressCallback(Math.max(0, Math.min(100, curFilePct)));
+      }
+    };
+
+    const pctRe = /(\d+(?:\.\d+)?)%/;
+    const itemRe = /Downloading item\s+(\d+)\s+of\s+(\d+)/i;
+
+    const bumpSkipStd = (line) => {
+      if (SKIP_RE.test(line)) {
+        skippedCount++;
+        emitEvent(progressCallback, opts, {
+          type: "skip-hint",
+          skippedCount,
+          errorsCount,
+          lastLogKey: "log.skippedItem",
+          raw: line
+        });
+        try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
+      }
+      if (ERROR_WORD.test(line)) {
+        errorsCount++;
+        try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
+      }
+    };
+
+    const handleLine = (line) => {
+      if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkipStd(line);
+      if (line.includes("[download]") && pctRe.test(line)) {
+        const m = line.match(pctRe);
+        if (m) {
+          curFilePct = parseFloat(m[1]) || 0;
+          bumpProgress();
+        }
+      }
+      if (itemRe.test(line)) {
+        const m2 = line.match(itemRe);
+        const idx = parseInt(m2[1], 10);
+        const tot = parseInt(m2[2], 10);
+        if (Number.isFinite(tot) && tot > 0) seenTotal = tot;
+        if (Number.isFinite(idx)) {
+          seenIndex = Math.max(seenIndex, idx - 1);
+          curFilePct = 0;
+          bumpProgress();
+        }
+      }
+      if (/\[download\]\s+Destination:/i.test(line)) {
+        if (isPlaylist || isAutomix) {
+          seenIndex += 1;
+          curFilePct = 0;
+          bumpProgress();
+        } else {
+        }
+      }
+    };
+
+    child.stdout.on("data", (d) => {
+      if (abortIfCanceled()) return;
+      const s = d.toString();
+      s.split(/\r?\n/).forEach(handleLine);
+    });
+    child.stderr.on("data", (d) => {
+      if (abortIfCanceled()) return;
+      const s = d.toString();
+      stderrBuf += s;
+      s.split(/\r?\n/).forEach(handleLine);
+    });
+
+    child.on("close", (code, signal) => {
+      clearInterval(cancelTick);
+      try { process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`); } catch {}
+      emitEvent(progressCallback, opts, {
+        type: "summary",
+        skippedCount,
+        errorsCount,
+        lastLogKey: "log.skipSummary",
+        lastLogVars: { skipped: skippedCount, errors: errorsCount }
+      });
+      if (signal === "SIGTERM" || signal === "SIGKILL") {
+        return reject(new Error("CANCELED"));
+      }
+      if (isPlaylist || isAutomix) {
+    const playlistDir = path.join(tempDir, jobId);
+    const files = getDownloadedFiles(playlistDir, true);
+    if (files.length > 0) {
+      if (progressCallback) progressCallback(100);
+      return resolve(files);
+    }
+      if (code !== 0) {
+        const tail = stderrBuf.split("\n").slice(-20).join("\n");
+        return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
+      }
+      return reject(new Error("Playlist klasörü oluştu ama dosya bulunamadı"));
+    } else {
+      const files = getDownloadedFiles(tempDir, false, jobId);
+      if (files.length > 0) {
+        if (progressCallback) progressCallback(100);
+        return resolve(files[0]);
+      }
+      if (code !== 0) {
+        const tail = stderrBuf.split("\n").slice(-20).join("\n");
+        return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
+      }
+      return reject(new Error("İndirme başarılı görünüyor ama dosya bulunamadı"));
+    }
+    });
+
+    child.on("error", (err) => reject(new Error(`yt-dlp başlatılamadı: ${err.message}`)));
   });
 }
 
@@ -764,4 +937,3 @@ export function buildEntriesMap(ytMetadata) {
 
   return map;
 }
-

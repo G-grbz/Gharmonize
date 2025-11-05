@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title data >🎵 Groovify</title>
+  <title data >🎵 Gharmonize</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="container">
     <div class="header">
       <div class="title-section">
-        <h1 data >🎵 Groovify</h1>
-        <p class="subtitle" data-i18n="app.subtitle">Linkten sese, tek tık: Groovify.</p>
+        <h1 data >🎵 Gharmonize</h1>
+        <p class="subtitle" data-i18n="app.subtitle">Linkten sese, tek tık: Gharmonize.</p>
       </div>
       <div class="lang-toggle">
           <button type="button" class="btn-outline" data-lang="tr">TR</button>
@@ -30,7 +30,6 @@
           <span id="jobsBadge" class="jobs-badge" hidden>0</span>
         </button>
     </div>
-
     <div class="card-grid">
       <div class="card">
         <h2 data-i18n="section.output">⚙️ Çıktı Ayarları</h2>
@@ -41,6 +40,15 @@
         <div class="form-group">
           <label data-i18n="label.quality">Kalite:</label>
           <select id="bitrateSelect"></select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="label.sampleRate">Örnekleme Hızı:</label>
+          <select id="sampleRateSelect">
+            <option value="44100" data-i18n="quality.44100">44.1 kHz (CD Kalitesi)</option>
+            <option value="48000" selected data-i18n="quality.48000">48 kHz (Standart)</option>
+            <option value="96000" data-i18n="quality.96000">96 kHz (Yüksek Kalite)</option>
+            <option value="192000" data-i18n="quality.192000">192 kHz (Stüdyo Kalitesi)</option>
+          </select>
         </div>
       </div>
       <div class="card">
@@ -53,12 +61,19 @@
             <input type="checkbox" id="playlistCheckbox" />
             <label for="playlistCheckbox" data-i18n="label.playlist">Bu bir YouTube playlist'i</label>
           </div>
+           <div class="checkbox-group" id="lyricsCheckboxContainer">
+       <input type="checkbox" id="lyricsCheckbox" />
+       <label for="lyricsCheckbox" data-i18n="label.includeLyrics">Şarkı sözlerini dahil et</label>
+     </div>
           <div class="spotify-actions" id="urlSpotifyActions" style="display: none;">
               <button id="startSpotifyBtn" class="btn-primary" data-i18n="btn.spotifyPreview">Spotify Eşleştirmeyi Başlat</button>
               <button id="startIntegratedBtn" class="btn-primary" data-i18n="btn.spotifyIntegrated">Eşleştir ve İndir</button>
           </div>
           <div class="btn-row" id="normalUrlActions">
-            <button type="submit" id="startConvertBtn" data-i18n="btn.start">Dönüştürmeyi Başlat</button>
+            <button type="submit" id="startConvertBtn" data-i18n="btn.start">
+              <span class="btn-spinner" style="display: none;"></span>
+              <span class="btn-text">Dönüştürmeyi Başlat</span>
+            </button>
             <button type="button" class="btn-outline" id="previewBtn" data-i18n="btn.preview" data-i18n-title="btn.preview" title="Playlist'i Önizle">Playlist'i Önizle</button>
           </div>
         </form>
@@ -171,8 +186,9 @@
   </aside>
   <div id="jobsOverlay" class="jobs-overlay" hidden></div>
 
-  <script src="/i18n.js"></script>
+<script src="/i18n.js"></script>
   <script>
+
 
   function focusUrlInput() {
       const urlInput = document.getElementById('urlInput');
@@ -224,9 +240,90 @@
       }
     }
 
+class NotificationManager {
+    constructor() {
+        this.notificationQueue = new Map();
+        this.activeNotifications = new Set();
+        this.notificationTimers = new Map();
+    }
+
+    showNotification(message, type = 'info', group = 'default', duration = 3000) {
+        if (this.notificationTimers.has(group)) {
+            clearTimeout(this.notificationTimers.get(group));
+            this.notificationTimers.delete(group);
+        }
+
+        if (this.activeNotifications.has(group)) {
+            const existing = document.querySelector(`[data-notification-group="${group}"]`);
+            if (existing) {
+                existing.remove();
+                this.activeNotifications.delete(group);
+            }
+        }
+
+        const notification = document.createElement('div');
+        notification.className = `notification ${type}`;
+        notification.textContent = message;
+        notification.setAttribute('data-notification-group', group);
+
+        notification.style.transform = 'translateX(100%)';
+        notification.style.opacity = '0';
+        notification.style.transition = 'all 0.3s ease';
+
+        document.body.appendChild(notification);
+
+        this.activeNotifications.add(group);
+
+        requestAnimationFrame(() => {
+            notification.style.transform = 'translateX(0)';
+            notification.style.opacity = '1';
+        });
+
+        const timer = setTimeout(() => {
+            this.hideNotification(notification, group);
+        }, duration);
+
+        this.notificationTimers.set(group, timer);
+    }
+
+    hideNotification(notification, group) {
+        notification.style.transform = 'translateX(100%)';
+        notification.style.opacity = '0';
+
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.remove();
+            }
+            this.activeNotifications.delete(group);
+            this.notificationTimers.delete(group);
+        }, 300);
+    }
+
+    quickNotify(message, type = 'info', group = 'default') {
+        this.showNotification(message, type, group, 2000);
+    }
+
+    clearAll() {
+        document.querySelectorAll('.notification').forEach(notification => {
+            notification.remove();
+        });
+        this.activeNotifications.clear();
+        this.notificationTimers.forEach(timer => clearTimeout(timer));
+        this.notificationTimers.clear();
+    }
+}
+
+const notificationManager = new NotificationManager();
+
     class MediaConverterApp {
-      constructor() {
+    constructor() {
         this.currentJobs = new Map();
+        this._escapeMap = {
+        '&': '&amp;', '<': '&lt;', '>': '&gt;',
+        '"': '&quot;', "'": '&#39;', '`': '&#96;', '=': '&#61;', '/': '&#47;'
+        };
+        this.includeLyrics = false;
+        this.currentSampleRate = 48000;
         this.currentPreview = {
           url: null, items: [], selected: new Set(),
           title: '', count: 0, page: 1, pageSize: 25,
@@ -245,6 +342,7 @@
         this.jobStates = new Map();
         this.previewAbort = null;
         this.spotifyEventSource = null;
+        this.notificationManager = notificationManager;
         this.initializeEventListeners();
         this.toRelative = (u) => {
           try {
@@ -253,6 +351,40 @@
         };
         this.initializeTheme();
         this.loadFormats();
+        this.ensureWarnStyles();
+      }
+
+      ensureWarnStyles() {
+        if (document.getElementById('skipped-badge-style')) return;
+        const st = document.createElement('style');
+        st.id = 'skipped-badge-style';
+      }
+
+      computeSkipped(job) {
+      const direct = Number(job?.skippedCount ?? job?.metadata?.skippedCount ?? 0);
+      if (direct > 0) return direct;
+
+      if (Number.isFinite(job?.playlist?.skipped)) {
+        return Number(job.playlist.skipped);
+      }
+
+      if (Number.isFinite(job?.errorsCount)) {
+        return Number(job.errorsCount);
+      }
+
+      if (job?.metadata?.isPlaylist && Array.isArray(job?.resultPath)) {
+        const successful = job.resultPath.filter(r => r && r.outputPath && !r.error).length;
+        const total = Number(job?.playlist?.total ?? job?.metadata?.frozenEntries?.length ?? successful);
+        return Math.max(0, total - successful);
+      }
+
+      if (job?.stderr) {
+        const skipPattern = /(private|izin|skipp?ed|unavailable|atlan(?:d|an)|blocked|copyright|region|geo)/gi;
+        const matches = job.stderr.match(skipPattern);
+        return matches ? matches.length : 0;
+      }
+
+      return 0;
       }
 
       normalizeStatus(s) {
@@ -278,9 +410,38 @@
           const response = await fetch('/api/formats');
           const data = await response.json();
           this.updateFormatOptions(data.formats);
+          this.handleFormatChange();
         }
         catch (error) {
           console.error('Formatlar yüklenemedi:', error);
+        }
+      }
+
+      handleFormatChange() {
+        const formatSelect = document.getElementById('formatSelect');
+        formatSelect.addEventListener('change', async (e) => {
+        const format = e.target.value;
+        this.toggleFormatSpecificOptions(format);
+
+        const formats = await this.getFormats();
+        this.updateBitrateOptions(format, formats);
+      });
+
+        const currentFormat = formatSelect.value;
+        this.toggleFormatSpecificOptions(currentFormat);
+      }
+
+      toggleFormatSpecificOptions(format) {
+        const sampleRateGroup = document.querySelector('.form-group:has(#sampleRateSelect)');
+        const lyricsGroup = document.getElementById('lyricsCheckboxContainer');
+        const isMp4 = format === 'mp4';
+
+        if (sampleRateGroup) {
+          sampleRateGroup.style.display = isMp4 ? 'none' : '';
+        }
+
+        if (lyricsGroup) {
+          lyricsGroup.style.display = isMp4 ? 'none' : '';
         }
       }
 
@@ -294,6 +455,8 @@
           formatSelect.appendChild(option);
         });
         this.updateBitrateOptions(formats[0].format, formats);
+        const currentFormat = formatSelect.value;
+        this.toggleFormatSpecificOptions(currentFormat);
       }
 
       async getFormats() {
@@ -320,12 +483,12 @@
       }
 
       initializeEventListeners() {
-        document.getElementById('urlForm').addEventListener('submit', (e) => this.handleUrlSubmit(e));
-        document.getElementById('fileForm').addEventListener('submit', (e) => this.handleFileSubmit(e));
         document.getElementById('formatSelect').addEventListener('change', async (e) => {
-          const formats = await this.getFormats();
-          this.updateBitrateOptions(e.target.value, formats);
-        });
+            const format = e.target.value;
+            this.toggleFormatSpecificOptions(format);
+            const formats = await this.getFormats();
+            this.updateBitrateOptions(format, formats);
+          });
         document.getElementById('previewBtn').addEventListener('click', () => this.handlePreviewClick());
         document.getElementById('convertSelectedBtn').addEventListener('click', () => this.convertSelected());
         document.getElementById('convertAllBtn').addEventListener('click', () => this.convertAll());
@@ -340,6 +503,8 @@
         document.getElementById('startIntegratedBtn').addEventListener('click', () => {
           this.startIntegratedSpotifyProcess();
         });
+
+         document.getElementById('urlForm').addEventListener('submit', (e) => this.handleUrlSubmitWithSpinner(e));
 
         const startSpotifyBtn = document.getElementById('startSpotifyBtn');
         const convertMatchedBtn = document.getElementById('convertMatchedBtn');
@@ -370,6 +535,12 @@
             this.updateJobUI(job, this.jobToBatch.get(id) || null);
           }
         });
+        document.getElementById('lyricsCheckbox').addEventListener('change', (e) => {
+       this.includeLyrics = e.target.checked;
+        });
+        document.getElementById('sampleRateSelect').addEventListener('change', (e) => {
+        this.currentSampleRate = parseInt(e.target.value);
+      });
       }
 
       onUrlInputChange(url) {
@@ -410,7 +581,7 @@
       async startSpotifyPreview() {
         const url = document.getElementById('urlInput').value.trim();
         if (!url) {
-          this.showNotification(t('notif.needUrl'), 'error');
+          this.showNotification(t('notif.needUrl'), 'error', 'error');
           return;
         }
 
@@ -443,7 +614,7 @@
           this.streamSpotifyLogs(data.mapId);
 
         } catch (error) {
-          this.showNotification(`${t('notif.errorPrefix')}: ${error.message}`, 'error');
+          this.showNotification(`${t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
         } finally {
           const btn = document.getElementById('startSpotifyBtn');
           btn.classList.remove('btn-loading');
@@ -604,36 +775,44 @@
         }
       }
 
-      async startIntegratedSpotifyProcess() {
-        const url = document.getElementById('urlInput').value.trim();
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
+    async startIntegratedSpotifyProcess() {
+    const url = document.getElementById('urlInput').value.trim();
+    const format = document.getElementById('formatSelect').value;
+    const bitrate = document.getElementById('bitrateSelect').value;
+    const sampleRate = document.getElementById('sampleRateSelect').value;
+    const includeLyrics = document.getElementById('lyricsCheckbox').checked;
 
-        if (!url) {
-          this.showNotification(t('notif.needUrl'), 'error');
-          return;
-        }
+    if (!url) {
+    this.showNotification(t('notif.needUrl'), 'error', 'error');
+    return;
+  }
 
-        try {
-          const btn = document.getElementById('startIntegratedBtn');
-          btn.classList.add('btn-loading');
-          btn.disabled = true;
+  try {
+    const btn = document.getElementById('startIntegratedBtn');
+    btn.classList.add('btn-loading');
+    btn.disabled = true;
 
-          document.getElementById('spotifyPreviewCard').style.display = 'block';
-          document.getElementById('spotifyTitle').textContent = t('status.starting');
-          document.getElementById('spotifyTotal').textContent = '0';
-          document.getElementById('spotifyMatched').textContent = '0';
-          document.getElementById('spotifyProgress').textContent = '0%';
-          document.getElementById('spotifyLogs').innerHTML = '';
-          const listEl = document.getElementById('spotifyPreviewList');
-          if (listEl) listEl.innerHTML = '';
-          this.integratedRenderedCount = 0;
+    document.getElementById('spotifyPreviewCard').style.display = 'block';
+    document.getElementById('spotifyTitle').textContent = t('status.starting');
+    document.getElementById('spotifyTotal').textContent = '0';
+    document.getElementById('spotifyMatched').textContent = '0';
+    document.getElementById('spotifyProgress').textContent = '0%';
+    document.getElementById('spotifyLogs').innerHTML = '';
+    const listEl = document.getElementById('spotifyPreviewList');
+    if (listEl) listEl.innerHTML = '';
+    this.integratedRenderedCount = 0;
 
-          const response = await fetch('/api/spotify/process/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, format, bitrate })
-          });
+    const response = await fetch('/api/spotify/process/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url,
+        format,
+        bitrate,
+        sampleRate: sampleRate,
+        includeLyrics
+      })
+    });
 
           if (!response.ok) {
             const error = await response.json().catch(()=>({}));
@@ -645,11 +824,11 @@
           document.getElementById('spotifyTitle').textContent = data.title || '-';
           document.getElementById('spotifyTotal').textContent = data.total || '0';
           this.trackJob(data.jobId);
-          this.showNotification(t('notif.queue'), 'success');
+          this.showNotification(t('notif.queue'), 'success', 'queue');
           this.streamIntegratedLogs(data.jobId);
 
         } catch (error) {
-          this.showNotification(`${t('notif.errorPrefix')}: ${error.message}`, 'error');
+          this.showNotification(`${t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
           document.getElementById('spotifyLogs').innerHTML +=
             `<div class="log-entry error">[${new Date().toLocaleTimeString()}] ❌ ${t('notif.errorPrefix')}: ${this.escapeHtml(error.message)}</div>`;
         } finally {
@@ -669,6 +848,21 @@
           if (job.progress) {
             document.getElementById('spotifyProgress').textContent = `${job.progress}%`;
           }
+          (() => {
+            try {
+              let line = '';
+              if (job && job.__event && job.type === 'skip-hint') {
+                if (job.lastLogKey) line = t(job.lastLogKey, job.lastLogVars || {});
+                else if (job.raw)   line = this.normalizeBackendLog(job.raw);
+                else if (job.message) line = this.normalizeBackendLog(job.message);
+              } else if (typeof job.raw === 'string' && /SKIP_(HINT|SUMMARY):/i.test(job.raw)) {
+                line = this.normalizeBackendLog(job.raw);
+              }
+              if (line) {
+                this.addLogEntry(line, 'warning');
+              }
+            } catch (_) {}
+          })();
 
          if (job.playlist) {
             document.getElementById('spotifyMatched').textContent = `${job.playlist.done || 0}/${job.playlist.total || 0}`;
@@ -682,6 +876,10 @@
               completed: t('phase.completed'),
               error: t('phase.error')
             };
+
+            if (typeof job.lastLog === 'string') {
+              job.lastLog = this.normalizeBackendLog(job.lastLog);
+            }
 
             const logEntry = document.createElement('div');
             logEntry.className = `log-entry ${job.phase === 'error' ? 'error' : 'info'}`;
@@ -756,16 +954,18 @@
       }
       async convertMatchedSpotify() {
         if (!this.currentSpotifyTask.id) {
-          this.showNotification(t('notif.spotifyMappingFirst'), 'error');
+          this.showNotification(t('notif.spotifyMappingFirst'), 'error', 'error');
           return;
         }
 
         try {
           const format = document.getElementById('formatSelect').value;
           const bitrate = document.getElementById('bitrateSelect').value;
+          const sampleRate = document.getElementById('sampleRateSelect').value;
+          const includeLyrics = document.getElementById('lyricsCheckbox').checked;
           const validItems = this.getCurrentSpotifyMatchedItems();
           if (validItems.length === 0) {
-            this.showNotification(t('notif.noMatchedTracks'), 'error');
+            this.showNotification(t('notif.noMatchedTracks'), 'error', 'error');
             return;
           }
 
@@ -773,6 +973,7 @@
             url: document.getElementById('urlInput').value.trim(),
             format,
             bitrate,
+            sampleRate: sampleRate,
             isPlaylist: true,
             selectedIndices: validItems.map(item => item.index),
             spotifyMapId: this.currentSpotifyTask.id,
@@ -781,7 +982,8 @@
               spotifyTitle: document.getElementById('spotifyTitle').textContent,
               selectedIds: validItems.map(item => item.id),
               frozenEntries: validItems,
-              spotifyMapId: this.currentSpotifyTask.id
+              spotifyMapId: this.currentSpotifyTask.id,
+              includeLyrics
             }
           };
 
@@ -792,12 +994,12 @@
           if (jobId) {
             this.currentSpotifyTask.jobId = jobId;
             document.getElementById('spotifyStatusText').textContent = t('status.conversionStarted');
-            this.showNotification(t('notif.tracksQueued', { count: validItems.length }), 'success');
+            this.showNotification(t('notif.tracksQueued', { count: validItems.length }), 'success', 'queue');
             this.trackJob(jobId);
           }
 
         } catch (error) {
-          this.showNotification(`${t('notif.conversionError')}: ${error.message}`, 'error');
+          this.showNotification(`${t('notif.conversionError')}: ${error.message}`, 'error', 'error');
           document.getElementById('spotifyStatusText').textContent = t('status.conversionFailed');
         }
       }
@@ -884,6 +1086,7 @@
           job.phase = this.normalizeStatus(job.phase);
           this.updateSpotifyJobUI(job);
 
+
           if (job.status === 'completed' || job.status === 'error' || job.status === 'canceled') {
             eventSource.close();
             this.onSpotifyJobCompleted(job);
@@ -921,6 +1124,7 @@
       showSpotifyDownloads(job) {
         const downloadList = document.getElementById('spotifyDownloadList');
         downloadList.innerHTML = '';
+        const hasLyrics = !!job?.metadata?.includeLyrics;
         if (Array.isArray(job.resultPath)) {
           job.resultPath.forEach((result, index) => {
             const item = document.createElement('div');
@@ -941,9 +1145,9 @@
           zipItem.className = 'download-item zip-all';
           zipItem.innerHTML = `
             <strong>${t('ui.all')}:</strong>
-            <a href="${this.toRelative(job.zipPath)}" class="download-btn" download>
-              ${t('download.all')}
-            </a>
+          <a href="${this.toRelative(job.zipPath)}" class="download-btn" download>
+            ${hasLyrics ? t('download.allWithLyrics') : t('download.all')}
+          </a>
           `;
           downloadList.appendChild(zipItem);
         }
@@ -951,64 +1155,90 @@
       }
 
       async handleUrlSubmit(e) {
-        e.preventDefault();
-        const url = document.getElementById('urlInput').value.trim();
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
-        const isPlaylist = document.getElementById('playlistCheckbox').checked;
-        const sequential = document.getElementById('sequentialChk')?.checked;
+      e.preventDefault();
+      const url = document.getElementById('urlInput').value.trim();
+      const format = document.getElementById('formatSelect').value;
+      const bitrate = document.getElementById('bitrateSelect').value;
+      const sampleRate = document.getElementById('sampleRateSelect').value;
+      const isPlaylist = document.getElementById('playlistCheckbox').checked;
+      const sequential = document.getElementById('sequentialChk')?.checked;
+      const includeLyrics = document.getElementById('lyricsCheckbox').checked;
 
-        if (isSpotifyUrl(url)) {
-          if (!this.currentSpotifyTask.completed) {
-            this.showNotification(t('notif.completeSpotifyFirst'), 'error');
-            return;
-          }
-          await this.convertMatchedSpotify();
-          return;
-        }
+    if (isSpotifyUrl(url)) {
+    if (!this.currentSpotifyTask.completed) {
+      this.showNotification(t('notif.completeSpotifyFirst'), 'error', 'error');
+      return;
+    }
+    await this.convertMatchedSpotify();
+    return;
+  }
 
-        if (isPlaylist) {
-          const selectedIndices = Array.from(this.currentPreview.selected);
-          if (sequential && selectedIndices.length > 1) {
-            const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
-            this.ensureBatch(batchId, selectedIndices.length, { format, bitrate, source: t('ui.youtubePlaylist') });
-            for (const idx of selectedIndices) {
-              const payload = { url, format, bitrate, isPlaylist: true, selectedIndices: [idx], clientBatch: batchId };
-              this.submitJob(payload);
-            }
-          } else {
-            const payload = {
-              url, format, bitrate, isPlaylist: true,
-              selectedIndices: selectedIndices.length ? selectedIndices : 'all'
-            };
-            await this.submitJob(payload);
-          }
-        } else {
-          const payload = { url, format, bitrate, isPlaylist: false };
-          await this.submitJob(payload);
-        }
-
-        document.getElementById('urlForm').reset();
-        document.getElementById('playlistCheckbox').checked = false;
-        this.hidePreview();
+  if (isPlaylist) {
+    const selectedIndices = Array.from(this.currentPreview.selected);
+    if (sequential && selectedIndices.length > 1) {
+      const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
+      this.ensureBatch(batchId, selectedIndices.length, { format, bitrate, source: t('ui.youtubePlaylist') });
+      for (const idx of selectedIndices) {
+        const payload = {
+          url, format, bitrate,
+          sampleRate: sampleRate,
+          isPlaylist: true,
+          selectedIndices: [idx],
+          clientBatch: batchId,
+          includeLyrics
+        };
+        this.submitJob(payload);
       }
+    } else {
+      const payload = {
+        url, format, bitrate,
+        isPlaylist: true,
+        sampleRate: sampleRate,
+        selectedIndices: selectedIndices.length ? selectedIndices : 'all',
+        includeLyrics
+      };
+      await this.submitJob(payload);
+    }
+  } else {
+    const payload = {
+      url, format, bitrate,
+      isPlaylist: false,
+      sampleRate: Number(sampleRate),
+      includeLyrics
+    };
+    await this.submitJob(payload);
+  }
 
-      async handleFileSubmit(e) {
-        e.preventDefault();
-        const fileInput = document.getElementById('fileInput');
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
-        if (!fileInput.files.length) {
-          this.showNotification(t('notif.pickFile'), 'error');
-          return;
-        }
-        const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
-        formData.append('format', format);
-        formData.append('bitrate', bitrate);
-        await this.submitJob(formData, true);
-        document.getElementById('fileForm').reset();
-      }
+  document.getElementById('urlForm').reset();
+  document.getElementById('playlistCheckbox').checked = false;
+  document.getElementById('lyricsCheckbox').checked = false;
+  this.hidePreview();
+}
+
+  async handleFileSubmit(e) {
+  e.preventDefault();
+  const fileInput = document.getElementById('fileInput');
+  const format = document.getElementById('formatSelect').value;
+  const bitrate = document.getElementById('bitrateSelect').value;
+  const sampleRate = document.getElementById('sampleRateSelect').value;
+  const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+
+  if (!fileInput.files.length) {
+    this.showNotification(t('notif.pickFile'), 'error', 'error');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  formData.append('format', format);
+  formData.append('bitrate', bitrate);
+  formData.append('sampleRate', sampleRate);
+  formData.append('includeLyrics', includeLyrics);
+
+  await this.submitJob(formData, true);
+  document.getElementById('fileForm').reset();
+  document.getElementById('lyricsCheckbox').checked = false;
+}
 
       async submitJob(payload, isFormData = false) {
       try {
@@ -1043,22 +1273,27 @@
             this.trackJob(result.id);
           }
 
-          this.showNotification(t('notif.queue'), 'success');
+          this.showNotification(t('notif.queue'), 'success', 'queue');
         } catch (error) {
           console.error("Job gönderme hatası:", error);
-          this.showNotification(`${t('notif.errorPrefix')}: ${error.message}`, 'error');
+          this.showNotification(`${t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
         }
       }
 
       trackJob(jobId, batchId = null) {
         if (this.currentJobs.has(jobId)) return;
         const eventSource = new EventSource(`/api/stream/${jobId}`);
+        let firstUpdate = true;
         eventSource.onmessage = (event) => {
           const job = JSON.parse(event.data);
           job.status = this.normalizeStatus(job.status);
           job.currentPhase = this.normalizeStatus(job.currentPhase);
           job.phase = this.normalizeStatus(job.phase);
           this.jobStates.set(jobId, job);
+          if (firstUpdate) {
+                firstUpdate = false;
+                document.dispatchEvent(new CustomEvent('job:first-update', { detail: { jobId, job } }));
+            }
           this.updateJobUI(job, batchId);
           if (job.status === 'completed' || job.status === 'error' || job.status === 'canceled') {
             eventSource.close();
@@ -1074,25 +1309,25 @@
       }
 
       uiCurrentIndex(job) {
-  const total = job.playlist?.total;
-  const done  = job.playlist?.done;
-  if (Number.isFinite(total) && Number.isFinite(done) && total > 0) {
-    return Math.min(Math.max(0, done || 0), Math.max(0, total - 1));
-  }
-  return null;
-}
-
-uiNowTitle(job) {
-  if (job.metadata?.isPlaylist && Array.isArray(job.metadata?.frozenEntries) && job.metadata.frozenEntries.length) {
-    const i0 = this.uiCurrentIndex(job);
-    if (i0 !== null && job.metadata.frozenEntries[i0]) {
-      const e = job.metadata.frozenEntries[i0];
-      return `${e.index}. ${e.title}`;
+      const total = job.playlist?.total;
+      const done  = job.playlist?.done;
+      if (Number.isFinite(total) && Number.isFinite(done) && total > 0) {
+        return Math.min(Math.max(0, done || 0), Math.max(0, total - 1));
+      }
+      return null;
     }
-  }
-  const ex = job.metadata?.extracted || {};
-  return ex.track || ex.title || job.metadata?.originalName || null;
-}
+
+    uiNowTitle(job) {
+      if (job.metadata?.isPlaylist && Array.isArray(job.metadata?.frozenEntries) && job.metadata.frozenEntries.length) {
+        const i0 = this.uiCurrentIndex(job);
+        if (i0 !== null && job.metadata.frozenEntries[i0]) {
+          const e = job.metadata.frozenEntries[i0];
+          return `${e.index}. ${e.title}`;
+        }
+      }
+      const ex = job.metadata?.extracted || {};
+      return ex.track || ex.title || job.metadata?.originalName || null;
+    }
 
       updateJobUI(job, batchId = null) {
         const statusNorm = this.normalizeStatus(job.status);
@@ -1208,6 +1443,7 @@ uiNowTitle(job) {
     }
 
     let jobElement = document.getElementById(`job-${job.id}`);
+
     if (!jobElement) {
       const empty = document.getElementById('job-empty');
       if (empty) empty.remove();
@@ -1227,6 +1463,7 @@ uiNowTitle(job) {
     };
 
     let jobTitle = job.metadata?.originalName || job.metadata?.source || '';
+
     if (job.metadata.source === 'spotify') {
       jobTitle = `🎵 ${job.metadata.spotifyTitle || t('ui.spotifyPlaylist')}`;
     }
@@ -1242,26 +1479,47 @@ uiNowTitle(job) {
       }
     }
 
+    const skippedCount = this.computeSkipped(job);
+  const skippedKeywords = /(private|izin|skipp?ed|unavailable|atlan(?:d|an)|blocked|copyright|region|geo)/i;
+  const showSkippedBadge =
+    (skippedCount > 0) ||
+    (job.lastLog && skippedKeywords.test(String(job.lastLog))) ||
+    (job.lastLogKey && skippedKeywords.test(String(job.lastLogKey))) ||
+    (job.error && skippedKeywords.test(String(job.error?.message || job.error)));
+
+  const skippedBadge = showSkippedBadge
+    ? `<span class="chip chip--warn" title="${this.escapeHtml(job.lastLog || 'atlananlar')}">⚠️ ${t('jobs.skipped')}${skippedCount ? ` (${skippedCount})` : ''}</span>`
+    : '';
+
     let resultContent = '';
+
     if (job.status === 'completed') {
       if (Array.isArray(job.resultPath)) {
         const successfulResults = job.resultPath.filter(r => r.outputPath && !r.error);
         if (successfulResults.length > 0) {
+        const hasLyrics = job.metadata.includeLyrics;
+          const downloadText = hasLyrics ? t('download.withLyrics') : t('download.single');
           resultContent = `
             <div class="download-list">
               ${successfulResults.map((r, i) => {
                 const trackTitle = job.metadata?.frozenEntries?.[i]?.title || t('ui.track', { number: i + 1 });
-                return `
+                const lrcBtn = r.lyricsPath
+              ? `<a href="${this.toRelative(r.lyricsPath)}" class="download-btn" download>${t('download.lyrics')}</a>`
+              : '';
+              return `
                   <div class="download-item">
                     <span>${i + 1}. ${this.escapeHtml(trackTitle)}</span>
                     <a href="${this.toRelative(r.outputPath)}" class="download-btn" download>${t('download.single')}</a>
-                  </div>
+                    ${lrcBtn}
+                    </div>
                 `;
               }).join('')}
               ${job.zipPath ? `
                 <div class="download-item" style="margin-top:8px;">
                   <strong>${t('ui.all')}:</strong>
-                  <a href="${this.toRelative(job.zipPath)}" class="download-btn" download>${t('download.all')}</a>
+                  <a href="${this.toRelative(job.zipPath)}" class="download-btn" download>
+                     ${hasLyrics ? t('download.allWithLyrics') : t('download.all')}
+                   </a>
                 </div>` : ''}
             </div>
           `;
@@ -1269,21 +1527,53 @@ uiNowTitle(job) {
           resultContent = `<div style="color: var(--error); font-size: 13px;">❌ ${t('ui.noFilesConverted')}</div>`;
         }
       } else if (job.resultPath) {
-            resultContent = `<a href="${this.toRelative(job.resultPath)}" class="download-btn" download>${t('download.single')}</a>`;
-      }
-    }
+            const rp = (typeof job.resultPath === 'string')
+               ? { outputPath: job.resultPath }
+               : job.resultPath;
+                const hasLyricsFlag = !!rp.lyricsPath;
+                const baseBtn = `<a href="${this.toRelative(rp.outputPath)}" class="download-btn" download>${t('download.single')}</a>`;
+                const lrcBtn  = hasLyricsFlag
+                ? `<a href="${this.toRelative(rp.lyricsPath)}" class="download-btn" download>${t('download.lyrics')}</a>`
+                  : '';
+                resultContent = `${baseBtn} ${lrcBtn}`;
+              }
+            }
 
     const totalProgress = job.progress || 0;
 
-    jobElement.innerHTML = `
-      <strong>${this.escapeHtml(jobTitle)}</strong>
-      <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
-        ${job.format.toUpperCase()} • ${job.bitrate}
-        ${job.metadata?.isPlaylist ? ` • ${t('ui.playlist')}` : ''}
-        ${phaseInfo}
-      </div>
+    let lyricsInfo = '';
 
-      ${phaseDetails}
+    if (job.metadata?.includeLyrics && job.metadata?.lyricsStats) {
+      const stats = job.metadata.lyricsStats;
+      lyricsInfo = `<div class="lyrics-stats" style="font-size: 12px; color: var(--text-muted); margin: 4px 0;">
+        🎼 ${t('label.includeLyrics2')}: ${t('ui.found')} ${stats.found}, ${t('ui.notFound')} ${stats.notFound}
+      </div>`;
+    }
+
+  let lastLogInfo = '';
+
+  if (job.lastLog || job.lastLogKey) {
+    const raw = job.lastLogKey ? t(job.lastLogKey, job.lastLogVars || {}) : this.normalizeLog(job.lastLog);
+    lastLogInfo = `<div class="last-log" style="font-size: 12px; color: var(--text-muted); margin: 4px 0; font-style: italic;">
+      ${this.escapeHtml(raw)}
+    </div>`;
+  }
+
+  jobElement.innerHTML = `
+    <strong>${this.escapeHtml(jobTitle)}</strong>
+    <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
+  ${job.format.toUpperCase()} • ${job.bitrate}
+  ${job.sampleRate ? ` • ${Math.round(job.sampleRate / 1000)} kHz` : ''}
+  ${job.metadata?.isPlaylist ? ` • ${t('ui.playlist')}` : ''}
+  ${job.metadata?.includeLyrics ? ` • 🎼 ${t('label.includeLyrics2')}` : ''}
+  ${phaseInfo}
+  ${skippedBadge}
+</div>
+
+    ${lyricsInfo}
+    ${lastLogInfo}
+
+    ${phaseDetails}
 
       ${(() => {
         const nt = this.uiNowTitle(job);
@@ -1325,15 +1615,14 @@ uiNowTitle(job) {
           this.updateJobUI(js, this.jobToBatch.get(job.id) || null);
         }
 
-        this.showNotification(t('notif.canceledByUser'), 'success');
+        this.showNotification(t('notif.canceledByUser'), 'success', 'action');
       } catch (e) {
         stopBtn.disabled = false;
-        this.showNotification(`${t('notif.cancelFailed')}: ${e.message}`, 'error');
+        this.showNotification(`${t('notif.cancelFailed')}: ${e.message}`, 'error', 'error');
       }
     });
   }
   }
-
       ensureBatch(batchId, total, meta) {
         let batch = this.batches.get(batchId);
 
@@ -1352,7 +1641,7 @@ uiNowTitle(job) {
         const sourceText = meta?.source || t('ui.playlist');
         const seqText = t('label.sequential');
         batchElement.innerHTML = `
-          <strong>${sourceText} — ${seqText}</strong>
+          <strong>${sourceText} — ${t('label.sequential')}</strong>
           <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
             ${meta?.format?.toUpperCase() || ''} • ${meta?.bitrate || ''}
           </div>
@@ -1381,9 +1670,9 @@ uiNowTitle(job) {
 
         this.batches.set(batchId, batch);
         const stopBtn = batchElement.querySelector(`[data-stop-batch="${batchId}"]`);
-if (stopBtn) {
-  stopBtn.addEventListener('click', () => this.cancelBatch(batchId));
-}
+        if (stopBtn) {
+          stopBtn.addEventListener('click', () => this.cancelBatch(batchId));
+        }
         return batch;
       }
 
@@ -1422,20 +1711,20 @@ if (stopBtn) {
         }
 
         const anyActive = Array.from(batch.jobs).some(jobId => {
-      const j = this.jobStates.get(jobId);
-      const s = j ? this.normalizeStatus(j.status) : 'completed';
-      return !['completed','error','canceled'].includes(s);
-    });
-    const stopBtn = document.querySelector(`[data-stop-batch="${batchId}"]`);
-    if (stopBtn) stopBtn.disabled = !anyActive;
-      }
+        const j = this.jobStates.get(jobId);
+        const s = j ? this.normalizeStatus(j.status) : 'completed';
+        return !['completed','error','canceled'].includes(s);
+        });
+        const stopBtn = document.querySelector(`[data-stop-batch="${batchId}"]`);
+        if (stopBtn) stopBtn.disabled = !anyActive;
+        }
 
       async previewPlaylist() {
         const url = document.getElementById('urlInput').value.trim();
         const isPlaylist = document.getElementById('playlistCheckbox').checked;
         const btn = document.getElementById('previewBtn');
         if (!url) {
-          this.showNotification(t('notif.needUrl'), 'error');
+          this.showNotification(t('notif.needUrl'), 'error', 'error');
           return;
         }
         if (isSpotifyUrl(url)) {
@@ -1446,7 +1735,7 @@ if (stopBtn) {
             const batchSize = Number(document.getElementById('pageSizeSel').value) || 10;
             await this.streamPreviewByPaging(url, Math.max(1, Math.min(50, batchSize)));
           } catch (e) {
-            this.showNotification(`${t('notif.errorPrefix')}: ${e.message}`, 'error');
+            this.showNotification(`${t('notif.errorPrefix')}: ${e.message}`, 'error', 'error');
           } finally {
             btn?.classList.remove('btn-loading');
             btn?.removeAttribute('disabled');
@@ -1455,7 +1744,7 @@ if (stopBtn) {
           return;
         }
         if (!isPlaylist) {
-          this.showNotification(t('notif.checkPlaylist'), 'error');
+          this.showNotification(t('notif.checkPlaylist'), 'error', 'error');
           return;
         }
         this.currentPreview.url = url;
@@ -1491,7 +1780,7 @@ if (stopBtn) {
           this.renderPreview();
           this.showPreview();
         } catch (e) {
-          this.showNotification(`${t('notif.errorPrefix')}: ${e.message}`, 'error');
+          this.showNotification(`${t('notif.errorPrefix')}: ${e.message}`, 'error', 'error');
         } finally {
           btn?.classList.remove('btn-loading');
           btn?.removeAttribute('disabled');
@@ -1639,7 +1928,7 @@ if (stopBtn) {
           document.getElementById('pageNo').textContent = String(this.currentPreview.page);
           this.renderPreview();
         } catch (e) {
-          this.showNotification(`${t('notif.errorPrefix')}: ${e.message}`, 'error');
+          this.showNotification(`${t('notif.errorPrefix')}: ${e.message}`, 'error', 'error');
         } finally {
           const prevBtn = document.getElementById('prevPageBtn');
           const nextBtn = document.getElementById('nextPageBtn');
@@ -1741,72 +2030,122 @@ if (stopBtn) {
       }
 
       async convertSelected() {
-        if (!this.currentPreview.url) {
-          this.showNotification(t('notif.previewFirst'), 'error');
-          return;
-        }
-        const selected = Array.from(this.currentPreview.selected);
-        if (!selected.length) {
-          this.showNotification(t('notif.selectAtLeastOne'), 'error');
-          return;
-        }
+  if (!this.currentPreview.url) {
+    this.showNotification(t('notif.previewFirst'), 'error', 'error');
+    return;
+  }
 
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
-        const sequential = document.getElementById('sequentialChk')?.checked;
-        const selectedIds = selected
-        .map(i => this.currentPreview.indexToId.get(i))
-        .filter(Boolean);
+  const selected = Array.from(this.currentPreview.selected);
+  if (!selected.length) {
+    this.showNotification(t('notif.selectAtLeastOne'), 'error', 'error');
+    return;
+  }
 
-        console.log("Seçilen ID'ler:", selectedIds);
+  const convertBtn = document.getElementById('convertSelectedBtn');
+  const originalText = convertBtn.textContent;
 
-        if (sequential && selected.length > 1) {
-          const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
-          this.ensureBatch(batchId, selected.length, { format, bitrate, source: t('ui.youtubePlaylist') });
-          for (const idx of selected) {
-            const idFromMap = this.currentPreview.indexToId.get(idx);
-            const itemId = idFromMap ? [idFromMap] : null;
+  try {
+    convertBtn.classList.add('btn-loading');
+    convertBtn.disabled = true;
+    convertBtn.textContent = t('ui.processing') || 'İşleniyor...';
 
-            await this.submitJob({
-              url: this.currentPreview.url,
-              isPlaylist: true,
-              selectedIndices: [idx],
-              selectedIds: itemId,
-              format,
-              bitrate,
-              clientBatch: batchId
-            });
-          }
-        } else {
-          await this.submitJob({
-            url: this.currentPreview.url,
-            isPlaylist: true,
-            selectedIndices: selected,
-            selectedIds: selectedIds.length ? selectedIds : null,
-            format,
-            bitrate
-          });
-        }
-      }
+    const format = document.getElementById('formatSelect').value;
+    const bitrate = document.getElementById('bitrateSelect').value;
+    const sampleRate = document.getElementById('sampleRateSelect').value;
+    const sequential = document.getElementById('sequentialChk')?.checked;
+    const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+    const selectedIds = selected
+      .map(i => this.currentPreview.indexToId.get(i))
+      .filter(Boolean);
 
-      async convertAll() {
-        if (!this.currentPreview.url) {
-          this.showNotification(t('notif.previewFirst'), 'error');
-          return;
-        }
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
-        const allIds = this.currentPreview.items.map(item => item.id).filter(Boolean);
+    console.log("Seçilen ID'ler:", selectedIds);
+
+    if (sequential && selected.length > 1) {
+      const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
+      this.ensureBatch(batchId, selected.length, { format, bitrate, source: t('ui.youtubePlaylist') });
+      for (const idx of selected) {
+        const idFromMap = this.currentPreview.indexToId.get(idx);
+        const itemId = idFromMap ? [idFromMap] : null;
 
         await this.submitJob({
           url: this.currentPreview.url,
           isPlaylist: true,
-          selectedIndices: 'all',
-          selectedIds: allIds,
+          selectedIndices: [idx],
+          selectedIds: itemId,
           format,
-          bitrate
+          bitrate,
+          sampleRate: sampleRate,
+          clientBatch: batchId,
+          includeLyrics
         });
       }
+    } else {
+      await this.submitJob({
+        url: this.currentPreview.url,
+        isPlaylist: true,
+        selectedIndices: selected,
+        selectedIds: selectedIds.length ? selectedIds : null,
+        format,
+        bitrate,
+        sampleRate: sampleRate,
+        includeLyrics
+      });
+    }
+
+    this.showNotification(t('notif.tracksQueued', { count: selected.length }), 'success', 'queue');
+
+  } catch (error) {
+    console.error('Seçilenleri dönüştürme hatası:', error);
+    this.showNotification(`${t('notif.conversionError')}: ${error.message}`, 'error', 'error');
+  } finally {
+    convertBtn.classList.remove('btn-loading');
+    convertBtn.disabled = false;
+    convertBtn.textContent = originalText;
+  }
+}
+
+      async convertAll() {
+  if (!this.currentPreview.url) {
+    this.showNotification(t('notif.previewFirst'), 'error', 'error');
+    return;
+  }
+
+  const convertAllBtn = document.getElementById('convertAllBtn');
+  const originalText = convertAllBtn.textContent;
+
+  try {
+    convertAllBtn.classList.add('btn-loading');
+    convertAllBtn.disabled = true;
+    convertAllBtn.textContent = t('ui.processing') || 'İşleniyor...';
+
+    const format = document.getElementById('formatSelect').value;
+    const bitrate = document.getElementById('bitrateSelect').value;
+    const sampleRate = document.getElementById('sampleRateSelect').value;
+    const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+    const allIds = this.currentPreview.items.map(item => item.id).filter(Boolean);
+
+    await this.submitJob({
+      url: this.currentPreview.url,
+      isPlaylist: true,
+      selectedIndices: 'all',
+      selectedIds: allIds,
+      format,
+      bitrate,
+      sampleRate: sampleRate,
+      includeLyrics
+    });
+
+    this.showNotification(t('notif.allTracksQueued'), 'success', 'queue');
+
+  } catch (error) {
+    console.error('Tümünü dönüştürme hatası:', error);
+    this.showNotification(`${t('notif.conversionError')}: ${error.message}`, 'error', 'error');
+  } finally {
+    convertAllBtn.classList.remove('btn-loading');
+    convertAllBtn.disabled = false;
+    convertAllBtn.textContent = originalText;
+  }
+}
 
       showPreview() {
       document.getElementById('spotifyPreviewCard').style.display = 'none';
@@ -1851,22 +2190,49 @@ if (stopBtn) {
         if (logEl) { logEl.style.display='none'; logEl.textContent=''; }
       }
 
-      showNotification(message, type = 'info') {
-        const notification = document.createElement('div');
-        notification.className = `notification ${type}`;
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        setTimeout(() => notification.remove(), 3000);
+      showQueueNotification(message) {
+          this.showNotification(message, 'success', 'queue');
+      }
+
+      showErrorNotification(message) {
+          this.showNotification(message, 'error', 'error');
+      }
+
+      showProgressNotification(message) {
+          this.showNotification(message, 'info', 'progress');
+      }
+
+      showNotification(message, type = 'info', group = 'default') {
+        this.notificationManager.showNotification(message, type, group, 3000);
+      }
+
+      normalizeBackendLog(txt) {
+        if (txt == null) return '';
+        try { txt = String(txt); } catch { return ''; }
+        txt = txt.replace(/^SKIP_HINT:\s*/i, '');
+        txt = txt.replace(/^SKIP_SUMMARY:\s*/i, '');
+        if (txt.startsWith('log.') || txt.startsWith('phase.') || txt.startsWith('status.')) {
+          try { return t(txt); } catch {  }
+        }
+        return txt.replace(/\s+/g, ' ').trim();
       }
 
       escapeHtml(str) {
-        return str.replace(/[&<>"]+/g, (c) => ({
-          '&': '&amp;',
-          '<': '&lt;',
-          '>': '&gt;',
-          '"': '&quot;'
-        }[c]));
-      }
+        if (str == null) return "";
+        if (typeof str === "object") {
+        const key  = str.key || str.logKey || null;
+        const vars = str.vars || str.logVars || null;
+        const txt  = str.text || str.fallback || "";
+        if (key && typeof this.t === "function") {
+          try { str = this.t(key, vars || {}) ?? txt ?? key; }
+          catch { str = txt || key || ""; }
+        } else {
+            try { str = txt || JSON.stringify(str); } catch { str = String(str); }
+          }
+        }
+        str = String(str);
+        return str.replace(/[&<>"'`=\/]/g, s => this._escapeMap[s] || s);
+    }
 
       formatSeconds(sec) {
         const h = Math.floor(sec / 3600);
@@ -1903,7 +2269,74 @@ if (stopBtn) {
 
         await Promise.allSettled(tasks);
         this.updateBatchProgress(batchId);
-        this.showNotification(t('notif.canceledByUser') || 'Batch iptal edildi', 'success');
+        this.showNotification(t('notif.canceledByUser') || 'Batch iptal edildi', 'success', 'action');
+      }
+      async handleUrlSubmitWithSpinner(e) {
+        e.preventDefault();
+
+        const startConvertBtn =
+          document.getElementById('startConvertBtn') ||
+          document.querySelector('#urlForm [type="submit"]');
+        const spinner = startConvertBtn?.querySelector('.btn-spinner') || null;
+        const btnText = startConvertBtn?.querySelector('.btn-text') || null;
+        this.showButtonSpinner(startConvertBtn, spinner, btnText);
+
+        try {
+          const waitFirstUpdate = new Promise((resolve) => {
+                const onFirst = () => resolve();
+                const timeout = setTimeout(resolve, 15000);
+                document.addEventListener('job:first-update', function handler() {
+                    clearTimeout(timeout);
+                    document.removeEventListener('job:first-update', handler);
+                    onFirst();
+                }, { once: true });
+            });
+
+            await this.handleUrlSubmit(e);
+            await waitFirstUpdate;
+        } catch (error) {
+            console.error('URL gönderme hatası:', error);
+            this.showNotification(`${t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
+        } finally {
+            this.hideButtonSpinner(startConvertBtn, startConvertBtn?.querySelector('.btn-spinner') || null, startConvertBtn?.querySelector('.btn-text') || null);
+        }
+      }
+
+      showButtonSpinner(button, spinner, btnText) {
+        if (!button) return;
+        if (!spinner) {
+          const sp = document.createElement('span');
+          sp.className = 'btn-spinner';
+          sp.style.display = 'inline-block';
+          sp.style.marginRight = '6px';
+          button.prepend(sp);
+          spinner = sp;
+        }
+        if (!btnText) {
+          const textNodes = [];
+          button.childNodes.forEach(n => {
+            if (n.nodeType === 3 && n.textContent.trim()) textNodes.push(n);
+          });
+          const txt = document.createElement('span');
+          txt.className = 'btn-text';
+          if (textNodes.length) {
+            const raw = textNodes.map(n => n.textContent).join(' ').replace(/\s+/g,' ').trim();
+            if (raw) txt.textContent = raw;
+          }
+          textNodes.forEach(n => n.remove());
+          button.appendChild(txt);
+          btnText = txt;
+        }
+        button.classList.add('btn-loading');
+        if (spinner) spinner.style.display = 'inline-block';
+        button.disabled = true;
+      }
+
+      hideButtonSpinner(button, spinner, btnText) {
+        if (!button) return;
+        button.classList.remove('btn-loading');
+        if (spinner) spinner.style.display = 'none';
+        button.disabled = false;
       }
     }
 
@@ -1919,7 +2352,7 @@ if (stopBtn) {
     document.addEventListener('DOMContentLoaded', async () => {
       try { await window.i18nInit(); } catch {}
       new MediaConverterApp();
-      const tokenKey = "groovify_admin_token";
+      const tokenKey = "gharmonize_admin_token";
       const settingsBtn = document.getElementById('settingsBtn');
       settingsBtn.addEventListener('click', openSettingsModal);
 
@@ -2144,7 +2577,7 @@ if (stopBtn) {
           }
           const data = await r.json();
           localStorage.setItem(tokenKey, data.token);
-          window.dispatchEvent(new CustomEvent('groovify:auth', { detail: { loggedIn: true } }));
+          window.dispatchEvent(new CustomEvent('gharmonize:auth', { detail: { loggedIn: true } }));
           showForm();
           await loadSettings();
         }catch(e){
@@ -2160,7 +2593,7 @@ if (stopBtn) {
 
       async function doLogout(){
         localStorage.removeItem(tokenKey);
-        window.dispatchEvent(new CustomEvent('groovify:auth', { detail: { loggedIn: false } }));
+        window.dispatchEvent(new CustomEvent('gharmonize:auth', { detail: { loggedIn: false } }));
         showLogin();
         requestAnimationFrame(() => document.getElementById('adminPass')?.focus());
       }
@@ -2266,7 +2699,7 @@ if (stopBtn) {
           const e = await r.json().catch(()=>({}));
           const code = e?.error?.code;
           const map = {
-            BAD_PASSWORD: 'errors.BAD_PASSWORD',
+            BAD_PASSWORD: 'errors.BAD_PASSWORD2',
             PASSWORD_MISMATCH: 'errors.PASSWORD_MISMATCH',
             PASSWORD_TOO_SHORT: 'errors.PASSWORD_TOO_SHORT',
             FIELDS_REQUIRED: 'errors.FIELDS_REQUIRED',
@@ -2282,7 +2715,7 @@ if (stopBtn) {
         alert((t && t('settings.passwordChanged')) || 'Şifre güncellendi. Lütfen yeniden giriş yapın.');
         if (data.logout) {
           localStorage.removeItem(tokenKey);
-          window.dispatchEvent(new CustomEvent('groovify:auth', { detail: { loggedIn: false } }));
+          window.dispatchEvent(new CustomEvent('gharmonize:auth', { detail: { loggedIn: false } }));
           document.getElementById('f_ADMIN_OLD').value = '';
           document.getElementById('f_ADMIN_NEW').value = '';
           document.getElementById('f_ADMIN_NEW2').value = '';
@@ -2324,7 +2757,7 @@ if (stopBtn) {
   });
 
 (function(){
-      const tokenKey = "groovify_admin_token";
+      const tokenKey = "gharmonize_admin_token";
       const bell = document.getElementById('jobsBell');
       const badge = document.getElementById('jobsBadge');
       const panel = document.getElementById('jobsPanel');
@@ -2393,7 +2826,7 @@ if (stopBtn) {
       start();
       if (localStorage.getItem(tokenKey)) goOnline(); else goOffline();
 
-      window.addEventListener('groovify:auth', (ev)=>{
+      window.addEventListener('gharmonize:auth', (ev)=>{
         const on = !!ev?.detail?.loggedIn;
         if (on) goOnline(); else goOffline();
       });
@@ -2469,6 +2902,21 @@ if (stopBtn) {
         return ex.track || ex.title || j.metadata?.originalName || null;
       }
 
+      function computeSkippedPanel(j){
+        const direct = Number(j?.skippedCount ?? j?.metadata?.skippedCount ?? 0);
+        if (direct > 0) return direct;
+
+        if (Number.isFinite(j?.playlist?.skipped))
+        return Number(j.playlist.skipped);
+
+        if (j?.metadata?.isPlaylist && Array.isArray(j?.resultPath)) {
+          const successful = j.resultPath.filter(r => r && r.outputPath && !r.error).length;
+          const total = Number(j?.playlist?.total ?? j?.metadata?.frozenEntries?.length ?? successful);
+          return Math.max(0, total - successful);
+        }
+        return 0;
+        }
+
       function render(){
         const allItems = state.items.slice();
         const items = (filter==='active')
@@ -2514,15 +2962,28 @@ if (stopBtn) {
             ? `${baseTitle} — ${nowT}`
             : (nowT || baseTitle);
 
+          const skippedCount = computeSkippedPanel(j);
+          const skippedKeywords = /(private|izin|skipp?ed|unavailable|atlan(?:d|an)|blocked|copyright|region|geo)/i;
+          const showSkippedBadge =
+            (skippedCount > 0) ||
+            (j.lastLog && skippedKeywords.test(String(j.lastLog))) ||
+            (j.lastLogKey && skippedKeywords.test(String(j.lastLogKey))) ||
+            (j.error && skippedKeywords.test(String(j.error?.message || j.error)));
+          const skippedBadge = showSkippedBadge
+            ? `<span class="chip chip--warn" title="atlananlar">⚠️ ${t?.('jobsPanel.skipped') || 'atlananlar'}${skippedCount ? ` (${skippedCount})` : ''}</span>`
+            : '';
+
           return `
             <div class="job-card" data-job-id="${j.id}">
               <div class="job-title">${statusDot(j)}<span>${titleText}</span></div>
 
               <div class="job-meta">
-                <span class="pill">${sourcePill(j)}</span>
-                <span class="pill">${(j.format||'').toUpperCase()} ${j.bitrate||''}</span>
-                <span class="pill">${phasePill(j)}</span>
-              </div>
+              <span class="pill">${sourcePill(j)}</span>
+              <span class="pill">${(j.format||'').toUpperCase()} ${j.bitrate||''}</span>
+              ${j.sampleRate ? `<span class="pill">${Math.round(j.sampleRate / 1000)} kHz</span>` : ''}
+              <span class="pill">${phasePill(j)}</span>
+              ${skippedBadge}
+            </div>
 
               ${(() => {
                 const nt = nowT;

@@ -1,11 +1,10 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import crypto from "crypto";
-import { sendOk, sendError } from "../modules/utils.js";
+import { sendOk, sendError, uniqueId } from "../modules/utils.js";
 import { idsToMusicUrls, mapSpotifyToYtm, downloadMatchedSpotifyTracks, createDownloadQueue } from "../modules/sp.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
-import { spotifyMapTasks, spotifyDownloadTasks, jobs, killJobProcesses } from "../modules/store.js";
+import { spotifyMapTasks, spotifyDownloadTasks, jobs, killJobProcesses, createJob } from "../modules/store.js";
 import { processJob } from "../modules/processor.js";
 import { convertMedia, downloadThumbnail } from "../modules/media.js";
 import archiver from "archiver";
@@ -13,31 +12,30 @@ import { resolveMarket } from "../modules/market.js";
 
 const router = express.Router();
 
-function makeMapId() { return crypto.randomBytes(8).toString("hex"); }
+function makeMapId() { return uniqueId("map"); }
 
 router.post("/api/spotify/process/start", async (req, res) => {
   try {
-    const { url, format = "mp3", bitrate = "192k", market: marketIn } = req.body || {};
+    const { url, format = "mp3", bitrate = "192k", sampleRate = "48000", market: marketIn, includeLyrics } = req.body || {};
     if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL gerekli", 400);
 
-    const jobId = makeMapId();
     let sp;
     try {
       sp = await resolveSpotifyUrl(url, { market: resolveMarket(marketIn) });
     } catch (e) {
       const msg = String(e?.message || "");
       if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
-        return sendError(res, 'SPOTIFY_MIX_UNSUPPORTED', "Bu link kişiselleştirilmiş bir Spotify Mix. Spotify Web API bu içerikleri sağlamıyor (404). Lütfen Mix’teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayıp o URL’yi gönderin.", 400);
+        return sendError(res, 'SPOTIFY_MIX_UNSUPPORTED', "Bu link kişiselleştirilmiş bir Spotify Mix. Spotify Web API bu içerikleri sağlamıyor (404). Lütfen Mix'teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayıp o URL'yi gönderin.", 400);
       }
       throw e;
     }
 
-    const job = {
-      id: jobId,
+    const job = createJob({
       status: "running",
       progress: 0,
       format,
       bitrate,
+      sampleRate: parseInt(sampleRate) || 48000,
       metadata: {
         source: "spotify",
         spotifyUrl: url,
@@ -45,9 +43,9 @@ router.post("/api/spotify/process/start", async (req, res) => {
         spotifyTitle: sp.title,
         isPlaylist: sp.kind === "playlist",
         isAlbum: sp.kind === "album",
-        isAutomix: false
+        isAutomix: false,
+        includeLyrics: (includeLyrics === true || includeLyrics === "true")
       },
-      createdAt: new Date(),
       resultPath: null,
       error: null,
       playlist: { total: sp.items?.length || 1, done: 0 },
@@ -55,9 +53,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
       lastLog: "",
       lastLogKey: null,
       lastLogVars: null
-    };
-
-    jobs.set(jobId, job);
+    });
+    const jobId = job.id;
 
     sendOk(res, {
       jobId,
@@ -80,6 +77,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
   try {
     job.phase = "mapping";
     job.progress = 5;
+    job.downloadProgress = 0;
+    job.convertProgress = 0;
     job.metadata.selectedIds   = job.metadata.selectedIds   || [];
     job.metadata.frozenEntries = job.metadata.frozenEntries || [];
     job.metadata.frozenTitle   = job.metadata.frozenTitle   || job.metadata.spotifyTitle;
@@ -93,6 +92,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       concurrency: 4,
       onProgress: (done, total) => {
         job.playlist.done = done;
+        job.downloadProgress = Math.floor((done / total) * 100);
         job.lastLogKey = 'log.downloading.progress';
         job.lastLogVars = { done, total };
         job.lastLog = `📥 İndiriliyor: ${done}/${total}`;
@@ -189,6 +189,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
 
     job.phase = "converting";
     job.progress = 70;
+    job.downloadProgress = 100;
+    job.convertProgress = 0;
     job.playlist.total = successfulDownloads.length;
     job.playlist.done = 0;
     job.lastLogKey = 'log.converting.batch';
@@ -273,32 +275,51 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
         job.lastLogKey = 'log.converting.single';
         job.lastLogVars = { title: entry.title };
         job.lastLog = `⚙️ Dönüştürülüyor: ${entry.title}`;
+
         const result = await convertMedia(
           filePath, format, bitrate, `${jobId}_${i}`,
           (progress) => {
             const fileProgress = (i / files.length) * 25;
             const cur = (progress / 100) * (25 / files.length);
-            job.progress = Math.floor(70 + fileProgress + cur);
+            job.convertProgress = Math.floor(70 + fileProgress + cur);
+            job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
           },
           fileMeta, itemCover, (format === "mp4"),
           path.resolve(process.cwd(), "outputs"),
           path.resolve(process.cwd(), "temp"),
-          { onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} } }
+          {
+            onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
+            includeLyrics: !!job.metadata.includeLyrics,
+            sampleRate: job.sampleRate || 48000
+          }
         );
+
+        if (job.metadata.includeLyrics) {
+          if (result && result.lyricsPath) {
+            job.lastLog = `🎼 Şarkı sözü eklendi: ${path.basename(result.lyricsPath)}`;
+          } else {
+            job.lastLog = `🎼 Şarkı sözü bulunamadı: ${entry.title}`;
+          }
+        }
 
         results.push(result);
         job.lastLogKey = 'log.converting.ok';
         job.lastLogVars = { title: entry.title };
         job.lastLog = `✅ Dönüştürüldü: ${entry.title}`;
-        } catch (convertError) {
+      } catch (convertError) {
         console.error(`Dönüştürme hatası (${entry.title}):`, convertError);
         job.lastLogKey = 'log.converting.err';
         job.lastLogVars = { title: entry.title, err: convertError.message };
         job.lastLog = `❌ Dönüştürme hatası: ${entry.title} - ${convertError.message}`;
         results.push({ outputPath: null, error: convertError.message });
-        }
+      }
 
       job.playlist.done = i + 1;
+    }
+
+    if (job.metadata.includeLyrics && job.metadata.lyricsStats) {
+      const stats = job.metadata.lyricsStats;
+      job.lastLog = `📊 Şarkı sözü özeti: ${stats.found} bulundu, ${stats.notFound} bulunamadı`;
     }
 
     const successfulResults = results.filter(r => r.outputPath && !r.error);
@@ -311,7 +332,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       job.lastLogKey = 'log.zip.creating';
       job.lastLogVars = {};
       job.lastLog = `📦 ZIP dosyası oluşturuluyor...`;
-      job.zipPath = await makeZipFromOutputs(jobId, successfulResults, zipTitle);
+      job.zipPath = await makeZipFromOutputs(jobId, successfulResults, zipTitle, !!job.metadata.includeLyrics);
       job.lastLogKey = 'log.zip.ready';
       job.lastLogVars = { title: zipTitle };
       job.lastLog = `✅ ZIP dosyası hazır: ${zipTitle}`;
@@ -324,6 +345,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
 
     job.status = "completed";
     job.progress = 100;
+    job.downloadProgress = 100;
+    job.convertProgress = 100;
     job.phase = "completed";
     job.lastLogKey = 'log.done';
     job.lastLogVars = { ok: successfulResults.length };
@@ -335,14 +358,19 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       job.status = "canceled";
       job.error = null;
       job.phase = "canceled";
+      job.downloadProgress = 0;
+      job.convertProgress = 0;
       job.lastLogKey = 'status.canceled';
       job.lastLogVars = {};
       job.lastLog = "⛔ İptal edildi";
       try { killJobProcesses(jobId); } catch {}
+      try { cleanupSpotifyTempFiles(jobId); } catch {}
     } else {
       job.status = "error";
       job.error = error.message;
       job.phase = "error";
+      job.downloadProgress = 0;
+      job.convertProgress = 0;
       job.lastLogKey = 'log.error';
       job.lastLogVars = { err: error.message };
       job.lastLog = `❌ Hata: ${error.message}`;
@@ -497,10 +525,13 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       fileMeta, itemCover, (format === "mp4"),
       path.resolve(process.cwd(), "outputs"),
       path.resolve(process.cwd(), "temp"),
-      { onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} } }
+      { onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
+      includeLyrics: !!job.metadata.includeLyrics,
+      sampleRate: job.sampleRate || 48000
+      }
     );
 
-    job.resultPath = result.outputPath;
+    job.resultPath = result;
     job.status = "completed";
     job.progress = 100;
     job.phase = "completed";
@@ -520,6 +551,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       job.lastLogVars = {};
       job.lastLog = "⛔ İptal edildi";
       try { killJobProcesses(jobId); } catch {}
+      try { cleanupSpotifyTempFiles(jobId); } catch {}
     } else {
       job.status = "error";
       job.error = error.message;
@@ -532,7 +564,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
   }
 }
 
-async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist") {
+async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includeLyrics = false) {
   const outDir = path.resolve(process.cwd(), "outputs");
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -558,7 +590,13 @@ async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist") {
       const rel = decodeURIComponent(r.outputPath.replace(/^\/download\//, ""));
       const abs = path.join(outDir, rel);
       if (fs.existsSync(abs)) {
-        archive.file(abs, { name: path.basename(abs) });
+        archive.file(abs, { name: path.basename(abs).normalize("NFC") });
+        if (includeLyrics) {
+          const lrcPath = abs.replace(/\.[^/.]+$/, "") + ".lrc";
+          if (fs.existsSync(lrcPath)) {
+            archive.file(lrcPath, { name: path.basename(lrcPath).normalize("NFC") });
+          }
+        }
       }
     }
 
@@ -595,7 +633,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
     } catch (e) {
       const msg = String(e?.message || "");
       if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
-        return sendError(res, 'SPOTIFY_MIX_UNSUPPORTED', "Bu link kişiselleştirilmiş bir Spotify Mix. Spotify Web API bu içerikleri sağlamıyor (404). Lütfen Mix’teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayıp o URL’yi gönderin.", 400);
+        return sendError(res, 'SPOTIFY_MIX_UNSUPPORTED', "Bu link kişiselleştirilmiş bir Spotify Mix. Spotify Web API bu içerikleri sağlamıyor (404). Lütfen Mix'teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayıp o URL'yi gönderin.", 400);
       }
       throw e;
     }
