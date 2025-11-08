@@ -1,8 +1,11 @@
-# <img width="128" height="128" alt="Başlıksız" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" /> Gharmonize – YouTube / Spotify Downloader & Converter
+
+<div align="center">
+
+# <img width="128" height="128" alt="Gharmonize Logo" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" /> 
+# Gharmonize -  YouTube / Spotify Downloader & Converter
+<img width="1280" height="720" alt="1" src="https://github.com/user-attachments/assets/65d49371-7844-471f-9486-3680fe2a763e" />
+</div>
  
-
-<img width="1698" height="930" alt="1" src="https://github.com/user-attachments/assets/65d49371-7844-471f-9486-3680fe2a763e" />
-
 
 # 🇬🇧 English
 
@@ -305,6 +308,8 @@ PORT=5174
 ```
 
 ---
+
+## Hızlı Başlangıç (Yerel – Node & npm)
 
 #### 1. Repoyu İndirin ve Dizine Geçin
 
