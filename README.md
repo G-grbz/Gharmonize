@@ -1,4 +1,5 @@
-# 🎵 Gharmonize – YouTube / Spotify Downloader & Converter
+# <img width="128" height="128" alt="Başlıksız" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" /> Gharmonize – YouTube / Spotify Downloader & Converter
+ 
 
 <img width="1698" height="930" alt="1" src="https://github.com/user-attachments/assets/65d49371-7844-471f-9486-3680fe2a763e" />
 
@@ -93,34 +94,87 @@ PORT=5174
 
 ## Quick Start (Local – Node & npm)
 
-1. Clone the repository and navigate to the project directory:
+#### 1. Clone the Repository and Enter the Directory
 
-   ```bash
-   git clone https://github.com/G-grbz/Gharmonize
-   cd Gharmonize
-   ```
+```bash
+git clone https://github.com/G-grbz/Gharmonize
+cd Gharmonize
+```
 
-2. Create a `.env` file. (To manage environment settings via the UI, include `ADMIN_PASSWORD` and `APP_SECRET` fields. Generate `APP_SECRET` using the following command:)
+#### 2. Create the .env File
 
-   ```bash
-   openssl rand -hex 32
-   ```
+To enable UI configuration, fill in `ADMIN_PASSWORD` and `APP_SECRET`. You can generate a secure `APP_SECRET` using the following command:
 
-3. Install the required dependencies:
-
-   ```bash
-   npm i express multer node-fetch spotify-web-api-node dotenv archiver && npm i -D nodemon
-   ```
-
-4. Start the application:
-
-   ```bash
-   npm start
-   ```
-
-5. Open in your browser: [http://localhost:5174](http://localhost:5174)
+```bash
+openssl rand -hex 32
+```
 
 ---
+
+#### 3. Installation Commands
+
+**Linux**
+
+```bash
+BUILD_ELECTRON=1 npm i
+```
+
+**Windows (CMD)**
+
+```cmd
+set BUILD_ELECTRON=1
+npm i
+```
+
+---
+
+#### Default .env Locations (AppImage or .exe only)
+
+These paths are **not** general application directories. They are automatically created only when running the AppImage or Windows .exe builds, and they store the default-generated `.env` file:
+
+* **Windows:** `C:\Users\<Username>\AppData\Roaming\Gharmonize`
+* **Linux:** `~/.config/Gharmonize/`
+* **Default Password** `123456`
+
+You can change env variables in the Settings panel. Windows users should add the location of the ffmpeg and yt-dlp files to the env variable.
+
+---
+
+#### Run Without Building
+
+```bash
+npm start
+```
+
+---
+
+#### Build Commands
+
+**To build AppImage (Linux only):**
+
+```bash
+npm run desktop:build:appimage
+```
+
+**To build NSIS (Windows Installer only):**
+
+```bash
+npm run desktop:build:nsis
+```
+
+> **Note:** If you choose *Install for all users* (which installs under *Program Files*), you must manually create the folders `temp`, `outputs`, and `uploads` inside the installation directory and grant read/write permissions. Alternatively, install to a custom directory outside *Program Files* or *Program Files (x86)*.
+
+**To build Portable (Windows standalone version):**
+
+```bash
+npm run desktop:build:portable
+```
+
+**To build both Windows versions (NSIS + Portable):**
+
+```bash
+npm run desktop:build:all
+```
 
 ## Quick Start (Docker Compose)
 
@@ -252,34 +306,87 @@ PORT=5174
 
 ---
 
-## Hızlı Başlangıç (Yerel – Node & npm)
+#### 1. Repoyu İndirin ve Dizine Geçin
 
-1. Repoyu indirin ve dizine geçin:
+```bash
+git clone https://github.com/G-grbz/Gharmonize
+cd Gharmonize
+```
 
-   ```bash
-   git clone https://github.com/G-grbz/Gharmonize
-   cd Gharmonize
-   ```
+#### 2. .env Dosyasını Oluşturun
 
-2. `.env` dosyasını oluşturun. (UI üzerinden düzenleme yapabilmek için `ADMIN_PASSWORD` ve `APP_SECRET` alanlarını girin. `APP_SECRET` değerini oluşturmak için aşağıdaki komutu kullanabilirsiniz:)
+UI üzerinden ayarları düzenleyebilmek için `ADMIN_PASSWORD` ve `APP_SECRET` alanlarını doldurun. `APP_SECRET` değerini oluşturmak için şu komutu kullanabilirsiniz:
 
-   ```bash
-   openssl rand -hex 32
-   ```
+```bash
+openssl rand -hex 32
+```
 
-3. Gerekli bağımlılıkları yükleyin:
+---
 
-   ```bash
-   npm i express multer node-fetch spotify-web-api-node dotenv archiver && npm i -D nodemon
-   ```
+#### 3. Kurulum Komutları
 
-4. Uygulamayı başlatın:
+**Linux**
 
-   ```bash
-   npm start
-   ```
+```bash
+BUILD_ELECTRON=1 npm i
+```
 
-5. Tarayıcıda açın: [http://localhost:5174](http://localhost:5174)
+**Windows (CMD)**
+
+```cmd
+set BUILD_ELECTRON=1
+npm i
+```
+
+---
+
+#### Varsayılan .env Konumları (sadece AppImage veya .exe için)
+
+Bu dizinler uygulama verileri için değil, AppImage veya Windows .exe sürümleri çalıştırıldığında varsayılan .env dosyasının otomatik olarak oluşturulacağı konumlardır:
+
+* **Windows:** `C:\Users\<KullanıcıAdı>\AppData\Roaming\Gharmonize`
+* **Linux:** `~/.config/Gharmonize/`
+* **Varsayılan şifre** `123456`
+
+Ayarlar panelinden ortam değişkenlerini değiştirebilirsiniz. Windows kullanıcıları, ffmpeg ve yt-dlp dosyalarının konumunu ortam değişkenine eklemelidir.
+
+---
+
+#### Derlemeden Çalıştırmak İçin
+
+```bash
+npm start
+```
+
+---
+
+#### Derleme Komutları
+
+**Sadece AppImage (Linux) oluşturmak için:**
+
+```bash
+npm run desktop:build:appimage
+```
+
+**Sadece NSIS (Windows Kurulum) oluşturmak için:**
+
+```bash
+npm run desktop:build:nsis
+```
+
+> **Not:** Eğer kurulumu *bu bilgisayardaki tüm kullanıcılar için* seçerseniz (yani *Program Files* dizinine kurulum yaparsanız), kurulum dizininde manuel olarak `temp`, `outputs` ve `uploads` klasörlerini oluşturmalı ve bu klasörlere okuma/yazma izni vermelisiniz. Alternatif olarak, *Program Files* veya *Program Files (x86)* dışında bir dizine kurulum yapabilirsiniz.
+
+**Sadece Portable (taşınabilir sürüm) oluşturmak için:**
+
+```bash
+npm run desktop:build:portable
+```
+
+**Her iki Windows sürümünü (NSIS + Portable) birlikte oluşturmak için:**
+
+```bash
+npm run desktop:build:all
+```
 
 ---
 
