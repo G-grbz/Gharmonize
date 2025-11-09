@@ -55,7 +55,7 @@ function writeEnv(updates, extraAllowed = []) {
   const envMap = parseEnv()
   for (const [k, v] of Object.entries(updates)) {
     if (!(ALLOWED_KEYS.includes(k) || extraAllowed.includes(k))) continue
-    if (v === '' || v === null || typeof v === 'undefined') continue
+    if (v === null || typeof v === 'undefined') continue
     envMap.set(k, String(v))
   }
 
@@ -162,6 +162,8 @@ router.get('/settings', authMiddleware, (req, res) => {
   }
   res.json({ settings: data })
 })
+
+const NO_CLEAR_KEYS = ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET'];
 
 router.post('/settings', authMiddleware, express.json(), (req, res) => {
   const incoming = (req.body && req.body.settings) || {}

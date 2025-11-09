@@ -5,12 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title data >🎵 Gharmonize</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="icon" type="image/x-icon" href="./src/favicon.ico">
+  <link rel="shortcut icon" type="image/x-icon" href="./src/favicon.ico">
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <div class="title-section">
-        <h1 data >🎵 Gharmonize</h1>
+      <div class="container">
+        <div class="header">
+            <div class="title-section">
+        <h1>
+          <img src="./src/logo.png" alt="Gharmonize" class="app-logo-large">
+        </h1>
         <p class="subtitle" data-i18n="app.subtitle">Linkten sese, tek tık: Gharmonize.</p>
       </div>
       <div class="lang-toggle">
@@ -3207,24 +3211,49 @@ if (job.currentPhase) {
       }
 
       function startPolling(){
-        const poll = () => {
-          const token = localStorage.getItem(tokenKey) || "";
-          fetch(`/api/jobs?status=all`, { headers: { 'Authorization': 'Bearer ' + token }})
-            .then(r=>{
-              if (!r.ok) throw new Error('Failed to fetch jobs');
-              return r.json();
-            })
-            .then(d=>{
+      let pollingInterval = null;
+
+      const poll = () => {
+      const token = localStorage.getItem(tokenKey) || "";
+
+        if (!token) {
+          if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+          }
+          return;
+        }
+
+        fetch(`/api/jobs?status=all`, {
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        })
+          .then(r => {
+            if (r.status === 401) {
+              if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+              }
+              return;
+            }
+            if (!r.ok) throw new Error('Failed to fetch jobs');
+            return r.json();
+          })
+          .then(d => {
+            if (d) {
               state = { items: d.items || [] };
               render();
-            })
-            .catch(e=>{
-              console.error('Polling error:', e);
-            });
-        };
-        poll();
-        setInterval(poll, 1500);
-      }
+            }
+          })
+          .catch(e => {
+            console.error('Polling error:', e);
+          });
+      };
+
+      poll();
+      pollingInterval = setInterval(poll, 1500);
+    }
     })();
     </script>
   </body>
