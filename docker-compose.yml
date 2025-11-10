@@ -1,12 +1,8 @@
+version: "3.9"
 services:
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: gharmonize:prod
-    pull_policy: never
+    image: ggrbz/gharmonize:latest
     container_name: Gharmonize
-    env_file: .env
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       - NODE_ENV=production
@@ -16,14 +12,15 @@ services:
       - YTDLP_EXTRA=--force-ipv4
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      - DATA_DIR=/usr/src/app
     ports:
       - "${PORT:-5174}:${PORT:-5174}"
     volumes:
-      - ./uploads:/usr/src/app/uploads
-      - ./outputs:/usr/src/app/outputs
-      - ./temp:/usr/src/app/temp
-      - ./cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
-      - ./.env:/usr/src/app/.env
+      - /opt/gharmonize/uploads:/usr/src/app/uploads
+      - /opt/gharmonize/outputs:/usr/src/app/outputs
+      - /opt/gharmonize/temp:/usr/src/app/temp
+      - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
+      - /opt/gharmonize/.env:/usr/src/app/.env
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-5174}/ || exit 1"]
