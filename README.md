@@ -181,26 +181,85 @@ npm run desktop:build:all
 
 ## Quick Start (Docker Compose)
 
-1. Clone the repository and navigate to the project directory:
+### 1. Clone the Repository and Enter the Directory
 
-   ```bash
-   git clone https://github.com/G-grbz/Gharmonize
-   cd Gharmonize
-   ```
+```bash
+git clone https://github.com/G-grbz/Gharmonize
+cd Gharmonize
+```
 
-2. Create a `.env` file. (To manage environment settings via the UI, include `ADMIN_PASSWORD` and `APP_SECRET` fields. Generate `APP_SECRET` using the following command:)
+### 2. Create Required Folders and Files
 
-   ```bash
-   openssl rand -hex 32
-   ```
+The commands below assume the default directory `/opt/gharmonize`. If you want to use a different one, update the paths in the commands and under the `volumes:` section of your `docker-compose.yml` file.
 
-3. Run the application with Docker Compose:
+```bash
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies}
+sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
+sudo chmod -R a+rw /opt/gharmonize
+```
 
-   ```bash
-   docker compose up -d --build
-   ```
+### 3. Configure Environment Variables
 
-4. Open in your browser: [http://localhost:5174](http://localhost:5174)
+In the `.env` file, you only need to set `ADMIN_PASSWORD` and `APP_SECRET`. All other settings can be adjusted later via the settings panel.
+
+To generate a random `APP_SECRET`:
+
+```bash
+openssl rand -hex 32
+```
+
+### 4. Start with Docker Compose
+
+```bash
+docker compose up -d --build
+```
+
+### 5. Open in Browser
+
+[http://localhost:5174](http://localhost:5174)
+
+### 6. If You Encounter Permission Errors
+
+Run the following command to reapply read/write permissions:
+
+```bash
+sudo chmod -R a+rw /opt/gharmonize
+```
+
+---
+
+## 🐳 Alternative Installation Using Docker Run
+
+### 1. Prepare Folders and Permissions
+
+```bash
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies}
+sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
+sudo chmod -R a+rw /opt/gharmonize
+```
+
+### 2. Run the Container
+
+```bash
+docker run -d \
+  --name Gharmonize \
+  -p 5174:5174 \
+  -e NODE_ENV=production \
+  -e PORT=5174 \
+  -e YT_FORCE_IPV4=1 \
+  -e YT_APPLY_403_WORKAROUNDS=1 \
+  -e YTDLP_EXTRA="--force-ipv4" \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
+  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
+  -v /opt/gharmonize/temp:/usr/src/app/temp \
+  -v /opt/gharmonize/cookies:/usr/src/app/cookies \
+  -v /opt/gharmonize/.env:/usr/src/app/.env \
+  ggrbz/gharmonize:latest
+```
+
+> **Note:** Don’t forget to add `ADMIN_PASSWORD` and `APP_SECRET` values to the `.env` file located in `/opt/gharmonize/` directory.
 
 ---
 
@@ -392,31 +451,89 @@ npm run desktop:build:portable
 ```bash
 npm run desktop:build:all
 ```
-
 ---
 
 ## Hızlı Başlangıç (Docker Compose)
 
-1. Repoyu indirin ve dizine geçin:
+### 1. Depoyu İndirin ve Dizine Geçin
 
-   ```bash
-   git clone https://github.com/G-grbz/Gharmonize
-   cd Gharmonize
-   ```
+```bash
+git clone https://github.com/G-grbz/Gharmonize
+cd Gharmonize
+```
 
-2. `.env` dosyasını oluşturun. (UI üzerinden düzenleme yapabilmek için `ADMIN_PASSWORD` ve `APP_SECRET` alanlarını girin. `APP_SECRET` değerini oluşturmak için aşağıdaki komutu kullanabilirsiniz:)
+### 2. Gerekli Klasör ve Dosyaları Oluşturun
 
-   ```bash
-   openssl rand -hex 32
-   ```
+Aşağıdaki komutlar varsayılan dizin (`/opt/gharmonize`) için geçerlidir. Farklı bir dizin kullanmak isterseniz komutlarda ve `docker-compose.yml` dosyasındaki `volumes:` alanlarında bu yolu değiştirin.
 
-3. Uygulamayı Docker Compose ile başlatın:
+```bash
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies}
+sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
+sudo chmod -R a+rw /opt/gharmonize
+```
 
-   ```bash
-   docker compose up -d --build
-   ```
+### 3. Ortam Değişkenlerini Ayarlayın
 
-4. Tarayıcıda açın: [http://localhost:5174](http://localhost:5174)
+`.env` dosyasına sadece `ADMIN_PASSWORD` ve `APP_SECRET` değerlerini eklemeniz yeterlidir. Diğer ayarları uygulama arayüzünden yapabilirsiniz.
+
+`APP_SECRET` değeri oluşturmak için:
+
+```bash
+openssl rand -hex 32
+```
+
+### 4. Docker Compose ile Başlatın
+
+```bash
+docker compose up -d --build
+```
+
+### 5. Uygulamayı Tarayıcıda Açın
+
+[http://localhost:5174](http://localhost:5174)
+
+### 6. İzin Hataları Durumunda
+
+Eğer okuma/yazma hatası alırsanız, aşağıdaki komutu tekrar çalıştırın:
+
+```bash
+sudo chmod -R a+rw /opt/gharmonize
+```
+
+---
+
+## 🐳 Docker Run ile Alternatif Kurulum
+
+### 1. Klasörleri ve İzinleri Ayarlayın
+
+```bash
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies}
+sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
+sudo chmod -R a+rw /opt/gharmonize
+```
+
+### 2. Konteyneri Başlatın
+
+```bash
+docker run -d \
+  --name Gharmonize \
+  -p 5174:5174 \
+  -e NODE_ENV=production \
+  -e PORT=5174 \
+  -e YT_FORCE_IPV4=1 \
+  -e YT_APPLY_403_WORKAROUNDS=1 \
+  -e YTDLP_EXTRA="--force-ipv4" \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
+  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
+  -v /opt/gharmonize/temp:/usr/src/app/temp \
+  -v /opt/gharmonize/cookies:/usr/src/app/cookies \
+  -v /opt/gharmonize/.env:/usr/src/app/.env \
+  ggrbz/gharmonize:latest
+```
+
+> **Not:** `/opt/gharmonize/` dizininde bulunan `.env` dosyasına `ADMIN_PASSWORD` ve `APP_SECRET` değerlerini eklemeyi unutmayın.
 
 ---
 
