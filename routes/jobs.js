@@ -11,6 +11,7 @@ import { idsToMusicUrls, searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js";
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
+import "dotenv/config";
 import {
   isYouTubeUrl,
   isYouTubePlaylist,
@@ -25,6 +26,30 @@ import {
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const DEFAULT_UPLOAD_MAX_BYTES = 1000 * 1024 * 1024;
+const UPLOAD_MAX_BYTES = (() => {
+  const raw = process.env.UPLOAD_MAX_BYTES;
+  if (!raw) return DEFAULT_UPLOAD_MAX_BYTES;
+
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+
+  const m = String(raw).match(/^(\d+)\s*mb?$/i);
+  if (m) {
+    const mb = Number(m[1]);
+    if (Number.isFinite(mb) && mb > 0) {
+      return mb * 1024 * 1024;
+    }
+  }
+
+  console.warn(`[jobs] Geçersiz UPLOAD_MAX_BYTES değeri ("${raw}"), varsayılan kullanılacak.`);
+  return DEFAULT_UPLOAD_MAX_BYTES;
+})();
+
+console.log(
+  `[jobs] Maksimum yükleme boyutu: ${Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))} MB`
+);
 
 const inFlightAutomix = new Map();
 
@@ -43,9 +68,10 @@ const storage = multer.diskStorage({
     cb(null, `${crypto.randomBytes(8).toString("hex")}_${origUtf8}`);
   }
 });
+
 const upload = multer({
   storage,
-  limits: { fileSize: 1000 * 1024 * 1024 }
+  limits: { fileSize: UPLOAD_MAX_BYTES }
 });
 
 const router = express.Router();
@@ -146,20 +172,25 @@ router.post("/api/debug/lyrics", async (req, res) => {
 
 router.post("/api/jobs", upload.single("file"), async (req, res) => {
   try {
+    const body = req.body || {};
+
     const {
       url,
       format = "mp3",
       bitrate = "192k",
       sampleRate = "48000",
+      bitDepth,
       sampleRateHz,
+      compressionLevel,
       isPlaylist = false,
       selectedIndices,
       clientBatch,
       spotifyMapId,
       includeLyrics = false,
       stereoConvert = "auto",
-      atempoAdjust = "none"
-    } = req.body || {};
+      atempoAdjust = "none",
+      videoSettings: rawVideoSettings
+    } = body;
 
     const parseSR = (v) => {
       if (v == null) return NaN;
@@ -169,14 +200,50 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       const n = Number(s.replace(/[^0-9.]/g, ""));
       return Number.isFinite(n) ? Math.round(n) : NaN;
     };
-    const pickedSR = Number.isFinite(parseSR(sampleRate)) ? parseSR(sampleRate)
-                     : Number.isFinite(parseSR(sampleRateHz)) ? parseSR(sampleRateHz)
-                     : 48000;
+    const pickedSR =
+      Number.isFinite(parseSR(sampleRate))    ? parseSR(sampleRate) :
+      Number.isFinite(parseSR(sampleRateHz))  ? parseSR(sampleRateHz) :
+      48000;
 
-    const supported = ["mp3","flac","wav","ogg","mp4","eac3","ac3"];
+    const normalizeFlacLevel = (fmt, val) => {
+      if (fmt !== "flac") return null;
+      const n = Number(val);
+      if (!Number.isFinite(n)) return null;
+      const clamped = Math.min(12, Math.max(0, Math.round(n)));
+      return clamped;
+    };
+
+    const normalizedCompressionLevel = normalizeFlacLevel(format, compressionLevel);
+
+    const parseVideoSettings = (raw) => {
+      if (!raw) return null;
+      if (typeof raw === "string") {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          console.warn("videoSettings JSON parse edilemedi:", raw);
+          return null;
+        }
+      }
+      if (typeof raw === "object") return raw;
+      return null;
+    };
+
+    const parsedVideoSettings = parseVideoSettings(rawVideoSettings);
+    const effectiveVideoSettings =
+      format === "mp4" && parsedVideoSettings
+        ? parsedVideoSettings
+        : null;
+
+    const supported = ["mp3","flac","wav","ogg","mp4","eac3","ac3","aac"];
     if (!supported.includes(format)) {
       return sendError(res, ERR.INVALID_FORMAT, "Unsupported format", 400);
     }
+
+    const validBitDepths = ["16", "24", "32f"];
+    const normalizedBitDepth = validBitDepths.includes(String(bitDepth))
+      ? String(bitDepth)
+      : null;
 
     const metadata = {};
     let inputPath = null;
@@ -336,11 +403,15 @@ else if (isYouTubeUrl(url)) {
       format,
       bitrate,
       sampleRate: pickedSR,
+      compressionLevel: normalizedCompressionLevel,
+      bitDepth: normalizedBitDepth,
+      videoSettings: effectiveVideoSettings,
       metadata: {
         ...metadata,
         includeLyrics: includeLyrics === true || includeLyrics === "true",
         stereoConvert: stereoConvert,
-        atempoAdjust: atempoAdjust
+        atempoAdjust: atempoAdjust,
+        compressionLevel: normalizedCompressionLevel
       },
       resultPath: null,
       error: null,
@@ -435,6 +506,7 @@ router.get("/api/jobs", requireAuth, (req, res) => {
       currentPhase: j.currentPhase || "queued",
       format: j.format,
       bitrate: j.bitrate,
+      videoSettings: j.videoSettings || null,
       createdAt: j.createdAt,
       resultPath: j.resultPath || null,
       zipPath: j.zipPath || null,
@@ -491,6 +563,7 @@ router.get("/api/stream", requireAuth, (req, res) => {
       currentPhase: j.currentPhase || "queued",
       format: j.format,
       bitrate: j.bitrate,
+      videoSettings: j.videoSettings || null,
       resultPath: j.resultPath || null,
       zipPath: j.zipPath || null,
       createdAt: j.createdAt,

@@ -31,7 +31,8 @@ const ALLOWED_KEYS = [
   'ENRICH_SPOTIFY_FOR_YT',
   'MEDIA_COMMENT',
   'YTDLP_BIN',
-  'FFMPEG_BIN'
+  'FFMPEG_BIN',
+  'UPLOAD_MAX_BYTES'
 ]
 
 function parseEnv() {

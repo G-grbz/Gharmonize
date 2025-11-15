@@ -9,6 +9,19 @@ export class MediaConverterApp {
         };
         this.includeLyrics = false;
         this.currentSampleRate = 48000;
+        this.videoSettings = {
+           transcodeEnabled: false,
+           audioTranscodeEnabled: false,
+           audioCodec: 'aac',
+           audioChannels: 'original',
+           audioSampleRate: '48000',
+           audioBitrate: '192k',
+            hwaccel: 'off',
+            fps: 'source',
+            nvencSettings: { preset: 'fast', quality: '26' },
+            qsvSettings: { preset: 'veryfast', quality: '26' },
+            vaapiSettings: { device: '/dev/dri/renderD128', quality: '26' }
+        };
         this.currentPreview = {
             url: null, items: [], selected: new Set(),
             title: '', count: 0, page: 1, pageSize: 25,
@@ -33,7 +46,407 @@ export class MediaConverterApp {
         this.initializeTheme();
         this.loadFormats();
         this.ensureWarnStyles();
+        this.initializeVideoSettings();
     }
+
+    initializeVideoSettings() {
+       this.loadVideoSettingsFromStorage();
+       this.createVideoSettingsUI();
+   }
+
+   loadVideoSettingsFromStorage() {
+       const saved = localStorage.getItem('videoSettings');
+       if (saved) {
+           try {
+                this.videoSettings = { ...this.videoSettings, ...JSON.parse(saved) };
+                this.videoSettings.audioTranscodeEnabled = this.videoSettings.audioTranscodeEnabled || false;
+                this.videoSettings.audioCodec = this.videoSettings.audioCodec || 'aac';
+                this.videoSettings.audioBitrate = this.videoSettings.audioBitrate || '192k';
+                this.videoSettings.audioChannels = this.videoSettings.audioChannels || 'original';
+                this.videoSettings.audioSampleRate = this.videoSettings.audioSampleRate || '48000';
+           } catch (e) {
+               console.warn('Video ayarları yüklenemedi:', e);
+           }
+       }
+   }
+
+   saveVideoSettingsToStorage() {
+       localStorage.setItem('videoSettings', JSON.stringify(this.videoSettings));
+   }
+
+   createVideoSettingsUI() {
+    const formatSelect = document.getElementById('formatSelect');
+    if (!formatSelect) return;
+
+    const videoSettingsContainer = document.createElement('div');
+    videoSettingsContainer.id = 'videoSettingsContainer';
+    videoSettingsContainer.className = 'video-settings-container';
+    videoSettingsContainer.style.display = 'none';
+    videoSettingsContainer.innerHTML = this.getVideoSettingsHTML();
+
+    const bitrateGroup = document.querySelector('.form-group:has(#bitrateSelect)');
+    if (bitrateGroup && bitrateGroup.parentNode) {
+        bitrateGroup.parentNode.insertBefore(videoSettingsContainer, bitrateGroup.nextSibling);
+    } else {
+        formatSelect.parentNode.insertBefore(videoSettingsContainer, formatSelect.nextSibling);
+    }
+
+    if (window.i18n?.apply) {
+        window.i18n.apply(videoSettingsContainer);
+    }
+    this.attachVideoSettingsEvents();
+}
+
+   getVideoSettingsHTML() {
+    return `
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="videoTranscodeCheckbox" />
+                <span data-i18n="label.videoTranscode"></span>
+            </label>
+        </div>
+
+        <!-- ÖNCE encoder/video ayarları -->
+        <div id="encoderSettingsGroup" class="encoder-settings-group" style="display: none;">
+            <div class="form-group">
+                <label for="hwaccelSelect" data-i18n="label.hwaccel"></label>
+                <select id="hwaccelSelect">
+                    <option value="off" data-i18n="option.software"></option>
+                    <option value="nvenc" data-i18n="option.nvenc"></option>
+                    <option value="qsv" data-i18n="option.qsv"></option>
+                    <option value="vaapi" data-i18n="option.vaapi"></option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="fpsSelect">FPS:</label>
+                <select id="fpsSelect">
+                    <option value="source" data-i18n="option.videoNone"></option>
+                    <option value="23.976" data-i18n="option.23976">23.976 FPS</option>
+                    <option value="24" data-i18n="option.24">24 FPS</option>
+                    <option value="25" data-i18n="option.25">25 FPS</option>
+                    <option value="30" data-i18n="option.30">30 FPS</option>
+                    <option value="50" data-i18n="option.50">50 FPS</option>
+                    <option value="60" data-i18n="option.60">60 FPS</option>
+                </select>
+                <div class="muted" style="font-size: 12px; margin-top: 4px;">
+                    <span data-i18n="option.note"></span>
+                </div>
+            </div>
+
+            <div id="nvencSettings" class="encoder-specific-settings" style="display: none;">
+                <div class="form-group">
+                    <label for="nvencPreset" data-i18n="label.nvencPreset"></label>
+                    <select id="nvencPreset">
+                        <option value="slow" data-i18n="option.nvencSlow">slow (en iyi kalite)</option>
+                        <option value="medium" data-i18n="option.nvencMedium">medium</option>
+                        <option value="fast" selected data-i18n="option.nvencFast">fast</option>
+                        <option value="hp" data-i18n="option.nvencHp">hp (high performance)</option>
+                        <option value="hq" data-i18n="option.nvencHq">hq (high quality)</option>
+                        <option value="bd" data-i18n="option.nvencBd">bd (blu-ray)</option>
+                        <option value="ll" data-i18n="option.nvencLl">ll (low latency)</option>
+                        <option value="llhq" data-i18n="option.nvencLlhq">llhq (low latency high quality)</option>
+                        <option value="llhp" data-i18n="option.nvencLlhp">llhp (low latency high performance)</option>
+                        <option value="lossless" data-i18n="option.nvencLossless">lossless</option>
+                        <option value="losslesshp" data-i18n="option.nvencLosslesshp">losslesshp</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="nvencQuality" data-i18n="label.nvencQuality"></label>
+                    <input type="range" id="nvencQuality" min="18" max="30" step="1" value="23" />
+                    <span id="nvencQualityValue" class="range-value">23</span>
+                    <div class="range-hints">
+                        <span>18 (<span data-i18n="ui.bestQuality"></span>)</span>
+                        <span>23 (<span data-i18n="ui.default"></span>)</span>
+                        <span>30 (<span data-i18n="ui.fastest"></span>)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="qsvSettings" class="encoder-specific-settings" style="display: none;">
+                <div class="form-group">
+                    <label for="qsvPreset" data-i18n="label.qsvPreset"></label>
+                    <select id="qsvPreset">
+                        <option value="veryfast" selected data-i18n="option.qsvVeryfast">veryfast</option>
+                        <option value="faster" data-i18n="option.qsvFaster">faster</option>
+                        <option value="fast" data-i18n="option.qsvFast">fast</option>
+                        <option value="medium" data-i18n="option.qsvMedium">medium</option>
+                        <option value="slow" data-i18n="option.qsvSlow">slow</option>
+                        <option value="slower" data-i18n="option.qsvSlower">slower</option>
+                        <option value="veryslow" data-i18n="option.qsvVeryslow">veryslow</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="qsvQuality" data-i18n="label.qsvQuality"></label>
+                    <input type="range" id="qsvQuality" min="18" max="30" step="1" value="23" />
+                    <span id="qsvQualityValue" class="range-value">23</span>
+                    <div class="range-hints">
+                        <span>18 (<span data-i18n="ui.bestQuality"></span>)</span>
+                        <span>23 (<span data-i18n="ui.default"></span>)</span>
+                        <span>30 (<span data-i18n="ui.fastest"></span>)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="vaapiSettings" class="encoder-specific-settings" style="display: none;">
+                <div class="form-group">
+                    <label for="vaapiDevice" data-i18n="label.vaapiDevice"></label>
+                    <input type="text" id="vaapiDevice" value="/dev/dri/renderD128" placeholder="/dev/dri/renderD128" />
+                </div>
+                <div class="form-group">
+                    <label for="vaapiQuality" data-i18n="label.vaapiQuality"></label>
+                    <input type="range" id="vaapiQuality" min="18" max="30" step="1" value="23" />
+                    <span id="vaapiQualityValue" class="range-value">23</span>
+                    <div class="range-hints">
+                        <span>18 (<span data-i18n="ui.bestQuality"></span>)</span>
+                        <span>23 (<span data-i18n="ui.default"></span>)</span>
+                        <span>30 (<span data-i18n="ui.fastest"></span>)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SONRA audio transcode bölümü -->
+        <div id="audioTranscodeContainer" class="audio-transcode-container" style="display: none;">
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="audioTranscodeCheckbox" />
+                    <span data-i18n="label.audioTranscode">Ses Codec'ini Değiştir</span>
+                </label>
+            </div>
+
+            <div id="audioCodecSettings" class="audio-codec-settings" style="display: none;">
+                <div class="form-group">
+                    <label for="audioCodecSelect" data-i18n="label.format">Ses Codec:</label>
+                    <select id="audioCodecSelect">
+                        <option value="aac">AAC</option>
+                        <option value="ac3">AC3</option>
+                        <option value="eac3">E-AC3</option>
+                        <option value="mp3">MP3</option>
+                        <option value="flac">FLAC</option>
+                        <option value="copy" data-i18n="label.copyFormat">Orijinal Ses (Copy)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="audioChannelsSelect" data-i18n="label.stereoConvert">Kanallar:</label>
+                    <select id="audioChannelsSelect">
+                        <option value="original" data-i18n="option.auto">Orijinal Kanal Sayısını Koru</option>
+                        <option value="stereo" data-i18n="option.forceStereo">Stereo'ya Dönüştür (2 Kanal)</option>
+                        <option value="mono" data-i18n="option.forceMono">Mono'ya Dönüştür (1 Kanal)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="audioSampleRateSelect" data-i18n="label.sampleRate">Örnekleme Hızı:</label>
+                    <select id="audioSampleRateSelect">
+                        <option value="original" data-i18n="option.none">Ses hızını değiştirme</option>
+                        <option value="48000">48 kHz</option>
+                        <option value="44100">44.1 kHz</option>
+                        <option value="32000">32 kHz</option>
+                        <option value="24000">24 kHz</option>
+                        <option value="22050">22.05 kHz</option>
+                    </select>
+                </div>
+                <div id="audioBitrateContainer" class="form-group" style="display: none;"></div>
+            </div>
+        </div>
+    `;
+}
+
+
+   attachVideoSettingsEvents() {
+       const transcodeCheckbox = document.getElementById('videoTranscodeCheckbox');
+       if (transcodeCheckbox) {
+           transcodeCheckbox.checked = this.videoSettings.transcodeEnabled;
+           transcodeCheckbox.addEventListener('change', (e) => {
+               this.videoSettings.transcodeEnabled = e.target.checked;
+               this.toggleEncoderSettings(e.target.checked);
+               const audioTranscodeContainer = document.getElementById('audioTranscodeContainer');
+               if (audioTranscodeContainer) {
+                   audioTranscodeContainer.style.display = e.target.checked ? 'block' : 'none';
+                   if (!e.target.checked) {
+                       this.videoSettings.audioTranscodeEnabled = false;
+                       const audioTranscodeCheckbox = document.getElementById('audioTranscodeCheckbox');
+                       if (audioTranscodeCheckbox) {
+                           audioTranscodeCheckbox.checked = false;
+                       }
+                       this.toggleAudioCodecSettings(false);
+                   }
+               }
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const audioTranscodeCheckbox = document.getElementById('audioTranscodeCheckbox');
+       if (audioTranscodeCheckbox) {
+           audioTranscodeCheckbox.checked = this.videoSettings.audioTranscodeEnabled;
+           audioTranscodeCheckbox.addEventListener('change', (e) => {
+               if (!this.videoSettings.transcodeEnabled) {
+                   e.target.checked = false;
+                   return;
+               }
+               this.videoSettings.audioTranscodeEnabled = e.target.checked;
+               this.toggleAudioCodecSettings(e.target.checked);
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const audioCodecSelect = document.getElementById('audioCodecSelect');
+       if (audioCodecSelect) {
+           audioCodecSelect.value = this.videoSettings.audioCodec;
+           audioCodecSelect.addEventListener('change', (e) => {
+               this.videoSettings.audioCodec = e.target.value;
+               this.updateAudioBitrateOptions(e.target.value);
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const audioChannelsSelect = document.getElementById('audioChannelsSelect');
+       if (audioChannelsSelect) {
+           audioChannelsSelect.value = this.videoSettings.audioChannels;
+           audioChannelsSelect.addEventListener('change', (e) => {
+               this.videoSettings.audioChannels = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const audioSampleRateSelect = document.getElementById('audioSampleRateSelect');
+       if (audioSampleRateSelect) {
+           audioSampleRateSelect.value = this.videoSettings.audioSampleRate;
+           audioSampleRateSelect.addEventListener('change', (e) => {
+               this.videoSettings.audioSampleRate = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       this.updateAudioBitrateOptions(this.videoSettings.audioCodec);
+       this.toggleAudioCodecSettings(this.videoSettings.audioTranscodeEnabled);
+   }
+
+   toggleAudioCodecSettings(show) {
+       const audioCodecGroup = document.getElementById('audioCodecSettings');
+       if (audioCodecGroup) {
+           audioCodecGroup.style.display = show ? 'block' : 'none';
+       }
+
+       const hwaccelSelect = document.getElementById('hwaccelSelect');
+       if (hwaccelSelect) {
+           hwaccelSelect.value = this.videoSettings.hwaccel;
+           hwaccelSelect.addEventListener('change', (e) => {
+               this.videoSettings.hwaccel = e.target.value;
+               this.showEncoderSpecificSettings(e.target.value);
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const fpsSelect = document.getElementById('fpsSelect');
+       if (fpsSelect) {
+           const curFps = this.videoSettings.fps || 'source';
+           fpsSelect.value = String(curFps);
+
+           fpsSelect.addEventListener('change', (e) => {
+               this.videoSettings.fps = e.target.value || 'source';
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const nvencQuality = document.getElementById('nvencQuality');
+       const nvencQualityValue = document.getElementById('nvencQualityValue');
+       if (nvencQuality && nvencQualityValue) {
+           nvencQuality.value = this.videoSettings.nvencSettings.quality;
+           nvencQualityValue.textContent = this.videoSettings.nvencSettings.quality;
+           nvencQuality.addEventListener('input', (e) => {
+               this.videoSettings.nvencSettings.quality = e.target.value;
+               nvencQualityValue.textContent = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const nvencPreset = document.getElementById('nvencPreset');
+       if (nvencPreset) {
+           nvencPreset.value = this.videoSettings.nvencSettings.preset;
+           nvencPreset.addEventListener('change', (e) => {
+               this.videoSettings.nvencSettings.preset = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const qsvQuality = document.getElementById('qsvQuality');
+       const qsvQualityValue = document.getElementById('qsvQualityValue');
+       if (qsvQuality && qsvQualityValue) {
+           qsvQuality.value = this.videoSettings.qsvSettings.quality;
+           qsvQualityValue.textContent = this.videoSettings.qsvSettings.quality;
+           qsvQuality.addEventListener('input', (e) => {
+               this.videoSettings.qsvSettings.quality = e.target.value;
+               qsvQualityValue.textContent = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const qsvPreset = document.getElementById('qsvPreset');
+       if (qsvPreset) {
+           qsvPreset.value = this.videoSettings.qsvSettings.preset;
+           qsvPreset.addEventListener('change', (e) => {
+               this.videoSettings.qsvSettings.preset = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const vaapiDevice = document.getElementById('vaapiDevice');
+       if (vaapiDevice) {
+           vaapiDevice.value = this.videoSettings.vaapiSettings.device;
+           vaapiDevice.addEventListener('input', (e) => {
+               this.videoSettings.vaapiSettings.device = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+
+       const vaapiQuality = document.getElementById('vaapiQuality');
+       const vaapiQualityValue = document.getElementById('vaapiQualityValue');
+       if (vaapiQuality && vaapiQualityValue) {
+           vaapiQuality.value = this.videoSettings.vaapiSettings.quality;
+           vaapiQualityValue.textContent = this.videoSettings.vaapiSettings.quality;
+           vaapiQuality.addEventListener('input', (e) => {
+               this.videoSettings.vaapiSettings.quality = e.target.value;
+               vaapiQualityValue.textContent = e.target.value;
+               this.saveVideoSettingsToStorage();
+           });
+       }
+   }
+
+   toggleEncoderSettings(show) {
+       const encoderGroup = document.getElementById('encoderSettingsGroup');
+       const audioTranscodeContainer = document.getElementById('audioTranscodeContainer');
+       if (encoderGroup) {
+           encoderGroup.style.display = show ? 'block' : 'none';
+           if (show) {
+               this.showEncoderSpecificSettings(this.videoSettings.hwaccel);
+           }
+       }
+
+       if (audioTranscodeContainer) {
+           audioTranscodeContainer.style.display = show ? 'block' : 'none';
+           if (!show) {
+               this.videoSettings.audioTranscodeEnabled = false;
+               const audioTranscodeCheckbox = document.getElementById('audioTranscodeCheckbox');
+               if (audioTranscodeCheckbox) {
+                   audioTranscodeCheckbox.checked = false;
+               }
+               this.toggleAudioCodecSettings(false);
+               this.saveVideoSettingsToStorage();
+           }
+       }
+   }
+
+   showEncoderSpecificSettings(encoder) {
+       document.querySelectorAll('.encoder-specific-settings').forEach(el => {
+           el.style.display = 'none';
+       });
+
+       const specificSettings = document.getElementById(`${encoder}Settings`);
+       if (specificSettings) {
+           specificSettings.style.display = 'block';
+       }
+   }
 
     ensureWarnStyles() {
         if (document.getElementById('skipped-badge-style')) return;
@@ -89,6 +502,45 @@ export class MediaConverterApp {
         });
     }
 
+    updateAudioBitrateOptions(codec) {
+       const container = document.getElementById('audioBitrateContainer');
+       if (!container) return;
+
+       const bitrateOptions = {
+           aac: ['96k', '128k', '160k', '192k', '256k', '320k'],
+           ac3: ['192k', '224k', '256k', '320k', '384k', '448k', '512k', '640k'],
+           eac3: ['96k', '128k', '192k', '256k', '384k', '448k', '512k', '640k', '768k'],
+           mp3: ['96k', '128k', '160k', '192k', '256k', '320k'],
+           flac: ['lossless'],
+           copy: ['original']
+       };
+
+       const options = bitrateOptions[codec] || ['192k'];
+       container.innerHTML = '';
+       container.style.display = options.length > 1 ? 'block' : 'none';
+
+       if (options.length > 1) {
+           container.innerHTML = `
+               <label for="audioBitrateSelect" data-i18n="label.audioBitrate">Ses Bitrate:</label>
+               <select id="audioBitrateSelect">
+                   ${options.map(bitrate =>
+                       `<option value="${bitrate}" ${bitrate === this.videoSettings.audioBitrate ? 'selected' : ''}>
+                           ${bitrate === 'lossless' ? 'Lossless' : bitrate === 'original' ? 'Orijinal' : bitrate}
+                       </option>`
+                   ).join('')}
+               </select>
+           `;
+
+           const audioBitrateSelect = document.getElementById('audioBitrateSelect');
+           if (audioBitrateSelect) {
+               audioBitrateSelect.addEventListener('change', (e) => {
+                   this.videoSettings.audioBitrate = e.target.value;
+                   this.saveVideoSettingsToStorage();
+               });
+           }
+       }
+   }
+
     async loadFormats() {
         try {
             const response = await fetch('/api/formats');
@@ -109,7 +561,7 @@ export class MediaConverterApp {
             const formats = await this.getFormats();
             this.updateBitrateOptions(format, formats);
 
-            if (format === 'eac3' || format === 'ac3') {
+            if (format === 'eac3' || format === 'ac3' || format === 'aac') {
              this.updateSampleRateOptionsForEac3Ac3();
             }
         });
@@ -117,7 +569,7 @@ export class MediaConverterApp {
         const currentFormat = formatSelect.value;
         this.toggleFormatSpecificOptions(currentFormat);
 
-        if (currentFormat === 'eac3' || currentFormat === 'ac3') {
+        if (currentFormat === 'eac3' || currentFormat === 'ac3' || currentFormat === 'aac') {
          this.updateSampleRateOptionsForEac3Ac3();
      }
     }
@@ -145,7 +597,17 @@ export class MediaConverterApp {
         const sampleRateGroup = document.querySelector('.form-group:has(#sampleRateSelect)');
         const lyricsGroup = document.getElementById('lyricsCheckboxContainer');
         const isMp4 = format === 'mp4';
-        const isEac3Ac3 = format === 'eac3' || format === 'ac3';
+        const isEac3Ac3 = format === 'eac3' || format === 'ac3' || format === 'aac';
+        const isFlacWav = format === 'flac' || format === 'wav';
+        const isFlac = format === 'flac';
+
+        const videoSettingsContainer = document.getElementById('videoSettingsContainer');
+        if (videoSettingsContainer) {
+            videoSettingsContainer.style.display = isMp4 ? 'block' : 'none';
+            if (isMp4) {
+                this.toggleEncoderSettings(this.videoSettings.transcodeEnabled);
+            }
+        }
 
         if (sampleRateGroup) {
             sampleRateGroup.style.display = (isMp4) ? 'none' : '';
@@ -154,6 +616,67 @@ export class MediaConverterApp {
         if (lyricsGroup) {
             lyricsGroup.style.display = (isMp4 || isEac3Ac3) ? 'none' : '';
         }
+        let bitDepthGroup = document.getElementById('bitDepthGroup');
+
+        if (isFlacWav && !bitDepthGroup) {
+            bitDepthGroup = document.createElement('div');
+            bitDepthGroup.className = 'form-group';
+            bitDepthGroup.id = 'bitDepthGroup';
+            bitDepthGroup.innerHTML = `
+                <label for="bitDepthSelect" data-i18n="label.flacDepth">Bit Depth</label>
+                <select id="bitDepthSelect"></select>
+            `;
+
+            const sampleRateGroupEl = document.querySelector('.form-group:has(#sampleRateSelect)');
+            if (sampleRateGroupEl && sampleRateGroupEl.parentNode) {
+                sampleRateGroupEl.parentNode.insertBefore(bitDepthGroup, sampleRateGroupEl.nextSibling);
+            }
+            if (window.i18n?.apply) {
+               window.i18n.apply(bitDepthGroup);
+           }
+        }
+
+        if (bitDepthGroup) {
+            bitDepthGroup.style.display = isFlacWav ? '' : 'none';
+        }
+
+        let compressionGroup = document.getElementById('compressionGroup');
+        if (isFlac && !compressionGroup) {
+            compressionGroup = document.createElement('div');
+            compressionGroup.className = 'form-group';
+            compressionGroup.id = 'compressionGroup';
+            compressionGroup.innerHTML = `
+                <label for="compressionLevelRange" data-i18n="label.flacCompression">FLAC Compression Level</label>
+                <div class="range-row">
+                    <input id="compressionLevelRange" type="range" min="0" max="12" step="1" value="5" />
+                    <span id="compressionLevelValue" class="muted">5</span>
+                </div>
+            `;
+
+            const insertAfter =
+                document.getElementById('bitDepthGroup') ||
+                document.querySelector('.form-group:has(#sampleRateSelect)');
+
+            if (insertAfter && insertAfter.parentNode) {
+                insertAfter.parentNode.insertBefore(compressionGroup, insertAfter.nextSibling);
+            }
+
+            const rangeEl = compressionGroup.querySelector('#compressionLevelRange');
+            const valueEl = compressionGroup.querySelector('#compressionLevelValue');
+            if (rangeEl && valueEl) {
+                rangeEl.addEventListener('input', () => {
+                    valueEl.textContent = rangeEl.value;
+                });
+            }
+            if (window.i18n?.apply) {
+               window.i18n.apply(compressionGroup);
+           }
+        }
+
+        if (compressionGroup) {
+            compressionGroup.style.display = isFlac ? '' : 'none';
+        }
+
         this.toggleEac3Ac3Options(isEac3Ac3);
         }
 
@@ -177,7 +700,6 @@ export class MediaConverterApp {
                 <label for="atempoSelect" data-i18n="label.atempoAdjust">Ses Hızı Düzeltme (FPS Uyumu):</label>
                 <select id="atempoSelect">
                   <option value="none" data-i18n="option.none">Ses hızını değiştirme</option>
-                  <option value="23976_24000" data-i18n="option.23976_24000">23.976 FPS → 24 FPS (TV/stream → sinema)</option>
                   <option value="23976_24000" data-i18n="option.23976_24000">23.976 FPS → 24 FPS (TV/stream → sinema)</option>
                   <option value="23976_25000" data-i18n="option.23976_25000">23.976 FPS → 25 FPS (NTSC → PAL TV)</option>
                   <option value="24000_23976" data-i18n="option.24000_23976">24 FPS → 23.976 FPS (sinema → TV/stream)</option>
@@ -236,6 +758,23 @@ export class MediaConverterApp {
             option.textContent = bitrate === 'lossless' ? this.t('quality.lossless') : bitrate;
             bitrateSelect.appendChild(option);
         });
+        const bitDepthSelect = document.getElementById('bitDepthSelect');
+        if (bitDepthSelect) {
+            bitDepthSelect.innerHTML = '';
+            if (formatData.bitDepths && formatData.bitDepths.length) {
+                formatData.bitDepths.forEach((depth) => {
+                    const opt = document.createElement('option');
+                    opt.value = depth;
+                    opt.textContent = depth === '32f' ? '32-bit Float' : `${depth}-bit`;
+                    bitDepthSelect.appendChild(opt);
+                });
+                if (bitDepthSelect.parentElement) {
+                    bitDepthSelect.parentElement.style.display = '';
+                }
+            } else if (bitDepthSelect.parentElement) {
+                bitDepthSelect.parentElement.style.display = 'none';
+            }
+        }
     }
 
     initializeEventListeners() {
@@ -545,7 +1084,10 @@ export class MediaConverterApp {
         const bitrate = document.getElementById('bitrateSelect').value;
         const sampleRate = document.getElementById('sampleRateSelect').value;
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
-
+        const compressionLevel =
+        format === 'flac'
+            ? (document.getElementById('compressionLevelRange')?.value || '5')
+            : undefined;
         if (!url) {
             this.showNotification(this.t('notif.needUrl'), 'error', 'error');
             return;
@@ -574,7 +1116,10 @@ export class MediaConverterApp {
                     format,
                     bitrate,
                     sampleRate: sampleRate,
-                    includeLyrics
+                    includeLyrics,
+                    ...(compressionLevel !== undefined
+                        ? { compressionLevel }
+                        : {})
                 })
             });
 
@@ -730,6 +1275,10 @@ export class MediaConverterApp {
             const bitrate = document.getElementById('bitrateSelect').value;
             const sampleRate = document.getElementById('sampleRateSelect').value;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+            const compressionLevel =
+                format === 'flac'
+                    ? (document.getElementById('compressionLevelRange')?.value || '5')
+                    : undefined;
             const validItems = this.getCurrentSpotifyMatchedItems();
             if (validItems.length === 0) {
                 this.showNotification(this.t('notif.noMatchedTracks'), 'error', 'error');
@@ -742,6 +1291,9 @@ export class MediaConverterApp {
                 bitrate,
                 sampleRate: sampleRate,
                 isPlaylist: true,
+                ...(compressionLevel !== undefined
+                    ? { compressionLevel }
+                    : {}),
                 selectedIndices: validItems.map(item => item.index),
                 spotifyMapId: this.currentSpotifyTask.id,
                 metadata: {
@@ -931,7 +1483,7 @@ export class MediaConverterApp {
         const sequential = document.getElementById('sequentialChk')?.checked;
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
 
-        if ((format === 'eac3' || format === 'ac3') && !sampleRate) {
+        if ((format === 'eac3' || format === 'ac3' || format === 'aac') && !sampleRate) {
          this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
          return;
      }
@@ -1017,7 +1569,19 @@ export class MediaConverterApp {
             console.log("Gönderilen payload:", payload);
 
             const format = document.getElementById('formatSelect').value;
-            if (format === 'eac3' || format === 'ac3') {
+
+            if (format === 'mp4' && this.videoSettings.transcodeEnabled) {
+                console.log("🎬 Video ayarları payload'a ekleniyor:", this.videoSettings);
+               if (!isFormData) {
+                   payload.videoSettings = this.videoSettings;
+               } else {
+                   payload.append('videoSettings', JSON.stringify(this.videoSettings));
+               }
+               } else {
+          console.log("🎬 Video transcode pasif veya format mp4 değil");
+           }
+
+            if (format === 'eac3' || format === 'ac3' || format === 'aac') {
                 const stereoConvert = document.getElementById('stereoConvertSelect')?.value || 'auto';
                 const atempoAdjust = document.getElementById('atempoSelect')?.value || 'none';
 
@@ -1028,6 +1592,22 @@ export class MediaConverterApp {
                     payload.append('stereoConvert', stereoConvert);
                     payload.append('atempoAdjust', atempoAdjust);
                 }
+            }
+
+            if (format === 'flac' || format === 'wav') {
+                const bitDepth = document.getElementById('bitDepthSelect')?.value || '16';
+                if (!isFormData) {
+                    payload.bitDepth = bitDepth;
+                } else {
+                    payload.append('bitDepth', bitDepth);
+                }
+            }
+
+            if (format === 'flac') {
+                const compEl = document.getElementById('compressionLevelRange');
+                const compVal = compEl ? compEl.value : '5';
+                if (!isFormData) payload.compressionLevel = compVal;
+                else payload.append('compressionLevel', compVal);
             }
 
             const response = await fetch('/api/jobs', {
@@ -1197,72 +1777,92 @@ export class MediaConverterApp {
             const currentPhaseText = phaseTexts[job.currentPhase] || job.currentPhase;
 
             if (job.playlist && job.playlist.total) {
-                if (job.metadata?.source === 'spotify') {
-                    let downloaded, converted;
+            if (job.metadata?.source === 'spotify') {
+                let downloaded, converted;
 
-                    if (job.currentPhase === 'downloading') {
-                        downloaded = job.playlist.done || 0;
-                        converted = 0;
-                    } else if (job.currentPhase === 'converting') {
-                        downloaded = job.playlist.total;
-                        converted = job.playlist.done || 0;
-                    } else {
-                        downloaded = job.playlist.done || 0;
-                        converted = job.playlist.done || 0;
-                    }
-
-                    phaseDetails = `
-                        <div class="phase-details">
-                            <div class="phase-details__title">${currentPhaseText}</div>
-                            <div class="phase-details__grid">
-                                <span class="phase-details__item">
-                                    🎵 ${this.t('ui.current')}:
-                                    <span class="phase-details__value">${(job.playlist.current || job.playlist.done || 0) + 1}</span>
-                                </span>
-                                <span class="phase-details__item">
-                                    📥 ${this.t('ui.downloading')}:
-                                    <span class="phase-details__value">${downloaded}/${job.playlist.total}</span>
-                                </span>
-                                <span class="phase-details__item">
-                                    ⚡ ${this.t('ui.converting')}:
-                                    <span class="phase-details__value">${converted}/${job.playlist.total}</span>
-                                </span>
-                            </div>
-                        </div>
-                    `;
+                if (job.currentPhase === 'downloading') {
+                    downloaded = job.playlist.done || 0;
+                    converted = 0;
+                } else if (job.currentPhase === 'converting') {
+                    downloaded = job.playlist.total;
+                    converted = job.playlist.done || 0;
                 } else {
-                    let downloaded, converted;
-
-                    if (job.counters && typeof job.counters.dlDone === 'number' && typeof job.counters.cvDone === 'number') {
-                        downloaded = job.counters.dlDone;
-                        converted = job.counters.cvDone;
-                    } else {
-                        downloaded = job.downloadProgress >= 100 ? job.playlist.total : Math.floor((job.downloadProgress / 100) * job.playlist.total);
-                        converted = job.convertProgress >= 100 ? job.playlist.total : Math.floor((job.convertProgress / 100) * job.playlist.total);
-                    }
-                    const currentTrack = job.playlist.current !== undefined ? job.playlist.current + 1 : (downloaded + 1);
-
-                    phaseDetails = `
-                        <div class="phase-details">
-                            <div class="phase-details__title">${currentPhaseText}</div>
-                            <div class="phase-details__grid">
-                                <span class="phase-details__item">
-                                    🎵 ${this.t('ui.current')}:
-                                    <span class="phase-details__value">${currentTrack}</span>
-                                </span>
-                                <span class="phase-details__item">
-                                    📥 ${this.t('ui.downloading')}:
-                                    <span class="phase-details__value">${downloaded}/${job.playlist.total}</span>
-                                </span>
-                                <span class="phase-details__item">
-                                    ⚡ ${this.t('ui.converting')}:
-                                    <span class="phase-details__value">${converted}/${job.playlist.total}</span>
-                                </span>
-                            </div>
-                        </div>
-                    `;
+                    downloaded = job.playlist.done || 0;
+                    converted = job.playlist.done || 0;
                 }
-            } else if (job.metadata?.isPlaylist) {
+
+                phaseDetails = `
+                    <div class="phase-details">
+                        <div class="phase-details__title">${currentPhaseText}</div>
+                        <div class="phase-details__grid">
+                            <span class="phase-details__item">
+                                🎵 ${this.t('ui.current')}:
+                                <span class="phase-details__value">${(job.playlist.current || job.playlist.done || 0) + 1}</span>
+                            </span>
+                            <span class="phase-details__item">
+                                📥 ${this.t('ui.downloading')}:
+                                <span class="phase-details__value">${downloaded}/${job.playlist.total}</span>
+                            </span>
+                            <span class="phase-details__item">
+                                ⚡ ${this.t('ui.converting')}:
+                                <span class="phase-details__value">${converted}/${job.playlist.total}</span>
+                            </span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                const total = Number(job.playlist.total || 0) || 0;
+                let downloaded = Number(job.counters?.dlDone ?? job.playlist.done ?? 0) || 0;
+                let converted  = Number(job.counters?.cvDone ?? job.playlist.done ?? 0) || 0;
+
+                if (!downloaded && total && job.downloadProgress) {
+                    downloaded = Math.max(
+                        0,
+                        Math.min(total, Math.floor((job.downloadProgress / 100) * total))
+                    );
+                }
+                if (!converted && total && job.convertProgress) {
+                    converted = Math.max(
+                        0,
+                        Math.min(total, Math.floor((job.convertProgress / 100) * total))
+                    );
+                }
+
+                const phase = this.normalizeStatus(job.currentPhase || job.phase);
+
+                let currentTrack;
+                if (Number.isFinite(job.playlist.current)) {
+                    currentTrack = job.playlist.current + 1;
+                } else if (phase === 'downloading') {
+                    currentTrack = Math.min(total || 1, (downloaded || 0) + 1);
+                } else if (phase === 'converting') {
+                    currentTrack = Math.min(total || 1, (converted || 0) + 1);
+                } else {
+                    const base = converted || downloaded || 0;
+                    currentTrack = Math.min(total || 1, Math.max(1, base || 1));
+                }
+
+                phaseDetails = `
+                    <div class="phase-details">
+                        <div class="phase-details__title">${currentPhaseText}</div>
+                        <div class="phase-details__grid">
+                            <span class="phase-details__item">
+                                🎵 ${this.t('ui.current')}:
+                                <span class="phase-details__value">${currentTrack}</span>
+                            </span>
+                            <span class="phase-details__item">
+                                📥 ${this.t('ui.downloading')}:
+                                <span class="phase-details__value">${downloaded}/${total || '?'}</span>
+                            </span>
+                            <span class="phase-details__item">
+                                ⚡ ${this.t('ui.converting')}:
+                                <span class="phase-details__value">${converted}/${total || '?'}</span>
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }
+        } else if (job.metadata?.isPlaylist) {
             const dlDone = Number(job?.counters?.dlDone || 0);
             const cvDone = Number(job?.counters?.cvDone || 0);
             const total  = Number(
@@ -1408,7 +2008,17 @@ export class MediaConverterApp {
             }
         }
 
-        const totalProgress = job.progress || 0;
+        let totalProgress = Number(job.progress || 0);
+        if (!Number.isFinite(totalProgress) || totalProgress <= 0) {
+            const dl = Number(job.downloadProgress || 0);
+            const cv = Number(job.convertProgress || 0);
+
+            if (dl || cv) {
+                totalProgress = Math.max(dl, cv);
+            } else {
+                totalProgress = 0;
+            }
+        }
 
         let lyricsInfo = '';
 
@@ -1928,6 +2538,10 @@ export class MediaConverterApp {
             const sampleRate = document.getElementById('sampleRateSelect').value;
             const sequential = document.getElementById('sequentialChk')?.checked;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+            const compressionLevel =
+            format === 'flac'
+                ? (document.getElementById('compressionLevelRange')?.value || '5')
+                : undefined;
             const selectedIds = selected
                 .map(i => this.currentPreview.indexToId.get(i))
                 .filter(Boolean);

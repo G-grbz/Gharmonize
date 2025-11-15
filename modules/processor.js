@@ -5,7 +5,7 @@ import { resolveId3StrictForYouTube } from "./tags.js";
 import { resolveMarket } from "./market.js";
 import { jobs, registerJobProcess, killJobProcesses } from "./store.js";
 import { sanitizeFilename, toNFC } from "./utils.js";
-import { processYouTubeVideoJob } from "./video.js";
+import { processYouTubeVideoJob, qualityToHeight } from "./video.js";
 import {
   isYouTubeAutomix,
   fetchYtMetadata,
@@ -111,10 +111,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     job.metadata = job.metadata || {};
     job.counters = job.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 };
     const isVideoFormat = format === "mp4";
+
     if (isVideoFormat && job.metadata?.source === "youtube") {
       await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
+
       try {
-        if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch) {
+        if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch && format !== "mp4") {
           const titleHint =
             job.metadata?.frozenTitle ||
             job.metadata?.extracted?.title ||
@@ -128,6 +130,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           );
         }
       } catch {}
+
       cleanupTempFiles(jobId, inputPath, null);
       return;
     }
@@ -269,11 +272,14 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               },
               includeLyrics: job.metadata.includeLyrics,
               sampleRate: sampleRate,
+              bitDepth: job.bitDepth || null,
+              compressionLevel: job.metadata?.compressionLevel ?? null,
               isCanceled: () => !!jobs.get(jobId)?.canceled,
               onLog: handleLyricsLog,
               onLyricsStats: handleLyricsStats,
               stereoConvert: job.metadata?.stereoConvert || "auto",
-              atempoAdjust: job.metadata?.atempoAdjust || "none"
+              atempoAdjust: job.metadata?.atempoAdjust || "none",
+              videoSettings: job.videoSettings || {}
             }
           );
         }
@@ -623,6 +629,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 },
                 includeLyrics: job.metadata.includeLyrics,
                 sampleRate: sampleRate,
+                bitDepth: job.bitDepth || null,
+                compressionLevel: job.metadata?.compressionLevel ?? null,
                 isCanceled: () => !!jobs.get(jobId)?.canceled,
                 onLog: handleLyricsLog,
                 onLyricsStats: handleLyricsStats,
@@ -701,7 +709,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     }
 
     const isVideo = format === "mp4";
-    const isEac3Ac3 = format === "eac3" || format === "ac3";
+    const isEac3Ac3 = format === "eac3" || format === "ac3" || format === "aac";
     if (!coverPath && typeof actualInputPath === "string") {
       const baseNoExt = actualInputPath.replace(/\.[^.]+$/, "");
       const sidecar = `${baseNoExt}.jpg`;
@@ -757,11 +765,14 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
             includeLyrics: !!job.metadata.includeLyrics,
             sampleRate: sampleRate,
+            compressionLevel: job.metadata?.compressionLevel ?? null,
+            bitDepth: job.bitDepth || null,
             isCanceled: () => !!jobs.get(jobId)?.canceled,
             onLog: handleLyricsLog,
             onLyricsStats: handleLyricsStats,
             stereoConvert: job.metadata?.stereoConvert || "auto",
-            atempoAdjust: job.metadata?.atempoAdjust || "none"
+            atempoAdjust: job.metadata?.atempoAdjust || "none",
+            videoSettings: job.videoSettings || {}
           }
         );
 
@@ -914,13 +925,4 @@ function cleanupTempFiles(jobId, originalInputPath, downloadedPath = null) {
   } catch (e) {
     console.warn("Temizleme uyarısı:", e.message);
   }
-}
-
-function qualityToHeight(q) {
-  const v = String(q || "").toLowerCase();
-  if (v.includes("1080")) return 1080;
-  if (v.includes("720")) return 720;
-  if (v.includes("480")) return 480;
-  if (v.includes("360")) return 360;
-  return 1080;
 }

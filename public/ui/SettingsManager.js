@@ -65,6 +65,10 @@ export class SettingsManager {
                     <input id="f_SPOTIFY_CLIENT_SECRET" type="password" placeholder="••••••••" data-i18n-ph="ph.spotifyClientSecret" >
                 </div>
                 <div class="form-group">
+                    <label for="f_UPLOAD_MAX_BYTES" data-i18n="settings.maxUpload">UPLOAD_MAX_BYTES</label>
+                    <input id="f_UPLOAD_MAX_BYTES" type="text" placeholder='' data-i18n-ph="ph.maxUpload">
+                </div>
+                <div class="form-group">
                     <label for="f_SPOTIFY_MARKET" data-i18n="settings.spotifyMarket">SPOTIFY_MARKET</label>
                     <input id="f_SPOTIFY_MARKET" type="text" placeholder="TR, US, GB vb." data-i18n-ph="ph.spotifyMarket" >
                 </div>
@@ -350,6 +354,7 @@ export class SettingsManager {
             document.getElementById('f_MEDIA_COMMENT').value = s.MEDIA_COMMENT || 'Gharmonize';
             document.getElementById('f_FFMPEG_BIN').value = s.FFMPEG_BIN || '';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
+            document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
 
         } catch (e) {
             alert(this.t('settings.errorLoading') + ': ' + e.message);
@@ -380,7 +385,8 @@ export class SettingsManager {
                 ENRICH_SPOTIFY_FOR_YT: document.getElementById('f_ENRICH_SPOTIFY_FOR_YT').value,
                 MEDIA_COMMENT: document.getElementById('f_MEDIA_COMMENT').value.trim(),
                 YTDLP_BIN: document.getElementById('f_YTDLP_BIN').value.trim(),
-                FFMPEG_BIN: document.getElementById('f_FFMPEG_BIN').value.trim()
+                FFMPEG_BIN: document.getElementById('f_FFMPEG_BIN').value.trim(),
+                UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim()
             }
         };
 

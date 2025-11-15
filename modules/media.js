@@ -6,7 +6,7 @@ import fetch from "node-fetch";
 import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
 import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
-import 'dotenv/config';
+import "dotenv/config";
 
 function resolveFfmpegBin() {
   const isWin = process.platform === "win32";
@@ -14,21 +14,21 @@ function resolveFfmpegBin() {
   const fromPATH = findOnPATH(exe);
   if (fromPATH && isExecutable(fromPATH)) return fromPATH;
   const guesses = isWin
-     ? [
-         "C:\\tools\\ffmpeg\\bin\\ffmpeg.exe",
-         "C:\\ffmpeg\\bin\\ffmpeg.exe",
-         "C:\\tools\\yt-dlp\\ffmpeg.exe",
-         "C:\\Windows\\ffmpeg.exe"
-       ]
-     : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/bin/ffmpeg"];
+    ? [
+        "C:\\tools\\ffmpeg\\bin\\ffmpeg.exe",
+        "C:\\ffmpeg\\bin\\ffmpeg.exe",
+        "C:\\tools\\yt-dlp\\ffmpeg.exe",
+        "C:\\Windows\\ffmpeg.exe"
+      ]
+    : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/bin/ffmpeg"];
   if (process.resourcesPath) {
-     const packed = path.join(process.resourcesPath, "bin", exe);
-     guesses.unshift(packed);
-   }
+    const packed = path.join(process.resourcesPath, "bin", exe);
+    guesses.unshift(packed);
+  }
 
-   for (const g of guesses) {
-     if (isExecutable(g)) return g;
-   }
+  for (const g of guesses) {
+    if (isExecutable(g)) return g;
+  }
 
   const fromEnvFile = process.env.FFMPEG_BIN || process.env.FFMPEG_PATH;
   if (fromEnvFile && isExecutable(fromEnvFile)) return fromEnvFile;
@@ -38,7 +38,7 @@ function resolveFfmpegBin() {
     if (isExecutable(candidate)) return candidate;
   }
 
-   return exe;
+  return exe;
 }
 
 function emitLog(onLog, payload) {
@@ -47,7 +47,8 @@ function emitLog(onLog, payload) {
 }
 
 export function resolveTemplate(meta, template) {
-  const pick = (a, b) => (meta[a] || "").toString().trim() || (meta[b] || "").toString().trim();
+  const pick = (a, b) =>
+    (meta[a] || "").toString().trim() || (meta[b] || "").toString().trim();
   return template
     .replace(/%\(([^)]+)\)s/g, (_, keyExpr) => {
       if (keyExpr.includes("|")) {
@@ -92,7 +93,12 @@ export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
   }
 }
 
-export async function ensureJpegCover(coverPath, jobId, tempDir, ffmpegFromCaller = null) {
+export async function ensureJpegCover(
+  coverPath,
+  jobId,
+  tempDir,
+  ffmpegFromCaller = null
+) {
   try {
     if (!coverPath || !fs.existsSync(coverPath)) return null;
     const ext = path.extname(coverPath).toLowerCase();
@@ -110,7 +116,9 @@ export async function ensureJpegCover(coverPath, jobId, tempDir, ffmpegFromCalle
           ? resolve()
           : reject(new Error(`Kapak dönüştürülemedi (kod ${code}): ${err}`))
       );
-      p.on("error", (e) => reject(new Error(`ffmpeg başlatma hatası: ${e.message}`)));
+      p.on("error", (e) =>
+        reject(new Error(`ffmpeg başlatma hatası: ${e.message}`))
+      );
     });
     return outJpg;
   } catch (e) {
@@ -124,6 +132,14 @@ const getCommentText = () => {
   if (process.env.COMMENT_TEXT) return process.env.COMMENT_TEXT;
   return "Gharmonize";
 };
+
+const VIDEO_HWACCEL = (process.env.VIDEO_HWACCEL || "off").toLowerCase();
+const NVENC_PRESET  = process.env.NVENC_PRESET  || "fast";
+const NVENC_Q       = process.env.NVENC_Q       || "23";
+const QSV_PRESET    = process.env.QSV_PRESET    || "veryfast";
+const QSV_Q         = process.env.QSV_Q         || "23";
+const VAAPI_DEVICE  = process.env.VAAPI_DEVICE  || "/dev/dri/renderD128";
+const VAAPI_QUALITY = process.env.VAAPI_QUALITY || "23";
 
 export async function convertMedia(
   inputPath,
@@ -142,35 +158,86 @@ export async function convertMedia(
   const isCanceled =
     typeof opts.isCanceled === "function" ? () => !!opts.isCanceled() : () => false;
 
-    const stereoConvert = opts?.stereoConvert || "auto";
-    const atempoAdjust = opts?.atempoAdjust || "none";
+  const stereoConvert = opts?.stereoConvert || "auto";
+  const atempoAdjust = opts?.atempoAdjust || "none";
+  const bitDepth = opts?.bitDepth || null;
+  const videoSettings = opts.videoSettings || {};
+  const videoHwaccel = videoSettings.hwaccel || VIDEO_HWACCEL;
 
-    const parseSR = (v) => {
+  const audioCodec = videoSettings.audioTranscodeEnabled ?
+                         videoSettings.audioCodec : 'aac';
+  const audioBitrate = videoSettings.audioTranscodeEnabled ?
+                          videoSettings.audioBitrate : '192k';
+   const audioChannels = videoSettings.audioTranscodeEnabled ?
+                           videoSettings.audioChannels : 'original';
+  const audioSampleRate = videoSettings.audioTranscodeEnabled ?
+                             videoSettings.audioSampleRate : '48000';
+
+       console.log(`🎬 Video Ayarları:`, { isVideo, format, videoSettings, videoHwaccel });
+       console.log(`🎵 Audio Ayarları: Codec=${audioCodec}, Bitrate=${audioBitrate}, Transcode=${videoSettings.audioTranscodeEnabled}`);
+
+  const parseFps = (v) => {
+     if (v == null) return null;
+     const s = String(v).trim().toLowerCase();
+     if (!s || s === "source" || s === "auto") return null;
+
+     const n = Number(s);
+     if (!Number.isFinite(n) || n <= 0) return null;
+     return Math.max(15, Math.min(120, n));
+ };
+
+ const targetFps = parseFps(videoSettings.fps);
+
+ console.log(`🎬 Video Ayarları:`, {
+   isVideo,
+   format,
+   videoSettings,
+   videoHwaccel,
+   transcodeEnabled: videoSettings.transcodeEnabled,
+   targetFps
+ });
+
+  const parseSR = (v) => {
     const n = Number(String(v || "").replace(/[^0-9.]/g, ""));
     return Number.isFinite(n) ? Math.round(n) : NaN;
   };
 
-  const isEac3Ac3 = format === "eac3" || format === "ac3";
+  const isEac3Ac3 = format === "eac3" || format === "ac3" || format === "aac";
   const srOpt1 = parseSR(opts?.sampleRate);
   const srOpt2 = parseSR(opts?.sampleRateHz);
   const srEnv = parseSR(process.env.TARGET_SAMPLE_RATE);
+
   let SAMPLE_RATE;
-   if (isEac3Ac3) {
-       SAMPLE_RATE = Number.isFinite(srOpt1) ? srOpt1
-           : Number.isFinite(srOpt2) ? srOpt2
-           : Number.isFinite(srEnv) ? srEnv
-           : 48000;
-   } else {
-       SAMPLE_RATE = Number.isFinite(srOpt1) ? srOpt1
-           : Number.isFinite(srOpt2) ? srOpt2
-           : Number.isFinite(srEnv) ? srEnv
-           : 48000;
-   }
+  if (isEac3Ac3) {
+    SAMPLE_RATE = Number.isFinite(srOpt1)
+      ? srOpt1
+      : Number.isFinite(srOpt2)
+      ? srOpt2
+      : Number.isFinite(srEnv)
+      ? srEnv
+      : 48000;
+  } else {
+    SAMPLE_RATE = Number.isFinite(srOpt1)
+      ? srOpt1
+      : Number.isFinite(srOpt2)
+      ? srOpt2
+      : Number.isFinite(srEnv)
+      ? srEnv
+      : 48000;
+  }
+
+  if (!Number.isFinite(SAMPLE_RATE) || SAMPLE_RATE <= 0) {
+    SAMPLE_RATE = 48000;
+  }
 
   const SAFE_SR = Math.min(192000, Math.max(8000, SAMPLE_RATE));
 
   const pickNearest = (target, allowed) =>
-    allowed.reduce((best, cur) => (Math.abs(cur - target) < Math.abs(best - target) ? cur : best), allowed[0]);
+    allowed.reduce(
+      (best, cur) =>
+        Math.abs(cur - target) < Math.abs(best - target) ? cur : best,
+      allowed[0]
+    );
 
   function commentKeyFor(fmt) {
     const f = String(fmt || "").toLowerCase();
@@ -178,6 +245,7 @@ export async function convertMedia(
     if (f === "mp4" || f === "m4a") return "comment";
     if (f === "mp3") return "comment";
     if (f === "eac3" || f === "ac3") return "comment";
+    if (f === "aac" || f === "ac3") return "comment";
     return "comment";
   }
   const COMMENT_KEY = commentKeyFor(format);
@@ -185,7 +253,9 @@ export async function convertMedia(
   function normalizeSR(fmt, sr) {
     const f = String(fmt || "").toLowerCase();
     if (f === "mp3") {
-      const allowed = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
+      const allowed = [
+        8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000
+      ];
       const picked = pickNearest(sr, allowed);
       return { sr: picked, note: "mp3-legal" };
     }
@@ -195,16 +265,44 @@ export async function convertMedia(
     }
     return { sr: sr, note: "as-is" };
   }
-  const { sr: SR_NORM, note: SR_NOTE } = normalizeSR(format, SAFE_SR);
 
-  const srSrc =
-    Number.isFinite(srOpt1) ? "opt.sampleRate"
-    : Number.isFinite(srOpt2) ? "opt.sampleRateHz"
-    : Number.isFinite(srEnv) ? "env"
+  let baseSR = SAFE_SR;
+  if (
+    isVideo &&
+    format === "mp4" &&
+    !Number.isFinite(srOpt1) &&
+    !Number.isFinite(srOpt2) &&
+    !Number.isFinite(srEnv)
+  ) {
+    baseSR = 48000;
+  }
+
+  const { sr: SR_NORM, note: SR_NOTE } = normalizeSR(format, baseSR);
+
+  let FINAL_SAMPLE_RATE = SR_NORM;
+  if (videoSettings.audioTranscodeEnabled && audioSampleRate !== 'original') {
+    const selectedSR = parseInt(audioSampleRate);
+    if (Number.isFinite(selectedSR) && selectedSR > 0) {
+      FINAL_SAMPLE_RATE = Math.min(192000, Math.max(8000, selectedSR));
+      console.log(`🎵 Seçilen Sample Rate: ${audioSampleRate} -> ${FINAL_SAMPLE_RATE} Hz`);
+    }
+  } else if (audioSampleRate === 'original') {
+    FINAL_SAMPLE_RATE = null;
+    console.log(`🎵 Orijinal Sample Rate korunacak`);
+  }
+
+  const srSrc = Number.isFinite(srOpt1)
+    ? "opt.sampleRate"
+    : Number.isFinite(srOpt2)
+    ? "opt.sampleRateHz"
+    : Number.isFinite(srEnv)
+    ? "env"
     : "default";
 
   console.log(
-    `🎵 Dönüştürme → in: ${path.basename(inputPath)} | fmt=${format} | lyrics=${
+    `🎵 Dönüştürme → in: ${path.basename(
+      inputPath
+    )} | fmt=${format} | lyrics=${
       opts.includeLyrics !== false ? "evet" : "hayır"
     } | video=${isVideo ? "evet" : "hayır"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}`
   );
@@ -215,6 +313,9 @@ export async function convertMedia(
 
   const resolvedMeta = { ...metadata, title: maybeCleanTitle(metadata?.title) };
   const VIDEO_MAX_H = Number(resolvedMeta.__maxHeight) || 1080;
+  const SRC_H = Number(resolvedMeta.__srcHeight) || 0;
+  const EFFECTIVE_H = SRC_H || VIDEO_MAX_H;
+  const VIDEO_PRESET = process.env.VIDEO_PRESET || "veryfast";
 
   let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
   basename = sanitizeFilename(basename);
@@ -257,7 +358,8 @@ export async function convertMedia(
     const trackTag = tn ? (ttot ? `${tn}/${ttot}` : String(tn)) : "";
     const discTag = dn ? (dtot ? `${dn}/${dtot}` : String(dn)) : "";
     const dateTag =
-      resolvedMeta.release_date && /^\d{4}(-\d{2}(-\d{2})?)?$/.test(resolvedMeta.release_date)
+      resolvedMeta.release_date &&
+      /^\d{4}(-\d{2}(-\d{2})?)?$/.test(resolvedMeta.release_date)
         ? resolvedMeta.release_date
         : resolvedMeta.release_year || resolvedMeta.upload_date || "";
 
@@ -292,21 +394,27 @@ export async function convertMedia(
     if (resolvedMeta.isrc) args.push("-metadata", `ISRC=${resolvedMeta.isrc}`);
 
     if (!isVideo && (format === "flac" || format === "ogg")) {
-      if (resolvedMeta.album_artist) args.push("-metadata", `ALBUMARTIST=${resolvedMeta.album_artist}`);
+      if (resolvedMeta.album_artist)
+        args.push("-metadata", `ALBUMARTIST=${resolvedMeta.album_artist}`);
       if (labelLike) {
         args.push("-metadata", `LABEL=${labelLike}`);
         args.push("-metadata", `PUBLISHER=${labelLike}`);
       }
-      if (resolvedMeta.webpage_url) args.push("-metadata", `URL=${resolvedMeta.webpage_url}`);
+      if (resolvedMeta.webpage_url)
+        args.push("-metadata", `URL=${resolvedMeta.webpage_url}`);
       if (resolvedMeta.genre) args.push("-metadata", `GENRE=${resolvedMeta.genre}`);
-      if (resolvedMeta.copyright) args.push("-metadata", `COPYRIGHT=${resolvedMeta.copyright}`);
+      if (resolvedMeta.copyright)
+        args.push("-metadata", `COPYRIGHT=${resolvedMeta.copyright}`);
     }
 
     if (!isVideo && format === "mp3") {
-      if (resolvedMeta.album_artist) args.push("-metadata", `ALBUMARTIST=${resolvedMeta.album_artist}`);
+      if (resolvedMeta.album_artist)
+        args.push("-metadata", `ALBUMARTIST=${resolvedMeta.album_artist}`);
       if (resolvedMeta.genre) args.push("-metadata", `genre=${resolvedMeta.genre}`);
-      if (resolvedMeta.copyright) args.push("-metadata", `copyright=${resolvedMeta.copyright}`);
-      if (resolvedMeta.webpage_url) args.push("-metadata", `URL=${resolvedMeta.webpage_url}`);
+      if (resolvedMeta.copyright)
+        args.push("-metadata", `copyright=${resolvedMeta.copyright}`);
+      if (resolvedMeta.webpage_url)
+        args.push("-metadata", `URL=${resolvedMeta.webpage_url}`);
 
       const cmt = getCommentText();
       if (cmt) args.push("-metadata", `comment=${cmt}`);
@@ -314,10 +422,14 @@ export async function convertMedia(
 
     if (canEmbedCover) {
       args.push(
-        "-map", "0:a",
-        "-map", "1:v?",
-        "-disposition:v", "attached_pic",
-        "-metadata:s:v", "title=Album cover"
+        "-map",
+        "0:a",
+        "-map",
+        "1:v?",
+        "-disposition:v",
+        "attached_pic",
+        "-metadata:s:v",
+        "title=Album cover"
       );
       if (format === "mp3") args.push("-c:v", "mjpeg", "-id3v2_version", "3");
       else if (format === "flac") args.push("-c:v", "mjpeg");
@@ -325,63 +437,245 @@ export async function convertMedia(
 
     if (isVideo) {
       if (format === "mp4") {
+        console.log(`🎬 Video Transcode: ${videoSettings.transcodeEnabled ? 'AKTİF' : 'PASİF'}`);
         const br = (bitrate || "").toString().trim();
         const isVidMb = /^[0-9]+(\.[0-9]+)?m$/i.test(br);
         const isVidKb = /^[0-9]+k$/i.test(br);
-        args.push("-c:v", "libx264", "-preset", "medium", "-tune", "film");
+        const useHevc = EFFECTIVE_H >= 2160;
+        const useNvenc = videoHwaccel === "nvenc";
+        const useQsv   = videoHwaccel === "qsv";
+        const useVaapi = videoHwaccel === "vaapi";
 
+        let explicitBv = null;
         if (isVidMb || isVidKb) {
-          const bv = isVidMb ? br.replace(/m$/i, "M") : br;
-          args.push("-b:v", bv, "-maxrate", bv, "-bufsize", `${bv}*2`);
-        } else {
-          const crf = br === "auto" || br === "0" ? "23" : "21";
-          args.push("-crf", crf);
+          explicitBv = isVidMb ? br.replace(/m$/i, "M") : br;
         }
 
-        args.push(
-          "-pix_fmt", "yuv420p",
-          "-profile:v", "high",
-          "-level", "4.1",
-          "-movflags", "+faststart",
-          "-g", "60",
-          "-keyint_min", "60",
-          "-sc_threshold", "0"
-        );
+        if (useNvenc) {
+          const nvencPreset = videoSettings.nvencSettings?.preset || NVENC_PRESET;
+          const nvencQuality = videoSettings.nvencSettings?.quality || NVENC_Q;
+          if (useHevc) {
+            args.push(
+              "-c:v", "hevc_nvenc",
+              "-preset", nvencPreset,
+              "-rc:v", "vbr"
+            );
+          } else {
+            args.push(
+              "-c:v", "h264_nvenc",
+              "-preset", nvencPreset,
+              "-rc:v", "vbr"
+            );
+          }
 
-        args.push("-c:a", "aac", "-b:a", "128k", "-ac", "2", "-ar", String(SR_NORM));
-        args.push("-threads", "0", "-vf", `scale='if(gt(ih\\,${VIDEO_MAX_H}),-2,-1)':'if(gt(ih\\,${VIDEO_MAX_H}),${VIDEO_MAX_H},-1)'`);
+          if (explicitBv) {
+            args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
+          } else {
+            args.push("-cq:v", nvencQuality);
+          }
+        } else if (useQsv) {
+          const qsvPreset = videoSettings.qsvSettings?.preset || QSV_PRESET;
+          const qsvQuality = videoSettings.qsvSettings?.quality || QSV_Q;
+          if (useHevc) {
+            args.push("-c:v", "hevc_qsv", "-preset", qsvPreset);
+          } else {
+            args.push("-c:v", "h264_qsv", "-preset", qsvPreset);
+          }
+
+          if (explicitBv) {
+            args.push("-b:v", explicitBv);
+          } else {
+            args.push(
+              "-global_quality", qsvQuality,
+              "-rc_mode", "vbr"
+            );
+          }
+        } else if (useVaapi) {
+          const vaapiDevice = videoSettings.vaapiSettings?.device || VAAPI_DEVICE;
+          const vaapiQuality = videoSettings.vaapiSettings?.quality || VAAPI_QUALITY;
+          let vaapiFilter = "format=nv12,hwupload";
+          if (targetFps) {
+            vaapiFilter += `,fps=${targetFps}`;
+          }
+          args.push(
+            "-vaapi_device", vaapiDevice,
+            "-vf", vaapiFilter,
+            "-c:v", "h264_vaapi"
+          );
+
+          if (explicitBv) {
+            args.push("-b:v", explicitBv);
+          } else {
+            args.push("-global_quality", vaapiQuality);
+          }
+        } else {
+          if (useHevc) {
+            args.push("-c:v", "libx265", "-preset", VIDEO_PRESET);
+          } else {
+            args.push("-c:v", "libx264", "-preset", VIDEO_PRESET, "-tune", "film");
+          }
+
+          if (explicitBv) {
+            args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
+          } else {
+            const crf = br === "auto" || br === "0" ? "23" : "21";
+            args.push("-crf", crf);
+          }
+        }
+
+        if (!useVaapi && targetFps) {
+          args.push("-r", String(targetFps));
+        }
+
+        if (!useVaapi) {
+          args.push(
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-g",
+            "60",
+            "-keyint_min",
+            "60",
+            "-sc_threshold",
+            "0"
+          );
+        } else {
+          args.push(
+            "-movflags", "+faststart",
+            "-g", "60",
+            "-keyint_min", "60",
+            "-sc_threshold", "0"
+          );
+        }
+
+        if (audioCodec === 'copy') {
+                args.push("-c:a", "copy");
+            } else {
+                args.push("-c:a", audioCodec);
+                if (audioCodec === 'flac') {
+                    args.push("-compression_level", "5");
+                } else if (audioBitrate !== 'original' && audioBitrate !== 'lossless') {
+                    args.push("-b:a", audioBitrate);
+                }
+
+                if (audioCodec !== 'copy' && audioCodec !== 'flac') {
+                    if (audioChannels === 'stereo') {
+                        args.push("-ac", "2");
+                    } else if (audioChannels === 'mono') {
+                        args.push("-ac", "1");
+                    }
+                } else if (audioCodec === 'flac' && audioChannels !== 'original') {
+                    args.push("-ac", audioChannels === 'stereo' ? "2" : "1");
+                }
+
+                if (FINAL_SAMPLE_RATE !== null) {
+                    args.push("-ar", String(FINAL_SAMPLE_RATE));
+                }
+            }
       }
     } else {
       switch (format) {
         case "mp3":
           args.push("-id3v2_version", "3");
           if (process.env.WRITE_ID3V1 === "1") args.push("-write_id3v1", "1");
-          if (bitrate === "auto" || bitrate === "0") {
-            args.push("-acodec", "libmp3lame", "-q:a", "0", "-ar", String(SR_NORM));
+          if (bitrate === "auto" || bitrate === "0" || bitrate === "lossless") {
+            args.push(
+              "-acodec",
+              "libmp3lame",
+              "-q:a",
+              "0",
+              "-ar",
+              FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
+            );
           } else {
-            args.push("-acodec", "libmp3lame", "-b:a", bitrate, "-ar", String(SR_NORM));
+            args.push(
+              "-acodec",
+              "libmp3lame",
+              "-b:a",
+              bitrate,
+              "-ar",
+              FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
+            );
           }
           break;
-        case "flac":
-          args.push("-acodec", "flac", "-compression_level", "12", "-ar", String(SR_NORM));
+        case "flac": {
+          let cl = Number(opts?.compressionLevel);
+          if (!Number.isFinite(cl)) cl = 5;
+          cl = Math.max(0, Math.min(12, cl));
+
+          args.push(
+            "-acodec",
+            "flac",
+            "-compression_level",
+            String(cl),
+            "-ar",
+            FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
+          );
+
+          if (bitDepth === "16") {
+            args.push("-sample_fmt", "s16");
+          } else if (bitDepth === "24") {
+            args.push("-sample_fmt", "s32");
+          } else if (bitDepth === "32f") {
+            args.push("-sample_fmt", "flt");
+          }
           break;
-        case "wav":
-          args.push("-acodec", "pcm_s16le", "-ar", String(SR_NORM));
+        }
+        case "wav": {
+          let codec = "pcm_s16le";
+          if (bitDepth === "24") {
+            codec = "pcm_s24le";
+          } else if (bitDepth === "32f") {
+            codec = "pcm_f32le";
+          }
+          args.push("-acodec", codec, "-ar", FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM));
           break;
+        }
         case "ogg":
           if (bitrate === "auto" || bitrate === "0") {
-            args.push("-acodec", "libvorbis", "-q:a", "6", "-ar", String(SR_NORM));
+            args.push(
+              "-acodec",
+              "libvorbis",
+              "-q:a",
+              "6",
+              "-ar",
+              FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
+            );
           } else {
-            args.push("-acodec", "libvorbis", "-b:a", bitrate, "-ar", String(SR_NORM));
+            args.push(
+              "-acodec",
+              "libvorbis",
+              "-b:a",
+              bitrate,
+              "-ar",
+              FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
+            );
           }
           break;
-          case "eac3":
-          case "ac3":
-          args.push("-acodec", format, "-b:a", bitrate, "-ar", String(SR_NORM));
+        case "eac3":
+        case "aac":
+        case "ac3":
+          args.push(
+            "-acodec",
+            format,
+            "-b:a",
+            bitrate,
+            "-ar",
+            FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
+          );
           if (stereoConvert === "force") args.push("-ac", "2");
           break;
       }
     }
+
+    if (stereoConvert === "force") {
+          args.push("-ac", "2");
+        } else if (audioChannels === 'stereo') {
+          args.push("-ac", "2");
+        } else if (audioChannels === 'mono') {
+          args.push("-ac", "1");
+        }
 
     if (!isVideo && atempoAdjust !== "none") {
       const ratioTable = {
@@ -411,12 +705,12 @@ export async function convertMedia(
             x = x / 2.0;
           }
           parts.push(x);
-          return parts.map(v => +v.toFixed(6));
+          return parts.map((v) => +v.toFixed(6));
         };
 
         const chain = splitAtempo(target);
         if (chain.length) {
-          const expr = chain.map(v => `atempo=${v}`).join(",");
+          const expr = chain.map((v) => `atempo=${v}`).join(",");
           args.push("-af", expr);
         }
       }
@@ -501,18 +795,25 @@ export async function convertMedia(
       if (!triedFallback && /ENOENT/i.test(e.message)) {
         triedFallback = true;
         try {
-          ffmpeg = spawn(process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg", args);
+          ffmpeg = spawn(
+            process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
+            args
+          );
           if (typeof opts.onProcess === "function") {
-            try { opts.onProcess(ffmpeg); } catch {}
+            try {
+              opts.onProcess(ffmpeg);
+            } catch {}
           }
-          ffmpeg.stderr.on("data", (d) => {  });
-          ffmpeg.on("close", (code) => { });
+          ffmpeg.stderr.on("data", (d) => {});
+          ffmpeg.on("close", (code) => {});
           ffmpeg.on("error", (e2) => {
             reject(new Error(`FFmpeg spawn error (fallback): ${e2.message}`));
           });
           return;
         } catch (e2) {
-          return reject(new Error(`FFmpeg spawn error (fallback init): ${e2.message}`));
+          return reject(
+            new Error(`FFmpeg spawn error (fallback init): ${e2.message}`)
+          );
         }
       }
       reject(new Error(`FFmpeg spawn error: ${e.message}`));
@@ -526,9 +827,14 @@ export async function convertMedia(
     const includeLyricsFlag = opts.includeLyrics !== false;
 
     console.log(
-      `🔍 Söz kontrolü → eklenecek mi: ${includeLyricsFlag ? "evet" : "hayır"} | video: ${
-        isVideo ? "evet" : "hayır"
-      } | biçim: ${format} | meta: ${[metadata.artist, metadata.title || metadata.track].filter(Boolean).join(" - ")}`
+      `🔍 Söz kontrolü → eklenecek mi: ${
+        includeLyricsFlag ? "evet" : "hayır"
+      } | video: ${isVideo ? "evet" : "hayır"} | biçim: ${format} | meta: ${[
+        metadata.artist,
+        metadata.title || metadata.track
+      ]
+        .filter(Boolean)
+        .join(" - ")}`
     );
 
     if (includeLyricsFlag && !isVideo && result && result.outputPath) {
@@ -575,11 +881,15 @@ export async function convertMedia(
 
         if (lyricsPath) {
           console.log(`✅ Sözler başarıyla eklendi: ${lyricsPath}`);
-          result.lyricsPath = `/download/${encodeURIComponent(path.basename(lyricsPath))}`;
+          result.lyricsPath = `/download/${encodeURIComponent(
+            path.basename(lyricsPath)
+          )}`;
 
           const job = jobs.get(jobId.split("_")[0]);
           if (job) {
-            job.lastLog = `🎼 Söz dosyası eklendi: ${path.basename(lyricsPath)}`;
+            job.lastLog = `🎼 Söz dosyası eklendi: ${path.basename(
+              lyricsPath
+            )}`;
             if (!job.metadata.lyricsStats) {
               job.metadata.lyricsStats = { found: 0, notFound: 0 };
             }
@@ -589,7 +899,9 @@ export async function convertMedia(
           console.log("ℹ️ Söz bulunamadı veya eklenemedi");
           const job = jobs.get(jobId.split("_")[0]);
           if (job) {
-            job.lastLog = `🎼 Söz bulunamadı: ${metadata.title || "Bilinmiyor"}`;
+            job.lastLog = `🎼 Söz bulunamadı: ${
+              metadata.title || "Bilinmiyor"
+            }`;
             if (!job.metadata.lyricsStats) {
               job.metadata.lyricsStats = { found: 0, notFound: 0 };
             }
@@ -605,9 +917,9 @@ export async function convertMedia(
       }
     } else {
       console.log(
-        `⚙️ Söz eklenmedi → eklensin mi: ${includeLyricsFlag ? "evet" : "hayır"} | sebep: ${
-          isVideo ? "Video biçimi" : "Devre dışı"
-        }`
+        `⚙️ Söz eklenmedi → eklensin mi: ${
+          includeLyricsFlag ? "evet" : "hayır"
+        } | sebep: ${isVideo ? "Video biçimi" : "Devre dışı"}`
       );
     }
 

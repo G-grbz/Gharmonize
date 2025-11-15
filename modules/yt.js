@@ -14,6 +14,15 @@ const DEFAULT_HEADERS = getYouTubeHeaders();
 const SKIP_RE = /(private|members\s*only|copyright|blocked|region|geo|not\s+available|unavailable|age[-\s]?restricted|signin|sign\s*in|skipp?ed|removed)/i;
 const ERROR_WORD = /\berror\b/i;
 
+function isBenignSabrWarning(line) {
+  if (!line) return false;
+  const s = String(line);
+  return (
+    /SABR streaming for this client/i.test(s) &&
+    /Some web(?:_safari)? client https formats have been skipped as they are missing a url/i.test(s)
+  );
+}
+
 function headersToArgs(headersObj) {
   const out = [];
   for (const key of ["Referer", "Origin", "Accept-Language"]) {
@@ -480,7 +489,15 @@ export async function downloadYouTubeVideo(
   );
 }
 
-async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progressCallback, opts = {}, ctrl = {}) {
+async function downloadSelectedIds(
+  ytDlpBin,
+  selectedIds,
+  jobId,
+  tempDir,
+  progressCallback,
+  opts = {},
+  ctrl = {}
+) {
   const seenSkip = new Set();
   const listFile = path.join(tempDir, `${jobId}.urls.txt`);
   const urls = idsToWatchUrls(selectedIds);
@@ -496,7 +513,7 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
     return preExisting;
   }
 
-  let args;
+  const totalCount = selectedIds.length;
   let skippedCount = 0;
   let errorsCount = 0;
 
@@ -507,10 +524,12 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
   };
 
   const bumpSkip = (line) => {
+    if (isBenignSabrWarning(line)) return;
     if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
     const key = line.replace(/\s+/g, " ").trim();
     if (seenSkip.has(key)) return;
     seenSkip.add(key);
+
     if (SKIP_RE.test(line)) {
       skippedCount++;
       emitEvent(progressCallback, opts, {
@@ -519,128 +538,128 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
         errorsCount,
         lastLogKey: "log.skippedItem",
         raw: line,
-        jobId: jobId
+        jobId
       });
       updateSkipStats();
       try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
-      return;
-      } else if (ERROR_WORD.test(line)) {
+    } else if (ERROR_WORD.test(line)) {
       errorsCount++;
       updateSkipStats();
       try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
     }
   };
 
+  let args;
+
   if (opts.video) {
     const h = (opts.maxHeight && Number.isFinite(opts.maxHeight)) ? opts.maxHeight : 1080;
     args = [
-      "--ignore-config", "--no-warnings",
-      "--socket-timeout", "15",
-      "--extractor-args", "youtube:player_client=web_safari,web",
-      "--user-agent", DEFAULT_USER_AGENT,
-      ...headersToArgs(DEFAULT_HEADERS),
-      "--no-playlist", "-N", "2",
+      "--force-ipv4",
+      "--no-playlist",
       "--ignore-errors", "--no-abort-on-error",
-      "--http-chunk-size", "16M", "--concurrent-fragments", "2",
-      "--write-thumbnail", "--convert-thumbnails", "jpg",
-      "--continue", "--no-overwrites",
-      "--autonumber-size", "3",
+      "--no-part",
       "--progress", "--newline",
+      "-N", "4",
+      "-f", `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]`,
       "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
-      "-a", listFile,
-      "-f",
-      `b[ext=mp4][height<=${h}]/b[height<=${h}] / (bv*[height<=${h}][ext=mp4]/bv*[height<=${h}] + ba[ext=m4a]/ba) / b`,
-      "--merge-output-format", "mp4",
-      "--extractor-args", "youtube:player_client=web_safari,web"
+      "-a", listFile
     ];
-    const geoNetArgs = addGeoArgs([]);
-    if (geoNetArgs.length) args.push(...geoNetArgs);
-    if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
   } else {
     args = [
       "--ignore-config", "--no-warnings",
       "--socket-timeout", "15",
-      "--extractor-args", "youtube:player_client=android,web",
       "--user-agent", DEFAULT_USER_AGENT,
       ...headersToArgs(DEFAULT_HEADERS),
-      "--no-playlist", "-N", "2",
+      "--no-playlist",
+      "-N", "4",
       "--ignore-errors", "--no-abort-on-error",
-      "--http-chunk-size", "16M", "--concurrent-fragments", "2",
       "--write-thumbnail", "--convert-thumbnails", "jpg",
       "--continue", "--no-overwrites",
       "--autonumber-size", "3",
       "--progress", "--newline",
       "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
       "-a", listFile,
+      "--extractor-args", "youtube:player_client=android,web",
       "-f", "bestaudio/best"
     ];
+
     if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
     const geoNetArgs = addGeoArgs([]);
     if (geoNetArgs.length) args.push(...geoNetArgs);
+
+    const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
+    if (extraEnv) {
+      args.push(...extraEnv.split(/\s+/).filter(Boolean));
+    }
   }
-  if (process.env.YTDLP_ARGS_EXTRA) args.push(...process.env.YTDLP_ARGS_EXTRA.split(/\s+/).filter(Boolean));
 
   return new Promise((resolve, reject) => {
     let stderrBuf = "";
+    let downloadedCount = 0;
+
     const child = spawn(ytDlpBin, args);
     try { registerJobProcess(jobId, child); } catch {}
 
     const abortIfCanceled = () => {
       if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
-        try { child.kill('SIGTERM'); } catch {}
+        try { child.kill("SIGTERM"); } catch {}
         return true;
       }
       return false;
     };
 
-    let downloadedCount = 0;
-    const totalCount = selectedIds.length;
+    const handleLine = (line) => {
+  if (!line) return;
+  if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
 
-    child.stdout.on('data', (data) => {
-    if (abortIfCanceled()) return;
-    const line = data.toString();
-    if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
-    if (line.includes('[download] Destination:')) {
-      downloadedCount++;
-      const progress = (downloadedCount / totalCount) * 100;
-      if (progressCallback) progressCallback(progress);
-      emitEvent(progressCallback, opts, {
-      type: 'file-done',
-      downloaded: downloadedCount,
+  if (line.includes("[download] Destination:")) {
+  const m = line.match(/Destination:\s*(.+)$/i);
+  const dest = m ? m[1].trim() : "";
+
+  const isThumb = /\.(jpe?g|png|webp)$/i.test(dest);
+
+  if (!isThumb) {
+    downloadedCount++;
+    const logicalDone = opts.video
+      ? Math.min(totalCount, Math.ceil(downloadedCount / 2))
+      : Math.min(totalCount, downloadedCount);
+
+    const progress = (logicalDone / totalCount) * 100;
+
+    if (progressCallback) progressCallback(progress);
+    emitEvent(progressCallback, opts, {
+      type: "file-done",
+      downloaded: logicalDone,
       total: totalCount,
       jobId
     });
-    }
-  });
+  }
 
-  child.stderr.on('data', (data) => {
-    if (abortIfCanceled()) return;
-    const line = data.toString();
-    stderrBuf += line;
-    if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
-    if (line.includes('[download] Destination:')) {
-      downloadedCount++;
-      const progress = (downloadedCount / totalCount) * 100;
-      if (progressCallback) progressCallback(progress);
-    }
-  });
+  return;
+}
 
-    child.stderr.on('data', (data) => {
-      if (abortIfCanceled()) return;
-      const line = data.toString();
-      stderrBuf += line;
-      if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
-      if (line.includes('[download]') && line.includes('%')) {
-        const percentMatch = line.match(/(\d+\.\d+)%/);
-        if (percentMatch) {
-          const fileProgress = parseFloat(percentMatch[1]);
-          const overallProgress = (downloadedCount / totalCount) * 100 + (fileProgress / totalCount);
-          if (progressCallback) progressCallback(overallProgress);
-        }
+    const pctMatch = line.match(/(\d+(?:\.\d+)?)%/);
+    if (pctMatch && progressCallback) {
+    const filePct = parseFloat(pctMatch[1]);
+    const overall = (downloadedCount / totalCount) * 100 + (filePct / totalCount);
+        progressCallback(Math.min(100, overall));
       }
+    };
+
+    child.stdout.on("data", (data) => {
+      if (abortIfCanceled()) return;
+      const s = data.toString();
+      s.split(/\r?\n/).forEach(handleLine);
     });
 
-    child.on('close', (code, signal) => {
+    child.stderr.on("data", (data) => {
+      if (abortIfCanceled()) return;
+      const s = data.toString();
+      stderrBuf += s;
+      s.split(/\r?\n/).forEach(handleLine);
+    });
+
+    child.on("close", (code, signal) => {
       try { process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`); } catch {}
       updateSkipStats();
       emitEvent(progressCallback, opts, {
@@ -650,42 +669,49 @@ async function downloadSelectedIds(ytDlpBin, selectedIds, jobId, tempDir, progre
         lastLogKey: "log.skipSummary",
         lastLogVars: { skipped: skippedCount, errors: errorsCount }
       });
-      if (signal === 'SIGTERM' || signal === 'SIGKILL') {
-        return reject(new Error('CANCELED'));
+
+      if (signal === "SIGTERM" || signal === "SIGKILL") {
+        return reject(new Error("CANCELED"));
       }
       if (code === null && /terminated|killed|aborted|SIGTERM|SIGKILL/i.test(stderrBuf)) {
-        return reject(new Error('CANCELED'));
+        return reject(new Error("CANCELED"));
       }
+
       const files = getDownloadedFiles(playlistDir, true);
-  if (files.length > 0) {
-    const finalSkipped = Math.max(0, totalCount - files.length);
-     if (finalSkipped !== skippedCount) {
-       skippedCount = finalSkipped;
-       updateSkipStats();
-     }
-     if (progressCallback) progressCallback(100);
-     return resolve(files);
-  }
+      if (files.length > 0) {
+        const finalSkipped = Math.max(0, totalCount - files.length);
+        if (finalSkipped !== skippedCount) {
+          skippedCount = finalSkipped;
+          updateSkipStats();
+        }
+        if (progressCallback) progressCallback(100);
+        return resolve(files);
+      }
+
       const errorTail = String(stderrBuf).split("\n").slice(-20).join("\n");
       return reject(new Error(`yt-dlp hatası (selected-ids): ${code}\n${errorTail}`));
     });
 
-    child.on('error', (error) => {
+    child.on("error", (error) => {
       reject(new Error(`yt-dlp başlatılamadı: ${error.message}`));
     });
   });
 }
 
 async function downloadStandard(
-  ytDlpBin, url, jobId,
-  isPlaylist, isAutomix, playlistItems,
+  ytDlpBin,
+  url,
+  jobId,
+  isPlaylist,
+  isAutomix,
+  playlistItems,
   tempDir,
   progressCallback = null,
   opts = {},
   ctrl = {}
 ) {
-  const seenSkip = new Set();
   const H = (opts.maxHeight && Number.isFinite(opts.maxHeight)) ? opts.maxHeight : 1080;
+
   const outputTemplate = path.join(
     tempDir,
     isPlaylist || isAutomix
@@ -698,15 +724,6 @@ async function downloadStandard(
     if (fs.existsSync(playlistDir)) {
       const files = getDownloadedFiles(playlistDir, true);
       if (files.length > 0) return files;
-      const declaredTotal =
-     (Array.isArray(playlistItems) && playlistItems.length)
-       ? playlistItems.length
-       : (seenTotal || files.length);
-   const finalSkipped = Math.max(0, declaredTotal - files.length);
-   if (finalSkipped !== skippedCount) {
-     skippedCount = finalSkipped;
-     updateSkipStats();
-   }
     }
   } else {
     const existingSingle = getDownloadedFiles(tempDir, false, jobId);
@@ -716,83 +733,95 @@ async function downloadStandard(
   }
 
   let args;
+
   if (opts.video) {
+    const h = H || 1080;
     args = [
-      "--ignore-config", "--no-warnings",
-      "--socket-timeout", "15",
-      "--extractor-args", "youtube:player_client=web_safari,web",
-      "--user-agent", DEFAULT_USER_AGENT,
-      "--add-header", `Referer: ${DEFAULT_HEADERS["Referer"]}`,
-      "--add-header", `Origin: ${DEFAULT_HEADERS["Origin"]}`,
-      "--add-header", `Accept-Language: ${DEFAULT_HEADERS["Accept-Language"]}`,
+      "--force-ipv4",
       "--progress", "--newline",
-      "-f",
-      `b[ext=mp4][height<=${H}]/b[height<=${H}] / (bv*[height<=${H}][ext=mp4]/bv*[height<=${H}] + ba[ext=m4a]/ba) / b`,
-      "--merge-output-format", "mp4",
-      "--extractor-args", "youtube:player_client=web_safari,web"
-    ];
-    const geoNetArgs = addGeoArgs([]);
-    if (geoNetArgs.length) args.push(...geoNetArgs);
+      "-f", `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]`
+   ];
+
+    if (isPlaylist || isAutomix) {
+      args.push(
+        "--yes-playlist",
+        "--ignore-errors",
+        "--no-abort-on-error",
+        "--no-part",
+        "-N", "4",
+        "-o", outputTemplate
+      );
+
+      if (Array.isArray(playlistItems) && playlistItems.length > 0) {
+        args.push("--playlist-items", playlistItems.join(","));
+      } else {
+        args.push("--playlist-end", "100");
+      }
+    } else {
+      args.push(
+        "--no-playlist",
+        "--no-part",
+        "-o", outputTemplate
+      );
+    }
+
+    args.push(url);
   } else {
     args = [
-      "--progress", "--newline",
-      "-f", "bestaudio/best",
       "--ignore-config", "--no-warnings",
       "--socket-timeout", "15",
       "--extractor-args", "youtube:player_client=android,web",
       "--user-agent", DEFAULT_USER_AGENT,
-      ...headersToArgs(DEFAULT_HEADERS)
+      ...headersToArgs(DEFAULT_HEADERS),
+      "--progress", "--newline",
+      "-f", "bestaudio/best"
     ];
+
     if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
-  }
+    const geoNetArgs = addGeoArgs([]);
+    if (geoNetArgs.length) args.push(...geoNetArgs);
 
-  const geoNetArgs = addGeoArgs([]);
-  if (geoNetArgs.length) args.push(...geoNetArgs);
+    if (isPlaylist || isAutomix) {
+      args.push(
+        "--yes-playlist",
+        "--ignore-errors",
+        "--no-abort-on-error",
+        "--write-thumbnail",
+        "--convert-thumbnails", "jpg",
+        "-N", "4"
+      );
 
-  if (isPlaylist || isAutomix) {
+      if (Array.isArray(playlistItems) && playlistItems.length > 0) {
+        args.push("--playlist-items", playlistItems.join(","));
+      } else {
+        args.push("--playlist-end", "100");
+      }
+    } else {
+      args.push("--no-playlist");
+
+      const audioLimit = process.env.YTDLP_AUDIO_LIMIT_RATE;
+      if (audioLimit) {
+        args.push("--limit-rate", audioLimit);
+      }
+    }
+
     args.push(
-      "--yes-playlist", "--ignore-errors", "--no-abort-on-error",
-      "--write-thumbnail", "--convert-thumbnails", "jpg"
+      "--no-part", "--continue", "--no-overwrites",
+      "--retries", "10",
+      "--fragment-retries", "10",
+      "--retry-sleep", "1",
+      "-o", outputTemplate
     );
 
-    if (Array.isArray(playlistItems) && playlistItems.length > 0) {
-      args.push("--playlist-items", playlistItems.join(","));
-    } else {
-      args.push("--playlist-end", "100");
+    const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
+    if (extraEnv) {
+      args.push(...extraEnv.split(/\s+/).filter(Boolean));
     }
-  } else {
-    args.push("--no-playlist");
+
+    args.push(url);
   }
 
-  args.push(
-    "--no-part", "--continue", "--no-overwrites", "--retries", "10",
-    "--fragment-retries", "10", "--retry-sleep", "1",
-    "-o", outputTemplate
-  );
-
-  if (!isPlaylist && !isAutomix) {
-    if (opts.video) {
-      args.push("--concurrent-fragments", "1", "--limit-rate", "10M");
-    } else {
-      args.push("--concurrent-fragments", "1", "--limit-rate", "2M");
-      if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
-    }
-  }
-
-  if (process.env.YTDLP_ARGS_EXTRA) {
-    args.push(...process.env.YTDLP_ARGS_EXTRA.split(/\s+/).filter(Boolean));
-  }
-
-  if (isAutomix) {
-    args.push("--extractor-args", opts.video ? "youtube:player_client=web_safari,web"
-                                             : "youtube:player_client=android,web");
-  }
-
-  args.push(url);
-
-  const finalArgs = opts.video
-    ? withYT403Workarounds(args, { stripCookies: true })
-    : args;
+  const finalArgs = args;
 
   return new Promise((resolve, reject) => {
     const child = spawn(ytDlpBin, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
@@ -800,7 +829,7 @@ async function downloadStandard(
 
     const abortIfCanceled = () => {
       if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
-        try { child.kill('SIGTERM'); } catch {}
+        try { child.kill("SIGTERM"); } catch {}
         return true;
       }
       return false;
@@ -815,10 +844,8 @@ async function downloadStandard(
     let skippedCount = 0;
     let errorsCount = 0;
     let seenTotal = null;
-    let seenIndex = 0;
-    let curFilePct = 0;
-    let currentFileIndex = 0;
     let downloadedFiles = 0;
+    let curFilePct = 0;
 
     const updateSkipStats = () => {
       if (opts.onSkipUpdate) {
@@ -826,29 +853,13 @@ async function downloadStandard(
       }
     };
 
-    const bumpProgress = () => {
-      if (!progressCallback) return;
-      if (isPlaylist || isAutomix) {
-        const total = seenTotal || (Array.isArray(playlistItems) && playlistItems.length) || 100;
-        const fileProgress = currentFileIndex > 0 ? ((currentFileIndex - 1) / total) * 100 : 0;
-        const currentFileProgress = (curFilePct / 100) * (100 / total);
-        const overall = Math.max(0, Math.min(100, fileProgress + currentFileProgress));
-        progressCallback(overall);
-      } else {
-        progressCallback(Math.max(0, Math.min(100, curFilePct)));
-      }
-    };
-
-    const pctRe = /(\d+(?:\.\d+)?)%/;
-    const itemRe = /Downloading item\s+(\d+)\s+of\s+(\d+)/i;
-    const destinationRe = /\[download\]\s+Destination:\s*(.+)/i;
-    const downloadCompleteRe = /\[download\]\s+(\d+)% of\s+~?\s*(\d+(?:\.\d+)?)(?:\w+)?\s+in\s+/i;
-
     const bumpSkipStd = (line) => {
-    if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
-    const key = line.replace(/\s+/g, " ").trim();
-    if (seenSkip.has(key)) return;
-    seenSkip.add(key);
+      if (isBenignSabrWarning(line)) return;
+      if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
+      const key = line.replace(/\s+/g, " ").trim();
+      if (seenSkip.has(key)) return;
+      seenSkip.add(key);
+
       if (SKIP_RE.test(line)) {
         skippedCount++;
         emitEvent(progressCallback, opts, {
@@ -857,54 +868,102 @@ async function downloadStandard(
           errorsCount,
           lastLogKey: "log.skippedItem",
           raw: line,
-          jobId: jobId
+          jobId
         });
         updateSkipStats();
-        return;
-        } else if (ERROR_WORD.test(line)) {
+        try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
+      } else if (ERROR_WORD.test(line)) {
         errorsCount++;
         updateSkipStats();
         try { process.stderr.write(`\nSKIP_HINT: ${line.trim()}\n`); } catch {}
       }
     };
 
-    const handleLine = (line) => {
-    if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkipStd(line);
-    if (destinationRe.test(line)) {
-      downloadedFiles++;
-      currentFileIndex = downloadedFiles;
+    const seenSkip = new Set();
+    const pctRe = /(\d+(?:\.\d+)?)%/;
+    const itemRe = /Downloading item\s+(\d+)\s+of\s+(\d+)/i;
+    const destinationRe = /\[download\]\s+Destination:/i;
+
+    const bumpProgress = () => {
+      if (!progressCallback) return;
 
       if (isPlaylist || isAutomix) {
-        const total = seenTotal || downloadedFiles;
-        const progress = (downloadedFiles / total) * 100;
-        if (progressCallback) progressCallback(progress);
-        emitEvent(progressCallback, opts, {
-      type: 'file-done',
-      downloaded: downloadedFiles,
-      total: total,
-      jobId
-    });
+        const total = seenTotal || downloadedFiles || 1;
+        const fileProgress = (downloadedFiles / total) * 100;
+        const currentFileProgress = (curFilePct / 100) * (100 / total);
+        const overall = Math.max(0, Math.min(100, fileProgress + currentFileProgress));
+        progressCallback(overall);
       } else {
-        if (progressCallback) progressCallback(100);
+        progressCallback(Math.max(0, Math.min(100, curFilePct)));
+      }
+    };
+
+    const handleLine = (line) => {
+  if (!line) return;
+
+  if (ERROR_WORD.test(line) || SKIP_RE.test(line)) {
+    bumpSkipStd(line);
+  }
+
+  if (destinationRe.test(line)) {
+    const m = line.match(/Destination:\s*(.+)$/i);
+    const dest = (m?.[1] || "").trim();
+
+    if (isPlaylist || isAutomix) {
+      const ext  = path.extname(dest).toLowerCase();
+      const base = path.basename(dest);
+
+      const isThumb   = /\.(jpe?g|png|webp)$/i.test(ext);
+      const isSegment = /\.f\d+\./i.test(base);
+
+      if (isThumb || isSegment) {
+        return;
       }
     }
-    if (itemRe.test(line)) {
-      const m2 = line.match(itemRe);
-      const idx = parseInt(m2[1], 10);
-      const tot = parseInt(m2[2], 10);
-      if (Number.isFinite(tot) && tot > 0) seenTotal = tot;
-      if (Number.isFinite(idx)) {
-        currentFileIndex = idx;
-        seenIndex = Math.max(seenIndex, idx - 1);
+
+    downloadedFiles++;
+    curFilePct = 100;
+
+    if (isPlaylist || isAutomix) {
+      const total = seenTotal || downloadedFiles;
+      if (progressCallback) {
+        const progress = (downloadedFiles / total) * 100;
+        progressCallback(progress);
       }
+      emitEvent(progressCallback, opts, {
+        type: "file-done",
+        downloaded: downloadedFiles,
+        total: seenTotal || downloadedFiles,
+        jobId
+      });
+    } else if (progressCallback) {
+      if (progressCallback) progressCallback(100);
     }
-  };
+    return;
+  }
+
+  const pctMatch = line.match(pctRe);
+  if (pctMatch) {
+    curFilePct = parseFloat(pctMatch[1]) || 0;
+    bumpProgress();
+  }
+
+  const mItem = line.match(itemRe);
+  if (mItem) {
+    const idx = parseInt(mItem[1], 10);
+    const tot = parseInt(mItem[2], 10);
+    if (Number.isFinite(tot) && tot > 0) seenTotal = tot;
+    if (Number.isFinite(idx)) {
+    }
+  }
+};
 
     child.stdout.on("data", (d) => {
       if (abortIfCanceled()) return;
       const s = d.toString();
       s.split(/\r?\n/).forEach(handleLine);
     });
+
     child.stderr.on("data", (d) => {
       if (abortIfCanceled()) return;
       const s = d.toString();
@@ -923,47 +982,57 @@ async function downloadStandard(
         lastLogKey: "log.skipSummary",
         lastLogVars: { skipped: skippedCount, errors: errorsCount }
       });
+
       if (signal === "SIGTERM" || signal === "SIGKILL") {
         return reject(new Error("CANCELED"));
       }
+      if (code === null && /terminated|killed|aborted|SIGTERM|SIGKILL/i.test(stderrBuf)) {
+        return reject(new Error("CANCELED"));
+      }
+
       if (isPlaylist || isAutomix) {
-    const playlistDir = path.join(tempDir, jobId);
-    const files = getDownloadedFiles(playlistDir, true);
-    if (files.length > 0) {
-      const declaredTotal =
-     (Array.isArray(playlistItems) && playlistItems.length)
-       ? playlistItems.length
-       : (seenTotal || files.length);
-   const finalSkipped = Math.max(0, declaredTotal - files.length);
-   if (finalSkipped !== skippedCount) {
-     skippedCount = finalSkipped;
-     updateSkipStats();
-   }
-      if (progressCallback) progressCallback(100);
-      return resolve(files);
-    }
-      if (code !== 0) {
-        const tail = stderrBuf.split("\n").slice(-20).join("\n");
-        return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
+        const playlistDir = path.join(tempDir, jobId);
+        const files = getDownloadedFiles(playlistDir, true);
+        if (files.length > 0) {
+          const declaredTotal =
+            (Array.isArray(playlistItems) && playlistItems.length)
+              ? playlistItems.length
+              : (seenTotal || files.length);
+          const finalSkipped = Math.max(0, declaredTotal - files.length);
+          if (finalSkipped !== skippedCount) {
+            skippedCount = finalSkipped;
+            updateSkipStats();
+          }
+          if (progressCallback) progressCallback(100);
+          return resolve(files);
+        }
+
+        if (code !== 0) {
+          const tail = stderrBuf.split("\n").slice(-20).join("\n");
+          return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
+        }
+        return reject(new Error("Playlist klasörü oluştu ama dosya bulunamadı"));
+      } else {
+        const files = getDownloadedFiles(tempDir, false, jobId);
+        if (files.length > 0) {
+          if (progressCallback) progressCallback(100);
+          return resolve(files[0]);
+        }
+        if (code !== 0) {
+          const tail = stderrBuf.split("\n").slice(-20).join("\n");
+          return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
+        }
+        return reject(new Error("İndirme başarılı görünüyor ama dosya bulunamadı"));
       }
-      return reject(new Error("Playlist klasörü oluştu ama dosya bulunamadı"));
-    } else {
-      const files = getDownloadedFiles(tempDir, false, jobId);
-      if (files.length > 0) {
-        if (progressCallback) progressCallback(100);
-        return resolve(files[0]);
-      }
-      if (code !== 0) {
-        const tail = stderrBuf.split("\n").slice(-20).join("\n");
-        return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
-      }
-      return reject(new Error("İndirme başarılı görünüyor ama dosya bulunamadı"));
-    }
     });
 
-    child.on("error", (err) => reject(new Error(`yt-dlp başlatılamadı: ${err.message}`)));
+    child.on("error", (err) => {
+      clearInterval(cancelTick);
+      reject(new Error(`yt-dlp başlatılamadı: ${err.message}`));
+    });
   });
 }
+
 
 function getDownloadedFiles(directory, isPlaylist = false, jobId = null) {
   if (!fs.existsSync(directory)) return [];
