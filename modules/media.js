@@ -162,7 +162,20 @@ export async function convertMedia(
   const atempoAdjust = opts?.atempoAdjust || "none";
   const bitDepth = opts?.bitDepth || null;
   const videoSettings = opts.videoSettings || {};
-  const videoHwaccel = videoSettings.hwaccel || VIDEO_HWACCEL;
+  let videoHwaccel = videoSettings.hwaccel || VIDEO_HWACCEL;
+
+  const disableQsvInDocker = process.env.DISABLE_QSV_IN_DOCKER === "1";
+  const disableVaapiInDocker = process.env.DISABLE_VAAPI_IN_DOCKER === "1";
+
+  if (disableQsvInDocker && videoHwaccel === "qsv") {
+    console.log("⚠️ Docker: QSV devre dışı, NVENC'e düşülüyor");
+    videoHwaccel = "nvenc";
+  }
+
+  if (disableVaapiInDocker && videoHwaccel === "vaapi") {
+    console.log("⚠️ Docker: VAAPI devre dışı, NVENC'e düşülüyor");
+    videoHwaccel = "nvenc";
+  }
 
   const audioCodec = videoSettings.audioTranscodeEnabled ?
                          videoSettings.audioCodec : 'aac';
