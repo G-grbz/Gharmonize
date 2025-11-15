@@ -1,11 +1,11 @@
-
 <div align="center">
 
-# <img width="128" height="128" alt="Gharmonize Logo" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" /> 
+# <img width="128" height="128" alt="Gharmonize Logo" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" />
+
 # Gharmonize -  YouTube / Spotify Downloader & Converter
+
 <img width="1280" height="720" alt="1" src="https://github.com/user-attachments/assets/65d49371-7844-471f-9486-3680fe2a763e" />
 </div>
- 
 
 # 🇬🇧 English
 
@@ -179,6 +179,8 @@ npm run desktop:build:portable
 npm run desktop:build:all
 ```
 
+---
+
 ## Quick Start (Docker Compose)
 
 ### 1. Clone the Repository and Enter the Directory
@@ -206,6 +208,44 @@ To generate a random `APP_SECRET`:
 
 ```bash
 openssl rand -hex 32
+```
+
+### ⚡ Optional: Enable NVIDIA NVENC (hardware-accelerated video encoding)
+
+If you have an NVIDIA GPU and want to use hardware-accelerated encoding (NVENC) inside the container:
+
+1. Install the proprietary NVIDIA driver on the host.
+2. Install the **NVIDIA Container Toolkit** so Docker can access your GPU.
+3. Update your `docker-compose.yml` service like this:
+
+```yaml
+version: "3.9"
+services:
+  web:
+    image: ggrbz/gharmonize:latest
+    container_name: Gharmonize
+    # Enable access to the NVIDIA GPU
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - NODE_ENV=production
+      - PORT=${PORT:-5174}
+      - YT_FORCE_IPV4=1
+      - YT_APPLY_403_WORKAROUNDS=1
+      - YTDLP_EXTRA=--force-ipv4
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DATA_DIR=/usr/src/app
+    ports:
+      - "${PORT:-5174}:${PORT:-5174}"
+    volumes:
+      - /opt/gharmonize/uploads:/usr/src/app/uploads
+      - /opt/gharmonize/outputs:/usr/src/app/outputs
+      - /opt/gharmonize/temp:/usr/src/app/temp
+      - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
+      - /opt/gharmonize/.env:/usr/src/app/.env
+    restart: unless-stopped
 ```
 
 ### 4. Start with Docker Compose
@@ -259,10 +299,35 @@ docker run -d \
   ggrbz/gharmonize:latest
 ```
 
+### With NVIDIA NVENC (optional)
+
+If you want to run the container with NVENC enabled:
+
+```bash
+docker run -d \
+  --name Gharmonize \
+  --gpus all \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
+  -p 5174:5174 \
+  -e NODE_ENV=production \
+  -e PORT=5174 \
+  -e YT_FORCE_IPV4=1 \
+  -e YT_APPLY_403_WORKAROUNDS=1 \
+  -e YTDLP_EXTRA="--force-ipv4" \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
+  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
+  -v /opt/gharmonize/temp:/usr/src/app/temp \
+  -v /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro \
+  -v /opt/gharmonize/.env:/usr/src/app/.env \
+  ggrbz/gharmonize:latest
+```
+
 > **Note:** Don’t forget to add `ADMIN_PASSWORD` and `APP_SECRET` values to the `.env` file located in `/opt/gharmonize/` directory.
 
 ---
-
 
 ## Notes & Troubleshooting
 
@@ -281,9 +346,7 @@ This project is licensed under the MIT License.
 You are free to use, copy, modify, merge, publish, and distribute this software, provided that:
 
 You credit the original author clearly.
-
 A link to the original repository is included when possible.
-
 Any modifications or changes are clearly indicated.
 
 This software is provided “as is”, without warranty of any kind. Use it at your own responsibility.
@@ -451,6 +514,7 @@ npm run desktop:build:portable
 ```bash
 npm run desktop:build:all
 ```
+
 ---
 
 ## Hızlı Başlangıç (Docker Compose)
@@ -480,6 +544,44 @@ sudo chmod -R a+rw /opt/gharmonize
 
 ```bash
 openssl rand -hex 32
+```
+
+### ⚡ Opsiyonel: NVIDIA NVENC (donanım hızlandırmalı video kodlama)
+
+Eğer sisteminizde bir NVIDIA ekran kartı varsa ve konteyner içinde donanım hızlandırmalı kodlama (NVENC) kullanmak istiyorsanız:
+
+1. Host makinede NVIDIA sürücüsünün yüklü olduğundan emin olun.
+2. **NVIDIA Container Toolkit** kurulu olmalı (Docker’ın GPU’ya erişebilmesi için).
+3. `docker-compose.yml` içindeki servisi aşağıdaki gibi güncelleyin:
+
+```yaml
+version: "3.9"
+services:
+  web:
+    image: ggrbz/gharmonize:latest
+    container_name: Gharmonize
+    # NVIDIA GPU erişimini aç
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - NODE_ENV=production
+      - PORT=${PORT:-5174}
+      - YT_FORCE_IPV4=1
+      - YT_APPLY_403_WORKAROUNDS=1
+      - YTDLP_EXTRA=--force-ipv4
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DATA_DIR=/usr/src/app
+    ports:
+      - "${PORT:-5174}:${PORT:-5174}"
+    volumes:
+      - /opt/gharmonize/uploads:/usr/src/app/uploads
+      - /opt/gharmonize/outputs:/usr/src/app/outputs
+      - /opt/gharmonize/temp:/usr/src/app/temp
+      - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
+      - /opt/gharmonize/.env:/usr/src/app/.env
+    restart: unless-stopped
 ```
 
 ### 4. Docker Compose ile Başlatın
@@ -529,6 +631,32 @@ docker run -d \
   -v /opt/gharmonize/outputs:/usr/src/app/outputs \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
   -v /opt/gharmonize/cookies:/usr/src/app/cookies \
+  -v /opt/gharmonize/.env:/usr/src/app/.env \
+  ggrbz/gharmonize:latest
+```
+
+#### NVIDIA NVENC ile çalıştırmak (opsiyonel)
+
+Konteyneri NVENC aktif olacak şekilde çalıştırmak için:
+
+```bash
+docker run -d \
+  --name Gharmonize \
+  --gpus all \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
+  -p 5174:5174 \
+  -e NODE_ENV=production \
+  -e PORT=5174 \
+  -e YT_FORCE_IPV4=1 \
+  -e YT_APPLY_403_WORKAROUNDS=1 \
+  -e YTDLP_EXTRA="--force-ipv4" \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
+  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
+  -v /opt/gharmonize/temp:/usr/src/app/temp \
+  -v /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   ggrbz/gharmonize:latest
 ```
