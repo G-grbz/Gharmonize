@@ -25,12 +25,16 @@ import {
   extractAutomixPage
 } from "../modules/yt.js";
 
-const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
+const UPLOAD_DIR = path.resolve(BASE_DIR, "uploads");
 const LOCAL_INPUT_DIR = path.resolve(BASE_DIR, process.env.LOCAL_INPUT_DIR || "local-inputs");
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(LOCAL_INPUT_DIR, { recursive: true });
+
+console.log('[jobs] BASE_DIR:', BASE_DIR);
+console.log('[jobs] UPLOAD_DIR:', UPLOAD_DIR);
+console.log('[jobs] LOCAL_INPUT_DIR:', LOCAL_INPUT_DIR);
 
 const DEFAULT_UPLOAD_MAX_BYTES = 1000 * 1024 * 1024;
 const UPLOAD_MAX_BYTES = (() => {
