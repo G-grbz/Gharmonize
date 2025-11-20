@@ -12,6 +12,17 @@ import { resolveMarket } from "../modules/market.js";
 
 const router = express.Router();
 
+const BASE_DIR   = process.env.DATA_DIR || process.cwd();
+const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
+const TEMP_DIR   = path.resolve(BASE_DIR, "temp");
+
+fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+console.log("[spotify] BASE_DIR   =", BASE_DIR);
+console.log("[spotify] OUTPUT_DIR =", OUTPUT_DIR);
+console.log("[spotify] TEMP_DIR   =", TEMP_DIR);
+
 function makeMapId() { return uniqueId("map"); }
 
 router.post("/api/spotify/process/start", async (req, res) => {
@@ -294,8 +305,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
             job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
           },
           fileMeta, itemCover, (format === "mp4"),
-          path.resolve(process.cwd(), "outputs"),
-          path.resolve(process.cwd(), "temp"),
+          OUTPUT_DIR,
+          TEMP_DIR,
           {
             onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
             includeLyrics: !!job.metadata.includeLyrics,
@@ -546,8 +557,8 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
         job.progress = 80 + Math.floor(progress * 0.2);
       },
       fileMeta, itemCover, (format === "mp4"),
-      path.resolve(process.cwd(), "outputs"),
-      path.resolve(process.cwd(), "temp"),
+      OUTPUT_DIR,
+      TEMP_DIR,
       {
         onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
         includeLyrics: !!job.metadata.includeLyrics,
@@ -597,7 +608,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
 }
 
 async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includeLyrics = false) {
-  const outDir = path.resolve(process.cwd(), "outputs");
+  const outDir = OUTPUT_DIR;
   fs.mkdirSync(outDir, { recursive: true });
 
   const safeBase = `${(titleHint || 'playlist')}_${jobId}`
@@ -644,8 +655,7 @@ function cleanupSpotifyTempFiles(jobId, files) {
       });
     }
 
-    const tempDir = path.resolve(process.cwd(), "temp");
-    const jobDir = path.join(tempDir, jobId);
+    const jobDir = path.join(TEMP_DIR, jobId);
     if (fs.existsSync(jobDir)) {
       try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch {}
     }
@@ -696,7 +706,6 @@ router.post("/api/spotify/preview/start", async (req, res) => {
       task.status = "completed";
       if (task.validItems.length > 0) {
         const urls = idsToMusicUrls(task.validItems.map(i => i.id));
-        const TEMP_DIR = path.resolve(process.cwd(), "temp");
         fs.mkdirSync(TEMP_DIR, { recursive: true });
         const listFile = path.join(TEMP_DIR, `${task.id}.urls.txt`);
         fs.writeFileSync(listFile, urls.join("\n"), "utf8");
