@@ -90,6 +90,12 @@ SPOTIFY_FALLBACK_MARKETS=TR,GB,DE,FR
 
 # Server
 PORT=5174
+
+# Local media directory (optional)
+LOCAL_INPUT_DIR=/path/to/local-inputs
+# Optional: If not set, the app will use the default built-in local-inputs directory.
+# Media placed in this folder becomes selectable in the UI without uploading (admin-only).
+
 ```
 
 ---
@@ -242,6 +248,7 @@ services:
       - /opt/gharmonize/uploads:/usr/src/app/uploads
       - /opt/gharmonize/outputs:/usr/src/app/outputs
       - /opt/gharmonize/temp:/usr/src/app/temp
+      - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
       - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
       - /opt/gharmonize/.env:/usr/src/app/.env
     restart: unless-stopped
@@ -272,7 +279,7 @@ sudo chmod -R a+rw /opt/gharmonize
 ### 1. Prepare Folders and Permissions
 
 ```bash
-sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies}
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies,local-inputs}
 sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
 sudo chmod -R a+rw /opt/gharmonize
 ```
@@ -293,6 +300,7 @@ docker run -d \
   -v /opt/gharmonize/uploads:/usr/src/app/uploads \
   -v /opt/gharmonize/outputs:/usr/src/app/outputs \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
+  -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
   -v /opt/gharmonize/cookies:/usr/src/app/cookies \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   ggrbz/gharmonize:latest
