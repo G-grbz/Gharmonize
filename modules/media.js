@@ -333,6 +333,10 @@ export async function convertMedia(
   let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
   basename = sanitizeFilename(basename);
 
+  try {
+    fs.mkdirSync(outputDir, { recursive: true });
+  } catch {}
+
   let outputFileName = `${basename}.${format}`;
   let outputPath = path.join(outputDir, outputFileName);
   let idx = 1;
