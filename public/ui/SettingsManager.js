@@ -1,3 +1,5 @@
+import { modalManager } from './ModalManager.js';
+
 export class SettingsManager {
     constructor() {
         this.tokenKey = "gharmonize_admin_token";
@@ -18,7 +20,7 @@ export class SettingsManager {
 
         const modal = document.createElement('div');
         modal.id = 'settingsModal';
-        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:9999;';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:20;';
         modal.innerHTML = this.getModalHTML();
         document.body.appendChild(modal);
         if (window.i18n?.apply) window.i18n.apply(modal);
@@ -127,7 +129,7 @@ export class SettingsManager {
                         <option value="0">0</option>
                     </select>
                 </div>
-                <div class="form-group">
+                <div class="form-group">c
                     <label for="f_MEDIA_COMMENT" data-i18n="settings.mediaComment">MEDIA_COMMENT</label>
                     <input id="f_MEDIA_COMMENT" type="text" placeholder="Gharmonize" data-i18n-ph="ph.mediaComment">
                 </div>
@@ -357,7 +359,11 @@ export class SettingsManager {
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
 
         } catch (e) {
-            alert(this.t('settings.errorLoading') + ': ' + e.message);
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: (this.t('settings.errorLoading') || 'Ayarlar yüklenemedi.') + ': ' + e.message,
+                type: 'danger'
+            });
         }
     }
 
@@ -410,9 +416,17 @@ export class SettingsManager {
                 throw new Error(e?.error?.message || this.t('errors.saveFailed'));
             }
 
-            alert(this.t('settings.saved') || 'Ayarlar kaydedildi.');
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: this.t('settings.saved') || 'Ayarlar kaydedildi.',
+                type: 'success'
+            });
         } catch (e) {
-            alert(this.t('settings.errorSaving') + ': ' + e.message);
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: (this.t('settings.errorSaving') || 'Ayarlar kaydedilirken hata oluştu.') + ': ' + e.message,
+                type: 'danger'
+            });
         }
     }
 
@@ -423,17 +437,29 @@ export class SettingsManager {
         const newPassword2 = document.getElementById('f_ADMIN_NEW2').value;
 
         if (!oldPassword || !newPassword || !newPassword2) {
-            alert(this.t('settings.errors.fieldsRequired') || 'Tüm alanlar zorunludur.');
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: this.t('settings.errors.fieldsRequired') || 'Tüm alanlar zorunludur.',
+                type: 'warning'
+            });
             return;
         }
 
         if (newPassword !== newPassword2) {
-            alert(this.t('settings.errors.passwordMismatch') || 'Yeni şifreler eşleşmiyor.');
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: this.t('settings.errors.passwordMismatch') || 'Yeni şifreler eşleşmiyor.',
+                type: 'warning'
+            });
             return;
         }
 
         if (String(newPassword).length < 6) {
-            alert(this.t('settings.errors.passwordTooShort') || 'Yeni şifre en az 6 karakter olmalıdır.');
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: this.t('settings.errors.passwordTooShort') || 'Yeni şifre en az 6 karakter olmalıdır.',
+                type: 'warning'
+            });
             return;
         }
 
@@ -464,7 +490,11 @@ export class SettingsManager {
             }
 
             const data = await r.json();
-            alert(this.t('settings.passwordChanged') || 'Şifre güncellendi. Lütfen yeniden giriş yapın.');
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: this.t('settings.passwordChanged') || 'Şifre güncellendi. Lütfen yeniden giriş yapın.',
+                type: 'success'
+            });
 
             if (data.logout) {
                 localStorage.removeItem(this.tokenKey);
@@ -475,7 +505,11 @@ export class SettingsManager {
                 this.showLogin();
             }
         } catch (e) {
-            alert(String(e.message || 'Şifre değiştirilemedi.'));
+            modalManager.showAlert({
+                title: this.t('settings.title') || 'Ayarlar',
+                message: String(e.message || 'Şifre değiştirilemedi.'),
+                type: 'danger'
+            });
         }
     }
 

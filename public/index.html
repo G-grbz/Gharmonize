@@ -37,24 +37,27 @@
     <div class="header">
       <div class="title-section">
         <h1>
-          <a href="https://github.com/G-grbz" target="_blank" rel="noopener noreferrer">
+          <a href="https://github.com/G-grbz/" target="_blank" rel="noopener noreferrer">
             <img src="./src/logo.png" alt="Gharmonize" class="app-logo-large">
           </a>
         </h1>
         <p class="subtitle" data-i18n="app.subtitle">Linkten sese, tek tık: Gharmonize.</p>
       </div>
 
-      <div class="lang-toggle">
-        <button type="button" class="btn-outline" data-lang="tr">TR</button>
-        <button type="button" class="btn-outline" data-lang="en">EN</button>
-        <button type="button" class="btn-outline" data-lang="de">DE</button>
-        <button type="button" class="btn-outline" data-lang="fr">FR</button>
-      </div>
-
       <div class="theme-toggle" id="themeToggle">
         <span class="theme-icon">🌙</span>
         <div class="toggle-switch"></div>
         <span class="theme-icon">☀️</span>
+      </div>
+
+      <div class="language-switcher">
+        <span class="language-label" data-i18n="lang.label">Dil</span>
+        <select id="langSelect" class="language-select" aria-label="Language">
+          <option value="en">English</option>
+          <option value="tr">Türkçe</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Français</option>
+        </select>
       </div>
 
       <button id="settingsBtn" class="btn-outline" data-i18n-title="btn.envSettings">⚙️</button>
@@ -66,27 +69,52 @@
 
     <div class="card-grid">
       <div class="card">
-        <h2 data-i18n="section.output">⚙️ Çıktı Ayarları</h2>
+      <h2 data-i18n="section.file">📁 Dosya Yükle</h2>
+      <form id="fileForm" enctype="multipart/form-data">
         <div class="form-group">
-          <label for="formatSelect" data-i18n="label.format">Format:</label>
-          <select id="formatSelect"></select>
+          <span class="form-label" data-i18n="section.source">Kaynak</span>
+          <div class="source-toggle">
+            <label>
+              <input type="radio" name="fileSourceType" value="upload" checked>
+              <span data-i18n="section.file">Dosya Yükle</span>
+            </label>
+            <label>
+              <input type="radio" name="fileSourceType" value="local">
+              <span data-i18n="section.serverfile">Sunucu Dosyası</span>
+            </label>
+          </div>
         </div>
-        <div class="form-group">
-          <label for="bitrateSelect" data-i18n="label.quality">Kalite:</label>
-          <select id="bitrateSelect"></select>
-        </div>
-        <div class="form-group">
-          <label for="sampleRateSelect" data-i18n="label.sampleRate">Örnekleme Hızı:</label>
-          <select id="sampleRateSelect">
-            <option value="44100" data-i18n="quality.44100">44.1 kHz (CD Kalitesi)</option>
-            <option value="48000" selected data-i18n="quality.48000">48 kHz (Standart)</option>
-            <option value="96000" data-i18n="quality.96000">96 kHz (Yüksek Kalite)</option>
-            <option value="192000" data-i18n="quality.192000">192 kHz (Stüdyo Kalitesi)</option>
-          </select>
-        </div>
-      </div>
 
-      <div class="card">
+        <div id="uploadSourceGroup" class="form-group">
+          <input
+            type="file"
+            id="fileInput"
+            accept="audio/*,video/*"
+            multiple
+          />
+          <small class="muted" data-i18n="ui.multiUploadHint">
+            Birden fazla dosya seçmek için Ctrl / Shift tuşunu kullanabilirsiniz.
+          </small>
+        </div>
+
+        <div id="localSourceGroup" class="form-group" style="display:none;">
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+            <span data-i18n="section.serverfile">Sunucu Dosyaları</span>
+            <button type="button" id="refreshLocalFilesBtn" class="btn-secondary" title="Yenile">↻</button>
+          </div>
+
+          <div id="localFileCheckboxList" class="local-files-list">
+            <div class="local-files-empty" data-i18n="ui.noAuthLocalFiles">
+              Giriş yapılmadı
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary" data-i18n="btn.upload">Dönüştür</button>
+      </form>
+    </div>
+
+    <div class="card">
         <h2 data-i18n="section.url">🔗 URL'den Dönüştür</h2>
         <form id="urlForm">
           <div class="form-group">
@@ -119,15 +147,25 @@
       </div>
 
       <div class="card">
-        <h2 data-i18n="section.file">📁 Dosya Yükle</h2>
-        <form id="fileForm" enctype="multipart/form-data">
-          <div class="form-group">
-            <input type="file" id="fileInput" accept="video,audio" required />
-          </div>
-          <button type="submit" data-i18n="btn.upload">Yükle ve Dönüştür</button>
-        </form>
+        <h2 data-i18n="section.output">⚙️ Çıktı Ayarları</h2>
+        <div class="form-group">
+          <label for="formatSelect" data-i18n="label.format">Format:</label>
+          <select id="formatSelect"></select>
+        </div>
+        <div class="form-group">
+          <label for="bitrateSelect" data-i18n="label.quality">Kalite:</label>
+          <select id="bitrateSelect"></select>
+        </div>
+        <div class="form-group">
+          <label for="sampleRateSelect" data-i18n="label.sampleRate">Örnekleme Hızı:</label>
+          <select id="sampleRateSelect">
+            <option value="44100" data-i18n="quality.44100">44.1 kHz (CD Kalitesi)</option>
+            <option value="48000" selected data-i18n="quality.48000">48 kHz (Standart)</option>
+            <option value="96000" data-i18n="quality.96000">96 kHz (Yüksek Kalite)</option>
+            <option value="192000" data-i18n="quality.192000">192 kHz (Stüdyo Kalitesi)</option>
+          </select>
+        </div>
       </div>
-    </div>
 
     <div class="card collapsible-section" id="spotifyPreviewCard" style="display: none;">
       <div class="collapsible-header" id="spotifyPreviewHeader">

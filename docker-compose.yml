@@ -19,6 +19,7 @@ services:
       - /opt/gharmonize/uploads:/usr/src/app/uploads
       - /opt/gharmonize/outputs:/usr/src/app/outputs
       - /opt/gharmonize/temp:/usr/src/app/temp
+      - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
       - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
       - /opt/gharmonize/.env:/usr/src/app/.env
     restart: unless-stopped

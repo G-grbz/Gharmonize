@@ -39,8 +39,9 @@ const BASE_DIR = process.env.DATA_DIR || process.cwd()
 const UPLOAD_DIR = path.resolve(BASE_DIR, 'uploads')
 const OUTPUT_DIR = path.resolve(BASE_DIR, 'outputs')
 const TEMP_DIR = path.resolve(BASE_DIR, 'temp')
+const LOCAL_INPUTS_DIR = path.resolve(BASE_DIR, 'local-inputs')
 
-for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR]) {
+for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, LOCAL_INPUTS_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 
@@ -126,6 +127,7 @@ checkDependencies().then((results) => {
     console.log(`📁 Uploads: ${UPLOAD_DIR}`)
     console.log(`📁 Outputs: ${OUTPUT_DIR}`)
     console.log(`📁 Temp: ${TEMP_DIR}`)
+    console.log(`📁 Local Inputs: ${LOCAL_INPUTS_DIR}`)
     console.log('⚠️  Dependency Status:')
     console.log(`   ${results.ytDlp ? '✅' : '❌'} yt-dlp - ${results.ytDlp ? 'Available' : 'Required for YouTube support'}`)
     console.log(`   ${results.ffmpeg ? '✅' : '❌'} ffmpeg - ${results.ffmpeg ? 'Available' : 'Required for audio/video processing'}`)

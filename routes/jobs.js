@@ -6,6 +6,7 @@ import multer from "multer";
 import { sendOk, sendError, ERR, isDirectMediaUrl } from "../modules/utils.js";
 import { jobs, spotifyMapTasks, killJobProcesses, createJob } from "../modules/store.js";
 import { processJob } from "../modules/processor.js";
+import { enqueueJob } from "../modules/queue.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import { idsToMusicUrls, searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
@@ -26,6 +27,10 @@ import {
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const BASE_DIR = process.env.DATA_DIR || process.cwd();
+const LOCAL_INPUT_DIR = path.resolve(BASE_DIR, process.env.LOCAL_INPUT_DIR || "local-inputs");
+fs.mkdirSync(LOCAL_INPUT_DIR, { recursive: true });
 
 const DEFAULT_UPLOAD_MAX_BYTES = 1000 * 1024 * 1024;
 const UPLOAD_MAX_BYTES = (() => {
@@ -75,6 +80,113 @@ const upload = multer({
 });
 
 const router = express.Router();
+
+router.get("/api/local-files", requireAuth, (req, res) => {
+  try {
+    const allowedExts = [
+      ".mp3", ".flac", ".wav", ".ogg", ".m4a",
+      ".mp4", ".mkv", ".avi", ".mov", ".dts", ".ac3",
+      ".eac3", ".aac", ".webm"
+    ];
+
+    const items = [];
+
+    function walk(dir, baseDir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          walk(fullPath, baseDir);
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (!allowedExts.includes(ext)) continue;
+
+          let size = 0;
+          try { size = fs.statSync(fullPath).size; } catch {}
+          const relPath = path.relative(baseDir, fullPath);
+
+          items.push({
+            name: relPath,
+            size
+          });
+        }
+      }
+    }
+
+    walk(LOCAL_INPUT_DIR, LOCAL_INPUT_DIR);
+
+    res.json({ items });
+  } catch (e) {
+    console.error("[local-files] error:", e);
+    res.status(500).json({
+      error: { code: "LOCAL_LIST_FAILED", message: e.message || "list failed" }
+    });
+  }
+});
+
+router.post('/api/upload/chunk/cancel', async (req, res) => {
+  try {
+    const { uploadId } = req.body;
+
+    if (!uploadId) {
+      return res.status(400).json({ error: 'uploadId gerekli' });
+    }
+
+    const uploadData = chunkStorage.get(uploadId);
+    if (!uploadData) {
+      return res.status(404).json({ error: 'Upload bulunamadı' });
+    }
+
+    console.log(`🧹 Upload iptal ediliyor: ${uploadId}, ${uploadData.chunks.filter(Boolean).length} chunk temizlenecek`);
+
+    let cleanedCount = 0;
+    for (const chunkInfo of uploadData.chunks) {
+      if (chunkInfo && chunkInfo.path && fs.existsSync(chunkInfo.path)) {
+        try {
+          fs.unlinkSync(chunkInfo.path);
+          cleanedCount++;
+          console.log(`✅ Chunk dosyası silindi: ${chunkInfo.path}`);
+        } catch (error) {
+          console.warn(`❌ Chunk dosyası silinemedi: ${chunkInfo.path}`, error);
+        }
+      }
+    }
+
+    try {
+      const uploadsDir = path.resolve(process.cwd(), "uploads");
+      const files = fs.readdirSync(uploadsDir);
+
+      const uploadFiles = files.filter(file => file.includes(uploadId));
+      for (const file of uploadFiles) {
+        const filePath = path.join(uploadsDir, file);
+        try {
+          fs.unlinkSync(filePath);
+          cleanedCount++;
+          console.log(`✅ Upload dosyası silindi: ${filePath}`);
+        } catch (error) {
+          console.warn(`❌ Upload dosyası silinemedi: ${filePath}`, error);
+        }
+      }
+    } catch (dirError) {
+      console.warn('Uploads klasörü okunamadı:', dirError);
+    }
+
+    chunkStorage.delete(uploadId);
+
+    console.log(`✅ Upload iptal edildi: ${uploadId}, ${cleanedCount} dosya temizlendi`);
+    res.json({
+      success: true,
+      message: 'Upload başarıyla iptal edildi',
+      cleanedCount: cleanedCount
+    });
+
+  } catch (error) {
+    console.error('Upload iptal hatası:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 router.get("/api/jobs/:id", (req, res) => {
   const job = jobs.get(req.params.id);
@@ -126,6 +238,7 @@ router.post("/api/jobs/:id/cancel", (req, res) => {
   job.status = "canceled";
   job.currentPhase = "canceled";
   job.error = null;
+  job.canceledBy = "user";
   try { killJobProcesses(id); } catch {}
 
   try {
@@ -170,9 +283,133 @@ router.post("/api/debug/lyrics", async (req, res) => {
   }
 });
 
+const chunkStorage = new Map();
+
+router.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
+  try {
+    const { chunkIndex, totalChunks, uploadId, originalName } = req.body;
+    const chunk = req.file;
+
+    if (!chunk || !uploadId) {
+      return res.status(400).json({ error: 'Eksik parametreler' });
+    }
+
+    if (!chunkStorage.has(uploadId)) {
+      chunkStorage.set(uploadId, {
+        chunks: new Array(parseInt(totalChunks, 10)),
+        originalName,
+        totalChunks: parseInt(totalChunks, 10),
+        createdAt: Date.now(),
+        writeStream: null,
+        finalPath: null,
+        completedChunks: 0
+      });
+    }
+
+    const uploadData = chunkStorage.get(uploadId);
+    const chunkIndexNum = parseInt(chunkIndex);
+
+    if (chunkIndexNum === 0 && !uploadData.writeStream) {
+      const finalPath = path.join(UPLOAD_DIR, `${uploadId}_${originalName}`);
+      uploadData.writeStream = fs.createWriteStream(finalPath);
+      uploadData.finalPath = finalPath;
+    }
+
+    if (!uploadData.writeStream) {
+      return res.status(500).json({ error: 'Write stream oluşturulamadı' });
+    }
+
+    await new Promise((resolve, reject) => {
+      const rs = fs.createReadStream(chunk.path);
+
+      rs.on('error', (err) => {
+        console.error('Chunk read error:', err);
+        reject(err);
+      });
+
+      rs.pipe(uploadData.writeStream, { end: false });
+
+      rs.on('end', () => {
+        resolve();
+      });
+    });
+
+    try {
+      fs.unlink(chunk.path, () => {});
+    } catch (err) {
+      console.warn('Geçici chunk silinemedi:', chunk.path, err);
+    }
+
+    uploadData.chunks[chunkIndexNum] = { size: chunk.size };
+    uploadData.completedChunks = (uploadData.completedChunks || 0) + 1;
+
+    const completedChunks = uploadData.completedChunks;
+
+    if (completedChunks === uploadData.totalChunks && uploadData.writeStream) {
+      uploadData.writeStream.end();
+
+      uploadData.writeStream.on('finish', () => {
+        console.log(`✅ Tüm chunklar birleştirildi: ${uploadData.finalPath}`);
+      });
+
+      return res.json({
+        success: true,
+        finalPath: uploadData.finalPath,
+        message: 'Dosya başarıyla yüklendi'
+      });
+    }
+
+    const progress = (completedChunks / uploadData.totalChunks) * 100;
+
+    return res.json({
+      success: true,
+      progress,
+      message: `Chunk ${chunkIndexNum + 1}/${totalChunks} yüklendi`
+    });
+
+  } catch (error) {
+    console.error('Chunk upload error:', error);
+
+    const uploadData = chunkStorage.get(req.body.uploadId);
+    if (uploadData && uploadData.writeStream) {
+      uploadData.writeStream.destroy();
+    }
+
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/api/jobs", upload.single("file"), async (req, res) => {
   try {
     const body = req.body || {};
+    const metadata = {};
+
+    const finalUploadPath = body.finalUploadPath;
+    const localPath = body.localPath;
+    let inputPath = null;
+
+    if (finalUploadPath && fs.existsSync(finalUploadPath)) {
+      inputPath = finalUploadPath;
+    } else if (req.file) {
+      inputPath = req.file.path;
+    }
+
+    if (!inputPath && localPath) {
+    let relPath = String(localPath).trim();
+    relPath = relPath.replace(/^[/\\]+/, "");
+    const abs = path.resolve(LOCAL_INPUT_DIR, relPath);
+    if (!abs.startsWith(LOCAL_INPUT_DIR)) {
+      return sendError(res, "INVALID_LOCAL_PATH", "Geçersiz localPath", 400);
+    }
+
+    if (!fs.existsSync(abs)) {
+      return sendError(res, "LOCAL_FILE_NOT_FOUND", "Local dosya bulunamadı", 404);
+    }
+    inputPath = abs;
+    metadata.source = "local";
+    metadata.originalName = path.basename(abs);
+    metadata.localPath = abs;
+  }
 
     const {
       url,
@@ -244,9 +481,6 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     const normalizedBitDepth = validBitDepths.includes(String(bitDepth))
       ? String(bitDepth)
       : null;
-
-    const metadata = {};
-    let inputPath = null;
 
     if (req.file) {
     inputPath = req.file.path;
@@ -424,8 +658,7 @@ else if (isYouTubeUrl(url)) {
       batchTotal = metadata.selectedIndices.length;
     }
 
-    processJob(jobId, inputPath, format, bitrate)
-      .catch((e) => console.error("Job processing error:", e));
+    enqueueJob(jobId, () => processJob(jobId, inputPath, format, bitrate));
 
     return sendOk(res, {
       id: jobId,
@@ -514,6 +747,7 @@ router.get("/api/jobs", requireAuth, (req, res) => {
       skippedCount: j.skippedCount || 0,
       errorsCount: j.errorsCount || 0,
       lastLog: j.lastLog || null,
+      canceledBy: j.canceledBy || null,
       metadata: {
       source: j.metadata?.source,
       isPlaylist: !!j.metadata?.isPlaylist,
@@ -571,6 +805,7 @@ router.get("/api/stream", requireAuth, (req, res) => {
       errorsCount: j.errorsCount || 0,
       playlist: j.playlist || null,
       lastLog: j.lastLog || null,
+      canceledBy: j.canceledBy || null,
       metadata: {
       source: j.metadata?.source,
       isPlaylist: !!j.metadata?.isPlaylist,
@@ -598,5 +833,29 @@ router.get("/api/stream", requireAuth, (req, res) => {
   const iv = setInterval(()=>{ try{ res.write(payload()); }catch{} }, 1000);
   req.on("close", ()=> clearInterval(iv));
 });
+
+function cleanupOldChunks() {
+  const now = Date.now();
+  const MAX_AGE = 2 * 60 * 60 * 1000;
+
+  for (const [uploadId, uploadData] of chunkStorage.entries()) {
+    if (now - uploadData.createdAt > MAX_AGE) {
+      console.log(`🧹 Eski upload temizleniyor: ${uploadId}`);
+      for (const chunkInfo of uploadData.chunks) {
+        if (chunkInfo && chunkInfo.path && fs.existsSync(chunkInfo.path)) {
+          try {
+            fs.unlinkSync(chunkInfo.path);
+          } catch (error) {
+            console.warn(`Eski chunk silinemedi: ${chunkInfo.path}`, error);
+          }
+        }
+      }
+      chunkStorage.delete(uploadId);
+    }
+  }
+}
+
+setInterval(cleanupOldChunks, 30 * 60 * 1000);
+setTimeout(cleanupOldChunks, 5000);
 
 export default router;

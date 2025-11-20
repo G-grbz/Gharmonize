@@ -1,0 +1,222 @@
+export class ModalManager {
+    constructor() {
+        this.modalContainer = null;
+        this.init();
+    }
+
+    init() {
+        const existing = document.getElementById('custom-modal-container');
+        if (existing) {
+            this.modalContainer = existing;
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.id = 'custom-modal-container';
+        container.className = 'custom-modal-backdrop';
+        container.setAttribute('role', 'presentation');
+        container.style.display = 'none';
+
+        document.body.appendChild(container);
+        this.modalContainer = container;
+    }
+
+    showConfirm(options) {
+        return new Promise((resolve) => {
+            const {
+                title = 'Onay',
+                message = 'Emin misiniz?',
+                confirmText = 'Evet',
+                cancelText = 'Hayır',
+                type = 'warning'
+            } = options || {};
+
+            const modal = document.createElement('div');
+            const typeIcons = {
+                warning: '⚠️',
+                info: 'ℹ️',
+                danger: '❌',
+                success: '✅'
+            };
+
+            const typeClass = `custom-modal--${type}`;
+            modal.className = `custom-modal ${typeClass}`;
+
+            modal.innerHTML = `
+                <div class="custom-modal__header">
+                    <div class="custom-modal__icon">${typeIcons[type] || '⚠️'}</div>
+                    <div class="custom-modal__content">
+                        <h3 class="custom-modal__title">
+                            ${this.escapeHtml(title)}
+                        </h3>
+                        <div class="custom-modal__message">
+                            ${this.escapeHtml(message)}
+                        </div>
+                    </div>
+                </div>
+                <div class="custom-modal__footer">
+                    <button class="modal-btn modal-btn-cancel" type="button">
+                        ${this.escapeHtml(cancelText)}
+                    </button>
+                    <button class="modal-btn modal-btn-confirm" type="button">
+                        ${this.escapeHtml(confirmText)}
+                    </button>
+                </div>
+            `;
+
+            const confirmBtn = modal.querySelector('.modal-btn-confirm');
+            const cancelBtn = modal.querySelector('.modal-btn-cancel');
+            const backdrop = this.modalContainer;
+
+            const cleanup = () => {
+                if (modal.parentNode) {
+                    modal.parentNode.removeChild(modal);
+                }
+                if (backdrop && backdrop.children.length === 0) {
+                    backdrop.style.display = 'none';
+                    backdrop.classList.remove('is-open');
+                }
+                document.removeEventListener('keydown', escHandler);
+                backdrop.removeEventListener('click', backdropHandler);
+            };
+
+            const resolveAndCleanup = (value) => {
+                cleanup();
+                resolve(value);
+            };
+
+            const confirmHandler = () => resolveAndCleanup(true);
+            const cancelHandler = () => resolveAndCleanup(false);
+
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    cancelHandler();
+                }
+            };
+
+            const backdropHandler = (e) => {
+                if (e.target === backdrop) {
+                    cancelHandler();
+                }
+            };
+
+            confirmBtn.addEventListener('click', confirmHandler);
+            cancelBtn.addEventListener('click', cancelHandler);
+            document.addEventListener('keydown', escHandler);
+            backdrop.addEventListener('click', backdropHandler);
+
+            if (backdrop) {
+                backdrop.style.display = 'flex';
+                backdrop.classList.add('is-open');
+                backdrop.appendChild(modal);
+            }
+
+            cancelBtn.focus();
+        });
+    }
+
+    showAlert(options) {
+        return new Promise((resolve) => {
+            const {
+                title = 'Bilgi',
+                message = '',
+                buttonText = 'Tamam',
+                type = 'info'
+            } = options || {};
+
+            const modal = document.createElement('div');
+            const typeIcons = {
+                warning: '⚠️',
+                info: 'ℹ️',
+                danger: '❌',
+                success: '✅'
+            };
+
+            const typeClass = `custom-modal--${type}`;
+            modal.className = `custom-modal ${typeClass}`;
+
+            modal.innerHTML = `
+                <div class="custom-modal__header">
+                    <div class="custom-modal__icon">${typeIcons[type] || 'ℹ️'}</div>
+                    <div class="custom-modal__content">
+                        <h3 class="custom-modal__title">
+                            ${this.escapeHtml(title)}
+                        </h3>
+                        <div class="custom-modal__message">
+                            ${this.escapeHtml(message)}
+                        </div>
+                    </div>
+                </div>
+                <div class="custom-modal__footer">
+                    <button class="modal-btn modal-btn-ok" type="button">
+                        ${this.escapeHtml(buttonText)}
+                    </button>
+                </div>
+            `;
+
+            const okBtn = modal.querySelector('.modal-btn-ok');
+            const backdrop = this.modalContainer;
+
+            const cleanup = () => {
+                if (modal.parentNode) {
+                    modal.parentNode.removeChild(modal);
+                }
+                if (backdrop && backdrop.children.length === 0) {
+                    backdrop.style.display = 'none';
+                    backdrop.classList.remove('is-open');
+                }
+                document.removeEventListener('keydown', escHandler);
+                backdrop.removeEventListener('click', backdropHandler);
+            };
+
+            const resolveAndCleanup = () => {
+                cleanup();
+                resolve();
+            };
+
+            const okHandler = () => resolveAndCleanup();
+
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    okHandler();
+                }
+            };
+
+            const backdropHandler = (e) => {
+                if (e.target === backdrop) {
+                    okHandler();
+                }
+            };
+
+            okBtn.addEventListener('click', okHandler);
+            document.addEventListener('keydown', escHandler);
+            backdrop.addEventListener('click', backdropHandler);
+
+            if (backdrop) {
+                backdrop.style.display = 'flex';
+                backdrop.classList.add('is-open');
+                backdrop.appendChild(modal);
+            }
+
+            okBtn.focus();
+        });
+    }
+
+    escapeHtml(str) {
+        if (str == null) return "";
+        const escapeMap = {
+            '&': '&amp;', '<': '&lt;', '>': '&gt;',
+            '"': '&quot;', "'": '&#39;', '`': '&#96;', '=': '&#61;', '/': '&#47;'
+        };
+        return String(str).replace(/[&<>"'`=\/]/g, s => escapeMap[s] || s);
+    }
+
+    destroy() {
+        if (this.modalContainer) {
+            this.modalContainer.remove();
+            this.modalContainer = null;
+        }
+    }
+}
+
+export const modalManager = new ModalManager();

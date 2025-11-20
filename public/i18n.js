@@ -99,6 +99,15 @@
         }
       };
       window.i18n = api;
+      const langSelect = document.getElementById('langSelect');
+      if (langSelect) {
+        langSelect.value = api.lang;
+
+        langSelect.addEventListener('change', (e) => {
+          const nextLang = e.target.value;
+          api.setLang(nextLang);
+        });
+      }
       return api;
     } finally {
       clearTimeout(safety);

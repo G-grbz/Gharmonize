@@ -19,8 +19,9 @@ import { buildId3FromYouTube } from "./tags.js";
 import { probeYoutubeMusicMeta } from "./yt.js";
 import { findSpotifyMetaByQuery } from "./spotify.js";
 
-const OUTPUT_DIR = path.resolve(process.cwd(), "outputs");
-const TEMP_DIR = path.resolve(process.cwd(), "temp");
+const BASE_DIR = process.env.DATA_DIR || process.cwd();
+const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
+const TEMP_DIR = path.resolve(BASE_DIR, "temp");
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -778,12 +779,17 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
     job.resultPath = r;
     try {
-      if (job.metadata?.source === "file" && r?.outputPath) {
+      if (r?.outputPath) {
         const extMap = { mp3: ".mp3", flac: ".flac", wav: ".wav", ogg: ".ogg", mp4: ".mp4" };
         const desiredExt = extMap[format] || ('.' + String(format || 'mp3'));
-        const originalBase = (job.metadata.originalName || "output")
-          .replace(/\.[^.]*$/, "");
-        const safeBase = sanitizeFilename(toNFC(originalBase));
+        let baseTitle =
+          job.metadata?.originalName ||
+          singleMeta?.title ||
+          job.metadata?.extracted?.title ||
+          `job_${jobId}`;
+        baseTitle = baseTitle.replace(/\.[^.]*$/, "");
+        const safeBase = sanitizeFilename(toNFC(baseTitle)) || "output";
+
         let targetName = `${safeBase}${desiredExt}`;
         const currentRel = decodeURIComponent(String(r.outputPath).replace(/^\/download\//, ""));
         const currentAbs = path.join(OUTPUT_DIR, currentRel);
@@ -798,12 +804,15 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             i++;
           }
         }
-        fs.renameSync(currentAbs, targetAbs);
-        job.resultPath = { outputPath: `/download/${encodeURIComponent(targetName)}` };
-        const oldLrc = currentAbs.replace(/\.[^/.]+$/, "") + ".lrc";
-        if (fs.existsSync(oldLrc)) {
-          const newLrc = targetAbs.replace(/\.[^/.]+$/, "") + ".lrc";
-          try { fs.renameSync(oldLrc, newLrc); } catch {}
+
+        if (fs.existsSync(currentAbs)) {
+          fs.renameSync(currentAbs, targetAbs);
+          job.resultPath = { outputPath: `/download/${encodeURIComponent(targetName)}` };
+          const oldLrc = currentAbs.replace(/\.[^/.]+$/, "") + ".lrc";
+          if (fs.existsSync(oldLrc)) {
+            const newLrc = targetAbs.replace(/\.[^/.]+$/, "") + ".lrc";
+            try { fs.renameSync(oldLrc, newLrc); } catch {}
+          }
         }
       }
     } catch (e) {
@@ -905,12 +914,26 @@ function cleanupTempFiles(jobId, originalInputPath, downloadedPath = null) {
     }
 
     if (Array.isArray(downloadedPath)) {
-      downloadedPath.forEach(f => { try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch {} });
+      downloadedPath.forEach(f => {
+        try {
+          if (
+            typeof f === "string" &&
+            fs.existsSync(f) &&
+            f.startsWith(TEMP_DIR + path.sep)
+          ) {
+            fs.unlinkSync(f);
+          }
+        } catch {}
+      });
       const playlistDir = path.join(TEMP_DIR, jobId);
       if (fs.existsSync(playlistDir)) {
         try { fs.rmSync(playlistDir, { recursive: true, force: true }); } catch {}
       }
-    } else if (typeof downloadedPath === "string" && fs.existsSync(downloadedPath)) {
+    } else if (
+      typeof downloadedPath === "string" &&
+      fs.existsSync(downloadedPath) &&
+      downloadedPath.startsWith(TEMP_DIR + path.sep)
+    ) {
       try { fs.unlinkSync(downloadedPath); } catch {}
     }
 

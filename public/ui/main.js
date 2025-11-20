@@ -34,15 +34,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (error) {
         console.error('i18n initialization failed:', error);
     }
-    if (window.i18n?.apply) window.i18n.apply(document.body);
 
-    settingsManager.initialize();
+    if (window.i18n?.apply) {
+        window.i18n.apply(document.body);
+    }
+
+    await settingsManager.initialize();
     jobsPanelManager.initialize();
-    document.getElementById('settingsBtn').addEventListener('click', () => {
-        settingsManager.open();
-    });
 
-    new MediaConverterApp();
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', () => {
+            settingsManager.open();
+        });
+    }
+    const app = new MediaConverterApp();
+    await app.initialize();
     setupCollapsibleSections();
     setupTitlePositioning();
 });

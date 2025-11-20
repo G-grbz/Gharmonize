@@ -454,7 +454,21 @@ export async function convertMedia(
         const br = (bitrate || "").toString().trim();
         const isVidMb = /^[0-9]+(\.[0-9]+)?m$/i.test(br);
         const isVidKb = /^[0-9]+k$/i.test(br);
-        const useHevc = EFFECTIVE_H >= 2160;
+        let targetHeight = 0;
+        if (VIDEO_MAX_H && VIDEO_MAX_H > 0) {
+          targetHeight = VIDEO_MAX_H;
+        }
+        if (!targetHeight && br) {
+          const m = br.match(/(\d{3,4})p/i);
+          if (m) {
+            targetHeight = parseInt(m[1], 10) || 0;
+          }
+        }
+        if (SRC_H && SRC_H > 0 && targetHeight > 0 && SRC_H < targetHeight) {
+          targetHeight = SRC_H;
+        }
+
+        const useHevc = (targetHeight || EFFECTIVE_H) >= 2160;
         const useNvenc = videoHwaccel === "nvenc";
         const useQsv   = videoHwaccel === "qsv";
         const useVaapi = videoHwaccel === "vaapi";
@@ -504,24 +518,34 @@ export async function convertMedia(
             );
           }
         } else if (useVaapi) {
-          const vaapiDevice = videoSettings.vaapiSettings?.device || VAAPI_DEVICE;
+          const vaapiDevice  = videoSettings.vaapiSettings?.device  || VAAPI_DEVICE;
           const vaapiQuality = videoSettings.vaapiSettings?.quality || VAAPI_QUALITY;
           let vaapiFilter = "format=nv12,hwupload";
+
+          if (targetHeight > 0) {
+            vaapiFilter += `,scale_vaapi=w=-2:h=${targetHeight}`;
+          }
+
           if (targetFps) {
             vaapiFilter += `,fps=${targetFps}`;
           }
+
           args.push(
             "-vaapi_device", vaapiDevice,
             "-vf", vaapiFilter,
-            "-c:v", "h264_vaapi"
+            "-c:v", useHevc ? "hevc_vaapi" : "h264_vaapi"
           );
 
           if (explicitBv) {
-            args.push("-b:v", explicitBv);
+            args.push(
+              "-b:v",     explicitBv,
+              "-maxrate", explicitBv,
+              "-bufsize", `${explicitBv}*2`
+            );
           } else {
             args.push("-global_quality", vaapiQuality);
-          }
-        } else {
+            }
+          } else {
           if (useHevc) {
             args.push("-c:v", "libx265", "-preset", VIDEO_PRESET);
           } else {
@@ -534,6 +558,10 @@ export async function convertMedia(
             const crf = br === "auto" || br === "0" ? "23" : "21";
             args.push("-crf", crf);
           }
+        }
+
+        if (!useVaapi && targetHeight > 0) {
+          args.push("-vf", `scale=-2:${targetHeight}`);
         }
 
         if (!useVaapi && targetFps) {
