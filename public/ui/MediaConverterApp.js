@@ -74,8 +74,12 @@ export class MediaConverterApp {
             }
         });
 
+        const fileForm = document.getElementById('fileForm');
+        if (fileForm) {
+            fileForm.addEventListener('submit', (e) => this.uploadManager.handleFileSubmit(e));
+        }
+
         document.getElementById('previewBtn').addEventListener('click', () => this.previewManager.handlePreviewClick());
-        document.getElementById('fileForm').addEventListener('submit', (e) => this.uploadManager.handleFileSubmit(e));
         document.getElementById('convertSelectedBtn').addEventListener('click', () => this.previewManager.convertSelected());
         document.getElementById('convertAllBtn').addEventListener('click', () => this.previewManager.convertAll());
         document.getElementById('selectAllChk').addEventListener('change', (e) => this.previewManager.toggleSelectAll(e.target.checked));
@@ -90,7 +94,10 @@ export class MediaConverterApp {
             this.spotifyManager.startIntegratedSpotifyProcess();
         });
 
-        document.getElementById('urlForm').addEventListener('submit', (e) => this.handleUrlSubmitWithSpinner(e));
+        const urlForm = document.getElementById('urlForm');
+        if (urlForm) {
+            urlForm.addEventListener('submit', (e) => this.handleUrlSubmitWithSpinner(e));
+        }
 
         const startSpotifyBtn = document.getElementById('startSpotifyBtn');
         const convertMatchedBtn = document.getElementById('convertMatchedBtn');
@@ -165,36 +172,12 @@ export class MediaConverterApp {
     }
 
     async loadLocalFiles() {
-    const selectEl = document.getElementById('localFileSelect');
-    const listEl   = document.getElementById('localFileCheckboxList');
-    if (!selectEl && !listEl) return;
+        const selectEl = document.getElementById('localFileSelect');
+        const listEl   = document.getElementById('localFileCheckboxList');
+        if (!selectEl && !listEl) return;
 
-    const token = localStorage.getItem('gharmonize_admin_token') || '';
-    if (!token) {
-        if (selectEl) {
-            selectEl.disabled = true;
-            selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
-        }
-        if (listEl) {
-            listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</div>`;
-        }
-        return;
-    }
-
-    try {
-        if (selectEl) {
-            selectEl.disabled = true;
-            selectEl.innerHTML = `<option value="">${this.t('ui.loading')}...</option>`;
-        }
-        if (listEl) {
-            listEl.innerHTML = `<div class="local-files-loading">${this.t('ui.loading') || 'Yükleniyor'}...</div>`;
-        }
-
-        const res = await fetch('/api/local-files', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-
-        if (res.status === 401) {
+        const token = localStorage.getItem('gharmonize_admin_token') || '';
+        if (!token) {
             if (selectEl) {
                 selectEl.disabled = true;
                 selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
@@ -205,77 +188,107 @@ export class MediaConverterApp {
             return;
         }
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        try {
+            if (selectEl) {
+                selectEl.disabled = true;
+                selectEl.innerHTML = `<option value="">${this.t('ui.loading')}...</option>`;
+            }
+            if (listEl) {
+                listEl.innerHTML = `<div class="local-files-loading">${this.t('ui.loading') || 'Yükleniyor'}...</div>`;
+            }
 
-        const data = await res.json();
-        const items = data.items || [];
-        if (selectEl) {
-            selectEl.disabled = false;
-            selectEl.innerHTML = `<option value="">${this.t('ui.chooseServerFile') || '– Dosya seç –'}</option>`;
-            items.forEach(f => {
-                const opt = document.createElement('option');
-                opt.value = f.name;
-                const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
-                opt.textContent = `${f.name} (${sizeMb} MB)`;
-                selectEl.appendChild(opt);
+            const res = await fetch('/api/local-files', {
+                headers: { 'Authorization': 'Bearer ' + token }
             });
-        }
 
-        if (listEl) {
-            if (!items.length) {
-                listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noServerFiles') || 'Sunucuda dosya bulunamadı'}</div>`;
-            } else {
-                listEl.innerHTML = '';
-                items.forEach((f, idx) => {
-        const id = `local-file-${idx}`;
-        const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
+            if (res.status === 401) {
+                if (selectEl) {
+                    selectEl.disabled = true;
+                    selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
+                }
+                if (listEl) {
+                    listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</div>`;
+                }
+                return;
+            }
 
-        const wrapper = document.createElement('label');
-                wrapper.className = 'local-file-item';
-                wrapper.htmlFor = id;
-                wrapper.innerHTML = `
-                    <input type="checkbox" id="${id}" name="localFileItem" value="${this.escapeHtml(f.name)}">
-                    <span class="local-file-name">${this.escapeHtml(f.name)}</span>
-                    <span class="local-file-size">(${sizeMb} MB)</span>
-                `;
-                listEl.appendChild(wrapper);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+            const data = await res.json();
+            const items = data.items || [];
+
+            if (selectEl) {
+                selectEl.disabled = false;
+                selectEl.innerHTML = `<option value="">${this.t('ui.chooseServerFile') || '– Dosya seç –'}</option>`;
+                items.forEach(f => {
+                    const opt = document.createElement('option');
+                    opt.value = f.name;
+                    const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
+                    opt.textContent = `${f.name} (${sizeMb} MB)`;
+                    selectEl.appendChild(opt);
                 });
             }
-        }
-    } catch (e) {
-        console.error('Local files list error:', e);
 
-        this.showNotification(
-            `${this.t('notif.errorPrefix')}: ${e.message || 'local files'}`,
-            'error',
-            'error'
-        );
+            if (listEl) {
+                if (!items.length) {
+                    listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noServerFiles') || 'Sunucuda dosya bulunamadı'}</div>`;
+                } else {
+                    listEl.innerHTML = '';
+                    items.forEach((f, idx) => {
+                        const id = `local-file-${idx}`;
+                        const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
 
-        if (selectEl) {
-            selectEl.disabled = true;
-            selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
-        }
-        if (listEl) {
-            listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</div>`;
+                        const wrapper = document.createElement('label');
+                        wrapper.className = 'local-file-item';
+                        wrapper.htmlFor = id;
+                        wrapper.innerHTML = `
+                            <input type="checkbox" id="${id}" name="localFileItem" value="${this.escapeHtml(f.name)}">
+                            <span class="local-file-name">${this.escapeHtml(f.name)}</span>
+                            <span class="local-file-size">(${sizeMb} MB)</span>
+                        `;
+                        listEl.appendChild(wrapper);
+                    });
+
+                    const info = document.createElement('div');
+                    info.className = 'multi-select-info';
+                    info.innerHTML = `💡 <strong>${this.t('ui.multiSelectHint') || 'Çoklu seçim:'}</strong> ${this.t('ui.multiSelectInstructions') || 'Birden fazla dosya seçebilirsiniz'}`;
+                    listEl.appendChild(info);
+                }
+            }
+        } catch (e) {
+            console.error('Local files list error:', e);
+
+            this.showNotification(
+                `${this.t('notif.errorPrefix')}: ${e.message || 'local files'}`,
+                'error',
+                'error'
+            );
+
+            if (selectEl) {
+                selectEl.disabled = true;
+                selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
+            }
+            if (listEl) {
+                listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</div>`;
+            }
         }
     }
-}
 
     addSelectionInfo() {
-    const selectEl = document.getElementById('localFileSelect');
-    const parent = selectEl.parentElement;
-    const existingInfo = parent.querySelector('.multi-select-info');
-    if (existingInfo) existingInfo.remove();
+        const selectEl = document.getElementById('localFileSelect');
+        const parent = selectEl.parentElement;
+        const existingInfo = parent.querySelector('.multi-select-info');
+        if (existingInfo) existingInfo.remove();
 
-    const info = document.createElement('div');
-    info.className = 'multi-select-info';
-    info.style.fontSize = '12px';
-    info.style.color = 'var(--text-muted)';
-    info.style.marginTop = '8px';
-    info.innerHTML = `💡 <strong>${this.t('ui.multiSelectHint') || 'Çoklu seçim için:'}</strong> ${this.t('ui.multiSelectInstructions') || 'Ctrl (Windows) veya Cmd (Mac) tuşuna basarak birden fazla dosya seçebilirsiniz.'}`;
+        const info = document.createElement('div');
+        info.className = 'multi-select-info';
+        info.style.fontSize = '12px';
+        info.style.color = 'var(--text-muted)';
+        info.style.marginTop = '8px';
+        info.innerHTML = `💡 <strong>${this.t('ui.multiSelectHint') || 'Çoklu seçim için:'}</strong> ${this.t('ui.multiSelectInstructions') || 'Ctrl (Windows) veya Cmd (Mac) tuşuna basarak birden fazla dosya seçebilirsiniz.'}`;
 
-    parent.appendChild(info);
-}
+        parent.appendChild(info);
+    }
 
     onPlaylistToggle(isChecked) {
         if (isChecked) {
@@ -319,9 +332,9 @@ export class MediaConverterApp {
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
 
         if ((format === 'eac3' || format === 'ac3' || format === 'aac') && !sampleRate) {
-         this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
-         return;
-     }
+            this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
+            return;
+        }
 
         if (this.isSpotifyUrl(url)) {
             if (!this.spotifyManager.currentSpotifyTask.completed) {

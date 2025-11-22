@@ -47,11 +47,18 @@ function mergeMeta(base, extra) {
   return base;
 }
 
+function isVideoFormat(fmt) {
+  const f = String(fmt || "").toLowerCase();
+  return f === "mp4" || f === "mkv";
+}
+
 export async function processJob(jobId, inputPath, format, bitrate) {
   try { killJobProcesses(jobId); } catch {}
 
   const job = jobs.get(jobId);
   if (!job) return;
+
+  const selectedStreams = job.metadata?.selectedStreams || {};
 
   job.canceled = false;
 
@@ -111,9 +118,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     job.currentPhase = "preparing";
     job.metadata = job.metadata || {};
     job.counters = job.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 };
-    const isVideoFormat = format === "mp4";
+    const isVideoFormatFlag = isVideoFormat(format);
 
-    if (isVideoFormat && job.metadata?.source === "youtube") {
+      if (isVideoFormatFlag && job.metadata?.source === "youtube") {
       await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
 
       try {
@@ -184,7 +191,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
         },
         {
-          video: (format === "mp4"),
+          video: isVideoFormat(format),
           onSkipUpdate: handleSkipUpdate,
           maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
         },
@@ -264,7 +271,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             },
             fileMeta,
             itemCover,
-            (format === "mp4"),
+            isVideoFormat(format),
             OUTPUT_DIR,
             TEMP_DIR,
             {
@@ -280,6 +287,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               onLyricsStats: handleLyricsStats,
               stereoConvert: job.metadata?.stereoConvert || "auto",
               atempoAdjust: job.metadata?.atempoAdjust || "none",
+              selectedStreams: job.metadata.selectedStreams,
               videoSettings: job.videoSettings || {}
             }
           );
@@ -437,7 +445,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
         },
           {
-            video: (format === "mp4"),
+            video: isVideoFormat(format),
             onSkipUpdate: handleSkipUpdate,
             maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
           },
@@ -621,7 +629,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               },
               fileMeta,
               itemCover,
-              (format === "mp4"),
+              isVideoFormat(format),
               OUTPUT_DIR,
               TEMP_DIR,
               {
@@ -695,7 +703,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
         },
         {
-          video: (format === "mp4"),
+          video: isVideoFormat(format),
           onSkipUpdate: handleSkipUpdate,
           maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
         },
@@ -759,7 +767,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             __maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
           },
           coverPath,
-          isVideo,
+          isVideoFormat(format),
           OUTPUT_DIR,
           TEMP_DIR,
           {
@@ -772,6 +780,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             onLog: handleLyricsLog,
             onLyricsStats: handleLyricsStats,
             stereoConvert: job.metadata?.stereoConvert || "auto",
+            selectedStreams: job.metadata.selectedStreams,
             atempoAdjust: job.metadata?.atempoAdjust || "none",
             videoSettings: job.videoSettings || {}
           }

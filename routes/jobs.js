@@ -11,6 +11,7 @@ import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import { idsToMusicUrls, searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js";
+import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modules/probe.js";
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
 import "dotenv/config";
 import {
@@ -129,6 +130,81 @@ router.get("/api/local-files", requireAuth, (req, res) => {
     });
   }
 });
+
+ router.post("/api/probe/file", upload.single("file"), async (req, res) => {
+   try {
+     if (!req.file) {
+       return res.status(400).json({ error: "Dosya gerekli" });
+     }
+
+     const probeData = await probeMediaFile(req.file.path);
+     const streams = parseStreams(probeData);
+     const defaultSelection = getDefaultStreamSelection(streams);
+
+     try {
+       fs.unlinkSync(req.file.path);
+     } catch (e) {
+     }
+
+     res.json({
+       success: true,
+       streams,
+       defaultSelection
+     });
+   } catch (error) {
+     console.error("Probe hatası:", error);
+
+     if (req.file) {
+       try {
+         fs.unlinkSync(req.file.path);
+       } catch (e) {
+       }
+     }
+
+     res.status(500).json({
+       success: false,
+       error: error.message
+     });
+   }
+ });
+
+ router.post("/api/probe/local", requireAuth, async (req, res) => {
+   try {
+     const { localPath } = req.body;
+
+     if (!localPath) {
+       return res.status(400).json({ error: "localPath gerekli" });
+     }
+
+     let relPath = String(localPath).trim();
+     relPath = relPath.replace(/^[/\\]+/, "");
+     const abs = path.resolve(LOCAL_INPUT_DIR, relPath);
+
+     if (!abs.startsWith(LOCAL_INPUT_DIR)) {
+       return res.status(400).json({ error: "Geçersiz localPath" });
+     }
+
+     if (!fs.existsSync(abs)) {
+       return res.status(404).json({ error: "Dosya bulunamadı" });
+     }
+
+     const probeData = await probeMediaFile(abs);
+     const streams = parseStreams(probeData);
+     const defaultSelection = getDefaultStreamSelection(streams);
+
+     res.json({
+       success: true,
+       streams,
+       defaultSelection
+     });
+   } catch (error) {
+     console.error("Local probe hatası:", error);
+     res.status(500).json({
+       success: false,
+       error: error.message
+     });
+   }
+ });
 
 router.post('/api/upload/chunk/cancel', async (req, res) => {
   try {
@@ -430,8 +506,22 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       includeLyrics = false,
       stereoConvert = "auto",
       atempoAdjust = "none",
-      videoSettings: rawVideoSettings
+      videoSettings: rawVideoSettings,
+      selectedStreams
     } = body;
+
+    let selectedStreamsParsed = null;
+    if (selectedStreams) {
+      if (typeof selectedStreams === "string") {
+        try {
+          selectedStreamsParsed = JSON.parse(selectedStreams);
+        } catch (e) {
+          console.warn("selectedStreams JSON parse edilemedi:", e.message);
+        }
+      } else if (typeof selectedStreams === "object") {
+        selectedStreamsParsed = selectedStreams;
+      }
+    }
 
     const parseSR = (v) => {
       if (v == null) return NaN;
@@ -472,11 +562,11 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
 
     const parsedVideoSettings = parseVideoSettings(rawVideoSettings);
     const effectiveVideoSettings =
-      format === "mp4" && parsedVideoSettings
+      (format === "mp4" || format === "mkv") && parsedVideoSettings
         ? parsedVideoSettings
         : null;
 
-    const supported = ["mp3","flac","wav","ogg","mp4","eac3","ac3","aac"];
+    const supported = ["mp3","flac","wav","ogg","mp4","mkv","eac3","ac3","aac"];
     if (!supported.includes(format)) {
       return sendError(res, ERR.INVALID_FORMAT, "Unsupported format", 400);
     }
@@ -649,7 +739,8 @@ else if (isYouTubeUrl(url)) {
         includeLyrics: includeLyrics === true || includeLyrics === "true",
         stereoConvert: stereoConvert,
         atempoAdjust: atempoAdjust,
-        compressionLevel: normalizedCompressionLevel
+        compressionLevel: normalizedCompressionLevel,
+        selectedStreams: selectedStreamsParsed
       },
       resultPath: null,
       error: null,

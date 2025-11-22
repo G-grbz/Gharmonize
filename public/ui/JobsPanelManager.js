@@ -1254,6 +1254,12 @@ export class JobManager {
             } else {
             }
 
+            if (payload.selectedStreams && !isFormData) {
+                payload.selectedStreams = JSON.stringify(payload.selectedStreams);
+            } else if (payload.selectedStreams && isFormData) {
+                payload.append('selectedStreams', JSON.stringify(payload.selectedStreams));
+            }
+
             if (format === 'eac3' || format === 'ac3' || format === 'aac') {
                 const stereoConvert = document.getElementById('stereoConvertSelect')?.value || 'auto';
                 const atempoAdjust = document.getElementById('atempoSelect')?.value || 'none';

@@ -162,6 +162,21 @@ export async function convertMedia(
   const atempoAdjust = opts?.atempoAdjust || "none";
   const bitDepth = opts?.bitDepth || null;
   const videoSettings = opts.videoSettings || {};
+  const selectedStreams = opts.selectedStreams || null;
+  const selectedAudioStreams = Array.isArray(selectedStreams?.audio)
+    ? selectedStreams.audio
+    : [];
+  const selectedSubtitleStreams = Array.isArray(selectedStreams?.subtitles)
+    ? selectedStreams.subtitles
+    : [];
+  const hasVideoFlag =
+    typeof selectedStreams?.hasVideo === "boolean"
+      ? selectedStreams.hasVideo
+      : isVideo;
+
+      const audioLanguageMap = selectedStreams?.audioLanguages || null;
+      const subtitleLanguageMap = selectedStreams?.subtitleLanguages || null;
+
   let videoHwaccel = videoSettings.hwaccel || VIDEO_HWACCEL;
 
   const disableQsvInDocker = process.env.DISABLE_QSV_IN_DOCKER === "1";
@@ -453,34 +468,98 @@ export async function convertMedia(
     }
 
     if (isVideo) {
-      if (format === "mp4") {
-        console.log(`🎬 Video Transcode: ${videoSettings.transcodeEnabled ? 'AKTİF' : 'PASİF'}`);
-        const br = (bitrate || "").toString().trim();
-        const isVidMb = /^[0-9]+(\.[0-9]+)?m$/i.test(br);
-        const isVidKb = /^[0-9]+k$/i.test(br);
-        let targetHeight = 0;
-        if (VIDEO_MAX_H && VIDEO_MAX_H > 0) {
-          targetHeight = VIDEO_MAX_H;
-        }
-        if (!targetHeight && br) {
-          const m = br.match(/(\d{3,4})p/i);
-          if (m) {
-            targetHeight = parseInt(m[1], 10) || 0;
+      if (hasVideoFlag) {
+    args.push("-map", "0:v:0");
+  } else {
+    args.push("-vn");
+  }
+
+  if (selectedAudioStreams.length > 0) {
+    selectedAudioStreams.forEach((aIdx) => {
+      if (Number.isInteger(aIdx) && aIdx >= 0) {
+        args.push("-map", `0:${aIdx}`);
+      }
+    });
+  } else {
+    args.push("-map", "0:a:0");
+  }
+
+  if (selectedSubtitleStreams.length > 0) {
+    selectedSubtitleStreams.forEach((sIdx, i) => {
+      if (Number.isInteger(sIdx) && sIdx >= 0) {
+        args.push("-map", `0:${sIdx}`);
+      }
+      if (i === 0) {
+        args.push("-disposition:s:0", "default");
+      }
+    });
+
+    if (format === "mp4") {
+      args.push("-c:s", "mov_text");
+    } else {
+      args.push("-c:s", "copy");
+    }
+  }
+
+  if (selectedStreams) {
+    if (Array.isArray(selectedAudioStreams) && audioLanguageMap) {
+      let outAudioIndex = 0;
+      if (selectedAudioStreams.length > 0) {
+        for (const srcIdx of selectedAudioStreams) {
+          const lang = audioLanguageMap[srcIdx];
+          if (lang && lang !== "und") {
+            const normLang = String(lang).trim().toLowerCase().slice(0, 3);
+            if (normLang) {
+              args.push(`-metadata:s:a:${outAudioIndex}`, `language=${normLang}`);
+            }
           }
+          outAudioIndex++;
         }
-        if (SRC_H && SRC_H > 0 && targetHeight > 0 && SRC_H < targetHeight) {
-          targetHeight = SRC_H;
-        }
+      } else {
+      }
+    }
 
-        const useHevc = (targetHeight || EFFECTIVE_H) >= 2160;
-        const useNvenc = videoHwaccel === "nvenc";
-        const useQsv   = videoHwaccel === "qsv";
-        const useVaapi = videoHwaccel === "vaapi";
-
-        let explicitBv = null;
-        if (isVidMb || isVidKb) {
-          explicitBv = isVidMb ? br.replace(/m$/i, "M") : br;
+    if (Array.isArray(selectedSubtitleStreams) && subtitleLanguageMap) {
+      let outSubIndex = 0;
+      if (selectedSubtitleStreams.length > 0) {
+        for (const srcIdx of selectedSubtitleStreams) {
+          const lang = subtitleLanguageMap[srcIdx];
+          if (lang && lang !== "und") {
+            const normLang = String(lang).trim().toLowerCase().slice(0, 3);
+            if (normLang) {
+              args.push(`-metadata:s:s:${outSubIndex}`, `language=${normLang}`);
+            }
+          }
+          outSubIndex++;
         }
+      }
+    }
+  }
+
+  if (format === "mp4" || format === "mkv") {
+    console.log(`🎬 Video Transcode: ${videoSettings.transcodeEnabled ? 'AKTİF' : 'PASİF'}`);
+    const br = (bitrate || "").toString().trim();
+    const isVidMb = /^[0-9]+(\.[0-9]+)?m$/i.test(br);
+    const isVidKb = /^[0-9]+k$/i.test(br);
+    let targetHeight = 0;
+    if (VIDEO_MAX_H && VIDEO_MAX_H > 0) targetHeight = VIDEO_MAX_H;
+    if (!targetHeight && br) {
+      const m = br.match(/(\d{3,4})p/i);
+      if (m) targetHeight = parseInt(m[1], 10) || 0;
+    }
+    if (SRC_H && SRC_H > 0 && targetHeight > 0 && SRC_H < targetHeight) {
+      targetHeight = SRC_H;
+    }
+
+    const useHevc = (targetHeight || EFFECTIVE_H) >= 2160;
+    const useNvenc = videoHwaccel === "nvenc";
+    const useQsv   = videoHwaccel === "qsv";
+    const useVaapi = videoHwaccel === "vaapi";
+
+    let explicitBv = null;
+    if (isVidMb || isVidKb) {
+      explicitBv = isVidMb ? br.replace(/m$/i, "M") : br;
+    }
 
         if (useNvenc) {
           const nvencPreset = videoSettings.nvencSettings?.preset || NVENC_PRESET;
