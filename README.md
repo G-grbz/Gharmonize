@@ -24,24 +24,48 @@
 
 ## Overview
 
-**Gharmonize** is a Node.js + ffmpeg powered server that can:
+**Gharmonize** is a media automation toolkit that runs as a Node.js server with an optional Electron desktop shell. 
 
-* Parse YouTube / YouTube Music links (single, playlist, automix)
-* Map Spotify tracks, playlists, and albums to YouTube and download
-* Convert to **mp3 / flac / wav / ogg**, or save **mp4** without re-encoding
-* Embed tags & cover art when available
-* Provide a minimal web UI and JSON API
+Gharmonize bundles several third-party command-line tools (FFmpeg/FFprobe, MKVToolNix tools, yt-dlp) to provide reliable downloading, ripping and transcoding.  
+For detailed license information, see the **Third-Party Licenses** section and the `LICENSES.md` file in this repository.
 
 ---
 
 ## Features
 
-* **yt-dlp** integration (SABR / 403 workarounds)
-* **ffmpeg** conversion with reliability
-* **Multer** for file uploads
-* **Docker** image & Compose setup
-* **Spotify Web API** support (playlist / album / track)
-* **Settings API** for runtime config changes
+* **YouTube & YouTube Music**
+  * yt-dlp integration with SABR / 403 workarounds
+  * Support for single videos, playlists, and mixes
+  * Customizable yt-dlp arguments via environment variables
+
+* **Spotify Integration**
+  * Spotify Web API support (track / playlist / album)
+  * Automatic mapping from Spotify items to YouTube
+  * Optional preference for Spotify metadata when tagging
+
+* **Disc Ripping (DRM-free only)**
+  * Rip non-DRM optical discs (e.g., DVD/Blu-ray) into audio/video files
+  * Uses ffmpeg and MKVToolNix tools under the hood
+  * Disc analysis and stream selection via the web UI
+
+* **Audio & Video Conversion**
+  * ffmpeg-based conversion with focus on reliability
+  * Convert to **mp3 / flac / wav / ogg**, or pass through **mp4** without re-encoding when possible
+  * Ready-made **FPS adjustment presets** for **AC3 / EAC3 / AAC** audio to fix or prevent sync issues
+  * Transcode arbitrary local video files with hardware acceleration:
+    * **NVIDIA NVENC**
+    * **VAAPI**
+    * **Intel Quick Sync (QSV)**
+
+* **Local & Uploaded Media**
+  * File uploads handled via **Multer**
+  * Optional local media directory (`LOCAL_INPUT_DIR`) for selecting files without uploading
+  * Admin-only access for local inputs
+
+* **Deployment & Config**
+  * Docker image & Docker Compose setup
+  * Settings API for runtime configuration from the UI
+  * `.env`-driven configuration for server, YouTube, Spotify and processing behavior
 
 ---
 
@@ -348,19 +372,37 @@ docker run -d \
 
 ## License
 
-**MIT License**
+This project (Gharmonize’s own source code) is licensed under the **MIT License**.
 
-This project is licensed under the MIT License.
+See the [LICENSE](./LICENSE) file for the full text.
 
-You are free to use, copy, modify, merge, publish, and distribute this software, provided that:
+---
 
-You credit the original author clearly.
+## Third-Party Licenses
 
-A link to the original repository is included when possible.
+Gharmonize bundles several third-party command-line tools in its desktop and Docker builds:
 
-Any modifications or changes are clearly indicated.
+- **FFmpeg / FFprobe**
+- **MKVToolNix** tools:
+  - `mkvmerge`
+  - `mkvextract`
+  - `mkvinfo`
+  - `mkvpropedit`
+- **yt-dlp**
 
-This software is provided “as is”, without warranty of any kind.
-Use it at your own responsibility.
+These tools are *not* licensed under MIT. They keep their original licenses:
+
+- FFmpeg / FFprobe → GNU GPL/LGPL (depending on the specific build)
+- MKVToolNix tools → GNU General Public License v2 (GPLv2)
+- yt-dlp → The Unlicense (public domain)
+
+Detailed license texts are included in the distributed builds under:
+
+- `build/licenses/FFmpeg-LICENSE.txt`
+- `build/licenses/MKVToolNix-GPLv2.txt`
+- `build/licenses/yt-dlp-Unlicense.txt`
+
+For a human-readable summary, see also: `LICENSES.md`.
+.
 
 ---
