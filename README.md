@@ -276,6 +276,8 @@ services:
       - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
       - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
       - /opt/gharmonize/.env:/usr/src/app/.env
+      - /home:/home:ro
+      - /run/media:/run/media:ro
     restart: unless-stopped
 ```
 
@@ -326,8 +328,10 @@ docker run -d \
   -v /opt/gharmonize/outputs:/usr/src/app/outputs \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
   -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
-  -v /opt/gharmonize/cookies:/usr/src/app/cookies \
+  -v /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
+  -v /home:/home:ro \
+  -v /run/media:/run/media:ro \
   ggrbz/gharmonize:latest
 ```
 
