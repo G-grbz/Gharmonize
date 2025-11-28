@@ -6,6 +6,7 @@ import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./ca
 import { findOnPATH, isExecutable, toNFC } from "./utils.js";
 import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
 import "dotenv/config";
+import { YTDLP_BIN as BINARY_YTDLP_BIN } from "./binaries.js";
 
 export const YT_USE_MUSIC = FLAGS.USE_MUSIC;
 const DEFAULT_TIMEOUT = 30000;
@@ -86,21 +87,34 @@ export const isYouTubeAutomix = (url) =>
 
 export function resolveYtDlp() {
   const fromEnv = process.env.YTDLP_BIN;
-  if (fromEnv && isExecutable(fromEnv)) return fromEnv;
+  if (fromEnv && isExecutable(fromEnv)) {
+    return fromEnv;
+  }
 
-  const commonPaths = [
-    "/usr/local/bin/yt-dlp",
-    "/usr/bin/yt-dlp",
-    path.join(process.env.HOME || "", ".local/bin/yt-dlp")
-  ];
+  if (BINARY_YTDLP_BIN && isExecutable(BINARY_YTDLP_BIN)) {
+    return BINARY_YTDLP_BIN;
+  }
 
-  for (const path of commonPaths) {
-    if (path && isExecutable(path)) return path;
+  if (process.platform !== "win32") {
+    const commonPaths = [
+      "/usr/local/bin/yt-dlp",
+      "/usr/bin/yt-dlp",
+      path.join(process.env.HOME || "", ".local/bin/yt-dlp")
+    ];
+
+    for (const p of commonPaths) {
+      if (p && isExecutable(p)) return p;
+    }
   }
 
   const fromPATH = findOnPATH(process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
-  return fromPATH || null;
+  if (fromPATH && isExecutable(fromPATH)) {
+    return fromPATH;
+  }
+
+  return null;
 }
+
 
 export function idsToMusicUrls(ids) {
   return ids.map(id => YT_USE_MUSIC ?

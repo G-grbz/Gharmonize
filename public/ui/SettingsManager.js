@@ -129,7 +129,7 @@ export class SettingsManager {
                         <option value="0">0</option>
                     </select>
                 </div>
-                <div class="form-group">c
+                <div class="form-group">
                     <label for="f_MEDIA_COMMENT" data-i18n="settings.mediaComment">MEDIA_COMMENT</label>
                     <input id="f_MEDIA_COMMENT" type="text" placeholder="Gharmonize" data-i18n-ph="ph.mediaComment">
                 </div>

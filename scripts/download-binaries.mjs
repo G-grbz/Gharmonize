@@ -125,7 +125,9 @@ function createProgressBar(toolName) {
     const empty = barLength - filled;
     const bar = '█'.repeat(filled) + '░'.repeat(empty);
 
-    const sizeInfo = total ? `(${(downloaded / 1024 / 1024).toFixed(1)}MB/${(total / 1024 / 1024).toFixed(1)}MB)` : `(${(downloaded / 1024 / 1024).toFixed(1)}MB)`;
+    const sizeInfo = total
+      ? `(${(downloaded / 1024 / 1024).toFixed(1)}MB/${(total / 1024 / 1024).toFixed(1)}MB)`
+      : `(${(downloaded / 1024 / 1024).toFixed(1)}MB)`;
 
     process.stdout.write(`\r${toolName}: [${bar}] ${percent}% ${sizeInfo}`);
 
@@ -146,14 +148,23 @@ function run(cmd, args) {
   });
 }
 
-async function extractTarXZ(archivePath, outputDir, findName) {
+async function extractTarXZ(archivePath, outputDir) {
   await run('tar', ['-xf', archivePath, '-C', outputDir]);
-  return findFileRecursive(outputDir, findName);
 }
 
-async function extractZip(zipPath, outputDir, findName) {
-  await run('unzip', ['-o', zipPath, '-d', outputDir]);
-  return findFileRecursive(outputDir, findName);
+async function extractZip(zipPath, outputDir) {
+  if (PLATFORM === 'win32') {
+    const psArgs = [
+      '-NoLogo',
+      '-NoProfile',
+      '-Command',
+      `Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${outputDir}' -Force`
+    ];
+
+    await run('powershell', psArgs);
+  } else {
+    await run('unzip', ['-o', zipPath, '-d', outputDir]);
+  }
 }
 
 async function findFileRecursive(dir, fileName) {
@@ -196,17 +207,17 @@ const DEFAULTS = {
 
   win32: {
     ffmpeg: {
-      url: 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-8.0.1-essentials_build.zip',
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
       type: 'zip',
       find: 'ffmpeg.exe'
     },
     ffprobe: {
-      url: 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-8.0.1-essentials_build.zip',
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
       type: 'zip',
       find: 'ffprobe.exe'
     },
     mkvmerge: {
-      url: 'https://mkvtoolnix.download/windows/releases/96.0/mkvtoolnix-64-bit-96.0.7z',
+      url: 'https://mkvtoolnix.download/windows/releases/96.0/mkvtoolnix-64-bit-96.0.zip',
       type: 'zip',
       find: 'mkvmerge.exe'
     },
@@ -219,6 +230,8 @@ const DEFAULTS = {
 };
 
 const TOOL_ORDER = ['ffmpeg', 'ffprobe', 'mkvmerge', 'ytdlp'];
+const downloadCache = new Map();
+const extractCache = new Map();
 
 async function processTool(tool) {
   const defaults = DEFAULTS[PLATFORM]?.[tool];
@@ -246,43 +259,69 @@ async function processTool(tool) {
 
   await ensureDir(TARGET_DIR);
 
-  log(`${tool}: downloading from: ${url}`);
+  let tmpFile = downloadCache.get(url);
 
-  const tmpFile = path.join(os.tmpdir(), `${tool}-${Date.now()}`);
+  if (!tmpFile) {
+    log(`${tool}: downloading from: ${url}`);
 
-  try {
-    const progressBar = createProgressBar(tool);
-    await downloadFileWithRedirect(url, tmpFile, progressBar);
-  } catch (err) {
-    logError(`${tool}: download failed: ${err.message}`);
-
-    if (!NO_PATH) {
-      const fromPath = await which(outName);
-      if (fromPath) {
-        log(`${tool}: using system PATH at ${fromPath}`);
-        await fsp.copyFile(fromPath, outPath);
-        if (PLATFORM !== 'win32') await fsp.chmod(outPath, 0o755);
-        log(`${tool}: copied from PATH`);
-        return;
-      }
+    let tmpFileName;
+    if (defaults.type === 'zip') {
+      tmpFileName = `${tool}-${Date.now()}.zip`;
+    } else if (defaults.type === 'tar') {
+      tmpFileName = `${tool}-${Date.now()}.tar.xz`;
+    } else {
+      tmpFileName = `${tool}-${Date.now()}`;
     }
 
-    throw err;
+    tmpFile = path.join(os.tmpdir(), tmpFileName);
+
+    try {
+      const progressBar = createProgressBar(tool);
+      await downloadFileWithRedirect(url, tmpFile, progressBar);
+      downloadCache.set(url, tmpFile);
+    } catch (err) {
+      logError(`${tool}: download failed: ${err.message}`);
+
+      if (!NO_PATH) {
+        const fromPath = await which(outName);
+        if (fromPath) {
+          log(`${tool}: using system PATH at ${fromPath}`);
+          await fsp.copyFile(fromPath, outPath);
+          if (PLATFORM !== 'win32') await fsp.chmod(outPath, 0o755);
+          log(`${tool}: copied from PATH`);
+          return;
+        }
+      }
+
+      throw err;
+    }
+  } else {
+    log(`${tool}: reusing downloaded archive for ${url} → ${tmpFile}`);
   }
 
   if (defaults.type === 'direct') {
     await fsp.copyFile(tmpFile, outPath);
-  } else if (defaults.type === 'tar') {
-    log(`${tool}: extracting archive...`);
-    const tmpDir = path.join(os.tmpdir(), `extract-${tool}-${Date.now()}`);
-    await ensureDir(tmpDir);
-    const f = await extractTarXZ(tmpFile, tmpDir, defaults.find);
-    await fsp.copyFile(f, outPath);
-  } else if (defaults.type === 'zip') {
-    log(`${tool}: extracting archive...`);
-    const tmpDir = path.join(os.tmpdir(), `extract-${tool}-${Date.now()}`);
-    await ensureDir(tmpDir);
-    const f = await extractZip(tmpFile, tmpDir, defaults.find);
+  } else if (defaults.type === 'tar' || defaults.type === 'zip') {
+    let extractDir = extractCache.get(url);
+
+    if (!extractDir) {
+      extractDir = path.join(os.tmpdir(), `extract-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      await ensureDir(extractDir);
+
+      log(`${tool}: extracting archive...`);
+
+      if (defaults.type === 'tar') {
+        await extractTarXZ(tmpFile, extractDir);
+      } else {
+        await extractZip(tmpFile, extractDir);
+      }
+
+      extractCache.set(url, extractDir);
+    } else {
+      log(`${tool}: reusing extracted archive for ${url} → ${extractDir}`);
+    }
+
+    const f = await findFileRecursive(extractDir, defaults.find);
     await fsp.copyFile(f, outPath);
   }
 

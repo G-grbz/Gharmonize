@@ -7,12 +7,30 @@ import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
 import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
 import "dotenv/config";
+import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 
 function resolveFfmpegBin() {
   const isWin = process.platform === "win32";
   const exe = isWin ? "ffmpeg.exe" : "ffmpeg";
+  const fromEnvFile = process.env.FFMPEG_BIN || process.env.FFMPEG_PATH;
+  if (fromEnvFile && isExecutable(fromEnvFile)) {
+    return fromEnvFile;
+  }
+  
+  if (process.env.FFMPEG_DIR) {
+    const candidate = path.join(process.env.FFMPEG_DIR, exe);
+    if (isExecutable(candidate)) return candidate;
+  }
+
+  if (BINARY_FFMPEG_BIN && isExecutable(BINARY_FFMPEG_BIN)) {
+    return BINARY_FFMPEG_BIN;
+  }
+
   const fromPATH = findOnPATH(exe);
-  if (fromPATH && isExecutable(fromPATH)) return fromPATH;
+  if (fromPATH && isExecutable(fromPATH)) {
+    return fromPATH;
+  }
+
   const guesses = isWin
     ? [
         "C:\\tools\\ffmpeg\\bin\\ffmpeg.exe",
@@ -21,6 +39,7 @@ function resolveFfmpegBin() {
         "C:\\Windows\\ffmpeg.exe"
       ]
     : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/bin/ffmpeg"];
+
   if (process.resourcesPath) {
     const packed = path.join(process.resourcesPath, "bin", exe);
     guesses.unshift(packed);
@@ -28,14 +47,6 @@ function resolveFfmpegBin() {
 
   for (const g of guesses) {
     if (isExecutable(g)) return g;
-  }
-
-  const fromEnvFile = process.env.FFMPEG_BIN || process.env.FFMPEG_PATH;
-  if (fromEnvFile && isExecutable(fromEnvFile)) return fromEnvFile;
-  const fromEnvDir = process.env.FFMPEG_DIR;
-  if (fromEnvDir) {
-    const candidate = path.join(fromEnvDir, exe);
-    if (isExecutable(candidate)) return candidate;
   }
 
   return exe;

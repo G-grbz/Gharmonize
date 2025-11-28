@@ -1,16 +1,22 @@
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
 const isElectron = !!process.versions.electron;
+const resourcesPath =
+  isElectron && typeof process.resourcesPath === "string"
+    ? process.resourcesPath
+    : null;
 
 const isPackagedElectron =
-  isElectron &&
-  typeof process.resourcesPath === "string" &&
-  process.resourcesPath.length > 0;
+  !!resourcesPath && !resourcesPath.includes("node_modules");
 
-const DESKTOP_BIN_DIR = isPackagedElectron
-  ? path.join(process.resourcesPath, "bin")
-  : path.join(process.cwd(), "build", "bin");
+const PACKAGED_BIN_DIR = resourcesPath
+  ? path.join(resourcesPath, "bin")
+  : null;
+const DEV_BIN_DIR = path.resolve(__dirname, "..", "build", "bin");
 
 function pickExeName(baseName) {
   if (process.platform === "win32") {
@@ -25,17 +31,15 @@ function resolveBin(envVarName, baseName) {
   }
 
   const exeName = pickExeName(baseName);
-
-  if (isPackagedElectron) {
-    const candidate = path.join(DESKTOP_BIN_DIR, exeName);
+  if (PACKAGED_BIN_DIR) {
+    const candidate = path.join(PACKAGED_BIN_DIR, exeName);
     if (fs.existsSync(candidate)) {
       return candidate;
     }
   }
 
-  const devCandidate = path.join(DESKTOP_BIN_DIR, exeName);
-  if (!isPackagedElectron && fs.existsSync(devCandidate)) {
-    return devCandidate;
+  if (fs.existsSync(path.join(DEV_BIN_DIR, exeName))) {
+    return path.join(DEV_BIN_DIR, exeName);
   }
 
   return exeName;
@@ -45,3 +49,14 @@ export const FFMPEG_BIN   = resolveBin("FFMPEG_BIN",   "ffmpeg");
 export const FFPROBE_BIN  = resolveBin("FFPROBE_BIN",  "ffprobe");
 export const MKVMERGE_BIN = resolveBin("MKVMERGE_BIN", "mkvmerge");
 export const YTDLP_BIN    = resolveBin("YTDLP_BIN",    "yt-dlp");
+
+export function debugBinaries() {
+  console.log("[binaries] isElectron:", isElectron);
+  console.log("[binaries] isPackagedElectron:", isPackagedElectron);
+  console.log("[binaries] PACKAGED_BIN_DIR:", PACKAGED_BIN_DIR);
+  console.log("[binaries] DEV_BIN_DIR:", DEV_BIN_DIR);
+  console.log("[binaries] FFMPEG_BIN:", FFMPEG_BIN);
+  console.log("[binaries] YTDLP_BIN:", YTDLP_BIN);
+  console.log("[binaries] FFPROBE_BIN:", FFPROBE_BIN);
+  console.log("[binaries] MKVMERGE_BIN:", MKVMERGE_BIN);
+}
