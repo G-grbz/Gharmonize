@@ -144,7 +144,7 @@ openssl rand -hex 32
 
 ---
 
-#### 3. Installation Commands
+### 3. Installation Commands
 
 **Linux**
 
@@ -161,19 +161,33 @@ npm i
 
 ---
 
-#### Default .env Locations (AppImage or .exe only)
+### Default .env Locations (AppImage or .exe only)
 
-These paths are **not** general application directories. They are automatically created only when running the AppImage or Windows .exe builds, and they store the default-generated `.env` file:
+These paths are **not** general application directories. They are created automatically only when running AppImage or Windows .exe builds, and store the default-generated `.env` file:
 
 * **Windows:** `C:\Users\<Username>\AppData\Roaming\Gharmonize`
 * **Linux:** `~/.config/Gharmonize/`
-* **Default Password** `123456`
+* **Default Password:** `123456`
 
-You can change env variables in the Settings panel. Windows users should add the location of the ffmpeg and yt-dlp files to the env variable.
+You can edit environment variables in the Settings panel. Windows users should add the file paths for ffmpeg and yt-dlp to their environment variables.
 
 ---
 
-#### Run Without Building
+### Run Without Building
+
+To run the application without building:
+
+> **Optional:** If you do **not** want to use ffmpeg, ffprobe, yt-dlp, and mkvmerge tools from your host system — or if you prefer using the tested, verified versions — you can run:
+>
+> ```bash
+> npm run download:binaries
+> ```
+>
+> This command downloads the required third‑party binaries into the app directory so the application can use them internally.
+>
+> **Note:** While this step is *optional* when using **Run Without Building** (`npm start`), it is **strongly recommended for AppImage and Windows .exe builds** to ensure consistent, validated binary versions.
+>
+> **Important:** If you use `npm run download:binaries`, you must **remove or clear** any manually set binary paths in your `.env` file (`FFMPEG_PATH`, `FFPROBE_PATH`, `YTDLP_PATH`, etc.). Otherwise, the app will try to use the system tools instead of the downloaded ones.
 
 ```bash
 npm start
@@ -181,29 +195,31 @@ npm start
 
 ---
 
-#### Build Commands
+### Build Commands
 
-**To build AppImage (Linux only):**
+**Build AppImage (Linux only):**
 
 ```bash
 npm run desktop:build:appimage
 ```
 
-**To build NSIS (Windows Installer only):**
+**Build NSIS (Windows Installer):**
 
 ```bash
 npm run desktop:build:nsis
 ```
 
-> **Note:** If you choose *Install for all users* (which installs under *Program Files*), you must manually create the folders `temp`, `outputs`, and `uploads` inside the installation directory and grant read/write permissions. Alternatively, install to a custom directory outside *Program Files* or *Program Files (x86)*.
+> **Note:** If you choose *Install for all users* (which installs under *Program Files*), you must manually create the `temp`, `outputs`, and `uploads` folders inside the installation directory and grant read/write permissions.
+>
+> Alternatively, install to a custom directory outside *Program Files* or *Program Files (x86)*.
 
-**To build Portable (Windows standalone version):**
+**Build Portable (Windows standalone):**
 
 ```bash
 npm run desktop:build:portable
 ```
 
-**To build both Windows versions (NSIS + Portable):**
+**Build both Windows versions (NSIS + Portable):**
 
 ```bash
 npm run desktop:build:all
@@ -358,6 +374,8 @@ docker run -d \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
   -v /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
+  -v /home:/home:ro \
+  -v /run/media:/run/media:ro \
   ggrbz/gharmonize:latest
 ```
 
@@ -405,8 +423,5 @@ Detailed license texts are included in the distributed builds under:
 - `build/licenses/FFmpeg-LICENSE.txt`
 - `build/licenses/MKVToolNix-GPLv2.txt`
 - `build/licenses/yt-dlp-Unlicense.txt`
-
-For a human-readable summary, see also: `LICENSES.md`.
-.
 
 ---
