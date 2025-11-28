@@ -97,7 +97,7 @@
   "disc.source.placeholder": "/home/benutzer/DVD",
   "disc.btn.scan": "Disc scannen",
   "disc.btn.cancelScan": "Scan abbrechen",
-  "disc.btn.ipSelected": "Ausgewählte in MKV konvertieren",
+  "disc.btn.ripSelected": "Ausgewählte in MKV konvertieren",
   "disc.btn.cancelRip": "Konvertierung abbrechen",
   "disc.progress.label": "Fortschritt",
   "disc.titles.label": "Titel",
