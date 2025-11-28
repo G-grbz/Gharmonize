@@ -1,6 +1,6 @@
 {
   "name": "Gharmonize",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -8,6 +8,7 @@
     "dev": "nodemon app.js",
     "desktop:dev": "wait-on tcp:127.0.0.1:5174 && electron .",
     "desktop:build:nsis": "electron-builder --win nsis --x64",
+    "download:binaries": "node scripts/download-binaries.mjs",
     "desktop:build:appimage": "electron-builder --linux AppImage --x64",
     "desktop:build:portable": "electron-builder --win portable --x64",
     "desktop:build:all": "npm run desktop:build:nsis && npm run desktop:build:portable",
@@ -51,6 +52,13 @@
       "uploads/**",
       "outputs/**",
       "temp/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/bin",
+        "to": "bin",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "target": [

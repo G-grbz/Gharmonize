@@ -222,6 +222,8 @@ export class SettingsManager {
         if (!this.isInitialized) this.initialize();
 
         this.modal.style.display = 'flex';
+        this.modal.setAttribute('aria-hidden', 'false');
+        this.modal.removeAttribute('inert');
         const token = localStorage.getItem(this.tokenKey);
 
         if (token) {
@@ -234,9 +236,12 @@ export class SettingsManager {
     }
 
     close() {
-        if (this.modal) {
-            this.modal.style.display = 'none';
-        }
+    if (this.modal) {
+        this.modal.style.display = 'none';
+        this.modal.setAttribute('aria-hidden', 'true');
+        this.modal.setAttribute('inert', '');
+    }
+    document.getElementById('settingsBtn')?.focus();
     }
 
     showLogin() {
@@ -297,6 +302,15 @@ export class SettingsManager {
             this.showForm();
             await this.loadSettings();
 
+            localStorage.setItem(this.tokenKey, data.token);
+
+            window.dispatchEvent(new CustomEvent('gharmonize:auth', {
+                detail: { loggedIn: true }
+            }));
+
+            this.showForm();
+            await this.loadSettings();
+
         } catch (e) {
             if (errEl) {
                 errEl.textContent = String(e.message || 'Giriş hatası');
@@ -313,9 +327,18 @@ export class SettingsManager {
 
     async doLogout() {
         localStorage.removeItem(this.tokenKey);
-        window.dispatchEvent(new CustomEvent('gharmonize:auth', { detail: { loggedIn: false } }));
+        this.triggerGlobalLogout();
         this.showLogin();
         requestAnimationFrame(() => document.getElementById('adminPass')?.focus());
+    }
+
+    triggerGlobalLogout() {
+        window.dispatchEvent(new CustomEvent('gharmonize:auth', {
+            detail: { loggedIn: false }
+        }));
+        if (window.jobsPanelManager) {
+            window.jobsPanelManager.goOffline();
+        }
     }
 
     async loadSettings() {
@@ -512,7 +535,6 @@ export class SettingsManager {
             });
         }
     }
-
     t(key, vars) {
         return (window.i18n?.t?.(key, vars)) ?? key;
     }

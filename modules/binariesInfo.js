@@ -1,0 +1,62 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import {
+  FFMPEG_BIN,
+  FFPROBE_BIN,
+  MKVMERGE_BIN,
+  YTDLP_BIN
+} from './binaries.js';
+
+const execFileAsync = promisify(execFile);
+
+let cache = null;
+let cacheTime = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+function parseVersionFromStdout(stdout) {
+  if (!stdout) return null;
+  const firstLine = String(stdout).split('\n')[0] || '';
+  let m = firstLine.match(/version\s+([^\s]+)/i);
+  if (m && m[1]) return m[1];
+
+  m = firstLine.match(/\b(v?\d+\.\d+(\.\d+)?)/);
+  if (m && m[1]) return m[1];
+
+  return firstLine.trim() || null;
+}
+
+async function getSingleVersion(binPath, args = ['-version']) {
+  try {
+    const { stdout } = await execFileAsync(binPath, args, { timeout: 5000 });
+    const version = parseVersionFromStdout(stdout);
+    return {
+      path: binPath,
+      version: version || 'unknown',
+      raw: stdout.toString()
+    };
+  } catch (err) {
+    return {
+      path: binPath,
+      version: 'unavailable',
+      error: err.message || String(err)
+    };
+  }
+}
+
+export async function getBinariesInfo() {
+  const now = Date.now();
+  if (cache && (now - cacheTime) < CACHE_TTL_MS) {
+    return cache;
+  }
+
+  const [ffmpeg, ffprobe, mkvmerge, ytdlp] = await Promise.all([
+    getSingleVersion(FFMPEG_BIN),
+    getSingleVersion(FFPROBE_BIN),
+    getSingleVersion(MKVMERGE_BIN, ['--version']),
+    getSingleVersion(YTDLP_BIN, ['--version'])
+  ]);
+
+  cache = { ffmpeg, ffprobe, mkvmerge, ytdlp };
+  cacheTime = now;
+  return cache;
+}

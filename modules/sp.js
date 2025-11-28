@@ -5,6 +5,9 @@ import { runYtJson, resolveYtDlp, withYT403Workarounds } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
 
+const BASE_DIR = process.env.DATA_DIR || process.cwd();
+const TEMP_DIR = path.resolve(BASE_DIR, "temp");
+
 export function makeMapId(){ return crypto.randomBytes(8).toString("hex"); }
 
 export async function searchYtmBestId(artist, title){
@@ -58,7 +61,6 @@ export async function mapSpotifyToYtm(sp, onUpdate, { concurrency=3, onLog=null,
 }
 
 export async function downloadMatchedSpotifyTracks(matchedItems, jobId, onProgress, onLog = null) {
-  const TEMP_DIR = path.resolve(process.cwd(), "temp");
   const downloadDir = path.join(TEMP_DIR, jobId);
   fs.mkdirSync(downloadDir, { recursive: true });
 
@@ -204,7 +206,6 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
 }
 
 export function createDownloadQueue(jobId, { concurrency = 4, onProgress, onLog, shouldCancel } = {}) {
-  const TEMP_DIR = path.resolve(process.cwd(), "temp");
   const downloadDir = path.join(TEMP_DIR, jobId);
   fs.mkdirSync(downloadDir, { recursive: true });
 

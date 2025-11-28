@@ -22,6 +22,8 @@ services:
       - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
       - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
       - /opt/gharmonize/.env:/usr/src/app/.env
+      - /home:/home:ro
+      - /run/media:/run/media:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-5174}/ || exit 1"]

@@ -9,6 +9,7 @@ export class JobsPanelManager {
         this.eventSource = null;
         this.isStarted = false;
         this.pollingInterval = null;
+        this.tokenCheckInterval = null;
     }
 
     initialize() {
@@ -20,12 +21,49 @@ export class JobsPanelManager {
 
         this.setupEventListeners();
         this.isStarted = true;
+        this.startTokenCheck();
 
         if (localStorage.getItem(this.tokenKey)) {
             this.goOnline();
         } else {
             this.goOffline();
         }
+    }
+
+    startTokenCheck() {
+        this.tokenCheckInterval = setInterval(() => {
+            this.checkTokenValidity();
+        }, 100000);
+    }
+
+    async checkTokenValidity() {
+        const token = localStorage.getItem(this.tokenKey);
+        if (!token) {
+            this.handleTokenExpired();
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/auth/verify', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (!response.ok) {
+                this.handleTokenExpired();
+            }
+        } catch (error) {
+            console.error('Token check error:', error);
+            this.handleTokenExpired();
+        }
+    }
+
+    handleTokenExpired() {
+        console.log('Token expired or invalid, going offline');
+        localStorage.removeItem(this.tokenKey);
+        this.goOffline();
+        window.dispatchEvent(new CustomEvent('gharmonize:auth', {
+            detail: { loggedIn: false }
+        }));
     }
 
     setupEventListeners() {
@@ -47,15 +85,31 @@ export class JobsPanelManager {
         });
     }
 
-    open() {
-        this.panel?.setAttribute('aria-hidden', 'false');
-        this.overlay && (this.overlay.hidden = false);
-    }
+open() {
+    const panel = this.panel;
+    if (!panel) return;
+    panel.setAttribute('aria-hidden', 'false');
+    panel.removeAttribute('inert');
+    this.overlay && (this.overlay.hidden = false);
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => {
+        const closeBtn = document.getElementById('jobsClose');
+        closeBtn?.focus();
+    });
+}
 
-    close() {
-        this.panel?.setAttribute('aria-hidden', 'true');
-        this.overlay && (this.overlay.hidden = true);
+close() {
+    const panel = this.panel;
+    if (!panel) return;
+    panel.setAttribute('aria-hidden', 'true');
+    panel.setAttribute('inert', '');
+    this.overlay && (this.overlay.hidden = true);
+    document.body.style.overflow = '';
+    const jobsBell = document.getElementById('jobsBell');
+    if (jobsBell && !jobsBell.hidden) {
+        jobsBell.focus();
     }
+}
 
     setFilter(newFilter) {
         this.filter = newFilter;
@@ -70,17 +124,34 @@ export class JobsPanelManager {
     }
 
     goOffline() {
-        document.getElementById('jobsBell').hidden = true;
+        const jobsBell = document.getElementById('jobsBell');
+        if (jobsBell) {
+            jobsBell.hidden = true;
+        }
+
         this.close();
+
         this.eventSource?.close();
         this.eventSource = null;
         this.state = { items: [] };
         this.render();
-
         if (this.pollingInterval) {
             clearInterval(this.pollingInterval);
             this.pollingInterval = null;
         }
+    }
+
+    destroy() {
+        if (this.tokenCheckInterval) {
+            clearInterval(this.tokenCheckInterval);
+            this.tokenCheckInterval = null;
+        }
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+        }
+        this.eventSource?.close();
+        this.isStarted = false;
     }
 
     startSSE() {

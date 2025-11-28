@@ -101,11 +101,20 @@ export async function ensureJpegCover(
 ) {
   try {
     if (!coverPath || !fs.existsSync(coverPath)) return null;
+
     const ext = path.extname(coverPath).toLowerCase();
     if ([".jpg", ".jpeg"].includes(ext)) return coverPath;
 
     const ffmpegBin = ffmpegFromCaller || resolveFfmpegBin();
-    const outJpg = path.join(tempDir, `${jobId}.cover.norm.jpg`);
+
+    let outDir = path.dirname(coverPath);
+    if (!outDir || outDir === "." || !path.isAbsolute(outDir)) {
+      outDir = tempDir || process.cwd();
+    }
+
+    const baseName = path.basename(coverPath, ext);
+    const outJpg = path.join(outDir, `${baseName}.norm.jpg`);
+
     await new Promise((resolve, reject) => {
       const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", coverPath, outJpg];
       const p = spawn(ffmpegBin, args);
@@ -120,6 +129,7 @@ export async function ensureJpegCover(
         reject(new Error(`ffmpeg başlatma hatası: ${e.message}`))
       );
     });
+
     return outJpg;
   } catch (e) {
     console.warn("⚠️ Kapak dönüştürme uyarısı:", e.message);
@@ -485,21 +495,22 @@ export async function convertMedia(
   }
 
   if (selectedSubtitleStreams.length > 0) {
-    selectedSubtitleStreams.forEach((sIdx, i) => {
-      if (Number.isInteger(sIdx) && sIdx >= 0) {
-        args.push("-map", `0:${sIdx}`);
-      }
-      if (i === 0) {
-        args.push("-disposition:s:0", "default");
-      }
-    });
+      selectedSubtitleStreams.forEach((sIdx, i) => {
+        if (Number.isInteger(sIdx) && sIdx >= 0) {
+          args.push("-map", `0:${sIdx}`);
+        }
+        if (i === 0) {
+          args.push("-disposition:s:0", "default");
+        }
+      });
 
-    if (format === "mp4") {
-      args.push("-c:s", "mov_text");
-    } else {
-      args.push("-c:s", "copy");
+      if (format === "mp4") {
+        console.log("🎬 MP4 çıktısına altyazılar mov_text olarak yazılacak");
+        args.push("-c:s", "mov_text");
+      } else {
+        args.push("-c:s", "copy");
+      }
     }
-  }
 
   if (selectedStreams) {
     if (Array.isArray(selectedAudioStreams) && audioLanguageMap) {
@@ -511,15 +522,19 @@ export async function convertMedia(
             const normLang = String(lang).trim().toLowerCase().slice(0, 3);
             if (normLang) {
               args.push(`-metadata:s:a:${outAudioIndex}`, `language=${normLang}`);
+              }
             }
+            outAudioIndex++;
           }
-          outAudioIndex++;
-        }
-      } else {
+        } else {
       }
     }
 
-    if (Array.isArray(selectedSubtitleStreams) && subtitleLanguageMap) {
+    const includeSubtitleMeta =
+      Array.isArray(selectedSubtitleStreams) &&
+      subtitleLanguageMap;
+
+    if (includeSubtitleMeta) {
       let outSubIndex = 0;
       if (selectedSubtitleStreams.length > 0) {
         for (const srcIdx of selectedSubtitleStreams) {

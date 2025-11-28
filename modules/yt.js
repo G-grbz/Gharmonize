@@ -368,61 +368,79 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp bulunamadı.");
 
-  const buildArgs = (flat = false) => {
-    const args = buildBaseArgs();
+  const buildArgs = (flat = false, { stripCookies = false } = {}) => {
+    let args = buildBaseArgs();
+    if (!args.includes("--no-check-formats")) {
+      args.push("--no-check-formats");
+    }
+
     if (!isPlaylist) args.push("--no-playlist");
     if (flat && isPlaylist) args.push("--flat-playlist");
+    args = withYT403Workarounds(args, { stripCookies });
+
     args.push(url);
     return args;
   };
 
-  const attemptDownload = (args, label) => new Promise((resolve, reject) => {
-    let stdoutData = "", stderrData = "";
+  const attemptDownload = (args, label) =>
+    new Promise((resolve, reject) => {
+      let stdoutData = "", stderrData = "";
 
-    const process = spawn(YTDLP_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
-    const timeoutId = setTimeout(() => {
-      try { process.kill("SIGKILL"); } catch {}
-      reject(new Error(`[${label}] zaman aşımı`));
-    }, 30000);
+      console.warn("[yt-meta-debug]", label, "args:", args.join(" "));
 
-    process.stdout.on("data", chunk => stdoutData += chunk.toString());
-    process.stderr.on("data", chunk => stderrData += chunk.toString());
+      const child = spawn(YTDLP_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+      const timeoutId = setTimeout(() => {
+        try { child.kill("SIGKILL"); } catch {}
+        reject(new Error(`[${label}] zaman aşımı`));
+      }, 30000);
 
-    process.on("close", (code) => {
-      clearTimeout(timeoutId);
-      if (code === 0) {
-        try {
-          resolve(JSON.parse(stdoutData));
-        } catch (error) {
-          reject(new Error(`[${label}] JSON parse hatası: ${error.message}`));
+      child.stdout.on("data", chunk => stdoutData += chunk.toString());
+      child.stderr.on("data", chunk => stderrData += chunk.toString());
+
+      child.on("close", (code) => {
+        clearTimeout(timeoutId);
+        if (code === 0) {
+          try {
+            resolve(JSON.parse(stdoutData));
+          } catch (error) {
+            reject(new Error(`[${label}] JSON parse hatası: ${error.message}\n${stderrData}`));
+          }
+        } else {
+          const tail = stderrData.split("\n").slice(-20).join("\n");
+          reject(new Error(`[${label}] çıkış kodu ${code}\n${tail}`));
         }
-      } else {
-        reject(new Error(`[${label}] çıkış kodu ${code}`));
-      }
-    });
+      });
 
-    process.on("error", (error) => {
-      clearTimeout(timeoutId);
-      reject(new Error(`[${label}] başlatılamadı: ${error.message}`));
+      child.on("error", (error) => {
+        clearTimeout(timeoutId);
+        reject(new Error(`[${label}] başlatılamadı: ${error.message}`));
+      });
     });
-  });
 
   const attempts = [
-    { label: "nocookies+flat", args: buildArgs(true) },
-    { label: "nocookies", args: buildArgs(false) }
+    { label: "meta+cookies+flat", args: buildArgs(true,  { stripCookies: false }) },
+    { label: "meta+cookies",      args: buildArgs(false, { stripCookies: false }) },
+    { label: "meta+nocookies",    args: buildArgs(false, { stripCookies: true  }) }
   ];
 
   let lastError;
-  for (const attempt of attempts) {
-    try {
-      const data = await attemptDownload(attempt.args, attempt.label);
-      return data;
-    } catch (error) {
-      lastError = error;
+for (const attempt of attempts) {
+  try {
+    const data = await attemptDownload(attempt.args, attempt.label);
+    return data;
+  } catch (error) {
+    lastError = error;
+    const msg = String(error.message || "");
+    if (/Sign in to confirm your age/i.test(msg) ||
+        /may be inappropriate for some users/i.test(msg) ||
+        /age[-\s]?restricted/i.test(msg)) {
+      console.warn("[yt-meta] age-restricted, metadata alınamadı, null dönüyorum");
+      return null;
     }
   }
+}
 
-  throw new Error(`Tüm metadata denemeleri başarısız. Son hata: ${lastError?.message}`);
+throw new Error(`Tüm metadata denemeleri başarısız. Son hata: ${lastError?.message}`);
 }
 
 export async function resolvePlaylistSelectedIds(url, indices = []) {
@@ -564,6 +582,8 @@ async function downloadSelectedIds(
       "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
       "-a", listFile
     ];
+    const extra = getExtraArgs();
+    if (extra.length) args.push(...extra);
   } else {
     args = [
       "--ignore-config", "--no-warnings",

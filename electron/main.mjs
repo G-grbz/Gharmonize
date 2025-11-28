@@ -1,8 +1,9 @@
-import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain } from 'electron'
+import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification } from 'electron'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
 import fs from 'node:fs'
+import { FFMPEG_BIN, FFPROBE_BIN, MKVMERGE_BIN, YTDLP_BIN } from '../modules/binaries.js';
 
 const HOST = '127.0.0.1'
 const PORT = process.env.PORT || '5174'
@@ -123,6 +124,31 @@ async function waitForServer(port, retries = 75, delayMs = 200) {
   throw new Error(`Server not reachable on ${HOST}:${port}`)
 }
 
+function checkDesktopBinaries() {
+  const missing = [];
+
+  const tools = [
+    { name: 'ffmpeg', bin: FFMPEG_BIN },
+    { name: 'ffprobe', bin: FFPROBE_BIN },
+    { name: 'mkvmerge', bin: MKVMERGE_BIN },
+    { name: 'yt-dlp', bin: YTDLP_BIN }
+  ];
+
+  console.log('🔍 Checking bundled binaries:');
+  for (const tool of tools) {
+    const exists = fs.existsSync(tool.bin);
+    console.log(`   ${tool.name}: ${tool.bin} -> ${exists ? '✅' : '❌'}`);
+    if (!exists) {
+      missing.push(tool);
+    }
+  }
+
+  if (missing.length > 0) {
+    const list = missing.map(t => `${t.name}: ${t.bin}`).join('\n');
+    throw new Error(`Missing required binaries:\n${list}`);
+  }
+}
+
 async function startServerIfPackaged() {
   if (!app.isPackaged) {
     console.log('🛠️  Development mode - using external server')
@@ -161,31 +187,110 @@ async function startServerIfPackaged() {
 }
 
 function attachDownloads(win) {
-  const ses = win.webContents.session || session.defaultSession
-  ses.removeAllListeners('will-download')
-  ses.on('will-download', async (event, item) => {
-    const filename = item.getFilename() || 'download'
-    const { canceled, filePath } = await dialog.showSaveDialog(win, {
-      title: t('contextMenu.saveFile', 'Save File'),
-      defaultPath: path.join(app.getPath('downloads'), filename)
-    })
-    if (canceled) {
-      item.cancel()
-      return
-    }
-    item.setSavePath(filePath)
+  const ses = win.webContents.session || session.defaultSession;
 
-    item.once('done', (event, state) => {
+  ses.removeAllListeners('will-download');
+
+  ses.on('will-download', (event, item) => {
+    const filename = item.getFilename() || 'download';
+    console.log('📥 Download started:', filename, '→', item.getURL());
+
+    item.once('done', (ev, state) => {
+      const savePath = typeof item.getSavePath === 'function'
+        ? item.getSavePath()
+        : null;
+
       if (state === 'completed') {
-        console.log(`✅ Download completed: ${filePath}`)
-      } else {
-        console.log(`❌ Download failed: ${state}`)
+  console.log('✅ Download completed:', filename, savePath ? `→ ${savePath}` : '');
+
+  if (Notification.isSupported()) {
+        const lines = [];
+        lines.push(filename);
+        const locationLabel = t('download.locationLabel', 'Saved to:');
+
+        const dirPath = savePath
+          ? path.dirname(savePath)
+          : app.getPath('downloads');
+
+        const dirName = path.basename(dirPath) || dirPath;
+        lines.push(`${locationLabel} ${dirName}`);
+
+        const notifOptions = {
+          title: t('download.completedTitle', 'Download completed'),
+          body: lines.join('\n'),
+        };
+
+        if (savePath) {
+          notifOptions.actions = [
+            {
+              type: 'button',
+              text: t('download.openFile', 'Open file'),
+            },
+            {
+              type: 'button',
+              text: t('download.openFolder', 'Open folder'),
+            },
+          ];
+          notifOptions.closeButtonText = t('download.dismiss', 'Close');
+        }
+
+        const notif = new Notification(notifOptions);
+
+        if (savePath) {
+          notif.on('click', () => {
+            shell.showItemInFolder(savePath);
+          });
+
+          notif.on('action', (_event, index) => {
+            if (index === 0) {
+              shell.openPath(savePath);
+            } else if (index === 1) {
+              shell.showItemInFolder(savePath);
+            }
+          });
+        }
+
+        notif.show();
       }
-    })
-  })
+    } else {
+        console.log(`❌ Download failed: ${state} (${filename})`);
+
+        if (Notification.isSupported()) {
+          const notif = new Notification({
+            title: t('download.failedTitle', 'Download failed'),
+            body: `${filename}\n${t('download.failedBody', 'The download could not be completed.')} (${state})`,
+          });
+          notif.on('click', () => {
+            if (win && !win.isDestroyed()) {
+              win.show();
+              win.focus();
+            }
+          });
+          notif.show();
+        }
+      }
+    });
+  });
+}
+
+function getNavState(webContents) {
+  const nav = webContents.navigationHistory;
+  if (nav && typeof nav.canGoBack === 'function' && typeof nav.canGoForward === 'function') {
+    return {
+      canGoBack: nav.canGoBack(),
+      canGoForward: nav.canGoForward()
+    };
+  }
+
+  return {
+    canGoBack: webContents.canGoBack(),
+    canGoForward: webContents.canGoForward()
+  };
 }
 
 function buildAndShowContextMenu(win, params) {
+  const wc = win.webContents;
+  const { canGoBack, canGoForward } = getNavState(wc);
   const isEditable = params.isEditable;
   const hasSelection = params.selectionText && params.selectionText.trim().length > 0;
   const hasLink = params.linkURL && params.linkURL.length > 0;
@@ -196,12 +301,12 @@ function buildAndShowContextMenu(win, params) {
     {
       label: t('contextMenu.back', 'Back'),
       role: 'back',
-      enabled: win.webContents.canGoBack()
+      enabled: canGoBack
     },
     {
       label: t('contextMenu.forward', 'Forward'),
       role: 'forward',
-      enabled: win.webContents.canGoForward()
+      enabled: canGoForward
     },
     { type: 'separator' },
     {
@@ -244,15 +349,15 @@ function buildAndShowContextMenu(win, params) {
     template.push(
       {
         label: t('contextMenu.saveImageAs', 'Save image as...'),
-        click: () => win.webContents.downloadURL(params.srcURL)
+        click: () => wc.downloadURL(params.srcURL)
       },
       {
         label: t('contextMenu.copyImage', 'Copy image'),
-        click: () => win.webContents.copyImageAt(params.x, params.y)
+        click: () => wc.copyImageAt(params.x, params.y)
       },
       {
         label: t('contextMenu.copyImageAddress', 'Copy image address'),
-        click: () => require('electron').clipboard.writeText(params.srcURL)
+        click: () => clipboard.writeText(params.srcURL)
       }
     );
     template.push({ type: 'separator' });
@@ -262,13 +367,70 @@ function buildAndShowContextMenu(win, params) {
     template.push(
       {
         label: t('contextMenu.inspect', 'Inspect'),
-        click: () => win.webContents.inspectElement(params.x, params.y)
+        click: () => wc.inspectElement(params.x, params.y)
       }
     );
   }
 
   const menu = Menu.buildFromTemplate(template);
   menu.popup({ window: win });
+}
+
+function createAppMenu(win) {
+  const template = [];
+  if (process.platform === 'darwin') {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about', label: 'About Gharmonize' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    });
+  }
+
+  template.push({
+    label: 'Help',
+    submenu: [
+      {
+        label: 'About Gharmonize',
+        click: () => {
+          dialog.showMessageBox(win, {
+            type: 'info',
+            title: 'About Gharmonize',
+            message: 'Gharmonize',
+            detail: [
+              'Gharmonize is licensed under the MIT License.',
+              '',
+              'This application bundles the following third-party command-line tools:',
+              '- FFmpeg / FFprobe',
+              '- MKVToolNix tools (mkvmerge, mkvextract, mkvinfo, mkvpropedit)',
+              '- yt-dlp',
+              '',
+              'These tools are licensed under their respective open-source licenses',
+              '(GPL/LGPL or The Unlicense). For detailed license information, please',
+              'refer to the LICENSES.md file and the license texts shipped with the',
+              'application under the build/licenses/ directory (or equivalent path',
+              'in the installed build).',
+              '',
+              'More details and source code:',
+              'https://github.com/G-grbz/Gharmonize'
+            ].join('\n')
+          });
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Open GitHub (Project Page)',
+        click: () => {
+          shell.openExternal('https://github.com/G-grbz/Gharmonize');
+        }
+      }
+    ]
+  });
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
 
 function createWindow() {
@@ -279,6 +441,7 @@ function createWindow() {
     minHeight: 480,
     title: 'Gharmonize',
     icon: resolveIcon(),
+    autoHideMenuBar: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -290,9 +453,11 @@ function createWindow() {
   });
 
   win.once('ready-to-show', () => {
-    win.show()
-    win.focus()
-  })
+    win.show();
+    win.focus();
+
+  win.setMenuBarVisibility(true);
+  });
 
   win.webContents.on('context-menu', (event, params) => {
     event.preventDefault();
@@ -300,6 +465,7 @@ function createWindow() {
   });
 
   attachDownloads(win);
+  createAppMenu(win);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -389,6 +555,10 @@ app.whenReady().then(async () => {
   app.setAppUserModelId('com.gharmonize.app');
 
   try {
+    if (app.isPackaged) {
+      checkDesktopBinaries();
+    }
+
     await startServerIfPackaged();
     const mainWindow = createWindow();
     console.log('✅ Gharmonize started successfully');
@@ -400,7 +570,7 @@ app.whenReady().then(async () => {
     console.error('❌ Failed to start Gharmonize:', error);
     dialog.showErrorBox(
       'Startup Error',
-      `Failed to start Gharmonize: ${error.message}\n\nPlease check the logs for more details.`
+      `Failed to start Gharmonize:\n\n${error.message}\n\nPlease check the bundled binaries folder (resources/bin).`
     );
     app.quit();
   }

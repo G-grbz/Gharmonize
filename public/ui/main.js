@@ -1,6 +1,8 @@
 import { MediaConverterApp } from './MediaConverterApp.js';
 import { settingsManager } from './SettingsManager.js';
 import { jobsPanelManager } from './JobsPanelManager.js';
+import { initDiscRipperPanel } from './discRipperPanel.js';
+import { modalManager } from './ModalManager.js';
 
 window.focusUrlInput = function() {
     const urlInput = document.getElementById('urlInput');
@@ -52,6 +54,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await app.initialize();
     setupCollapsibleSections();
     setupTitlePositioning();
+    initDiscRipperPanel();
 });
 
 function setupCollapsibleSections() {
@@ -70,6 +73,7 @@ function setupCollapsibleSections() {
     setupCollapsible('spotifyPreviewHeader', 'spotifyPreviewContent');
     setupCollapsible('playlistPreviewHeader', 'playlistPreviewContent');
     setupCollapsible('jobsHeader', 'jobsContent');
+    setupCollapsible('discRipperHeader', 'discRipperContent');
     const jobsHeader = document.getElementById('jobsHeader');
     const jobsContent = document.getElementById('jobsContent');
     if (jobsHeader && jobsContent) {

@@ -33,6 +33,9 @@ export class MediaConverterApp {
         this.videoManager.initialize();
         this.ensureWarnStyles();
         this.loadLocalFiles();
+        this.loadBinaryVersions().catch(err => {
+            console.error('Binary versiyonları yüklenemedi:', err);
+        });
     }
 
     ensureWarnStyles() {
@@ -169,6 +172,57 @@ export class MediaConverterApp {
         if (refreshLocalBtn) {
             refreshLocalBtn.addEventListener('click', () => this.loadLocalFiles());
         }
+
+        const binaryFooter = document.getElementById('binaryFooter');
+        const binaryFooterToggle = document.getElementById('binaryFooterToggle');
+
+        if (binaryFooter && binaryFooterToggle) {
+            binaryFooter.classList.add('collapsed');
+
+            binaryFooterToggle.addEventListener('click', () => {
+                binaryFooter.classList.toggle('collapsed');
+            });
+        }
+
+    window.addEventListener('gharmonize:auth', (ev) => {
+            const isLoggedIn = ev?.detail?.loggedIn ?? false;
+            this.handleAuthStateChange(isLoggedIn);
+        });
+        this.checkInitialAuthState();
+    }
+
+    handleAuthStateChange(isLoggedIn) {
+        console.log('Auth state changed:', isLoggedIn);
+        const jobsBell = document.getElementById('jobsBell');
+        if (jobsBell) {
+            jobsBell.hidden = !isLoggedIn;
+        }
+        if (!isLoggedIn && window.jobsPanelManager) {
+            window.jobsPanelManager.close();
+        }
+    }
+
+    async checkInitialAuthState() {
+        const token = localStorage.getItem('gharmonize_admin_token');
+        const isLoggedIn = !!token;
+
+        if (token) {
+            try {
+                const response = await fetch('/api/auth/verify', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Token invalid');
+                }
+            } catch (error) {
+                localStorage.removeItem('gharmonize_admin_token');
+                this.handleAuthStateChange(false);
+                return;
+            }
+        }
+
+        this.handleAuthStateChange(isLoggedIn);
     }
 
     async loadLocalFiles() {
@@ -385,6 +439,54 @@ export class MediaConverterApp {
         document.getElementById('playlistCheckbox').checked = false;
         document.getElementById('lyricsCheckbox').checked = false;
         this.previewManager.hidePreview();
+    }
+
+        async loadBinaryVersions() {
+        try {
+            const res = await fetch('/api/binaries');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            const shortenVersion = (v) => {
+                if (!v) return '';
+                const nightly = v.match(/^N-(\d+)-g[0-9a-f]+-(\d{8})$/);
+                if (nightly) {
+                    const build = nightly[1];
+                    const date = nightly[2];
+                    return `N-${build}-${date}`;
+                }
+                if (v.length > 20) {
+                    return v.slice(0, 19) + '…';
+                }
+
+                return v;
+            };
+            const el = document.getElementById('binaryVersionsText');
+            if (!el) return;
+
+            const parts = [];
+
+        if (data.ffmpeg?.version) {
+            parts.push(`ffmpeg: ${shortenVersion(data.ffmpeg.version)}`);
+            }
+        if (data.ffprobe?.version) {
+            parts.push(`ffprobe: ${shortenVersion(data.ffprobe.version)}`);
+        }
+        if (data.mkvmerge?.version) {
+            parts.push(`mkvmerge: ${shortenVersion(data.mkvmerge.version)}`);
+        }
+        if (data.ytdlp?.version) {
+            parts.push(`yt-dlp: ${shortenVersion(data.ytdlp.version)}`);
+        }
+
+            el.textContent = parts.join(' • ');
+        } catch (e) {
+            console.error('loadBinaryVersions error:', e);
+            const el = document.getElementById('binaryVersionsText');
+            if (el) {
+                el.textContent = this.t('ui.binaryVersionsError') || 'Binary versiyonları okunamadı';
+            }
+        }
     }
 
     async handleUrlSubmitWithSpinner(e) {

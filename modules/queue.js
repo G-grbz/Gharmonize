@@ -3,7 +3,6 @@ import { getJob } from "./store.js";
 const jobQueue = [];
 let isRunning = false;
 
-
 export function enqueueJob(jobId, fn) {
   jobQueue.push({ jobId, fn });
   runQueue();

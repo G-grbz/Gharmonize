@@ -7,6 +7,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ffmpeg \
+        mkvtoolnix \
         curl \
         python3 \
         ca-certificates \
@@ -20,6 +21,7 @@ RUN set -eux; \
     chmod a+rx /usr/local/bin/yt-dlp; \
     echo "yt-dlp version:" && /usr/local/bin/yt-dlp --version; \
     echo "ffmpeg version:" && ffmpeg -version; \
+    echo "mkvmerge version:" && mkvmerge --version; \
     echo "FFmpeg NVENC/QSV encoders:" && ffmpeg -hide_banner -encoders | grep -E 'nvenc|_qsv' || true
 
 COPY package*.json ./
@@ -39,6 +41,9 @@ COPY . .
 ENV NODE_ENV=production \
     PORT=5174 \
     YTDLP_BIN=/usr/local/bin/yt-dlp \
+    FFMPEG_BIN=/usr/bin/ffmpeg \
+    FFPROBE_BIN=/usr/bin/ffprobe \
+    MKVMERGE_BIN=/usr/bin/mkvmerge \
     DISABLE_QSV_IN_DOCKER=1 \
     DISABLE_VAAPI_IN_DOCKER=1
 

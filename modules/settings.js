@@ -153,6 +153,10 @@ router.post('/auth/login', express.json(), (req, res) => {
   res.json({ token })
 })
 
+router.get('/auth/verify', authMiddleware, (req, res) => {
+    res.json({ valid: true, message: 'Token is valid' });
+});
+
 router.get('/settings', authMiddleware, (req, res) => {
   const env = parseEnv()
   const data = {}

@@ -186,15 +186,17 @@ export class UploadManager {
         resolve(value);
       };
 
-      const confirmHandler = () => {
+            const confirmHandler = async () => {
         const selectedAudio = Array.from(modal.querySelectorAll('.audio-stream-checkbox:checked'))
-            .map(cb => parseInt(cb.value));
+          .map(cb => parseInt(cb.value));
 
         const selectedSubtitles = Array.from(modal.querySelectorAll('.subtitle-stream-checkbox:checked'))
-            .map(cb => parseInt(cb.value));
+          .map(cb => parseInt(cb.value));
 
         const containerEl = modal.querySelector('input[name="outputContainer"]:checked');
         const outputContainer = containerEl ? containerEl.value : null;
+        const finalContainer = outputContainer || currentFormat;
+
         const audioLanguages = {};
         streams.audio.forEach(s => {
           audioLanguages[s.index] = s.language || 'und';
@@ -205,9 +207,83 @@ export class UploadManager {
           subtitleLanguages[s.index] = s.language || 'und';
         });
 
-        console.log('🎯 Seçilen streamler:', {
+        let finalSubtitleIndexes = selectedSubtitles;
+
+        if (finalContainer === 'mp4' && selectedSubtitles.length > 0) {
+          const subByIndex = new Map(
+            streams.subtitle.map(s => [s.index, s])
+          );
+
+          const unsupported = [];
+          const supported = [];
+
+          const isBitmapSubtitle = (stream) => {
+            if (!stream) return false;
+            const codec = (stream.codec || stream.codec_name || '').toLowerCase();
+            const codecLong = (stream.codec_long || '').toLowerCase();
+
+            if (/hdmv_pgs|pgs|dvd_subtitle|dvb_subtitle|xsub/.test(codec)) return true;
+            if (/pgs|dvd subtitle|dvb subtitle|vobsub|bitmap/.test(codecLong)) return true;
+            return false;
+          };
+
+          for (const idx of selectedSubtitles) {
+            const info = subByIndex.get(idx);
+            if (isBitmapSubtitle(info)) {
+              unsupported.push(info);
+            } else {
+              supported.push(info);
+            }
+          }
+
+          if (unsupported.length > 0) {
+            const unsupportedList = unsupported
+              .map(s => {
+                const lang = (s.language || 'und').toUpperCase();
+                const codec = s.codec_long || s.codec || '';
+                const title = s.title ? ` - ${s.title}` : '';
+                return `• ${lang} – ${codec}${title}`;
+              })
+              .join('\n');
+
+            const warningTitle =
+              this.app.t('streamSelection.subtitleMp4WarningTitle') ||
+              'MP4 Altyazı Uyumluluğu';
+
+            const warningMessage =
+              this.app.t('streamSelection.subtitleMp4WarningMessage', {
+                list: unsupportedList
+              }) ||
+              (
+              `MP4 çıkışı bazı altyazı türlerini (özellikle PGS / DVD Subtitle gibi bitmap altyazıları) desteklemez.
+
+              Aşağıdaki altyazılar MP4 dosyasına eklenemeyecek ve devam edersen atlanacaktır:
+
+              ${unsupportedList}
+
+              Devam etmek istemiyorsan çıktı biçimini MKV olarak değiştirip tekrar dene.`
+              );
+
+            const confirmed = await this.app.modalManager.showConfirm({
+              title: warningTitle,
+              message: warningMessage,
+              confirmText: this.app.t('btn.continueWithoutSubtitles') || 'Devam (uyumsuzları atla)',
+              cancelText: this.app.t('btn.goBack') || 'Geri dön',
+              type: 'warning'
+            });
+            if (!confirmed) {
+              console.log('⚠️ Kullanıcı MP4 altyazı uyarısında geri döndü.');
+              return;
+            }
+
+            finalSubtitleIndexes = supported.map(s => s.index);
+            console.log('🎯 MP4 için yalnızca uyumlu altyazılar tutuldu:', finalSubtitleIndexes);
+          }
+        }
+
+        console.log('🎯 Seçilen streamler (final):', {
           selectedAudio,
-          selectedSubtitles,
+          selectedSubtitles: finalSubtitleIndexes,
           outputContainer,
           audioLanguages,
           subtitleLanguages
@@ -215,7 +291,7 @@ export class UploadManager {
 
         resolveAndCleanup({
           audio: selectedAudio,
-          subtitles: selectedSubtitles,
+          subtitles: finalSubtitleIndexes,
           hasVideo: streams.video.length > 0,
           outputContainer,
           audioLanguages,

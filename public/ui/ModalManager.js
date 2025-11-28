@@ -22,19 +22,19 @@ export class ModalManager {
     }
 
     showConfirm(options) {
-        return new Promise((resolve) => {
-            const {
-                title = 'Onay',
-                message = 'Emin misiniz?',
-                confirmText = 'Evet',
-                cancelText = 'Hayır',
-                type = 'warning'
-            } = options || {};
+    return new Promise((resolve) => {
+        const {
+            title = 'Onay',
+            message = 'Emin misiniz?',
+            confirmText = 'Evet',
+            cancelText = 'Hayır',
+            type = 'warning'
+        } = options || {};
 
-            const modal = document.createElement('div');
+        const modal = document.createElement('div');
             const typeIcons = {
                 warning: '⚠️',
-                info: 'ℹ️',
+                disc: '💿',
                 danger: '❌',
                 success: '✅'
             };
@@ -67,7 +67,6 @@ export class ModalManager {
             const confirmBtn = modal.querySelector('.modal-btn-confirm');
             const cancelBtn = modal.querySelector('.modal-btn-cancel');
             const backdrop = this.modalContainer;
-
             const cleanup = () => {
                 if (modal.parentNode) {
                     modal.parentNode.removeChild(modal);
@@ -127,7 +126,7 @@ export class ModalManager {
             const modal = document.createElement('div');
             const typeIcons = {
                 warning: '⚠️',
-                info: 'ℹ️',
+                disc: '💿',
                 danger: '❌',
                 success: '✅'
             };
@@ -137,7 +136,7 @@ export class ModalManager {
 
             modal.innerHTML = `
                 <div class="custom-modal__header">
-                    <div class="custom-modal__icon">${typeIcons[type] || 'ℹ️'}</div>
+                    <div class="custom-modal__icon">${typeIcons[type] || '💿'}</div>
                     <div class="custom-modal__content">
                         <h3 class="custom-modal__title">
                             ${this.escapeHtml(title)}
@@ -202,6 +201,107 @@ export class ModalManager {
         });
     }
 
+        showCustomNode(options) {
+            return new Promise((resolve) => {
+                const {
+                    title = 'Pencere',
+                    node,
+                    type = 'disc',
+                    closeText = 'Kapat'
+                } = options || {};
+
+                if (!node) {
+                    resolve();
+                    return;
+                }
+
+                const modal = document.createElement('div');
+                const typeIcons = {
+                    warning: '⚠️',
+                    disc: '💿',
+                    danger: '❌',
+                    success: '✅'
+                };
+
+                const typeClass = `custom-modal--${type}`;
+                modal.className = `custom-modal ${typeClass}`;
+
+                modal.innerHTML = `
+                    <div class="custom-modal__header">
+                        <div class="custom-modal__icon">${typeIcons[type] || '💿'}</div>
+                        <div class="custom-modal__content">
+                            <h3 class="custom-modal__title">
+                                ${this.escapeHtml(title)}
+                            </h3>
+                        </div>
+                    </div>
+                    <div class="custom-modal__body" id="customModalBody"></div>
+                    <div class="custom-modal__footer">
+                        <button class="modal-btn modal-btn-ok" type="button">
+                            ${this.escapeHtml(closeText)}
+                        </button>
+                    </div>
+                `;
+
+            const bodyEl = modal.querySelector('#customModalBody');
+            const okBtn = modal.querySelector('.modal-btn-ok');
+            const backdrop = this.modalContainer;
+            const originalParent = node.parentNode;
+            const placeholder = document.createElement('div');
+            placeholder.id = 'discRipperPlaceholder-' + Date.now();
+
+            if (originalParent) {
+                originalParent.replaceChild(placeholder, node);
+            }
+
+            bodyEl.appendChild(node);
+
+            const cleanup = () => {
+                if (placeholder.parentNode) {
+                    placeholder.parentNode.replaceChild(node, placeholder);
+                }
+                if (modal.parentNode) {
+                    modal.parentNode.removeChild(modal);
+                }
+                if (backdrop && backdrop.children.length === 0) {
+                    backdrop.style.display = 'none';
+                    backdrop.classList.remove('is-open');
+                }
+                document.removeEventListener('keydown', escHandler);
+                backdrop.removeEventListener('click', backdropHandler);
+            };
+
+            const resolveAndCleanup = () => {
+                cleanup();
+                resolve();
+            };
+
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    resolveAndCleanup();
+                }
+            };
+
+            const backdropHandler = (e) => {
+                if (e.target === backdrop) {
+                    resolveAndCleanup();
+                }
+            };
+
+            okBtn.addEventListener('click', resolveAndCleanup);
+            document.addEventListener('keydown', escHandler);
+            backdrop.addEventListener('click', backdropHandler);
+
+            if (backdrop) {
+                backdrop.style.display = 'flex';
+                backdrop.classList.add('is-open');
+                backdrop.appendChild(modal);
+            }
+
+            okBtn.focus();
+        });
+    }
+
     escapeHtml(str) {
         if (str == null) return "";
         const escapeMap = {
@@ -220,3 +320,7 @@ export class ModalManager {
 }
 
 export const modalManager = new ModalManager();
+
+if (typeof window !== 'undefined') {
+    window.modalManager = modalManager;
+}

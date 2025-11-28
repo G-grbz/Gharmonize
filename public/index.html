@@ -35,37 +35,48 @@
   </div>
   <div class="container">
     <div class="header">
-      <div class="title-section">
-        <h1>
-          <a href="https://github.com/G-grbz/" target="_blank" rel="noopener noreferrer">
-            <img src="./src/logo.png" alt="Gharmonize" class="app-logo-large">
-          </a>
-        </h1>
-        <p class="subtitle" data-i18n="app.subtitle">Linkten sese, tek tık: Gharmonize.</p>
-      </div>
+  <div class="title-section">
+    <h1>
+      <a href="https://github.com/G-grbz/" target="_blank" rel="noopener noreferrer">
+        <img src="./src/logo.png" alt="Gharmonize" class="app-logo-large">
+      </a>
+    </h1>
+    <p class="subtitle" data-i18n="app.subtitle">Linkten sese, tek tık: Gharmonize.</p>
+  </div>
 
-      <div class="theme-toggle" id="themeToggle">
-        <span class="theme-icon">🌙</span>
-        <div class="toggle-switch"></div>
-        <span class="theme-icon">☀️</span>
-      </div>
+  <div class="theme-toggle" id="themeToggle">
+    <span class="theme-icon">🌙</span>
+    <div class="toggle-switch"></div>
+    <span class="theme-icon">☀️</span>
+  </div>
 
-      <div class="language-switcher">
-        <span class="language-label" data-i18n="lang.label">Dil</span>
-        <select id="langSelect" class="language-select" aria-label="Language">
-          <option value="en">English</option>
-          <option value="tr">Türkçe</option>
-          <option value="de">Deutsch</option>
-          <option value="fr">Français</option>
-        </select>
-      </div>
+  <button
+    id="discRipperOpenBtn"
+    class="btn-outline"
+    data-i18n-title="disc.header.buttonTitle"
+    title="Disc Ripper"
+    type="button"
+  >
+    📀
+  </button>
 
-      <button id="settingsBtn" class="btn-outline" data-i18n-title="btn.envSettings">⚙️</button>
-      <button id="jobsBell" class="jobs-bell" title="Aktif işler" hidden>
-        <span class="bell-icon">🔔</span>
-        <span id="jobsBadge" class="jobs-badge" hidden>0</span>
-      </button>
-    </div>
+  <div class="language-switcher">
+    <span class="language-label" data-i18n="lang.label">Dil</span>
+    <select id="langSelect" class="language-select" aria-label="Language">
+      <option value="en">English</option>
+      <option value="tr">Türkçe</option>
+      <option value="de">Deutsch</option>
+      <option value="fr">Français</option>
+    </select>
+  </div>
+
+  <button id="settingsBtn" class="btn-outline" data-i18n-title="btn.envSettings">⚙️</button>
+  <button id="jobsBell" class="jobs-bell" title="Aktif işler" hidden>
+    <span class="bell-icon">🔔</span>
+    <span id="jobsBadge" class="jobs-badge" hidden>0</span>
+  </button>
+</div>
+
 
     <div class="card-grid">
       <div class="card">
@@ -113,7 +124,6 @@
         <button type="submit" class="btn-primary" data-i18n="btn.upload">Dönüştür</button>
       </form>
     </div>
-
     <div class="card">
         <h2 data-i18n="section.url">🔗 URL'den Dönüştür</h2>
         <form id="urlForm">
@@ -259,6 +269,24 @@
         </div>
       </div>
     </div>
+    <footer id="binaryFooter" class="binary-footer collapsed">
+  <button
+    id="binaryFooterToggle"
+    class="binary-footer-toggle"
+    type="button"
+  >
+    <span class="binary-footer-toggle-label" data-i18n="ui.binaryVersionsLabel">
+      Kullanılan araçlar
+    </span>
+    <span class="binary-footer-toggle-arrow">▲</span>
+  </button>
+
+  <div class="binary-footer-body" id="binaryFooterBody">
+    <span id="binaryVersionsText">
+      ffmpeg: - • ffprobe: - • mkvmerge: - • yt-dlp: -
+    </span>
+  </div>
+</footer>
   </div>
 
   <aside id="jobsPanel" class="jobs-panel" aria-hidden="true">
@@ -316,5 +344,76 @@
     });
   </script>
   <script type="module" src="./ui/main.js" defer></script>
-</body>
+    <div id="discRipperAdvancedPanel" style="display:none;">
+      <div class="collapsible-inner">
+        <div id="discSourceSection">
+          <div class="form-group">
+            <label for="discSourcePath" data-i18n="disc.source.label">Disk Kaynağı</label>
+            <input
+              type="text"
+              id="discSourcePath"
+              class="input-field"
+              data-i18n-ph="disc.source.placeholder"
+              placeholder="/home/kullanici/DVD"
+            />
+          </div>
+
+          <div class="btn-row">
+            <button type="button" class="btn-primary" id="discScanBtn">
+              🔍 <span data-i18n="disc.btn.scan">Diski Tara</span>
+            </button>
+            <button type="button" class="btn-outline" id="discCancelScanBtn" style="display:none;">
+              🛑 <span data-i18n="disc.btn.cancelScan">Taramayı İptal Et</span>
+            </button>
+          </div>
+        </div>
+        <div class="form-group" id="discProgressSection">
+          <label data-i18n="disc.progress.label">İlerleme</label>
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-fill" id="discProgressFill" style="width:0%"></div>
+              <div class="progress-overlay" id="discProgressOverlay">0%</div>
+            </div>
+            <div class="progress-text" id="discProgressText" data-i18n="disc.progress.ready">
+              Hazır
+            </div>
+          </div>
+        </div>
+        <div id="discTitlesSection" class="collapsible-section" style="display:none;">
+          <div class="collapsible-header">
+            <div class="section-title">
+              <span data-i18n="disc.titles.label">Title'lar</span>
+              <span class="section-badge" id="discTitlesCount">0</span>
+            </div>
+            <span class="toggle-arrow">▼</span>
+          </div>
+          <div class="collapsible-content">
+            <div id="discTitlesList" class="titles-container"></div>
+          </div>
+        </div>
+        <div class="form-group" id="discOutputSection" style="display:none;">
+          <label for="discOutputPath" data-i18n="disc.output.label">Çıktı Klasörü</label>
+          <input
+            type="text"
+            id="discOutputPath"
+            class="input-field"
+            data-i18n-ph="disc.output.placeholder"
+            placeholder="/home/kullanici/outputs"
+          />
+        </div>
+        <div class="btn-row" id="discActionsSection" style="display:none;">
+          <button type="button" class="btn-primary" id="discRipBtn" disabled>
+            💾 <span data-i18n="disc.btn.ripSelected">Seçilenleri MKV'ye Dönüştür</span>
+          </button>
+          <button type="button" class="btn-outline" id="discCancelRipBtn" style="display:none;">
+            🛑 <span data-i18n="disc.btn.cancelRip">Dönüştürmeyi İptal Et</span>
+          </button>
+        </div>
+        <div class="form-group" id="discLogSection">
+          <label data-i18n="disc.log.label">Log</label>
+          <div class="log-container" id="discLog"></div>
+        </div>
+      </div>
+    </div>
+  </body>
 </html>
