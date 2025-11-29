@@ -389,17 +389,19 @@ export class UploadManager {
                   bitrate,
                   sampleRate,
                   includeLyrics,
-                  localPath: fileName
+                  localPath: fileName,
+                  volumeGain: this.app.currentVolumeGain
                 };
 
                 if (streamSelection) {
                 payload.selectedStreams = {
-                audio: streamSelection.audio,
-                subtitles: streamSelection.subtitles,
-                hasVideo: streamSelection.hasVideo,
-                audioLanguages: streamSelection.audioLanguages,
-                subtitleLanguages: streamSelection.subtitleLanguages
-              };
+                  audio: streamSelection.audio,
+                  subtitles: streamSelection.subtitles,
+                  hasVideo: streamSelection.hasVideo,
+                  volumeGain: this.app.currentVolumeGain,
+                  audioLanguages: streamSelection.audioLanguages,
+                  subtitleLanguages: streamSelection.subtitleLanguages
+                };
           }
 
                 console.log('📦 Gönderilecek payload:', payload);
@@ -503,18 +505,19 @@ export class UploadManager {
                           : format;
 
                       const payload = {
-                        format: effectiveFormat,
-                        bitrate,
-                        sampleRate,
-                        includeLyrics,
-                        selectedStreams: {
-                          audio: streamSelection.audio,
-                          subtitles: streamSelection.subtitles,
-                          hasVideo: streamSelection.hasVideo,
-                         audioLanguages: streamSelection.audioLanguages,
-                          subtitleLanguages: streamSelection.subtitleLanguages
-                        }
-                      };
+                      format: effectiveFormat,
+                      bitrate,
+                      sampleRate,
+                      includeLyrics,
+                      volumeGain: this.app.currentVolumeGain,
+                      selectedStreams: {
+                        audio: streamSelection.audio,
+                        subtitles: streamSelection.subtitles,
+                        hasVideo: streamSelection.hasVideo,
+                        audioLanguages: streamSelection.audioLanguages,
+                        subtitleLanguages: streamSelection.subtitleLanguages
+                      }
+                    };
 
                       if (uploadBatchId) {
                           payload.clientBatch = uploadBatchId;
@@ -523,11 +526,12 @@ export class UploadManager {
                       await this.submitLargeFileWithChunks(file, payload, true);
                     } else {
                       const payload = {
-                        format,
-                        bitrate,
-                        sampleRate,
-                        includeLyrics
-                      };
+                      format,
+                      bitrate,
+                      sampleRate,
+                      includeLyrics,
+                      volumeGain: this.app.currentVolumeGain
+                    };
                       if (uploadBatchId) {
                         payload.clientBatch = uploadBatchId;
                       }
@@ -554,12 +558,14 @@ export class UploadManager {
                       formData.append('file', file);
                       formData.append('format', effectiveFormat);
                       formData.append('bitrate', bitrate);
+                      formData.append('volumeGain', this.app.currentVolumeGain);
                       formData.append('sampleRate', sampleRate);
                       formData.append('includeLyrics', includeLyrics);
                       formData.append('selectedStreams', JSON.stringify({
                         audio: streamSelection.audio,
                         subtitles: streamSelection.subtitles,
                         hasVideo: streamSelection.hasVideo,
+                        volumeGain: this.app.currentVolumeGain,
                         audioLanguages: streamSelection.audioLanguages,
                         subtitleLanguages: streamSelection.subtitleLanguages
                       }));
@@ -635,6 +641,10 @@ export class UploadManager {
                 chunkFormData.append('includeLyrics', payload.includeLyrics);
                 if (payload.selectedStreams) {
                   chunkFormData.append('selectedStreams', JSON.stringify(payload.selectedStreams));
+                }
+
+                if (payload.volumeGain != null) {
+                  chunkFormData.append('volumeGain', payload.volumeGain);
                 }
 
                 const response = await fetch('/api/upload/chunk', {
@@ -892,6 +902,11 @@ export class UploadManager {
                                     const format =
                                         payload.get('format') ||
                                         document.getElementById('formatSelect')?.value;
+                                    const volumeGainRaw = payload.get('volumeGain');
+                                    const volumeGain =
+                                      volumeGainRaw === null || volumeGainRaw === undefined
+                                        ? null
+                                        : Number(volumeGainRaw);
                                     const bitrate =
                                         payload.get('bitrate') ||
                                         document.getElementById('bitrateSelect')?.value;
@@ -915,11 +930,12 @@ export class UploadManager {
                                     } catch {}
 
                                     const fallbackPayload = {
-                                        format,
-                                        bitrate,
-                                        sampleRate,
-                                        includeLyrics,
-                                        selectedStreams
+                                      format,
+                                      bitrate,
+                                      sampleRate,
+                                      includeLyrics,
+                                      selectedStreams,
+                                      volumeGain
                                     };
                                     if (clientBatch) {
                                         fallbackPayload.clientBatch = clientBatch;

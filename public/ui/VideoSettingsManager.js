@@ -12,12 +12,16 @@ export class VideoSettingsManager {
             fps: 'source',
             nvencSettings: { preset: 'fast', quality: '26' },
             qsvSettings: { preset: 'veryfast', quality: '26' },
-            vaapiSettings: { device: '/dev/dri/renderD128', quality: '26' }
+            vaapiSettings: { device: '/dev/dri/renderD128', quality: '26' },
+            volumeGain: 1.0
         };
     }
 
     initialize() {
         this.loadFromStorage();
+        if (this.app) {
+            this.app.currentVolumeGain = this.videoSettings.volumeGain ?? 1.0;
+        }
         this.createUI();
         this.attachEvents();
     }
@@ -450,7 +454,6 @@ export class VideoSettingsManager {
             }
         }
     }
-
     getSettings() {
         return { ...this.videoSettings };
     }

@@ -27,7 +27,8 @@ function makeMapId() { return uniqueId("map"); }
 
 router.post("/api/spotify/process/start", async (req, res) => {
   try {
-    const { url, format = "mp3", bitrate = "192k", sampleRate = "48000", market: marketIn, includeLyrics } = req.body || {};
+    const { url, format = "mp3", bitrate = "192k", sampleRate = "48000", market: marketIn, includeLyrics, volumeGain } = req.body || {};
+    const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
     if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL gerekli", 400);
 
     let sp;
@@ -47,6 +48,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
       format,
       bitrate,
       sampleRate: parseInt(sampleRate) || 48000,
+      volumeGain: volumeGainNum,
       metadata: {
         source: "spotify",
         spotifyUrl: url,
@@ -55,7 +57,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
         isPlaylist: sp.kind === "playlist",
         isAlbum: sp.kind === "album",
         isAutomix: false,
-        includeLyrics: (includeLyrics === true || includeLyrics === "true")
+        includeLyrics: (includeLyrics === true || includeLyrics === "true"),
+        volumeGain: volumeGainNum
       },
       resultPath: null,
       error: null,
@@ -88,6 +91,10 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
   if (!job) return;
 
   try {
+    const effectiveVolumeGain =
+      job.metadata?.volumeGain != null
+        ? job.metadata.volumeGain
+        : (job.volumeGain != null ? job.volumeGain : null);
     job.phase = "mapping"; job.currentPhase = "mapping"; job.currentPhase = "mapping";
     job.progress = 5;
     job.downloadProgress = 0;
@@ -311,6 +318,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
             onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
             includeLyrics: !!job.metadata.includeLyrics,
             sampleRate: job.sampleRate || 48000,
+            volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
             onLyricsStats: (delta) => {
               if (!delta) return;
               const m = job.metadata || (job.metadata = {});
@@ -563,6 +571,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
         onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
         includeLyrics: !!job.metadata.includeLyrics,
         sampleRate: job.sampleRate || 48000,
+        volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
         onLyricsStats: (delta) => {
           if (!delta) return;
           const m = job.metadata || (job.metadata = {});

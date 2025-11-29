@@ -358,6 +358,7 @@ export class PreviewManager {
             const sampleRate = document.getElementById('sampleRateSelect').value;
             const sequential = document.getElementById('sequentialChk')?.checked;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+            const volumeGain = this.app.currentVolumeGain || 1.0;
             const compressionLevel =
             format === 'flac'
                 ? (document.getElementById('compressionLevelRange')?.value || '5')
@@ -384,7 +385,8 @@ export class PreviewManager {
                         bitrate,
                         sampleRate: sampleRate,
                         clientBatch: batchId,
-                        includeLyrics
+                        includeLyrics,
+                        volumeGain
                     });
                 }
             } else {
@@ -396,7 +398,8 @@ export class PreviewManager {
                     format,
                     bitrate,
                     sampleRate: sampleRate,
-                    includeLyrics
+                    includeLyrics,
+                    volumeGain
                 });
             }
 
@@ -430,6 +433,7 @@ export class PreviewManager {
             const bitrate = document.getElementById('bitrateSelect').value;
             const sampleRate = document.getElementById('sampleRateSelect').value;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+            const volumeGain = this.app.currentVolumeGain || 1.0;
             const allIds = this.currentPreview.items.map(item => item.id).filter(Boolean);
 
             await this.app.jobManager.submitJob({
@@ -440,7 +444,8 @@ export class PreviewManager {
                 format,
                 bitrate,
                 sampleRate: sampleRate,
-                includeLyrics
+                includeLyrics,
+                volumeGain
             });
 
             this.app.showNotification(this.app.t('notif.allTracksQueued'), 'success', 'queue');

@@ -229,6 +229,7 @@ export class SpotifyManager {
                     bitrate,
                     sampleRate: sampleRate,
                     includeLyrics,
+                    volumeGain: this.app.currentVolumeGain || 1.0,
                     ...(compressionLevel !== undefined
                         ? { compressionLevel }
                         : {})
@@ -403,6 +404,7 @@ export class SpotifyManager {
                 bitrate,
                 sampleRate: sampleRate,
                 isPlaylist: true,
+                volumeGain: this.app.currentVolumeGain || 1.0,
                 ...(compressionLevel !== undefined
                     ? { compressionLevel }
                     : {}),
@@ -414,7 +416,8 @@ export class SpotifyManager {
                     selectedIds: validItems.map(item => item.id),
                     frozenEntries: validItems,
                     spotifyMapId: this.currentSpotifyTask.id,
-                    includeLyrics
+                    includeLyrics,
+                    volumeGain: this.app.currentVolumeGain || 1.0
                 }
             };
 

@@ -504,6 +504,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       clientBatch,
       spotifyMapId,
       includeLyrics = false,
+      volumeGain,
       stereoConvert = "auto",
       atempoAdjust = "none",
       videoSettings: rawVideoSettings,
@@ -733,14 +734,23 @@ else if (isYouTubeUrl(url)) {
       sampleRate: pickedSR,
       compressionLevel: normalizedCompressionLevel,
       bitDepth: normalizedBitDepth,
-      videoSettings: effectiveVideoSettings,
+      videoSettings: {
+        ...(effectiveVideoSettings || {}),
+        ...(volumeGain != null ? { volumeGain: Number(volumeGain) } : {})
+      },
       metadata: {
         ...metadata,
         includeLyrics: includeLyrics === true || includeLyrics === "true",
         stereoConvert: stereoConvert,
         atempoAdjust: atempoAdjust,
         compressionLevel: normalizedCompressionLevel,
-        selectedStreams: selectedStreamsParsed
+        selectedStreams: selectedStreamsParsed,
+        volumeGain:
+          volumeGain != null
+            ? Number(volumeGain)
+            : (selectedStreamsParsed && selectedStreamsParsed.volumeGain != null
+                ? Number(selectedStreamsParsed.volumeGain)
+                : null)
       },
       resultPath: null,
       error: null,

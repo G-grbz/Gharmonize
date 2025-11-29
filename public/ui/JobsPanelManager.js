@@ -85,31 +85,31 @@ export class JobsPanelManager {
         });
     }
 
-open() {
-    const panel = this.panel;
-    if (!panel) return;
-    panel.setAttribute('aria-hidden', 'false');
-    panel.removeAttribute('inert');
-    this.overlay && (this.overlay.hidden = false);
-    document.body.style.overflow = 'hidden';
-    requestAnimationFrame(() => {
-        const closeBtn = document.getElementById('jobsClose');
-        closeBtn?.focus();
-    });
-}
-
-close() {
-    const panel = this.panel;
-    if (!panel) return;
-    panel.setAttribute('aria-hidden', 'true');
-    panel.setAttribute('inert', '');
-    this.overlay && (this.overlay.hidden = true);
-    document.body.style.overflow = '';
-    const jobsBell = document.getElementById('jobsBell');
-    if (jobsBell && !jobsBell.hidden) {
-        jobsBell.focus();
+    open() {
+        const panel = this.panel;
+        if (!panel) return;
+        panel.setAttribute('aria-hidden', 'false');
+        panel.removeAttribute('inert');
+        this.overlay && (this.overlay.hidden = false);
+        document.body.style.overflow = 'hidden';
+        requestAnimationFrame(() => {
+            const closeBtn = document.getElementById('jobsClose');
+            closeBtn?.focus();
+        });
     }
-}
+
+    close() {
+        const panel = this.panel;
+        if (!panel) return;
+        panel.setAttribute('aria-hidden', 'true');
+        panel.setAttribute('inert', '');
+        this.overlay && (this.overlay.hidden = true);
+        document.body.style.overflow = '';
+        const jobsBell = document.getElementById('jobsBell');
+        if (jobsBell && !jobsBell.hidden) {
+            jobsBell.focus();
+        }
+    }
 
     setFilter(newFilter) {
         this.filter = newFilter;
@@ -214,7 +214,7 @@ close() {
             });
         };
 
-        poll();
+    poll();
         this.pollingInterval = setInterval(poll, 1500);
     }
 
@@ -230,13 +230,33 @@ close() {
                (m.isAutomix ? this.t('jobsPanel.automix') : (m.isPlaylist ? this.t('jobsPanel.playlist') : this.t('jobsPanel.job')));
     }
 
+    getHwaccelIcon(hwaccel) {
+        const icons = {
+            nvenc: '🔵',
+            qsv: '🔶',
+            vaapi: '🟣',
+            off: '⚪'
+        };
+        return icons[hwaccel] || '⚪';
+    }
+
+    getChannelsText(channels) {
+        const texts = {
+            stereo: this.t('option.forceStereo') || '2.0',
+            mono: this.t('option.forceMono') || '1.0',
+            original: this.t('option.auto') || 'Orig'
+        };
+        return texts[channels] || channels;
+    }
+
     sourcePill(j) {
         const s = j.metadata?.source || 'file';
         const sources = {
-            youtube: this.t('jobsPanel.sourceYouTube'),
-            spotify: this.t('jobsPanel.sourceSpotify'),
-            direct_url: this.t('jobsPanel.sourceURL'),
-            file: this.t('jobsPanel.sourceFile')
+           youtube: `▶️ ${this.t('jobsPanel.sourceYouTube')}`,
+            spotify: `🎵 ${this.t('jobsPanel.sourceSpotify')}`,
+            direct_url: `🌐 ${this.t('jobsPanel.sourceURL')}`,
+            file: `💾 ${this.t('jobsPanel.sourceFile')}`,
+            local: `💻 ${this.t('jobsPanel.sourceLocal')}`
         };
         return sources[s] || s;
     }
@@ -343,7 +363,7 @@ close() {
             return;
         }
 
-                const jobsHtml = items.map(j => {
+            const jobsHtml = items.map(j => {
             const p = this.prog(j);
             let downloadLinks = '';
 
@@ -370,6 +390,22 @@ close() {
                 ? `${baseTitle} — ${nowT}`
                 : (nowT || baseTitle);
 
+             const fmt = String(j.format || '').toLowerCase();
+            const videoFormats = ['mp4', 'mkv', 'webm', 'avi', 'mov'];
+            const audioFormats = ['mp3', 'aac', 'm4a', 'ogg', 'opus', 'flac', 'wav', 'alac', 'eac3', 'ac3'];
+
+            let formatEmoji = '📁';
+            if (videoFormats.includes(fmt)) {
+                formatEmoji = '🎬';
+            } else if (audioFormats.includes(fmt)) {
+                formatEmoji = '🎧';
+            }
+
+            const fpsEmoji = '🎯';
+            const sampleRateEmoji = '📡';
+            const channelsEmoji = '🎚️';
+            const bitrateEmoji = '📶';
+
             const skippedCount = this.computeSkippedPanel(j);
             const skippedKeywords = /(private|izin|skipp?ed|unavailable|atlan(?:d|an)|blocked|copyright|region|geo)/i;
             const showSkippedBadge =
@@ -394,11 +430,51 @@ close() {
 
                     <div class="job-meta">
                         <span class="pill">${this.sourcePill(j)}</span>
-                        <span class="pill">${(j.format || '').toUpperCase()} ${j.bitrate || ''}</span>
-                        ${j.sampleRate ? `<span class="pill">${Math.round(j.sampleRate / 1000)} kHz</span>` : ''}
+                        <span class="pill">${formatEmoji} ${(j.format || '').toUpperCase()} ${j.bitrate ? `• ${bitrateEmoji} ${j.bitrate}` : ''}</span>
+                        ${j.sampleRate ? `
+                            <span class="pill">
+                                ${sampleRateEmoji} ${Math.round(j.sampleRate / 1000)} ${this.t('ui.khz') || 'kHz'}
+                            </span>
+                        ` : ''}
+                        ${j.videoSettings?.transcodeEnabled ? `
+                            <span class="pill pill--video" title="${this.t('label.videoTranscode')}">🎬</span>
+                        ` : ''}
+                        ${j.videoSettings?.audioTranscodeEnabled ? `
+                            <span class="pill pill--audio" title="${this.t('label.audioTranscode')}">🎵</span>
+                        ` : ''}
+                        ${j.videoSettings?.hwaccel && j.videoSettings.hwaccel !== 'off' ? `
+                            <span
+                                class="pill pill--hwaccel"
+                                title="${this.t('label.hwaccel')}: ${this.t(`option.${j.videoSettings.hwaccel}`) || j.videoSettings.hwaccel}"
+                            >
+                                ${this.getHwaccelIcon(j.videoSettings.hwaccel)}
+                            </span>
+                        ` : ''}
+                        ${j.videoSettings?.fps && j.videoSettings.fps !== 'source' ?
+                            `<span class="pill" title="FPS">${fpsEmoji} ${j.videoSettings.fps} ${this.t('ui.fps') || 'FPS'}</span>` : ''}
+                        ${j.videoSettings?.audioChannels && j.videoSettings.audioChannels !== 'original' ?
+                            `<span class="pill" title="${this.t('label.stereoConvert')}">
+                                ${channelsEmoji} ${this.getChannelsText(j.videoSettings.audioChannels)}
+                            </span>` : ''}
+                        ${j.videoSettings?.audioSampleRate && j.videoSettings.audioSampleRate !== '48000' ?
+                            `<span class="pill" title="${this.t('label.sampleRate')}">
+                                ${sampleRateEmoji} ${parseInt(j.videoSettings.audioSampleRate)/1000}k
+                            </span>` : ''}
+                        ${j.videoSettings?.audioCodec && j.videoSettings.audioCodec !== 'aac' ?
+                            `<span class="pill" title="${this.t('label.format')}">${this.t(`option.${j.videoSettings.audioCodec}`) || j.videoSettings.audioCodec.toUpperCase()}</span>` : ''}
+                        ${j.videoSettings?.audioBitrate && j.videoSettings.audioBitrate !== '192k' ?
+                            `<span class="pill" title="${this.t('label.audioBitrate')}">
+                                ${bitrateEmoji} ${j.videoSettings.audioBitrate}
+                            </span>` : ''}
+                        ${j.metadata?.includeLyrics ? `
+                            <span class="pill pill--lyrics" title="${this.t('label.includeLyrics2')}">🎼</span>
+                        ` : ''}
+                        ${j.metadata?.volumeGain && j.metadata.volumeGain !== 1.0 ? `
+                            <span class="pill pill--volume" title="${this.t('label.volumeGain')}">🔊 ${j.metadata.volumeGain}x</span>
+                        ` : ''}
                         <span class="pill">${this.phasePill(j)}</span>
                         ${skippedBadge}
-                    </div>
+</div>
 
                     ${(() => {
                         const nt = nowT;
@@ -605,6 +681,15 @@ export class JobManager {
         const ex = job.metadata?.extracted || {};
         return ex.track || ex.title || job.metadata?.originalName || null;
     }
+
+    getChannelsText(channels) {
+       const texts = {
+           stereo: '2.0',
+           mono: '1.0',
+           original: 'Orig'
+       };
+       return texts[channels] || channels;
+   }
 
     updateJobUI(job, batchId = null) {
         const statusNorm = this.normalizeStatus(job.status);
@@ -915,6 +1000,72 @@ export class JobManager {
             }
         }
 
+       const fmt = String(job.format || '').toLowerCase();
+        const videoFormats = ['mp4', 'mkv', 'webm', 'avi', 'mov'];
+        const audioFormats = ['mp3', 'aac', 'm4a', 'ogg', 'opus', 'flac', 'wav', 'alac', 'eac3', 'ac3'];
+
+        let formatEmoji = '📁';
+        if (videoFormats.includes(fmt)) {
+            formatEmoji = '🎬';
+        } else if (audioFormats.includes(fmt)) {
+            formatEmoji = '🎧';
+        }
+
+        const bitrateEmoji    = '📶';
+        const sampleRateEmoji = '📡';
+        const fpsEmoji        = '🎯';
+        const channelsEmoji   = '🎚️';
+
+        let formatInfo = `${formatEmoji} ${job.format.toUpperCase()}`;
+        if (job.bitrate) {
+            formatInfo += ` • ${bitrateEmoji} ${job.bitrate}`;
+        }
+        if (job.sampleRate) {
+            formatInfo += ` • ${sampleRateEmoji} ${Math.round(job.sampleRate / 1000)} ${this.app.t('ui.khz') || 'kHz'}`;
+        }
+
+        if (job.videoSettings?.transcodeEnabled) {
+            formatInfo += ` • 🎬 ${this.app.t('label.videoTranscode') || 'Transcode'}`;
+            if (job.videoSettings.hwaccel && job.videoSettings.hwaccel !== 'off') {
+                const hwaccelText = this.app.t(`option.${job.videoSettings.hwaccel}`) || job.videoSettings.hwaccel.toUpperCase();
+                formatInfo += ` • ${hwaccelText}`;
+            }
+
+            if (job.videoSettings.fps && job.videoSettings.fps !== 'source') {
+                formatInfo += ` • ${fpsEmoji} ${job.videoSettings.fps} ${this.app.t('ui.fps') || 'FPS'}`;
+            }
+        }
+
+        if (job.videoSettings?.audioTranscodeEnabled) {
+            const audioCodecText = this.app.t(`option.${job.videoSettings.audioCodec}`) || job.videoSettings.audioCodec?.toUpperCase() || 'AAC';
+            formatInfo += ` • 🎵 ${audioCodecText}`;
+
+            if (job.videoSettings.audioBitrate && job.videoSettings.audioBitrate !== '192k') {
+                formatInfo += ` • ${bitrateEmoji} ${job.videoSettings.audioBitrate}`;
+            }
+
+            if (job.videoSettings.audioChannels && job.videoSettings.audioChannels !== 'original') {
+                const channelsText = this.getChannelsText(job.videoSettings.audioChannels);
+                formatInfo += ` • ${channelsEmoji} ${channelsText}`;
+            }
+
+            if (job.videoSettings.audioSampleRate && job.videoSettings.audioSampleRate !== '48000') {
+                formatInfo += ` • ${sampleRateEmoji} ${parseInt(job.videoSettings.audioSampleRate)/1000}k`;
+            }
+        }
+
+        if (job.metadata?.includeLyrics) {
+            formatInfo += ` • 🎼 ${this.app.t('label.includeLyrics2') || 'Lyrics'}`;
+        }
+
+        if (job.metadata?.volumeGain && job.metadata.volumeGain !== 1.0) {
+            formatInfo += ` • 🔊 ${job.metadata.volumeGain}x ${this.app.t('label.volumeGain') || 'Volume'}`;
+        }
+
+        if (job.metadata?.isPlaylist) {
+            formatInfo += ` • 📜 ${this.app.t('ui.playlist')}`;
+        }
+
         let jobElement = document.getElementById(`job-${job.id}`);
         const statusText = {
             queued: this.app.t('status.queued'),
@@ -1063,10 +1214,7 @@ export class JobManager {
         jobElement.innerHTML = `
             <strong>${this.app.escapeHtml(jobTitle)}</strong>
             <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
-                ${job.format.toUpperCase()} • ${job.bitrate}
-                ${job.sampleRate ? ` • ${Math.round(job.sampleRate / 1000)} kHz` : ''}
-                ${job.metadata?.isPlaylist ? ` • ${this.app.t('ui.playlist')}` : ''}
-                ${job.metadata?.includeLyrics ? ` • 🎼 ${this.app.t('label.includeLyrics2')}` : ''}
+                ${formatInfo}
                 ${phaseInfo}
                 ${skippedBadge}
             </div>

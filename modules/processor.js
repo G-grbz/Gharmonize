@@ -60,6 +60,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
   const selectedStreams = job.metadata?.selectedStreams || {};
 
+  const effectiveVolumeGain =
+    job.metadata?.volumeGain != null
+      ? job.metadata.volumeGain
+      : job.videoSettings?.volumeGain != null
+        ? job.videoSettings.volumeGain
+        : null;
+
   job.canceled = false;
 
   let skippedCount = 0;
@@ -284,6 +291,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               compressionLevel: job.metadata?.compressionLevel ?? null,
               isCanceled: () => !!jobs.get(jobId)?.canceled,
               onLog: handleLyricsLog,
+              volumeGain: effectiveVolumeGain,
               onLyricsStats: handleLyricsStats,
               stereoConvert: job.metadata?.stereoConvert || "auto",
               atempoAdjust: job.metadata?.atempoAdjust || "none",
@@ -642,6 +650,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 compressionLevel: job.metadata?.compressionLevel ?? null,
                 isCanceled: () => !!jobs.get(jobId)?.canceled,
                 onLog: handleLyricsLog,
+                volumeGain: effectiveVolumeGain,
                 onLyricsStats: handleLyricsStats,
                 stereoConvert: job.metadata?.stereoConvert || "auto",
                 atempoAdjust: job.metadata?.atempoAdjust || "none"
@@ -779,6 +788,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             isCanceled: () => !!jobs.get(jobId)?.canceled,
             onLog: handleLyricsLog,
             onLyricsStats: handleLyricsStats,
+            volumeGain: effectiveVolumeGain,
             stereoConvert: job.metadata?.stereoConvert || "auto",
             selectedStreams: job.metadata.selectedStreams,
             atempoAdjust: job.metadata?.atempoAdjust || "none",

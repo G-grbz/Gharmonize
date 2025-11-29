@@ -16,6 +16,7 @@ export class MediaConverterApp {
 
         this.includeLyrics = false;
         this.currentSampleRate = 48000;
+        this.currentVolumeGain = 1.0;
         this.videoManager = new VideoSettingsManager(this);
         this.jobManager = new JobManager(this);
         this.previewManager = new PreviewManager(this);
@@ -139,6 +140,32 @@ export class MediaConverterApp {
         document.getElementById('sampleRateSelect').addEventListener('change', (e) => {
             this.currentSampleRate = parseInt(e.target.value);
         });
+
+        const volumeRange = document.getElementById('volumeGainRange');
+        const volumeLabel = document.getElementById('volumeGainValue');
+
+        if (volumeRange && volumeLabel) {
+            const settings = this.videoManager?.videoSettings || {};
+            const initial = (typeof settings.volumeGain === 'number')
+                ? settings.volumeGain
+                : 1.0;
+
+            volumeRange.value = initial.toFixed(1);
+            volumeLabel.textContent = initial.toFixed(1) + 'x';
+            this.currentVolumeGain = initial;
+
+            const updateVolumeUI = () => {
+                const v = parseFloat(volumeRange.value) || 1.0;
+                this.currentVolumeGain = v;
+                volumeLabel.textContent = v.toFixed(1) + 'x';
+
+                if (this.videoManager && this.videoManager.videoSettings) {
+                    this.videoManager.videoSettings.volumeGain = v;
+                    this.videoManager.saveToStorage();
+                }
+            };
+            volumeRange.addEventListener('input', updateVolumeUI);
+        }
 
         const fileInput = document.getElementById('fileInput');
         if (fileInput) {
@@ -384,6 +411,7 @@ export class MediaConverterApp {
         const isPlaylist = document.getElementById('playlistCheckbox').checked;
         const sequential = document.getElementById('sequentialChk')?.checked;
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+        const volumeGain = this.currentVolumeGain || 1.0;
 
         if ((format === 'eac3' || format === 'ac3' || format === 'aac') && !sampleRate) {
             this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
@@ -411,7 +439,8 @@ export class MediaConverterApp {
                         isPlaylist: true,
                         selectedIndices: [idx],
                         clientBatch: batchId,
-                        includeLyrics
+                        includeLyrics,
+                        volumeGain
                     };
                     this.jobManager.submitJob(payload);
                 }
@@ -421,7 +450,8 @@ export class MediaConverterApp {
                     isPlaylist: true,
                     sampleRate: sampleRate,
                     selectedIndices: selectedIndices.length ? selectedIndices : 'all',
-                    includeLyrics
+                    includeLyrics,
+                    volumeGain
                 };
                 await this.jobManager.submitJob(payload);
             }
@@ -430,7 +460,8 @@ export class MediaConverterApp {
                 url, format, bitrate,
                 isPlaylist: false,
                 sampleRate: Number(sampleRate),
-                includeLyrics
+                includeLyrics,
+                volumeGain
             };
             await this.jobManager.submitJob(payload);
         }

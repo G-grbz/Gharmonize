@@ -184,6 +184,18 @@ export async function convertMedia(
   const bitDepth = opts?.bitDepth || null;
   const videoSettings = opts.videoSettings || {};
   const selectedStreams = opts.selectedStreams || null;
+
+  let volumeGainRaw = null;
+  if (opts?.volumeGain != null) {
+    volumeGainRaw = opts.volumeGain;
+  } else if (videoSettings?.volumeGain != null) {
+    volumeGainRaw = videoSettings.volumeGain;
+  } else if (metadata?.volumeGain != null) {
+    volumeGainRaw = metadata.volumeGain;
+  }
+
+  const volumeGain =
+    volumeGainRaw != null ? Number(volumeGainRaw) : null;
   const selectedAudioStreams = Array.isArray(selectedStreams?.audio)
     ? selectedStreams.audio
     : [];
@@ -827,6 +839,8 @@ export async function convertMedia(
           args.push("-ac", "1");
         }
 
+    const afilters = [];
+
     if (!isVideo && atempoAdjust !== "none") {
       const ratioTable = {
         "24000_23976": 24000 / 23976,
@@ -861,9 +875,19 @@ export async function convertMedia(
         const chain = splitAtempo(target);
         if (chain.length) {
           const expr = chain.map((v) => `atempo=${v}`).join(",");
-          args.push("-af", expr);
+          afilters.push(expr);
         }
       }
+    }
+
+    if (Number.isFinite(volumeGain) && volumeGain > 0 && volumeGain !== 1) {
+      const safeGain = Math.min(Math.max(volumeGain, 0.5), 5.0);
+      afilters.push(`volume=${safeGain.toFixed(2)}`);
+    }
+
+    if (afilters.length > 0) {
+      const filterStr = afilters.join(",");
+      args.push("-af", filterStr);
     }
 
     args.push(outputPath);
