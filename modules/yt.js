@@ -584,38 +584,37 @@ async function downloadSelectedIds(
   let args;
 
   if (opts.video) {
-    const h = (opts.maxHeight && Number.isFinite(opts.maxHeight)) ? opts.maxHeight : 1080;
-    args = [
-      "--force-ipv4",
-      "--no-playlist",
-      "--ignore-errors", "--no-abort-on-error",
-      "--no-part",
-      "--progress", "--newline",
-      "-N", "4",
-      "-f", `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]`,
-      "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
-      "-a", listFile
-    ];
+  const h = (opts.maxHeight && Number.isFinite(opts.maxHeight)) ? opts.maxHeight : 1080;
+  args = [
+    "--force-ipv4",
+    "--no-playlist",
+    "--ignore-errors", "--no-abort-on-error",
+    "--no-part",
+    "--progress", "--newline",
+    "-N", "4",
+    "-f", `bestvideo[height<=${h}]+bestaudio[vcodec=none]/best[height<=${h}]`,
+    "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
+    "-a", listFile
+  ];
     const extra = getExtraArgs();
     if (extra.length) args.push(...extra);
   } else {
-    args = [
-      "--ignore-config", "--no-warnings",
-      "--socket-timeout", "15",
-      "--user-agent", DEFAULT_USER_AGENT,
-      ...headersToArgs(DEFAULT_HEADERS),
-      "--no-playlist",
-      "-N", "4",
-      "--ignore-errors", "--no-abort-on-error",
-      "--write-thumbnail", "--convert-thumbnails", "jpg",
-      "--continue", "--no-overwrites",
-      "--autonumber-size", "3",
-      "--progress", "--newline",
-      "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
-      "-a", listFile,
-      "--extractor-args", "youtube:player_client=android,web",
-      "-f", "bestaudio/best"
-    ];
+  args = [
+    "--ignore-config", "--no-warnings",
+    "--socket-timeout", "15",
+    "--user-agent", DEFAULT_USER_AGENT,
+    ...headersToArgs(DEFAULT_HEADERS),
+    "--no-playlist",
+    "-N", "4",
+    "--ignore-errors", "--no-abort-on-error",
+    "--write-thumbnail", "--convert-thumbnails", "jpg",
+    "--continue", "--no-overwrites",
+    "--autonumber-size", "3",
+    "--progress", "--newline",
+    "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
+    "-a", listFile,
+    "-f", "bestaudio[abr>=128]/bestaudio/best"
+  ];
 
     if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
     const geoNetArgs = addGeoArgs([]);
@@ -769,12 +768,15 @@ async function downloadStandard(
   let args;
 
   if (opts.video) {
-    const h = H || 1080;
-    args = [
-      "--force-ipv4",
-      "--progress", "--newline",
-      "-f", `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]`
-   ];
+  const h = H || 1080;
+  args = [
+    "--force-ipv4",
+    "--progress", "--newline",
+    "-f",
+    `bestvideo[height<=${h}]+bestaudio[abr>=128][vcodec=none]/` +
+    `bestvideo[height<=${h}]+bestaudio[vcodec=none]/` +
+    `best[height<=${h}]`
+  ];
 
     if (isPlaylist || isAutomix) {
       args.push(
@@ -801,15 +803,14 @@ async function downloadStandard(
 
     args.push(url);
   } else {
-    args = [
-      "--ignore-config", "--no-warnings",
-      "--socket-timeout", "15",
-      "--extractor-args", "youtube:player_client=android,web",
-      "--user-agent", DEFAULT_USER_AGENT,
-      ...headersToArgs(DEFAULT_HEADERS),
-      "--progress", "--newline",
-      "-f", "bestaudio/best"
-    ];
+  args = [
+    "--ignore-config", "--no-warnings",
+    "--socket-timeout", "15",
+    "--user-agent", DEFAULT_USER_AGENT,
+    ...headersToArgs(DEFAULT_HEADERS),
+    "--progress", "--newline",
+    "-f", "bestaudio[abr>=128]/bestaudio/best"
+  ];
 
     if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
     const geoNetArgs = addGeoArgs([]);

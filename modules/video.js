@@ -4,7 +4,8 @@ import {
   downloadYouTubeVideo,
   buildEntriesMap,
   parsePlaylistIndexFromPath,
-  isYouTubeAutomix
+  isYouTubeAutomix,
+  idsToMusicUrls
 } from "./yt.js";
 import { sanitizeFilename } from "./utils.js";
 import { convertMedia } from "./media.js";
@@ -126,16 +127,24 @@ export async function processYouTubeVideoJob(job, {
   TEMP_DIR   = path.resolve(process.cwd(), "temp"),
 }) {
   const TARGET_H = qualityToHeight(job.bitrate);
-  const format = "mp4";
+  const format = job.format || "mp4";
   const videoSettings = job.videoSettings || {};
   const transcodeEnabled = videoSettings.transcodeEnabled === true;
 
   console.log(`🎬 Video Job Ayarları:`, {
    jobId: job.id,
+   format: format,
    targetHeight: TARGET_H,
    transcodeEnabled,
-   videoSettings: job.videoSettings
+   videoSettings: job.videoSettings,
+   source: job.metadata?.source
  });
+
+  if (job.metadata?.source === "spotify") {
+    console.log(`🎬 Spotify Video İşleme: ${job.metadata.spotifyTitle}`);
+    await processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings });
+    return;
+  }
 
   job.counters = job.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 };
   job.currentPhase = "downloading";
@@ -312,7 +321,27 @@ export async function processYouTubeVideoJob(job, {
       const ext = path.extname(filePath);
       const rawBase = path.basename(filePath);
       const cleaned = stripLeadingPrefix(rawBase, job.id).replace(ext, "").trim();
-      const cleanTitle = sanitizeFilename(cleaned) || "video";
+
+      const feEntry = Array.isArray(job.metadata.frozenEntries)
+        ? job.metadata.frozenEntries[i]
+        : null;
+
+      const artistRaw =
+        feEntry?.uploader ||
+        flat.uploader ||
+        "";
+
+      const titleRaw =
+        feEntry?.title ||
+        cleaned ||
+        "video";
+
+      const baseTitle = artistRaw
+        ? `${artistRaw} - ${titleRaw}`
+        : titleRaw;
+
+      const cleanTitle = sanitizeFilename(baseTitle) || "video";
+      console.log("🎧 Spotify cleanTitle:", { cleanTitle, artistRaw, titleRaw });
 
       if (!transcodeEnabled) {
         const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
@@ -331,18 +360,13 @@ export async function processYouTubeVideoJob(job, {
         job.convertProgress = Math.floor(overallConv);
         job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
       } else {
-        const feEntry = Array.isArray(job.metadata.frozenEntries)
-          ? job.metadata.frozenEntries[i]
-          : null;
-
         const srcHeight = await probeVideoHeight(filePath);
-
         const meta = {
-          title: feEntry?.title || cleanTitle,
-          track: feEntry?.title || cleanTitle,
-          artist: feEntry?.uploader || flat.uploader || "",
+          title: cleanTitle,
+          track: cleanTitle,
+          artist: artistRaw,
           album: flat.playlist_title || flat.title || "",
-          album_artist: feEntry?.uploader || flat.uploader || "",
+          album_artist: artistRaw,
           webpage_url: feEntry?.webpage_url || flat.webpage_url || "",
           __maxHeight: TARGET_H,
           __srcHeight: srcHeight
@@ -352,7 +376,7 @@ export async function processYouTubeVideoJob(job, {
 
         console.log(`🎬 ConvertMedia çağrılıyor:`, {
         inputPath: filePath,
-        format: "mp4",
+        format: format,
         bitrate: job.bitrate || "auto",
         isVideo: true,
         videoSettings: videoSettings
@@ -428,7 +452,16 @@ export async function processYouTubeVideoJob(job, {
   const ext = path.extname(filePath);
   const rawBase = path.basename(filePath);
   const cleaned = stripLeadingPrefix(rawBase, job.id).replace(ext, "").trim();
-  const cleanTitle = sanitizeFilename(cleaned) || "video";
+
+  const artistRaw = flat.uploader || "";
+  const titleRaw  = flat.title || cleaned || "video";
+
+  const baseTitle = artistRaw
+    ? `${artistRaw} - ${titleRaw}`
+    : titleRaw;
+
+  const cleanTitle = sanitizeFilename(baseTitle) || "video";
+  console.log("🎧 Spotify cleanTitle:", { cleanTitle, artistRaw, titleRaw });
 
   if (!transcodeEnabled) {
     const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
@@ -450,11 +483,11 @@ export async function processYouTubeVideoJob(job, {
     const srcHeight = await probeVideoHeight(filePath);
 
     const meta = {
-      title: flat.title || cleanTitle,
-      track: flat.title || cleanTitle,
-      artist: flat.uploader || "",
+      title: cleanTitle,
+      track: cleanTitle,
+      artist: artistRaw,
       album: flat.album || "",
-      album_artist: flat.uploader || "",
+      album_artist: artistRaw,
       webpage_url: flat.webpage_url || dlUrlSingle,
       __maxHeight: TARGET_H,
       __srcHeight: srcHeight
@@ -500,4 +533,334 @@ export async function processYouTubeVideoJob(job, {
     job.currentPhase = "completed";
     cleanupTempForJob(TEMP_DIR, job.id);
   }
+}
+
+async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings }) {
+  console.log(`🎬 Spotify Video İşleme Başlatılıyor: ${job.metadata.spotifyTitle}`);
+
+  job.counters = job.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 };
+  job.currentPhase = "downloading";
+  job.downloadProgress = 5;
+
+  const selectedIds = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : [];
+  if (!selectedIds.length) {
+    throw new Error("Spotify URL listesi boş");
+  }
+
+  const transcodeEnabled = videoSettings.transcodeEnabled === true;
+
+  job.lastLogKey = 'log.spotify.videoProcessingStart';
+  job.lastLogVars = {
+    title: job.metadata.spotifyTitle || "Spotify Playlist",
+    count: selectedIds.length
+  };
+  job.lastLog = `🎬 Spotify video işleme başlatılıyor: ${job.metadata.spotifyTitle} (${selectedIds.length} parça)`;
+
+  const onProgress = (p) => {
+    if (p && typeof p === "object" && p.__event) {
+      if (p.type === "file-done" && job.counters) {
+        const total = Number(p.total || job.counters.dlTotal || selectedIds.length || 0) || 0;
+        if (total > 0) {
+          job.counters.dlTotal = total;
+          if (job.playlist && !job.playlist.total) {
+            job.playlist.total = total;
+          }
+        }
+
+        const done = Number(p.downloaded || job.counters.dlDone || 0) || 0;
+        job.counters.dlDone = Math.max(0, done);
+
+        if (job.playlist) {
+          job.playlist.done = job.counters.dlDone;
+          job.playlist.current = Math.max(0, job.counters.dlDone - 1);
+        }
+
+        if (p.item && p.item.title) {
+          job.lastLogKey = 'log.spotify.videoDownloaded';
+          job.lastLogVars = {
+            artist: p.item.uploader || "Spotify Artist",
+            title: p.item.title,
+            done: done,
+            total: total
+          };
+          job.lastLog = `📥 İndirildi: ${p.item.uploader} - ${p.item.title} (${done}/${total})`;
+        }
+      }
+      return;
+    }
+
+    const pct = Number(p) || 0;
+    job.downloadProgress = Math.max(
+      job.downloadProgress,
+      Math.min(100, Math.floor(pct))
+    );
+    job.progress = Math.floor(
+      (job.downloadProgress + (job.convertProgress || 0)) / 2
+    );
+
+    if (job.counters) {
+      const total = job.counters.dlTotal || 1;
+      job.counters.dlDone = Math.floor((pct / 100) * total);
+    }
+  };
+
+  const files = await downloadYouTubeVideo(
+    job.metadata.spotifyTitle || "Spotify Playlist",
+    job.id,
+    true,
+    null,
+    false,
+    selectedIds,
+    TEMP_DIR,
+    onProgress,
+    {
+      video: true,
+      maxHeight: TARGET_H,
+      onSkipUpdate: (stats) => {
+        job.skippedCount = stats.skippedCount || 0;
+        job.errorsCount = stats.errorsCount || 0;
+      }
+    },
+    {
+      isCanceled: () => !!job.canceled,
+      onItemProgress: (item, progress) => {
+        if (item && progress > 0) {
+          job.lastLogKey = 'log.spotify.videoDownloading';
+          job.lastLogVars = {
+            artist: item.uploader || "Spotify Artist",
+            title: item.title,
+            progress: Math.floor(progress)
+          };
+          job.lastLog = `📥 İndiriliyor (${Math.floor(progress)}%): ${item.uploader} - ${item.title}`;
+        }
+      }
+    }
+  );
+
+  const VIDEO_EXTS = new Set([".mp4", ".m4v", ".mov", ".mkv", ".webm"]);
+  const mediaFiles = files.filter(fp =>
+    VIDEO_EXTS.has(path.extname(fp).toLowerCase())
+  );
+
+  if (!Array.isArray(mediaFiles) || !mediaFiles.length) {
+    throw new Error("Spotify video dosyaları bulunamadı.");
+  }
+
+  job.downloadProgress = 100;
+  job.currentPhase = "converting";
+  job.convertProgress = 0;
+
+  if (!Array.isArray(job.metadata.frozenEntries) || job.metadata.frozenEntries.length === 0) {
+    const fe = [];
+    const frozenEntries = Array.isArray(job.metadata.frozenEntries) ? job.metadata.frozenEntries : [];
+
+    for (let i = 0; i < mediaFiles.length; i++) {
+      const filePath = mediaFiles[i];
+      const idxFromName = parsePlaylistIndexFromPath(filePath);
+
+      const frozenEntry = frozenEntries[i] || {};
+      const title = frozenEntry.title ||
+                   path.basename(filePath, path.extname(filePath)).replace(/^\d+\s*-\s*/, "") ||
+                   `Track ${i + 1}`;
+      const uploader = frozenEntry.uploader || "Spotify Artist";
+
+      fe.push({
+        index: Number.isFinite(idxFromName) ? idxFromName : (i + 1),
+        id: selectedIds[i] || `spotify_${i + 1}`,
+        title: title,
+        uploader: uploader,
+        webpage_url: frozenEntry.webpage_url || ""
+      });
+    }
+
+    job.metadata.frozenEntries = fe;
+    job.metadata.frozenTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+  }
+
+  job.counters.dlTotal = mediaFiles.length;
+  job.counters.dlDone  = mediaFiles.length;
+  job.counters.cvTotal = mediaFiles.length;
+  job.counters.cvDone  = 0;
+
+  const sorted = mediaFiles
+    .map((fp, i) => ({ fp, auto: i + 1 }))
+    .sort((a, b) => a.auto - b.auto);
+  const results = [];
+
+  if (!job.playlist) {
+    job.playlist = { total: sorted.length, done: 0, current: 0 };
+  } else {
+    job.playlist.total   = sorted.length;
+    job.playlist.done    = 0;
+    job.playlist.current = 0;
+  }
+
+  for (let i = 0; i < sorted.length; i++) {
+    const { fp: filePath } = sorted[i];
+
+    job.playlist.current = i;
+
+    const feEntry = Array.isArray(job.metadata.frozenEntries)
+      ? job.metadata.frozenEntries[i]
+      : null;
+
+    const ext = path.extname(filePath);
+    const rawBase = path.basename(filePath);
+    const cleaned = stripLeadingPrefix(rawBase, job.id).replace(ext, "").trim();
+
+    const artistRaw = feEntry?.uploader || "Spotify Artist";
+    const titleRaw  =
+      feEntry?.title ||
+      cleaned ||
+      `Track ${i + 1}`;
+
+    const baseTitle = artistRaw
+      ? `${artistRaw} - ${titleRaw}`
+      : titleRaw;
+
+    const cleanTitle = sanitizeFilename(baseTitle) || "video";
+
+    job.lastLogKey = 'log.spotify.videoConverting';
+    job.lastLogVars = {
+      artist: artistRaw,
+      title: titleRaw,
+      current: i + 1,
+      total: sorted.length
+    };
+    job.lastLog = `⚙️ Dönüştürülüyor (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+
+    console.log("🎧 Spotify cleanTitle:", { cleanTitle, artistRaw, titleRaw });
+
+    if (!transcodeEnabled) {
+      const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
+      console.log(`🎬 Spotify Transcode PASIF - direkt taşıma: ${filePath} -> ${targetAbs}`);
+      safeMoveSync(filePath, targetAbs);
+
+      results.push({
+        outputPath: `/download/${encodeURIComponent(path.basename(targetAbs))}`,
+        fileSize: fs.statSync(targetAbs).size
+      });
+
+      job.playlist.done   = i + 1;
+      job.counters.cvDone = i + 1;
+
+      const overallConv = ((i + 1) / sorted.length) * 100;
+      job.convertProgress = Math.floor(overallConv);
+      job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+      job.lastLogKey = 'log.spotify.videoConverted';
+      job.lastLogVars = {
+        artist: artistRaw,
+        title: titleRaw,
+        current: i + 1,
+        total: sorted.length
+      };
+      job.lastLog = `✅ Dönüştürüldü (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+
+    } else {
+      const srcHeight = await probeVideoHeight(filePath);
+
+      const meta = {
+        title: cleanTitle,
+        track: cleanTitle,
+        artist: artistRaw,
+        album: job.metadata.spotifyTitle || "Spotify Playlist",
+        album_artist: artistRaw,
+        webpage_url: feEntry?.webpage_url || "",
+        __maxHeight: TARGET_H,
+        __srcHeight: srcHeight
+      };
+
+      const convJobId = `${job.id}_v${i + 1}`;
+
+      console.log(`🎬 Spotify ConvertMedia çağrılıyor:`, {
+        inputPath: filePath,
+        format: format,
+        bitrate: job.bitrate || "auto",
+        isVideo: true,
+        videoSettings: videoSettings
+      });
+
+      const convResult = await convertMedia(
+        filePath,
+        format,
+        job.bitrate || "auto",
+        convJobId,
+        (p) => {
+          const overallConv = ((i + p / 100) / sorted.length) * 100;
+          job.convertProgress = Math.max(
+            job.convertProgress || 0,
+            Math.floor(overallConv)
+          );
+          job.progress = Math.floor(
+            (job.downloadProgress + (job.convertProgress || 0)) / 2
+          );
+
+          if (p > 0 && p < 100) {
+            job.lastLogKey = 'log.spotify.videoConvertingProgress';
+            job.lastLogVars = {
+              artist: artistRaw,
+              title: titleRaw,
+              progress: Math.floor(p),
+              current: i + 1,
+              total: sorted.length
+            };
+            job.lastLog = `⚙️ Dönüştürülüyor (${Math.floor(p)}%) (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+          }
+        },
+        meta,
+        null,
+        true,
+        OUTPUT_DIR,
+        TEMP_DIR,
+        {
+          includeLyrics: false,
+          isCanceled: () => !!jobs.get(job.id)?.canceled,
+          videoSettings: videoSettings,
+          onProcess: (child) => {
+            try {
+              registerJobProcess(job.id, child);
+            } catch (_) {}
+          }
+        }
+      );
+
+      results.push(convResult);
+
+      job.playlist.done   = i + 1;
+      job.counters.cvDone = i + 1;
+      job.lastLogKey = 'log.spotify.videoConverted';
+      job.lastLogVars = {
+        artist: artistRaw,
+        title: titleRaw,
+        current: i + 1,
+        total: sorted.length
+      };
+      job.lastLog = `✅ Dönüştürüldü (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+    }
+  }
+
+  job.counters.cvDone = sorted.length;
+  job.resultPath = results;
+  job.status = "completed";
+  job.progress = 100;
+  job.downloadProgress = 100;
+  job.convertProgress = 100;
+  job.currentPhase = "completed";
+  job.lastLogKey = 'log.spotify.videoCompleted';
+  job.lastLogVars = {
+    title: job.metadata.spotifyTitle || "Spotify Playlist",
+    count: sorted.length
+  };
+  job.lastLog = `🎉 Spotify video işlemi tamamlandı: ${job.metadata.spotifyTitle} (${sorted.length} parça)`;
+
+  cleanupTempForJob(TEMP_DIR, job.id);
+}
+
+export function isVideoFormat(format) {
+  const f = String(format || "").toLowerCase();
+  return f === "mp4" || f === "mkv";
+}
+
+export async function processSpotifyVideo(job, options = {}) {
+  return processSpotifyVideoJob(job, options);
 }

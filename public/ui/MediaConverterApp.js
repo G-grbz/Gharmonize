@@ -28,10 +28,15 @@ export class MediaConverterApp {
     }
 
     async initialize() {
-        this.initializeEventListeners();
         this.initializeTheme();
+
+        if (this.videoManager?.initialize) {
+            await this.videoManager.initialize();
+        }
+
+        this.initializeEventListeners();
+
         await this.formatManager.loadFormats();
-        this.videoManager.initialize();
         this.ensureWarnStyles();
         this.loadLocalFiles();
         this.loadBinaryVersions().catch(err => {
@@ -413,6 +418,20 @@ export class MediaConverterApp {
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
         const volumeGain = this.currentVolumeGain || 1.0;
 
+        let compressionLevel = null;
+        let bitDepth = null;
+
+        const bitDepthSelect = document.getElementById('bitDepthSelect');
+        if (bitDepthSelect && (format === 'flac' || format === 'wav')) {
+            bitDepth = bitDepthSelect.value || null;
+        }
+
+        const compRange = document.getElementById('compressionLevelRange');
+        if (compRange && format === 'flac') {
+            compressionLevel = parseInt(compRange.value, 10);
+            if (!Number.isFinite(compressionLevel)) compressionLevel = null;
+        }
+
         if ((format === 'eac3' || format === 'ac3' || format === 'aac') && !sampleRate) {
             this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
             return;
@@ -440,7 +459,9 @@ export class MediaConverterApp {
                         selectedIndices: [idx],
                         clientBatch: batchId,
                         includeLyrics,
-                        volumeGain
+                        volumeGain,
+                        compressionLevel,
+                        bitDepth
                     };
                     this.jobManager.submitJob(payload);
                 }
@@ -451,7 +472,9 @@ export class MediaConverterApp {
                     sampleRate: sampleRate,
                     selectedIndices: selectedIndices.length ? selectedIndices : 'all',
                     includeLyrics,
-                    volumeGain
+                    volumeGain,
+                    compressionLevel,
+                    bitDepth
                 };
                 await this.jobManager.submitJob(payload);
             }

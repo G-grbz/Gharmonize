@@ -9,6 +9,7 @@ import { processJob } from "../modules/processor.js";
 import { convertMedia, downloadThumbnail } from "../modules/media.js";
 import archiver from "archiver";
 import { resolveMarket } from "../modules/market.js";
+import { isVideoFormat, processYouTubeVideoJob } from "../modules/video.js";
 
 const router = express.Router();
 
@@ -27,7 +28,19 @@ function makeMapId() { return uniqueId("map"); }
 
 router.post("/api/spotify/process/start", async (req, res) => {
   try {
-    const { url, format = "mp3", bitrate = "192k", sampleRate = "48000", market: marketIn, includeLyrics, volumeGain } = req.body || {};
+    const {
+      url,
+      format = "mp3",
+      bitrate = "192k",
+      sampleRate = "48000",
+      market: marketIn,
+      includeLyrics,
+      volumeGain,
+      compressionLevel,
+      bitDepth,
+      videoSettings = {}
+    } = req.body || {};
+
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
     if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL gerekli", 400);
 
@@ -49,6 +62,9 @@ router.post("/api/spotify/process/start", async (req, res) => {
       bitrate,
       sampleRate: parseInt(sampleRate) || 48000,
       volumeGain: volumeGainNum,
+      compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
+      bitDepth: bitDepth || null,
+      videoSettings: (format === "mp4" || format === "mkv") ? videoSettings : null,
       metadata: {
         source: "spotify",
         spotifyUrl: url,
@@ -58,7 +74,9 @@ router.post("/api/spotify/process/start", async (req, res) => {
         isAlbum: sp.kind === "album",
         isAutomix: false,
         includeLyrics: (includeLyrics === true || includeLyrics === "true"),
-        volumeGain: volumeGainNum
+        volumeGain: volumeGainNum,
+        compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
+        bitDepth: bitDepth || null
       },
       resultPath: null,
       error: null,
@@ -95,13 +113,96 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       job.metadata?.volumeGain != null
         ? job.metadata.volumeGain
         : (job.volumeGain != null ? job.volumeGain : null);
-    job.phase = "mapping"; job.currentPhase = "mapping"; job.currentPhase = "mapping";
+
+    job.phase = "mapping"; job.currentPhase = "mapping";
     job.progress = 5;
     job.downloadProgress = 0;
     job.convertProgress = 0;
     job.metadata.selectedIds   = job.metadata.selectedIds   || [];
     job.metadata.frozenEntries = job.metadata.frozenEntries || [];
     job.metadata.frozenTitle   = job.metadata.frozenTitle   || job.metadata.spotifyTitle;
+
+    const isVideoFormatFlag = isVideoFormat(format);
+
+    let matchedCount = 0;
+    const totalItems = sp.items.length;
+    job.playlist.total = totalItems;
+    job.playlist.done = 0;
+
+    const shouldCancel = () => {
+      const j = jobs.get(jobId);
+      return !!(j && (j.canceled || j.status === "canceled"));
+    };
+
+    await mapSpotifyToYtm(sp, (idx, item) => {
+      if (shouldCancel()) return;
+      job.progress = 5 + Math.floor(((idx + 1) / totalItems) * 25);
+      job.lastLogKey = 'log.searchingTrack';
+      job.lastLogVars = { artist: item.uploader, title: item.title };
+      job.lastLog = `🔍 Aranıyor: ${item.uploader} - ${item.title}`;
+
+      if (item.id) {
+        matchedCount++;
+        job.metadata.selectedIds.push(item.id);
+        job.metadata.frozenEntries.push({
+          index: item.index,
+          id: item.id,
+          title: item.title,
+          uploader: item.uploader,
+          webpage_url: item.webpage_url
+        });
+      }
+    }, {
+      concurrency: 3,
+      shouldCancel,
+      onLog: (payload) => {
+        const { logKey, logVars, fallback } =
+          (typeof payload === 'string')
+            ? { logKey: null, logVars: null, fallback: payload }
+            : payload;
+        job.lastLogKey  = logKey || null;
+        job.lastLogVars = logVars || null;
+        job.lastLog     = fallback || '';
+        console.log(`[Spotify ${jobId}] ${fallback || job.lastLogKey || ''}`);
+      }
+    });
+
+    if (shouldCancel()) { throw new Error("CANCELED"); }
+
+    if (matchedCount === 0) {
+      throw new Error("Hiç eşleşen parça bulunamadı");
+    }
+
+    if (isVideoFormatFlag && job.metadata?.source === "spotify") {
+      console.log(`🎬 Spotify Video İşlemeye Yönlendiriliyor: ${matchedCount} parça`);
+
+      const trackCount = matchedCount;
+      const playlistTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+
+      job.lastLogKey = 'log.spotify.videoProcessing';
+      job.lastLogVars = {
+        title: playlistTitle,
+        count: trackCount
+      };
+      job.lastLog = `🎬 Spotify video işleme başlatılıyor: ${playlistTitle} (${trackCount} parça)`;
+
+      await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
+
+      try {
+        if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch) {
+          const titleHint = job.metadata?.spotifyTitle || "Spotify Playlist";
+          job.zipPath = await makeZipFromOutputs(
+            jobId,
+            job.resultPath,
+            titleHint || "playlist",
+            job.metadata?.includeLyrics
+          );
+        }
+      } catch {}
+
+      cleanupSpotifyTempFiles(jobId, null, null);
+      return;
+    }
 
     if (sp.kind === "track") {
       await processSingleTrack(jobId, sp, format, bitrate);
@@ -130,68 +231,16 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       }
     });
 
-    let matchedCount = 0;
-    const totalItems = sp.items.length;
-    job.playlist.total = totalItems;
-    job.playlist.done = 0;
-
-      const shouldCancel = () => {
-      const j = jobs.get(jobId);
-      return !!(j && (j.canceled || j.status === "canceled"));
-    };
-
-    await mapSpotifyToYtm(sp, (idx, item) => {
-      if (shouldCancel()) return;
-      job.progress = 5 + Math.floor(((idx + 1) / totalItems) * 25);
-      job.lastLogKey = 'log.searchingTrack';
-      job.lastLogVars = { artist: item.uploader, title: item.title };
-      job.lastLog = `🔍 Aranıyor: ${item.uploader} - ${item.title}`;
-
-      if (item.id) {
-        matchedCount++;
-        if (job.phase !== "downloading") {
-          job.phase = "downloading"; job.currentPhase = "downloading";
-          job.lastLogKey = 'log.downloading.startShort';
-          job.lastLogVars = {};
-          job.lastLog = `📥 İndirme başlatıldı`;
-        }
-        job.metadata.selectedIds.push(item.id);
-        job.metadata.frozenEntries.push({
-          index: item.index,
-          id: item.id,
-          title: item.title,
-          uploader: item.uploader,
-          webpage_url: item.webpage_url
-        });
-        if (shouldCancel()) return;
-        dlQueue.enqueue({
-          index: item.index,
-          id: item.id,
-          title: item.title,
-          uploader: item.uploader,
-          webpage_url: item.webpage_url
-        }, idx);
-      }
-    }, {
-      concurrency: 3,
-      shouldCancel,
-      onLog: (payload) => {
-        const { logKey, logVars, fallback } =
-          (typeof payload === 'string')
-            ? { logKey: null, logVars: null, fallback: payload }
-            : payload;
-        job.lastLogKey  = logKey || null;
-        job.lastLogVars = logVars || null;
-        job.lastLog     = fallback || '';
-        console.log(`[Spotify ${jobId}] ${fallback || job.lastLogKey || ''}`);
-      }
+    job.metadata.frozenEntries.forEach((item, idx) => {
+      if (item.id && shouldCancel()) return;
+      dlQueue.enqueue({
+        index: item.index,
+        id: item.id,
+        title: item.title,
+        uploader: item.uploader,
+        webpage_url: item.webpage_url
+      }, idx);
     });
-
-    if (shouldCancel()) { throw new Error("CANCELED"); }
-
-    if (matchedCount === 0) {
-      throw new Error("Hiç eşleşen parça bulunamadı");
-    }
 
     dlQueue.end();
     job.phase = "downloading"; job.currentPhase = "downloading";
@@ -216,25 +265,6 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     job.lastLogKey = 'log.converting.batch';
     job.lastLogVars = { total: successfulDownloads.length };
     job.lastLog = `⚙️ ${successfulDownloads.length} parça dönüştürülüyor...`;
-
-    const postIds = successfulDownloads.map(r => r.item?.id).filter(Boolean);
-    const postEntries = successfulDownloads.map(r => r.item).filter(Boolean);
-    const idSet = new Set(job.metadata.selectedIds);
-    for (const pid of postIds) if (!idSet.has(pid)) job.metadata.selectedIds.push(pid);
-    const keyed = new Map(job.metadata.frozenEntries.map(e => [e.id, e]));
-    for (const it of postEntries) {
-      if (it?.id && !keyed.has(it.id)) {
-        keyed.set(it.id, {
-          index: it.index,
-          id: it.id,
-          title: it.title,
-          uploader: it.uploader,
-          webpage_url: it.webpage_url
-        });
-      }
-    }
-    job.metadata.frozenEntries = Array.from(keyed.values());
-    job.metadata.frozenTitle = job.metadata.frozenTitle || job.metadata.spotifyTitle;
 
     const files = successfulDownloads.map(r => r.filePath);
     const results = [];
@@ -283,19 +313,19 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
         webpage_url: entry.webpage_url
       };
 
-          let itemCover = null;
-          const baseNoExt = filePath.replace(/\.[^.]+$/, "");
-          const coverExts = [".jpg", ".jpeg", ".png", ".webp"];
-          for (const ext of coverExts) {
-            const cand = `${baseNoExt}${ext}`;
-            if (fs.existsSync(cand)) { itemCover = cand; break; }
-          }
-          if (!itemCover && preferSpotify && spInfo?.coverUrl) {
-            try {
-              const dl = await downloadThumbnail(spInfo.coverUrl, `${baseNoExt}.spotify_cover`);
-              if (dl) itemCover = dl;
-            } catch {}
-          }
+      let itemCover = null;
+      const baseNoExt = filePath.replace(/\.[^.]+$/, "");
+      const coverExts = [".jpg", ".jpeg", ".png", ".webp"];
+      for (const ext of coverExts) {
+        const cand = `${baseNoExt}${ext}`;
+        if (fs.existsSync(cand)) { itemCover = cand; break; }
+      }
+      if (!itemCover && preferSpotify && spInfo?.coverUrl) {
+        try {
+          const dl = await downloadThumbnail(spInfo.coverUrl, `${baseNoExt}.spotify_cover`);
+          if (dl) itemCover = dl;
+        } catch {}
+      }
 
       try {
         if (shouldCancel()) { throw new Error("CANCELED"); }
@@ -319,6 +349,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
             includeLyrics: !!job.metadata.includeLyrics,
             sampleRate: job.sampleRate || 48000,
             volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
+            compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
+            bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
             onLyricsStats: (delta) => {
               if (!delta) return;
               const m = job.metadata || (job.metadata = {});
@@ -572,6 +604,8 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
         includeLyrics: !!job.metadata.includeLyrics,
         sampleRate: job.sampleRate || 48000,
         volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
+        compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
+        bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
         onLyricsStats: (delta) => {
           if (!delta) return;
           const m = job.metadata || (job.metadata = {});

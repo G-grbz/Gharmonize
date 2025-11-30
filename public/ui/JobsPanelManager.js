@@ -437,7 +437,7 @@ export class JobsPanelManager {
                             </span>
                         ` : ''}
                         ${j.videoSettings?.transcodeEnabled ? `
-                            <span class="pill pill--video" title="${this.t('label.videoTranscode')}">🎬</span>
+                            <span class="pill pill--video" title="${this.t('label.videoTranscodejob')}">🎬</span>
                         ` : ''}
                         ${j.videoSettings?.audioTranscodeEnabled ? `
                             <span class="pill pill--audio" title="${this.t('label.audioTranscode')}">🎵</span>
@@ -1025,7 +1025,7 @@ export class JobManager {
         }
 
         if (job.videoSettings?.transcodeEnabled) {
-            formatInfo += ` • 🎬 ${this.app.t('label.videoTranscode') || 'Transcode'}`;
+            formatInfo += ` • 🎬 ${this.app.t('label.videoTranscodejob') || 'Transcode'}`;
             if (job.videoSettings.hwaccel && job.videoSettings.hwaccel !== 'off') {
                 const hwaccelText = this.app.t(`option.${job.videoSettings.hwaccel}`) || job.videoSettings.hwaccel.toUpperCase();
                 formatInfo += ` • ${hwaccelText}`;

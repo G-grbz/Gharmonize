@@ -191,75 +191,93 @@ export class SpotifyManager {
     }
 
     async startIntegratedSpotifyProcess() {
-        const url = document.getElementById('urlInput').value.trim();
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
-        const sampleRate = document.getElementById('sampleRateSelect').value;
-        const includeLyrics = document.getElementById('lyricsCheckbox').checked;
-        const compressionLevel =
-        format === 'flac'
-            ? (document.getElementById('compressionLevelRange')?.value || '5')
-            : undefined;
-        if (!url) {
-            this.app.showNotification(this.app.t('notif.needUrl'), 'error', 'error');
-            return;
-        }
+    const url = document.getElementById('urlInput').value.trim();
+    const format = document.getElementById('formatSelect').value;
+    const bitrate = document.getElementById('bitrateSelect').value;
+    const sampleRate = document.getElementById('sampleRateSelect').value;
+    const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+    const videoSettings = this.app.videoManager?.getSettings() || {};
+    const bitDepthSelect = document.getElementById('bitDepthSelect');
+    let bitDepth = null;
+    if (bitDepthSelect && (format === 'flac' || format === 'wav')) {
+        bitDepth = bitDepthSelect.value || null;
+    }
 
-        try {
-            const btn = document.getElementById('startIntegratedBtn');
-            btn.classList.add('btn-loading');
-            btn.disabled = true;
-
-            document.getElementById('spotifyPreviewCard').style.display = 'block';
-            document.getElementById('spotifyTitle').textContent = this.app.t('status.starting');
-            document.getElementById('spotifyTotal').textContent = '0';
-            document.getElementById('spotifyMatched').textContent = '0';
-            document.getElementById('spotifyProgress').textContent = '0%';
-            document.getElementById('spotifyLogs').innerHTML = '';
-            const listEl = document.getElementById('spotifyPreviewList');
-            if (listEl) listEl.innerHTML = '';
-            this.integratedRenderedCount = 0;
-
-            const response = await fetch('/api/spotify/process/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    url,
-                    format,
-                    bitrate,
-                    sampleRate: sampleRate,
-                    includeLyrics,
-                    volumeGain: this.app.currentVolumeGain || 1.0,
-                    ...(compressionLevel !== undefined
-                        ? { compressionLevel }
-                        : {})
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json().catch(() => ({}));
-                const code = error?.error?.code;
-                const msg = code ? this.app.t(`errors.${code}`) : (error?.error?.message || this.app.t('errors.startFailed'));
-                throw new Error(msg);
-            }
-
-            const data = await response.json();
-            document.getElementById('spotifyTitle').textContent = data.title || '-';
-            document.getElementById('spotifyTotal').textContent = data.total || '0';
-            this.app.jobManager.trackJob(data.jobId);
-            this.app.showNotification(this.app.t('notif.queue'), 'success', 'queue');
-            this.streamIntegratedLogs(data.jobId);
-
-        } catch (error) {
-            this.app.showNotification(`${this.app.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
-            document.getElementById('spotifyLogs').innerHTML +=
-                `<div class="log-entry error">[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('notif.errorPrefix')}: ${this.app.escapeHtml(error.message)}</div>`;
-        } finally {
-            const btn = document.getElementById('startIntegratedBtn');
-            btn.classList.remove('btn-loading');
-            btn.disabled = false;
+    let compressionLevel;
+    const compEl = document.getElementById('compressionLevelRange');
+    if (format === 'flac' && compEl) {
+        const v = parseInt(compEl.value, 10);
+        if (Number.isFinite(v)) {
+            compressionLevel = v;
         }
     }
+
+    if (!url) {
+        this.app.showNotification(this.app.t('notif.needUrl'), 'error', 'error');
+        return;
+    }
+
+    try {
+        const btn = document.getElementById('startIntegratedBtn');
+        btn.classList.add('btn-loading');
+        btn.disabled = true;
+
+        document.getElementById('spotifyPreviewCard').style.display = 'block';
+        document.getElementById('spotifyTitle').textContent = this.app.t('status.starting');
+        document.getElementById('spotifyTotal').textContent = '0';
+        document.getElementById('spotifyMatched').textContent = '0';
+        document.getElementById('spotifyProgress').textContent = '0%';
+        document.getElementById('spotifyLogs').innerHTML = '';
+        const listEl = document.getElementById('spotifyPreviewList');
+        if (listEl) listEl.innerHTML = '';
+        this.integratedRenderedCount = 0;
+
+        const isVideoFormat = format === 'mp4' || format === 'mkv';
+        const body = {
+            url,
+            format,
+            bitrate,
+            sampleRate,
+            includeLyrics,
+            volumeGain: this.app.currentVolumeGain || 1.0,
+            ...(compressionLevel != null ? { compressionLevel } : {}),
+            ...(bitDepth != null ? { bitDepth } : {}),
+            ...(isVideoFormat ? { videoSettings } : {})
+        };
+
+        const response = await fetch('/api/spotify/process/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            const code = error?.error?.code;
+            const msg = code
+                ? this.app.t(`errors.${code}`)
+                : (error?.error?.message || this.app.t('errors.startFailed'));
+            throw new Error(msg);
+        }
+
+        const data = await response.json();
+        document.getElementById('spotifyTitle').textContent = data.title || '-';
+        document.getElementById('spotifyTotal').textContent = data.total || '0';
+
+        this.app.jobManager.trackJob(data.jobId);
+        this.app.showNotification(this.app.t('notif.queue'), 'success', 'queue');
+        this.streamIntegratedLogs(data.jobId);
+
+    } catch (error) {
+        this.app.showNotification(`${this.app.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
+        document.getElementById('spotifyLogs').innerHTML +=
+            `<div class="log-entry error">[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('notif.errorPrefix')}: ${this.app.escapeHtml(error.message)}</div>`;
+    } finally {
+        const btn = document.getElementById('startIntegratedBtn');
+        btn.classList.remove('btn-loading');
+        btn.disabled = false;
+    }
+}
 
     streamIntegratedLogs(jobId) {
         const eventSource = new EventSource(`/api/stream/${jobId}`);
@@ -378,65 +396,68 @@ export class SpotifyManager {
     }
 
     async convertMatchedSpotify() {
-        if (!this.currentSpotifyTask.id) {
-            this.app.showNotification(this.app.t('notif.spotifyMappingFirst'), 'error', 'error');
+    if (!this.currentSpotifyTask.id) {
+        this.app.showNotification(this.app.t('notif.spotifyMappingFirst'), 'error', 'error');
+        return;
+    }
+
+    try {
+        const format = document.getElementById('formatSelect').value;
+        const bitrate = document.getElementById('bitrateSelect').value;
+        const sampleRate = document.getElementById('sampleRateSelect').value;
+        const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+        const videoSettings = this.app.videoManager?.getSettings() || {};
+        const isVideoFormat = format === 'mp4' || format === 'mkv';
+
+        const compressionLevel =
+            format === 'flac'
+                ? (document.getElementById('compressionLevelRange')?.value || '5')
+                : undefined;
+
+        const validItems = this.getCurrentSpotifyMatchedItems();
+        if (validItems.length === 0) {
+            this.app.showNotification(this.app.t('notif.noMatchedTracks'), 'error', 'error');
             return;
         }
 
-        try {
-            const format = document.getElementById('formatSelect').value;
-            const bitrate = document.getElementById('bitrateSelect').value;
-            const sampleRate = document.getElementById('sampleRateSelect').value;
-            const includeLyrics = document.getElementById('lyricsCheckbox').checked;
-            const compressionLevel =
-                format === 'flac'
-                    ? (document.getElementById('compressionLevelRange')?.value || '5')
-                    : undefined;
-            const validItems = this.getCurrentSpotifyMatchedItems();
-            if (validItems.length === 0) {
-                this.app.showNotification(this.app.t('notif.noMatchedTracks'), 'error', 'error');
-                return;
-            }
-
-            const payload = {
-                url: document.getElementById('urlInput').value.trim(),
-                format,
-                bitrate,
-                sampleRate: sampleRate,
-                isPlaylist: true,
-                volumeGain: this.app.currentVolumeGain || 1.0,
-                ...(compressionLevel !== undefined
-                    ? { compressionLevel }
-                    : {}),
-                selectedIndices: validItems.map(item => item.index),
+        const payload = {
+            url: document.getElementById('urlInput').value.trim(),
+            format,
+            bitrate,
+            sampleRate: sampleRate,
+            isPlaylist: true,
+            volumeGain: this.app.currentVolumeGain || 1.0,
+            ...(compressionLevel !== undefined ? { compressionLevel } : {}),
+            ...(isVideoFormat ? { videoSettings } : {}),
+            selectedIndices: validItems.map(item => item.index),
+            spotifyMapId: this.currentSpotifyTask.id,
+            metadata: {
+                source: "spotify",
+                spotifyTitle: document.getElementById('spotifyTitle').textContent,
+                selectedIds: validItems.map(item => item.id),
+                frozenEntries: validItems,
                 spotifyMapId: this.currentSpotifyTask.id,
-                metadata: {
-                    source: "spotify",
-                    spotifyTitle: document.getElementById('spotifyTitle').textContent,
-                    selectedIds: validItems.map(item => item.id),
-                    frozenEntries: validItems,
-                    spotifyMapId: this.currentSpotifyTask.id,
-                    includeLyrics,
-                    volumeGain: this.app.currentVolumeGain || 1.0
-                }
-            };
-
-            document.getElementById('spotifyStatusText').textContent = this.app.t('status.conversionStarting');
-
-            const jobId = await this.submitSpotifyJob(payload);
-
-            if (jobId) {
-                this.currentSpotifyTask.jobId = jobId;
-                document.getElementById('spotifyStatusText').textContent = this.app.t('status.conversionStarted');
-                this.app.showNotification(this.app.t('notif.tracksQueued', { count: validItems.length }), 'success', 'queue');
-                this.app.jobManager.trackJob(jobId);
+                includeLyrics,
+                volumeGain: this.app.currentVolumeGain || 1.0
             }
+        };
 
-        } catch (error) {
-            this.app.showNotification(`${this.app.t('notif.conversionError')}: ${error.message}`, 'error', 'error');
-            document.getElementById('spotifyStatusText').textContent = this.app.t('status.conversionFailed');
+        document.getElementById('spotifyStatusText').textContent = this.app.t('status.conversionStarting');
+
+        const jobId = await this.submitSpotifyJob(payload);
+
+        if (jobId) {
+            this.currentSpotifyTask.jobId = jobId;
+            document.getElementById('spotifyStatusText').textContent = this.app.t('status.conversionStarted');
+            this.app.showNotification(this.app.t('notif.tracksQueued', { count: validItems.length }), 'success', 'queue');
+            this.app.jobManager.trackJob(jobId);
         }
+
+    } catch (error) {
+        this.app.showNotification(`${this.app.t('notif.conversionError')}: ${error.message}`, 'error', 'error');
+        document.getElementById('spotifyStatusText').textContent = this.app.t('status.conversionFailed');
     }
+}
 
     getCurrentSpotifyMatchedItems() {
         const validItems = [];

@@ -24,10 +24,22 @@ export function idsToMusicUrls(ids, useMusic = process.env.YT_USE_MUSIC !== "0")
   return ids.map(id => useMusic ? `https://music.youtube.com/watch?v=${id}` : `https://www.youtube.com/watch?v=${id}`);
 }
 
-function getYtDlpCommonArgs(){
+function getYtDlpCommonArgs() {
   const ua = process.env.YTDLP_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
-  const base = ['--no-progress','--no-warnings','--force-ipv4','--retries','10','--fragment-retries','10','--retry-sleep','3','--user-agent', ua,'--add-header','Referer: https://www.youtube.com/','--add-header','Accept-Language: en-US,en;q=0.9','--extractor-args','youtube:player_client=android,web','--geo-bypass'];
-  if (process.env.YTDLP_EXTRA) base.push(...process.env.YTDLP_EXTRA.split(/\s+/).filter(Boolean));
+  const base = [
+    '--no-progress', '--no-warnings',
+    '--force-ipv4',
+    '--retries', '10',
+    '--fragment-retries', '10',
+    '--retry-sleep', '3',
+    '--user-agent', ua,
+    '--add-header', 'Referer: https://www.youtube.com/',
+    '--add-header', 'Accept-Language: en-US,en;q=0.9',
+    '--geo-bypass'
+  ];
+  if (process.env.YTDLP_EXTRA) {
+    base.push(...process.env.YTDLP_EXTRA.split(/\s+/).filter(Boolean));
+  }
   return base;
 }
 
@@ -143,11 +155,17 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
   } catch {}
 
   const base = [
-    "-f","bestaudio/best","--no-playlist","--no-part","--continue","--no-overwrites",
-    "--retries","3","--fragment-retries","3","--concurrent-fragments","1",
-    "--write-thumbnail",
-    "-o", template
-  ];
+  "-f", "bestaudio[abr>=128]/bestaudio/best",
+  "--no-playlist",
+  "--no-part",
+  "--continue",
+  "--no-overwrites",
+  "--retries", "3",
+  "--fragment-retries", "3",
+  "--concurrent-fragments", "1",
+  "--write-thumbnail",
+  "-o", template
+];
 
   let args = [...getYtDlpCommonArgs(), "--no-abort-on-error", ...base, url];
   const stripCookies = (process.env.YT_STRIP_COOKIES === "1");

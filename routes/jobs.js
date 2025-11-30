@@ -734,10 +734,7 @@ else if (isYouTubeUrl(url)) {
       sampleRate: pickedSR,
       compressionLevel: normalizedCompressionLevel,
       bitDepth: normalizedBitDepth,
-      videoSettings: {
-        ...(effectiveVideoSettings || {}),
-        ...(volumeGain != null ? { volumeGain: Number(volumeGain) } : {})
-      },
+      videoSettings: effectiveVideoSettings,
       metadata: {
         ...metadata,
         includeLyrics: includeLyrics === true || includeLyrics === "true",
