@@ -238,7 +238,7 @@ cd Gharmonize
 
 ### 2. Create Required Folders and Files
 
-The commands below assume the default directory `/opt/gharmonize`. If you want to use a different one, update the paths in the commands and under the `volumes:` section of your `docker-compose.yml` file.
+The commands below assume the default directory `/opt/gharmonize`. If you want to use a different one, update the paths in the commands and under the `volumes:` section of your `docker-compose.yml` file. You can also switch the Docker image branch to either `latest` or `testing` if you prefer.
 
 ```bash
 sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies}
