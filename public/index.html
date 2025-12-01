@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     (function() {
       try {
@@ -60,23 +61,22 @@
     📀
   </button>
 
-  <div class="language-switcher">
-    <span class="language-label" data-i18n="lang.label">Dil</span>
-    <select id="langSelect" class="language-select" aria-label="Language">
-      <option value="en">English</option>
-      <option value="tr">Türkçe</option>
-      <option value="de">Deutsch</option>
-      <option value="fr">Français</option>
-    </select>
+    <div class="language-switcher">
+      <span class="language-label" data-i18n="lang.label">Dil</span>
+      <select id="langSelect" class="language-select" aria-label="Language">
+        <option value="en">English</option>
+        <option value="tr">Türkçe</option>
+        <option value="de">Deutsch</option>
+        <option value="fr">Français</option>
+      </select>
+    </div>
+
+    <button id="settingsBtn" class="btn-outline" data-i18n-title="btn.envSettings">⚙️</button>
+    <button id="jobsBell" class="jobs-bell" title="Aktif işler" hidden>
+      <span class="bell-icon">🔔</span>
+      <span id="jobsBadge" class="jobs-badge" hidden>0</span>
+    </button>
   </div>
-
-  <button id="settingsBtn" class="btn-outline" data-i18n-title="btn.envSettings">⚙️</button>
-  <button id="jobsBell" class="jobs-bell" title="Aktif işler" hidden>
-    <span class="bell-icon">🔔</span>
-    <span id="jobsBadge" class="jobs-badge" hidden>0</span>
-  </button>
-</div>
-
 
     <div class="card-grid">
       <div class="card">

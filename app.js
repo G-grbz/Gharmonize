@@ -206,6 +206,24 @@ app.use(discRouter)
 app.use(downloadRoute)
 app.use('/api', settingsRoute)
 
+app.get('/api/version', (req, res) => {
+  try {
+    const packagePath = path.resolve(process.cwd(), 'package.json');
+    const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+
+    res.json({
+      version: packageData.version,
+      name: packageData.name
+    });
+  } catch (error) {
+    console.error('Package.json okunamadı:', error);
+    res.json({
+      version: '1.0.5',
+      name: 'Gharmonize'
+    });
+  }
+});
+
 app.get('/api/binaries', async (req, res) => {
   try {
     const info = await getBinariesInfo();

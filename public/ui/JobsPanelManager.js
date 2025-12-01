@@ -4,7 +4,12 @@ export class JobsPanelManager {
         this.panel = null;
         this.overlay = null;
         this.list = null;
-        this.state = { items: [] };
+        this.state = {
+            items: [],
+            hasUpdate: false,
+            latestVersion: null,
+            releaseUrl: null
+        };
         this.filter = 'active';
         this.eventSource = null;
         this.isStarted = false;
@@ -22,6 +27,47 @@ export class JobsPanelManager {
         this.setupEventListeners();
         this.isStarted = true;
         this.startTokenCheck();
+
+        try {
+            const latestVersion = localStorage.getItem('gharmonize_latest_version');
+            const storedReleaseUrl = localStorage.getItem('gharmonize_latest_release_url');
+            const currentVersion =
+                window.versionManager?.currentVersion ||
+                (() => {
+                    try {
+                        return localStorage.getItem('gharmonize_current_version');
+                    } catch {
+                        return null;
+                    }
+                })() ||
+                null;
+
+            if (latestVersion && currentVersion) {
+                let isNewer = false;
+
+                if (window.versionManager && typeof window.versionManager.isNewerVersion === 'function') {
+                    isNewer = window.versionManager.isNewerVersion(latestVersion, currentVersion);
+                } else {
+                    isNewer = this.isNewerVersionFallback(latestVersion, currentVersion);
+                }
+
+                if (isNewer) {
+                    this.state.hasUpdate = true;
+                    this.state.latestVersion = latestVersion;
+                    this.state.releaseUrl =
+                    storedReleaseUrl ||
+                    (window.versionManager?.githubRepo
+                    ? `https://github.com/${window.versionManager.githubRepo}/releases/tag/v${latestVersion}`
+                  : null);
+                }
+            }
+        } catch (e) {
+            console.warn('[JobsPanel] update banner init error:', e);
+        }
+
+        if (this.state.hasUpdate) {
+            this.render();
+        }
 
         if (localStorage.getItem(this.tokenKey)) {
             this.goOnline();
@@ -133,7 +179,13 @@ export class JobsPanelManager {
 
         this.eventSource?.close();
         this.eventSource = null;
-        this.state = { items: [] };
+        const { hasUpdate, latestVersion, releaseUrl } = this.state;
+        this.state = {
+            items: [],
+            hasUpdate,
+            latestVersion,
+            releaseUrl
+        };
         this.render();
         if (this.pollingInterval) {
             clearInterval(this.pollingInterval);
@@ -161,7 +213,16 @@ export class JobsPanelManager {
 
             this.eventSource.onmessage = (ev) => {
                 try {
-                    this.state = JSON.parse(ev.data) || { items: [] };
+                    const incoming = JSON.parse(ev.data) || { items: [] };
+                    const { hasUpdate, latestVersion, releaseUrl } = this.state;
+
+                    this.state = {
+                        ...incoming,
+                        hasUpdate,
+                        latestVersion,
+                        releaseUrl
+                    };
+
                     this.render();
                 } catch (e) {
                     console.error('SSE parse error:', e);
@@ -205,7 +266,15 @@ export class JobsPanelManager {
             })
             .then(d => {
                 if (d) {
-                    this.state = { items: d.items || [] };
+                    const { hasUpdate, latestVersion, releaseUrl } = this.state;
+
+                    this.state = {
+                        items: d.items || [],
+                        hasUpdate,
+                        latestVersion,
+                        releaseUrl
+                    };
+
                     this.render();
                 }
             })
@@ -221,6 +290,21 @@ export class JobsPanelManager {
     norm(s) {
         const v = String(s || '').toLowerCase();
         return v === 'cancelled' ? 'canceled' : v;
+    }
+
+    isNewerVersionFallback(latest, current) {
+        if (!latest) return false;
+
+        const latestParts  = String(latest).split('.').map(Number);
+        const currentParts = String(current).split('.').map(Number);
+
+        for (let i = 0; i < Math.max(latestParts.length, currentParts.length); i++) {
+            const lp = latestParts[i] || 0;
+            const cp = currentParts[i] || 0;
+            if (lp > cp) return true;
+            if (lp < cp) return false;
+        }
+        return false;
     }
 
     titleOf(j) {
@@ -326,258 +410,359 @@ export class JobsPanelManager {
     }
 
     render() {
-        const allItems = this.state.items.slice();
-        const items = (this.filter === 'active')
-            ? allItems.filter(j => !['completed', 'error', 'canceled'].includes(this.norm(j.status)))
-            : allItems;
+    if (!this.list) return;
+    const prevScrollTop = this.list.scrollTop;
 
-        const activeCount = allItems.filter(j => !['completed', 'error', 'canceled'].includes(this.norm(j.status))).length;
-        const badge = document.getElementById('jobsBadge');
-        if (badge) {
-            badge.textContent = String(activeCount);
-            badge.hidden = activeCount <= 0;
-        }
+    const allItems = Array.isArray(this.state.items)
+        ? this.state.items.slice()
+        : [];
 
-        if (items.length === 0) {
-            const isActive = (this.filter === 'active');
-            this.list.innerHTML = `
-                <div class="jobs-panel__empty">
-                    <div class="jobs-panel__empty-icon">🎵</div>
-                    <div class="jobs-panel__empty-title">
-                        ${isActive ? this.t('jobsPanel.emptyActive') : this.t('jobs.empty')}
+    const items = (this.filter === 'active')
+        ? allItems.filter(j => !['completed', 'error', 'canceled'].includes(this.norm(j.status)))
+        : allItems;
+
+    const activeCount = allItems.filter(j =>
+        !['completed', 'error', 'canceled'].includes(this.norm(j.status))
+    ).length;
+
+    const badge = document.getElementById('jobsBadge');
+    if (badge) {
+    const baseCount = activeCount;
+    const displayCount = this.state.hasUpdate
+        ? baseCount + 1
+        : baseCount;
+
+    badge.textContent = String(displayCount);
+    badge.title = this.t('version.badgeTitle', { count: displayCount });
+    badge.hidden = displayCount <= 0;
+}
+
+    let updateNotification = '';
+    if (this.state.hasUpdate) {
+        updateNotification = `
+            <div class="update-notification" style="
+                background: linear-gradient(135deg, var(--success-light) 0%, var(--accent-light) 100%);
+                border: 1px solid var(--success);
+                border-radius: 12px;
+                padding: 16px;
+                margin: 0 16px 16px 16px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            ">
+                <div style="font-size: 24px; flex-shrink: 0;">🔄</div>
+                <div style="flex: 1;">
+                    <div style="font-weight: 700; color: var(--success); margin-bottom: 4px; font-size: 14px;">
+                        ${this.t('version.updateAvailable')}
                     </div>
-                    <div class="jobs-panel__empty-subtitle">
-                        ${isActive ? this.t('jobsPanel.emptyDescriptionActive') : this.t('jobsPanel.emptyDescriptionAll')}
-                    </div>
-                    <div class="jobs-panel__empty-actions">
-                        <button class="jobs-panel__empty-action" onclick="focusUrlInputAndClose()">
-                            ${this.t('jobsPanel.addUrl')}
-                        </button>
-                        <button class="jobs-panel__empty-action jobs-panel__empty-action--outline" onclick="focusFileInputAndClose()">
-                            ${this.t('section.file')}
-                        </button>
-                    </div>
-                </div>
-            `;
-            if (window.i18n?.apply) window.i18n.apply(this.list);
-            return;
-        }
-
-            const jobsHtml = items.map(j => {
-            const p = this.prog(j);
-            let downloadLinks = '';
-
-            if (j.status === 'completed') {
-                if (typeof j.resultPath === 'string' && j.resultPath) {
-                    downloadLinks = `<a class="link" href="${j.resultPath}" download>${this.t('jobsPanel.downloadFile')}</a>`;
-                } else if (Array.isArray(j.resultPath)) {
-                    const successfulResults = j.resultPath.filter(r => r.outputPath && !r.error);
-                    if (successfulResults.length > 0) {
-                        if (j.zipPath) {
-                            downloadLinks = `<a class="link" href="${j.zipPath}" download>${this.t('jobsPanel.downloadZip')}</a>`;
-                        } else {
-                            downloadLinks = `<span class="link" style="opacity:.8" title="${this.t('jobsPanel.multipleOutputs')}">${this.t('jobsPanel.multiple')}</span>`;
-                        }
-                    }
-                } else if (typeof j.resultPath === 'object' && j.resultPath?.outputPath) {
-                    downloadLinks = `<a class="link" href="${j.resultPath.outputPath}" download>${this.t('jobsPanel.downloadFile')}</a>`;
-                }
-            }
-
-            const baseTitle = this.titleOf(j);
-            const nowT = this.nowTitle(j);
-            const titleText = (j.metadata?.isPlaylist && nowT)
-                ? `${baseTitle} — ${nowT}`
-                : (nowT || baseTitle);
-
-             const fmt = String(j.format || '').toLowerCase();
-            const videoFormats = ['mp4', 'mkv', 'webm', 'avi', 'mov'];
-            const audioFormats = ['mp3', 'aac', 'm4a', 'ogg', 'opus', 'flac', 'wav', 'alac', 'eac3', 'ac3'];
-
-            let formatEmoji = '📁';
-            if (videoFormats.includes(fmt)) {
-                formatEmoji = '🎬';
-            } else if (audioFormats.includes(fmt)) {
-                formatEmoji = '🎧';
-            }
-
-            const fpsEmoji = '🎯';
-            const sampleRateEmoji = '📡';
-            const channelsEmoji = '🎚️';
-            const bitrateEmoji = '📶';
-
-            const skippedCount = this.computeSkippedPanel(j);
-            const skippedKeywords = /(private|izin|skipp?ed|unavailable|atlan(?:d|an)|blocked|copyright|region|geo)/i;
-            const showSkippedBadge =
-                (skippedCount > 0) ||
-                (j.lastLog && skippedKeywords.test(String(j.lastLog))) ||
-                (j.lastLogKey && skippedKeywords.test(String(j.lastLogKey))) ||
-                (j.error && skippedKeywords.test(String(j.error?.message || j.error)));
-
-            const skippedBadge = showSkippedBadge
-                ? `<span class="chip chip--warn" title="atlananlar">⚠️ ${this.t('jobs.skipped')}${skippedCount ? ` (${skippedCount})` : ''}</span>`
-                : '';
-
-            const cancelInfo = (j.canceledBy === 'user')
-                ? `<div class="muted" style="font-size:12px;margin-top:4px;">
-                        ${this.t('status.canceled')}
-                   </div>`
-                : '';
-
-            return `
-                <div class="job-card" data-job-id="${j.id}">
-                    <div class="job-title">${this.statusDot(j)}<span>${titleText}</span></div>
-
-                    <div class="job-meta">
-                        <span class="pill">${this.sourcePill(j)}</span>
-                        <span class="pill">${formatEmoji} ${(j.format || '').toUpperCase()} ${j.bitrate ? `• ${bitrateEmoji} ${j.bitrate}` : ''}</span>
-                        ${j.sampleRate ? `
-                            <span class="pill">
-                                ${sampleRateEmoji} ${Math.round(j.sampleRate / 1000)} ${this.t('ui.khz') || 'kHz'}
-                            </span>
-                        ` : ''}
-                        ${j.videoSettings?.transcodeEnabled ? `
-                            <span class="pill pill--video" title="${this.t('label.videoTranscodejob')}">🎬</span>
-                        ` : ''}
-                        ${j.videoSettings?.audioTranscodeEnabled ? `
-                            <span class="pill pill--audio" title="${this.t('label.audioTranscode')}">🎵</span>
-                        ` : ''}
-                        ${j.videoSettings?.hwaccel && j.videoSettings.hwaccel !== 'off' ? `
-                            <span
-                                class="pill pill--hwaccel"
-                                title="${this.t('label.hwaccel')}: ${this.t(`option.${j.videoSettings.hwaccel}`) || j.videoSettings.hwaccel}"
-                            >
-                                ${this.getHwaccelIcon(j.videoSettings.hwaccel)}
-                            </span>
-                        ` : ''}
-                        ${j.videoSettings?.fps && j.videoSettings.fps !== 'source' ?
-                            `<span class="pill" title="FPS">${fpsEmoji} ${j.videoSettings.fps} ${this.t('ui.fps') || 'FPS'}</span>` : ''}
-                        ${j.videoSettings?.audioChannels && j.videoSettings.audioChannels !== 'original' ?
-                            `<span class="pill" title="${this.t('label.stereoConvert')}">
-                                ${channelsEmoji} ${this.getChannelsText(j.videoSettings.audioChannels)}
-                            </span>` : ''}
-                        ${j.videoSettings?.audioSampleRate && j.videoSettings.audioSampleRate !== '48000' ?
-                            `<span class="pill" title="${this.t('label.sampleRate')}">
-                                ${sampleRateEmoji} ${parseInt(j.videoSettings.audioSampleRate)/1000}k
-                            </span>` : ''}
-                        ${j.videoSettings?.audioCodec && j.videoSettings.audioCodec !== 'aac' ?
-                            `<span class="pill" title="${this.t('label.format')}">${this.t(`option.${j.videoSettings.audioCodec}`) || j.videoSettings.audioCodec.toUpperCase()}</span>` : ''}
-                        ${j.videoSettings?.audioBitrate && j.videoSettings.audioBitrate !== '192k' ?
-                            `<span class="pill" title="${this.t('label.audioBitrate')}">
-                                ${bitrateEmoji} ${j.videoSettings.audioBitrate}
-                            </span>` : ''}
-                        ${j.metadata?.includeLyrics ? `
-                            <span class="pill pill--lyrics" title="${this.t('label.includeLyrics2')}">🎼</span>
-                        ` : ''}
-                        ${j.metadata?.volumeGain && j.metadata.volumeGain !== 1.0 ? `
-                            <span class="pill pill--volume" title="${this.t('label.volumeGain')}">🔊 ${j.metadata.volumeGain}x</span>
-                        ` : ''}
-                        <span class="pill">${this.phasePill(j)}</span>
-                        ${skippedBadge}
-</div>
-
-                    ${(() => {
-                        const nt = nowT;
-                        return nt ? `<div class="muted" style="font-size:12px">▶️ <strong>${nt}</strong></div>` : '';
-                    })()}
-
-                    ${cancelInfo}
-
-                    <div class="progress panel" role="progressbar"
-                         aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}">
-                        <span style="width:${p}%"></span>
-                    </div>
-
-                    <div class="row panel">
-                        <span>${p}%</span>
-                        <span style="display:flex; gap:8px; align-items:center;">
-                            ${downloadLinks}
-                            <button class="btn-danger" data-stop-panel="${j.id}" ${(['completed', 'error', 'canceled'].includes(this.norm(j.status))) ? 'disabled' : ''} title="${this.t('btn.stop')}">${this.t('btn.stop')}</button>
-                        </span>
+                    <div style="font-size: 13px; color: var(--text-muted);">
+                        <strong>v${this.state.latestVersion}</strong> - ${this.t('version.viewDetails')}
                     </div>
                 </div>
-            `;
-        }).join('');
-
-        if (this.filter === 'active') {
-            const activeTitleKey = 'jobsPanel.activeGroupTitle';
-                const activeTitle = this.t(activeTitleKey);
-
-                this.list.innerHTML = `
-                    <section class="collapsible-section">
-                        <button
-                            type="button"
-                            class="collapsible-section__header"
-                            aria-expanded="true"
-                        >
-                            <span class="collapsible-section__title" data-i18n="${activeTitleKey}">
-                                ${activeTitle}
-                            </span>
-                            <span class="collapsible-section__badge">${items.length}</span>
-                            <span class="collapsible-section__icon" aria-hidden="true">▾</span>
-                        </button>
-                        <div class="collapsible-section__body">
-                            ${jobsHtml}
-                        </div>
-                    </section>
-                `;
-        } else {
-            this.list.innerHTML = jobsHtml;
-        }
-
-        if (window.i18n?.apply) window.i18n.apply(this.list);
-        if (this.filter === 'active') {
-            const header = this.list.querySelector('.collapsible-section__header');
-            const body   = this.list.querySelector('.collapsible-section__body');
-            if (header && body) {
-                header.addEventListener('click', () => {
-                    const expanded = header.getAttribute('aria-expanded') === 'true';
-                    header.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-                    body.hidden = expanded;
-                    header.classList.toggle('is-collapsed', expanded);
-                });
-            }
-        }
-
-        this.list.querySelectorAll('[data-stop-panel]').forEach(btn => {
-            btn.onclick = async () => {
-                const id = btn.getAttribute('data-stop-panel');
-                btn.disabled = true;
-                const j = this.state.items.find(x => x.id === id);
-                const cb = j?.clientBatch || null;
-
-                if (cb) {
-                    const sameBatch = this.state.items.filter(x => x.clientBatch === cb);
-                    try {
-                        await Promise.allSettled(sameBatch.map(x =>
-                            fetch(`/api/jobs/${encodeURIComponent(x.id)}/cancel`, { method: 'POST' })
-                        ));
-                        this.state.items = this.state.items.map(x =>
-                            x.clientBatch === cb ? { ...x, status: 'canceled', phase: 'canceled' } : x
-                        );
-                        this.render();
-                        return;
-                    } catch (_) { }
-                }
-
-                try {
-                    const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
-                    if (!r.ok) {
-                        const e = await r.json().catch(() => ({}));
-                        throw new Error(e?.error?.message || this.t('notif.cancelFailed'));
-                    }
-                    const idx = this.state.items.findIndex(j => j.id === id);
-                    if (idx >= 0) {
-                        this.state.items[idx] = { ...this.state.items[idx], status: 'canceled', phase: 'canceled' };
-                        this.render();
-                    }
-                } catch (e) {
-                    btn.disabled = false;
-                }
-            };
-        });
+                <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                    <button
+                        type="button"
+                        class="btn-outline btn-sm jobs-update-view"
+                        style="padding: 6px 12px; font-size: 12px; border-radius: 6px;"
+                    >
+                        ${this.t('btn.view')}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-primary btn-sm jobs-update-dismiss"
+                        style="padding: 6px 12px; font-size: 12px; border-radius: 6px; background: var(--success); border-color: var(--success);"
+                    >
+                        ${this.t('btn.close')}
+                    </button>
+                </div>
+            </div>
+        `;
     }
 
+    if (items.length === 0) {
+        const isActive = (this.filter === 'active');
+        this.list.innerHTML = `
+            ${updateNotification}
+            <div class="jobs-panel__empty">
+                <div class="jobs-panel__empty-icon">🎵</div>
+                <div class="jobs-panel__empty-title">
+                    ${isActive ? this.t('jobsPanel.emptyActive') : this.t('jobs.empty')}
+                </div>
+                <div class="jobs-panel__empty-subtitle">
+                    ${isActive ? this.t('jobsPanel.emptyDescriptionActive') : this.t('jobsPanel.emptyDescriptionAll')}
+                </div>
+                <div class="jobs-panel__empty-actions">
+                    <button class="jobs-panel__empty-action" onclick="focusUrlInputAndClose()">
+                        ${this.t('jobsPanel.addUrl')}
+                    </button>
+                    <button class="jobs-panel__empty-action jobs-panel__empty-action--outline" onclick="focusFileInputAndClose()">
+                        ${this.t('section.file')}
+                    </button>
+                </div>
+            </div>
+        `;
+
+        if (window.i18n?.apply) window.i18n.apply(this.list);
+
+        const viewBtnEmpty = this.list.querySelector('.jobs-update-view');
+        if (viewBtnEmpty && window.versionManager?.viewRelease) {
+            viewBtnEmpty.addEventListener('click', () => {
+                window.versionManager.viewRelease();
+            });
+        }
+
+        const dismissBtnEmpty = this.list.querySelector('.jobs-update-dismiss');
+        if (dismissBtnEmpty && window.versionManager?.dismissUpdate) {
+            dismissBtnEmpty.addEventListener('click', () => {
+                window.versionManager.dismissUpdate();
+            });
+        }
+
+        this.list.scrollTop = prevScrollTop;
+        return;
+    }
+
+    const jobsHtml = items.map(j => {
+        const p = this.prog(j);
+        let downloadLinks = '';
+
+        if (j.status === 'completed') {
+            if (typeof j.resultPath === 'string' && j.resultPath) {
+                downloadLinks = `<a class="link" href="${j.resultPath}" download>${this.t('jobsPanel.downloadFile')}</a>`;
+            } else if (Array.isArray(j.resultPath)) {
+                const successfulResults = j.resultPath.filter(r => r.outputPath && !r.error);
+                if (successfulResults.length > 0) {
+                    if (j.zipPath) {
+                        downloadLinks = `<a class="link" href="${j.zipPath}" download>${this.t('jobsPanel.downloadZip')}</a>`;
+                    } else {
+                        downloadLinks = `<span class="link" style="opacity:.8" title="${this.t('jobsPanel.multipleOutputs')}">${this.t('jobsPanel.multiple')}</span>`;
+                    }
+                }
+            } else if (typeof j.resultPath === 'object' && j.resultPath?.outputPath) {
+                downloadLinks = `<a class="link" href="${j.resultPath.outputPath}" download>${this.t('jobsPanel.downloadFile')}</a>`;
+            }
+        }
+
+        const baseTitle = this.titleOf(j);
+        const nowT = this.nowTitle(j);
+        const titleText = (j.metadata?.isPlaylist && nowT)
+            ? `${baseTitle} — ${nowT}`
+            : (nowT || baseTitle);
+
+        const fmt = String(j.format || '').toLowerCase();
+        const videoFormats = ['mp4', 'mkv', 'webm', 'avi', 'mov'];
+        const audioFormats = ['mp3', 'aac', 'm4a', 'ogg', 'opus', 'flac', 'wav', 'alac', 'eac3', 'ac3'];
+
+        let formatEmoji = '📁';
+        if (videoFormats.includes(fmt)) {
+            formatEmoji = '🎬';
+        } else if (audioFormats.includes(fmt)) {
+            formatEmoji = '🎧';
+        }
+
+        const fpsEmoji = '🎯';
+        const sampleRateEmoji = '📡';
+        const channelsEmoji = '🎚️';
+        const bitrateEmoji = '📶';
+
+        const skippedCount = this.computeSkippedPanel(j);
+        const skippedKeywords = /(private|izin|skipp?ed|unavailable|atlan(?:d|an)|blocked|copyright|region|geo)/i;
+        const showSkippedBadge =
+            (skippedCount > 0) ||
+            (j.lastLog && skippedKeywords.test(String(j.lastLog))) ||
+            (j.lastLogKey && skippedKeywords.test(String(j.lastLogKey))) ||
+            (j.error && skippedKeywords.test(String(j.error?.message || j.error)));
+
+        const skippedBadge = showSkippedBadge
+            ? `<span class="chip chip--warn" title="atlananlar">⚠️ ${this.t('jobs.skipped')}${skippedCount ? ` (${skippedCount})` : ''}</span>`
+            : '';
+
+        const cancelInfo = (j.canceledBy === 'user')
+            ? `<div class="muted" style="font-size:12px;margin-top:4px;">
+                    ${this.t('status.canceled')}
+               </div>`
+            : '';
+
+        return `
+            <div class="job-card" data-job-id="${j.id}">
+                <div class="job-title">${this.statusDot(j)}<span>${titleText}</span></div>
+
+                <div class="job-meta">
+                    <span class="pill">${this.sourcePill(j)}</span>
+                    <span class="pill">${formatEmoji} ${(j.format || '').toUpperCase()} ${j.bitrate ? `• ${bitrateEmoji} ${j.bitrate}` : ''}</span>
+                    ${j.sampleRate ? `
+                        <span class="pill">
+                            ${sampleRateEmoji} ${Math.round(j.sampleRate / 1000)} ${this.t('ui.khz') || 'kHz'}
+                        </span>
+                    ` : ''}
+                    ${j.videoSettings?.transcodeEnabled ? `
+                        <span class="pill pill--video" title="${this.t('label.videoTranscodejob')}">🎬</span>
+                    ` : ''}
+                    ${j.videoSettings?.audioTranscodeEnabled ? `
+                        <span class="pill pill--audio" title="${this.t('label.audioTranscode')}">🎵</span>
+                    ` : ''}
+                    ${j.videoSettings?.hwaccel && j.videoSettings.hwaccel !== 'off' ? `
+                        <span
+                            class="pill pill--hwaccel"
+                            title="${this.t('label.hwaccel')}: ${this.t(`option.${j.videoSettings.hwaccel}`) || j.videoSettings.hwaccel}"
+                        >
+                            ${this.getHwaccelIcon(j.videoSettings.hwaccel)}
+                        </span>
+                    ` : ''}
+                    ${j.videoSettings?.fps && j.videoSettings.fps !== 'source' ?
+                        `<span class="pill" title="FPS">${fpsEmoji} ${j.videoSettings.fps} ${this.t('ui.fps') || 'FPS'}</span>` : ''}
+                    ${j.videoSettings?.audioChannels && j.videoSettings.audioChannels !== 'original' ?
+                        `<span class="pill" title="${this.t('label.stereoConvert')}">
+                            ${channelsEmoji} ${this.getChannelsText(j.videoSettings.audioChannels)}
+                        </span>` : ''}
+                    ${j.videoSettings?.audioSampleRate && j.videoSettings.audioSampleRate !== '48000' ?
+                        `<span class="pill" title="${this.t('label.sampleRate')}">
+                            ${sampleRateEmoji} ${parseInt(j.videoSettings.audioSampleRate)/1000}k
+                        </span>` : ''}
+                    ${j.videoSettings?.audioCodec && j.videoSettings.audioCodec !== 'aac' ?
+                        `<span class="pill" title="${this.t('label.format')}">${this.t(`option.${j.videoSettings.audioCodec}`) || j.videoSettings.audioCodec.toUpperCase()}</span>` : ''}
+                    ${j.videoSettings?.audioBitrate && j.videoSettings.audioBitrate !== '192k' ?
+                        `<span class="pill" title="${this.t('label.audioBitrate')}">
+                            ${bitrateEmoji} ${j.videoSettings.audioBitrate}
+                        </span>` : ''}
+                    ${j.metadata?.includeLyrics ? `
+                        <span class="pill pill--lyrics" title="${this.t('label.includeLyrics2')}">🎼</span>
+                    ` : ''}
+                    ${j.metadata?.volumeGain && j.metadata.volumeGain !== 1.0 ? `
+                        <span class="pill pill--volume" title="${this.t('label.volumeGain')}">🔊 ${j.metadata.volumeGain}x</span>
+                    ` : ''}
+                    <span class="pill">${this.phasePill(j)}</span>
+                    ${skippedBadge}
+                </div>
+
+                ${(() => {
+                    const nt = nowT;
+                    return nt ? `<div class="muted" style="font-size:12px">▶️ <strong>${nt}</strong></div>` : '';
+                })()}
+
+                ${cancelInfo}
+
+                <div class="progress panel" role="progressbar"
+                     aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}">
+                    <span style="width:${p}%"></span>
+                </div>
+
+                <div class="row panel">
+                    <span>${p}%</span>
+                    <span style="display:flex; gap:8px; align-items:center;">
+                        ${downloadLinks}
+                        <button class="btn-danger" data-stop-panel="${j.id}" ${(['completed', 'error', 'canceled'].includes(this.norm(j.status))) ? 'disabled' : ''} title="${this.t('btn.stop')}">
+                            ${this.t('btn.stop')}
+                        </button>
+                    </span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    if (this.filter === 'active') {
+        const activeTitleKey = 'jobsPanel.activeGroupTitle';
+        const activeTitle = this.t(activeTitleKey);
+
+        this.list.innerHTML = `
+            ${updateNotification}
+            <section class="collapsible-section">
+                <button
+                    type="button"
+                    class="collapsible-section__header"
+                    aria-expanded="true"
+                >
+                    <span class="collapsible-section__title" data-i18n="${activeTitleKey}">
+                        ${activeTitle}
+                    </span>
+                    <span class="collapsible-section__badge">${items.length}</span>
+                    <span class="collapsible-section__icon" aria-hidden="true">▾</span>
+                </button>
+                <div class="collapsible-section__body">
+                    ${jobsHtml}
+                </div>
+            </section>
+        `;
+    } else {
+        this.list.innerHTML = `
+            ${updateNotification}
+            ${jobsHtml}
+        `;
+    }
+
+    if (window.i18n?.apply) window.i18n.apply(this.list);
+    if (this.filter === 'active' && items.length > 0) {
+        const header = this.list.querySelector('.collapsible-section__header');
+        const body   = this.list.querySelector('.collapsible-section__body');
+        if (header && body) {
+            header.addEventListener('click', () => {
+                const expanded = header.getAttribute('aria-expanded') === 'true';
+                header.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+                body.hidden = expanded;
+                header.classList.toggle('is-collapsed', expanded);
+            });
+        }
+    }
+
+    const viewBtn = this.list.querySelector('.jobs-update-view');
+        if (viewBtn) {
+            viewBtn.addEventListener('click', () => {
+                const url = this.state.releaseUrl;
+                if (url) {
+                    window.open(url, '_blank');
+                }
+            });
+        }
+
+    const dismissBtn = this.list.querySelector('.jobs-update-dismiss');
+        if (dismissBtn) {
+            dismissBtn.addEventListener('click', () => {
+                this.state.hasUpdate = false;
+                this.render();
+            });
+        }
+
+    this.list.querySelectorAll('[data-stop-panel]').forEach(btn => {
+        btn.onclick = async () => {
+            const id = btn.getAttribute('data-stop-panel');
+            btn.disabled = true;
+            const j = this.state.items.find(x => x.id === id);
+            const cb = j?.clientBatch || null;
+
+            if (cb) {
+                const sameBatch = this.state.items.filter(x => x.clientBatch === cb);
+                try {
+                    await Promise.allSettled(sameBatch.map(x =>
+                        fetch(`/api/jobs/${encodeURIComponent(x.id)}/cancel`, { method: 'POST' })
+                    ));
+                    this.state.items = this.state.items.map(x =>
+                        x.clientBatch === cb ? { ...x, status: 'canceled', phase: 'canceled' } : x
+                    );
+                    this.render();
+                    return;
+                } catch (_) { }
+            }
+
+            try {
+                const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+                if (!r.ok) {
+                    const e = await r.json().catch(() => ({}));
+                    throw new Error(e?.error?.message || this.t('notif.cancelFailed'));
+                }
+                const idx = this.state.items.findIndex(j => j.id === id);
+                if (idx >= 0) {
+                    this.state.items[idx] = { ...this.state.items[idx], status: 'canceled', phase: 'canceled' };
+                    this.render();
+                }
+            } catch (e) {
+                btn.disabled = false;
+            }
+        };
+    });
+
+    this.list.scrollTop = prevScrollTop;
+}
     t(key, vars) {
         return (window.i18n?.t?.(key, vars)) ?? key;
     }
@@ -690,6 +875,25 @@ export class JobManager {
        };
        return texts[channels] || channels;
    }
+
+   getHwaccelIcon(hwaccel) {
+    const icons = {
+        nvenc: '🔵',
+        qsv: '🔶',
+        vaapi: '🟣',
+        off: '⚪'
+    };
+    return icons[hwaccel] || '⚪';
+}
+
+getChannelsText(channels) {
+    const texts = {
+        stereo: '2.0',
+        mono: '1.0',
+        original: 'Orig'
+    };
+    return texts[channels] || channels;
+}
 
     updateJobUI(job, batchId = null) {
         const statusNorm = this.normalizeStatus(job.status);
@@ -1000,71 +1204,180 @@ export class JobManager {
             }
         }
 
-       const fmt = String(job.format || '').toLowerCase();
+        const fmt = String(job.format || '').toLowerCase();
         const videoFormats = ['mp4', 'mkv', 'webm', 'avi', 'mov'];
         const audioFormats = ['mp3', 'aac', 'm4a', 'ogg', 'opus', 'flac', 'wav', 'alac', 'eac3', 'ac3'];
-
-        let formatEmoji = '📁';
+        const codecIcon = '⚡';
+        let formatInnerEmoji = '⚡';
         if (videoFormats.includes(fmt)) {
-            formatEmoji = '🎬';
+            formatInnerEmoji = '🎬';
         } else if (audioFormats.includes(fmt)) {
-            formatEmoji = '🎧';
+            formatInnerEmoji = '🎧';
         }
 
-        const bitrateEmoji    = '📶';
+        const formatCards = [];
+        const bitrateEmoji = '📶';
         const sampleRateEmoji = '📡';
-        const fpsEmoji        = '🎯';
-        const channelsEmoji   = '🎚️';
+        const fpsEmoji = '🎯';
+        const channelsEmoji = '🎚️';
+        const basicCards = [];
 
-        let formatInfo = `${formatEmoji} ${job.format.toUpperCase()}`;
+        const formatFeatures = [];
+        formatFeatures.push(`
+            <span class="info-feature">
+                ${formatInnerEmoji} ${(job.format || '').toUpperCase() || '—'}
+            </span>
+        `);
+
         if (job.bitrate) {
-            formatInfo += ` • ${bitrateEmoji} ${job.bitrate}`;
-        }
-        if (job.sampleRate) {
-            formatInfo += ` • ${sampleRateEmoji} ${Math.round(job.sampleRate / 1000)} ${this.app.t('ui.khz') || 'kHz'}`;
+            formatFeatures.push(`
+                <span class="info-feature">
+                    ${bitrateEmoji} ${job.bitrate}
+                </span>
+            `);
         }
 
+        basicCards.push(`
+            <div class="info-card info-card--features">
+                <div class="info-card__icon">${codecIcon}</div>
+                <div class="info-card__content">
+                    <div class="info-card__title">${this.app.t('label.format')}</div>
+                    <div class="info-features-grid">
+                        ${formatFeatures.join('')}
+                    </div>
+                </div>
+            </div>
+        `);
+
+        const videoFeatures = [];
         if (job.videoSettings?.transcodeEnabled) {
-            formatInfo += ` • 🎬 ${this.app.t('label.videoTranscodejob') || 'Transcode'}`;
+            videoFeatures.push(`<span class="info-feature">🎬 ${this.app.t('label.videoTranscodejob') || 'Transcode'}</span>`);
+
             if (job.videoSettings.hwaccel && job.videoSettings.hwaccel !== 'off') {
                 const hwaccelText = this.app.t(`option.${job.videoSettings.hwaccel}`) || job.videoSettings.hwaccel.toUpperCase();
-                formatInfo += ` • ${hwaccelText}`;
+                videoFeatures.push(`<span class="info-feature">${this.getHwaccelIcon(job.videoSettings.hwaccel)} ${hwaccelText}</span>`);
             }
 
             if (job.videoSettings.fps && job.videoSettings.fps !== 'source') {
-                formatInfo += ` • ${fpsEmoji} ${job.videoSettings.fps} ${this.app.t('ui.fps') || 'FPS'}`;
+                videoFeatures.push(`<span class="info-feature">${fpsEmoji} ${job.videoSettings.fps} FPS</span>`);
             }
         }
 
+        const audioFeatures = [];
         if (job.videoSettings?.audioTranscodeEnabled) {
-            const audioCodecText = this.app.t(`option.${job.videoSettings.audioCodec}`) || job.videoSettings.audioCodec?.toUpperCase() || 'AAC';
-            formatInfo += ` • 🎵 ${audioCodecText}`;
+            const audioCodecText =
+                this.app.t(`option.${job.videoSettings.audioCodec}`) ||
+                job.videoSettings.audioCodec?.toUpperCase() ||
+                'AAC';
+
+            audioFeatures.push(`
+                <span class="info-feature">
+                    🎵 ${audioCodecText}
+                </span>
+            `);
 
             if (job.videoSettings.audioBitrate && job.videoSettings.audioBitrate !== '192k') {
-                formatInfo += ` • ${bitrateEmoji} ${job.videoSettings.audioBitrate}`;
+                audioFeatures.push(`
+                    <span class="info-feature">
+                        ${bitrateEmoji} ${job.videoSettings.audioBitrate}
+                    </span>
+                `);
             }
 
             if (job.videoSettings.audioChannels && job.videoSettings.audioChannels !== 'original') {
                 const channelsText = this.getChannelsText(job.videoSettings.audioChannels);
-                formatInfo += ` • ${channelsEmoji} ${channelsText}`;
+                audioFeatures.push(`
+                    <span class="info-feature">
+                        ${channelsEmoji} ${channelsText}
+                    </span>
+                `);
             }
 
+            let addedSampleRate = false;
             if (job.videoSettings.audioSampleRate && job.videoSettings.audioSampleRate !== '48000') {
-                formatInfo += ` • ${sampleRateEmoji} ${parseInt(job.videoSettings.audioSampleRate)/1000}k`;
+                audioFeatures.push(`
+                    <span class="info-feature">
+                        ${sampleRateEmoji} ${parseInt(job.videoSettings.audioSampleRate, 10) / 1000} kHz
+                    </span>
+                `);
+                addedSampleRate = true;
             }
+
+            if (!addedSampleRate && job.sampleRate) {
+                audioFeatures.push(`
+                    <span class="info-feature">
+                        ${sampleRateEmoji} ${Math.round(job.sampleRate / 1000)} kHz
+                    </span>
+                `);
+            }
+        } else if (job.sampleRate) {
+            audioFeatures.push(`
+                <span class="info-feature">
+                    ${sampleRateEmoji} ${Math.round(job.sampleRate / 1000)} kHz
+                </span>
+            `);
         }
 
+        const extraFeatures = [];
         if (job.metadata?.includeLyrics) {
-            formatInfo += ` • 🎼 ${this.app.t('label.includeLyrics2') || 'Lyrics'}`;
+            extraFeatures.push(`<span class="info-feature">🎼 ${this.app.t('label.includeLyrics2') || 'Lyrics'}</span>`);
         }
-
         if (job.metadata?.volumeGain && job.metadata.volumeGain !== 1.0) {
-            formatInfo += ` • 🔊 ${job.metadata.volumeGain}x ${this.app.t('label.volumeGain') || 'Volume'}`;
+            extraFeatures.push(`<span class="info-feature">🔊 ${job.metadata.volumeGain}x</span>`);
+        }
+        if (job.metadata?.isPlaylist) {
+            extraFeatures.push(`<span class="info-feature">📜 ${this.app.t('ui.playlist')}</span>`);
         }
 
-        if (job.metadata?.isPlaylist) {
-            formatInfo += ` • 📜 ${this.app.t('ui.playlist')}`;
+        const featureCards = [];
+        if (videoFeatures.length > 0) {
+            featureCards.push(`
+                <div class="info-card info-card--features">
+                    <div class="info-card__icon">🎬</div>
+                    <div class="info-card__content">
+                        <div class="info-card__title">${this.app.t('label.video')}</div>
+                        <div class="info-features-grid">
+                            ${videoFeatures.join('')}
+                        </div>
+                    </div>
+                </div>
+            `);
         }
+
+        if (audioFeatures.length > 0) {
+            featureCards.push(`
+                <div class="info-card info-card--features">
+                    <div class="info-card__icon">🎵</div>
+                    <div class="info-card__content">
+                        <div class="info-card__title">${this.app.t('label.audio')}</div>
+                        <div class="info-features-grid">
+                            ${audioFeatures.join('')}
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+
+        if (extraFeatures.length > 0) {
+            featureCards.push(`
+                <div class="info-card info-card--features">
+                    <div class="info-card__icon">⚙️</div>
+                    <div class="info-card__content">
+                        <div class="info-card__title">${this.app.t('label.extras') || 'Ekstra'}</div>
+                        <div class="info-features-grid">
+                            ${extraFeatures.join('')}
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+
+        const allCards = [...basicCards, ...featureCards];
+        const formatInfoHTML = `
+            <div class="info-cards-grid">
+                ${allCards.join('')}
+            </div>
+        `;
 
         let jobElement = document.getElementById(`job-${job.id}`);
         const statusText = {
@@ -1212,36 +1525,36 @@ export class JobManager {
         }
 
         jobElement.innerHTML = `
-            <strong>${this.app.escapeHtml(jobTitle)}</strong>
-            <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
-                ${formatInfo}
-                ${phaseInfo}
-                ${skippedBadge}
-            </div>
+    <strong>${this.app.escapeHtml(jobTitle)}</strong>
+    <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
+        ${phaseInfo}
+        ${skippedBadge}
+    </div>
+    ${formatInfoHTML}
 
-            ${lyricsInfo}
-            ${lastLogInfo}
-            ${cancelInfo}
+    ${lyricsInfo}
+    ${lastLogInfo}
+    ${cancelInfo}
 
-            ${phaseDetails}
+    ${phaseDetails}
 
-            ${(() => {
-                const nt = this.uiNowTitle(job);
-                return nt ? `<div class="muted" style="font-size:12px; margin: 8px 0 4px 0;">▶️ <strong>${this.app.escapeHtml(nt)}</strong></div>` : '';
-            })()}
+    ${(() => {
+        const nt = this.uiNowTitle(job);
+        return nt ? `<div class="muted" style="font-size:12px; margin: 8px 0 4px 0;">▶️ <strong>${this.app.escapeHtml(nt)}</strong></div>` : '';
+    })()}
 
-            <div class="progress-bar">
-                <div class="progress-fill" style="width: ${totalProgress}%"></div>
-            </div>
-            <div class="job-actions" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
-                <span class="status status-${job.status}">${statusText[job.status]}</span>
-                <div style="display:flex; gap:8px; align-items:center; flex-direction: column;">
-                    ${resultContent}
-                    <button class="btn-danger" data-stop="${job.id}" ${(['completed', 'error', 'canceled'].includes(statusNorm)) ? 'disabled' : ''} title="${this.app.t('btn.stop')}">${this.app.t('btn.stop')}</button>
-                </div>
-            </div>
-            ${job.error ? `<div style="color: var(--error); font-size: 13px; margin-top: 8px; padding: 8px; background: var(--bg-card); border-radius: 6px;">${this.app.escapeHtml(job.error)}</div>` : ''}
-        `;
+    <div class="progress-bar">
+        <div class="progress-fill" style="width: ${totalProgress}%"></div>
+    </div>
+    <div class="job-actions" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+        <span class="status status-${job.status}">${statusText[job.status]}</span>
+        <div style="display:flex; gap:8px; align-items:center; flex-direction: column;">
+            ${resultContent}
+            <button class="btn-danger" data-stop="${job.id}" ${(['completed', 'error', 'canceled'].includes(statusNorm)) ? 'disabled' : ''} title="${this.app.t('btn.stop')}">${this.app.t('btn.stop')}</button>
+        </div>
+    </div>
+    ${job.error ? `<div style="color: var(--error); font-size: 13px; margin-top: 8px; padding: 8px; background: var(--bg-card); border-radius: 6px;">${this.app.escapeHtml(job.error)}</div>` : ''}
+`;
         const parentForJob = (statusNorm === 'completed' || statusNorm === 'canceled')
             ? completedBody
             : activeBody;
@@ -1546,3 +1859,7 @@ export class JobManager {
 }
 
 export const jobsPanelManager = new JobsPanelManager();
+
+if (typeof window !== 'undefined') {
+    window.jobsPanelManager = jobsPanelManager;
+}

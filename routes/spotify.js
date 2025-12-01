@@ -174,35 +174,35 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     }
 
     if (isVideoFormatFlag && job.metadata?.source === "spotify") {
-      console.log(`🎬 Spotify Video İşlemeye Yönlendiriliyor: ${matchedCount} parça`);
+  console.log(`🎬 Spotify Video İşlemeye Yönlendiriliyor: ${matchedCount} parça`);
 
-      const trackCount = matchedCount;
-      const playlistTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+  const trackCount = matchedCount;
+  const playlistTitle = job.metadata.spotifyTitle || "Spotify Playlist";
 
-      job.lastLogKey = 'log.spotify.videoProcessing';
-      job.lastLogVars = {
-        title: playlistTitle,
-        count: trackCount
-      };
-      job.lastLog = `🎬 Spotify video işleme başlatılıyor: ${playlistTitle} (${trackCount} parça)`;
+  job.lastLogKey = 'log.spotify.videoProcessing';
+  job.lastLogVars = {
+    title: playlistTitle,
+    count: trackCount
+  };
+  job.lastLog = `🎬 Spotify video işleme başlatılıyor: ${playlistTitle} (${trackCount} parça)`;
 
-      await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
+  await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
 
-      try {
-        if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch) {
-          const titleHint = job.metadata?.spotifyTitle || "Spotify Playlist";
-          job.zipPath = await makeZipFromOutputs(
-            jobId,
-            job.resultPath,
-            titleHint || "playlist",
-            job.metadata?.includeLyrics
-          );
-        }
-      } catch {}
-
-      cleanupSpotifyTempFiles(jobId, null, null);
-      return;
+  try {
+    if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch) {
+      const titleHint = job.metadata?.spotifyTitle || "Spotify Playlist";
+      job.zipPath = await makeZipFromOutputs(
+        jobId,
+        job.resultPath,
+        titleHint || "playlist",
+        job.metadata?.includeLyrics
+      );
     }
+  } catch {}
+
+  cleanupSpotifyTempFiles(jobId, null, null);
+  return;
+}
 
     if (sp.kind === "track") {
       await processSingleTrack(jobId, sp, format, bitrate);

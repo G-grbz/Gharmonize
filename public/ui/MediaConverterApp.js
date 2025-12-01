@@ -6,6 +6,7 @@ import { UploadManager } from './UploadManager.js';
 import { FormatManager } from './FormatManager.js';
 import { notificationManager } from './NotificationManager.js';
 import { modalManager } from './ModalManager.js';
+import { settingsManager } from './SettingsManager.js';
 
 export class MediaConverterApp {
     constructor() {
@@ -56,12 +57,14 @@ export class MediaConverterApp {
         document.documentElement.setAttribute('data-theme', savedTheme);
 
         const themeToggle = document.getElementById('themeToggle');
-        themeToggle.addEventListener('click', () => {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-        });
+        if (themeToggle) {
+            themeToggle.addEventListener('click', () => {
+                const currentTheme = document.documentElement.getAttribute('data-theme');
+                const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+                document.documentElement.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+            });
+        }
     }
 
     initializeEventListeners() {
@@ -72,7 +75,12 @@ export class MediaConverterApp {
             this.formatManager.updateBitrateOptions(format, formats);
         });
 
-        document.addEventListener('i18n:langChanged', () => {
+        document.addEventListener('i18n:langChanged', (ev) => {
+            const newLang = ev?.detail?.lang || window.i18n?.getCurrentLang?.();
+            const langSelect = document.getElementById('langSelect');
+            if (langSelect && newLang && langSelect.value !== newLang) {
+                langSelect.value = newLang;
+            }
             this.loadLocalFiles();
         });
 
@@ -123,11 +131,22 @@ export class MediaConverterApp {
             this.onUrlInputChange(e.target.value);
         });
 
-        document.querySelectorAll('.lang-toggle [data-lang]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                await window.i18n?.setLang(btn.getAttribute('data-lang'));
+        const langSelect = document.getElementById('langSelect');
+        if (langSelect) {
+            const currentLang = window.i18n?.getCurrentLang?.();
+            if (currentLang && langSelect.value !== currentLang) {
+                langSelect.value = currentLang;
+            }
+
+            langSelect.addEventListener('change', async (e) => {
+                const nextLang = e.target.value;
+                try {
+                    await window.i18n?.setLang(nextLang);
+                } catch (err) {
+                    console.error('Dil değiştirilemedi:', err);
+                }
             });
-        });
+        }
 
         document.addEventListener('i18n:applied', () => {
             const modal = document.getElementById('settingsModal');
@@ -232,6 +251,10 @@ export class MediaConverterApp {
         if (!isLoggedIn && window.jobsPanelManager) {
             window.jobsPanelManager.close();
         }
+
+        this.loadLocalFiles()?.catch?.(err => {
+            console.error('loadLocalFiles after auth change failed:', err);
+        });
     }
 
     async checkInitialAuthState() {
@@ -257,107 +280,142 @@ export class MediaConverterApp {
         this.handleAuthStateChange(isLoggedIn);
     }
 
-    async loadLocalFiles() {
-        const selectEl = document.getElementById('localFileSelect');
-        const listEl   = document.getElementById('localFileCheckboxList');
-        if (!selectEl && !listEl) return;
+        async loadLocalFiles() {
+            const selectEl = document.getElementById('localFileSelect');
+            const listEl   = document.getElementById('localFileCheckboxList');
+            if (!selectEl && !listEl) return;
 
-        const token = localStorage.getItem('gharmonize_admin_token') || '';
-        if (!token) {
-            if (selectEl) {
-                selectEl.disabled = true;
-                selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
-            }
-            if (listEl) {
-                listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</div>`;
-            }
-            return;
-        }
+            const token = localStorage.getItem('gharmonize_admin_token') || '';
+            if (!token) {
+                const msg = this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı';
 
-        try {
-            if (selectEl) {
-                selectEl.disabled = true;
-                selectEl.innerHTML = `<option value="">${this.t('ui.loading')}...</option>`;
-            }
-            if (listEl) {
-                listEl.innerHTML = `<div class="local-files-loading">${this.t('ui.loading') || 'Yükleniyor'}...</div>`;
-            }
-
-            const res = await fetch('/api/local-files', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-
-            if (res.status === 401) {
                 if (selectEl) {
                     selectEl.disabled = true;
-                    selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
+                    selectEl.innerHTML = `<option value="">${msg}</option>`;
                 }
                 if (listEl) {
-                    listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</div>`;
+                    listEl.innerHTML = `<div class="local-files-empty">${msg}</div>`;
+                    this.addLoginButtonToLocalFiles(listEl);
                 }
                 return;
             }
 
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            try {
+                if (selectEl) {
+                    selectEl.disabled = true;
+                    selectEl.innerHTML = `<option value="">${this.t('ui.loading')}...</option>`;
+                }
+                if (listEl) {
+                    listEl.innerHTML = `<div class="local-files-loading">${this.t('ui.loading') || 'Yükleniyor'}...</div>`;
+                }
 
-            const data = await res.json();
-            const items = data.items || [];
-
-            if (selectEl) {
-                selectEl.disabled = false;
-                selectEl.innerHTML = `<option value="">${this.t('ui.chooseServerFile') || '– Dosya seç –'}</option>`;
-                items.forEach(f => {
-                    const opt = document.createElement('option');
-                    opt.value = f.name;
-                    const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
-                    opt.textContent = `${f.name} (${sizeMb} MB)`;
-                    selectEl.appendChild(opt);
+                const res = await fetch('/api/local-files', {
+                    headers: { 'Authorization': 'Bearer ' + token }
                 });
-            }
 
-            if (listEl) {
-                if (!items.length) {
-                    listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noServerFiles') || 'Sunucuda dosya bulunamadı'}</div>`;
-                } else {
-                    listEl.innerHTML = '';
-                    items.forEach((f, idx) => {
-                        const id = `local-file-${idx}`;
+                if (res.status === 401) {
+                    const msg = this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı';
+
+                    if (selectEl) {
+                        selectEl.disabled = true;
+                        selectEl.innerHTML = `<option value="">${msg}</option>`;
+                    }
+                    if (listEl) {
+                        listEl.innerHTML = `<div class="local-files-empty">${msg}</div>`;
+                        this.addLoginButtonToLocalFiles(listEl);
+                    }
+                    return;
+                }
+
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+                const data = await res.json();
+                const items = data.items || [];
+
+                if (selectEl) {
+                    selectEl.disabled = false;
+                    selectEl.innerHTML = `<option value="">${this.t('ui.chooseServerFile') || '– Dosya seç –'}</option>`;
+                    items.forEach(f => {
+                        const opt = document.createElement('option');
+                        opt.value = f.name;
                         const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
-
-                        const wrapper = document.createElement('label');
-                        wrapper.className = 'local-file-item';
-                        wrapper.htmlFor = id;
-                        wrapper.innerHTML = `
-                            <input type="checkbox" id="${id}" name="localFileItem" value="${this.escapeHtml(f.name)}">
-                            <span class="local-file-name">${this.escapeHtml(f.name)}</span>
-                            <span class="local-file-size">(${sizeMb} MB)</span>
-                        `;
-                        listEl.appendChild(wrapper);
+                        opt.textContent = `${f.name} (${sizeMb} MB)`;
+                        selectEl.appendChild(opt);
                     });
+                }
 
-                    const info = document.createElement('div');
-                    info.className = 'multi-select-info';
-                    info.innerHTML = `💡 <strong>${this.t('ui.multiSelectHint') || 'Çoklu seçim:'}</strong> ${this.t('ui.multiSelectInstructions') || 'Birden fazla dosya seçebilirsiniz'}`;
-                    listEl.appendChild(info);
+                if (listEl) {
+                    if (!items.length) {
+                        listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noServerFiles') || 'Sunucuda dosya bulunamadı'}</div>`;
+                    } else {
+                        listEl.innerHTML = '';
+                        items.forEach((f, idx) => {
+                            const id = `local-file-${idx}`;
+                            const sizeMb = (f.size / (1024 * 1024)).toFixed(1);
+
+                            const wrapper = document.createElement('label');
+                            wrapper.className = 'local-file-item';
+                            wrapper.htmlFor = id;
+                            wrapper.innerHTML = `
+                                <input type="checkbox" id="${id}" name="localFileItem" value="${this.escapeHtml(f.name)}">
+                                <span class="local-file-name">${this.escapeHtml(f.name)}</span>
+                                <span class="local-file-size">(${sizeMb} MB)</span>
+                            `;
+                            listEl.appendChild(wrapper);
+                        });
+
+                        const info = document.createElement('div');
+                        info.className = 'multi-select-info';
+                        info.innerHTML = `💡 <strong>${this.t('ui.multiSelectHint') || 'Çoklu seçim:'}</strong> ${this.t('ui.multiSelectInstructions') || 'Birden fazla dosya seçebilirsiniz'}`;
+                        listEl.appendChild(info);
+                    }
+                }
+            } catch (e) {
+                console.error('Local files list error:', e);
+
+                this.showNotification(
+                    `${this.t('notif.errorPrefix')}: ${e.message || 'local files'}`,
+                    'error',
+                    'error'
+                );
+
+                const msg = this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı';
+
+                if (selectEl) {
+                    selectEl.disabled = true;
+                    selectEl.innerHTML = `<option value="">${msg}</option>`;
+                }
+                if (listEl) {
+                    listEl.innerHTML = `<div class="local-files-empty">${msg}</div>`;
+                    this.addLoginButtonToLocalFiles(listEl);
                 }
             }
-        } catch (e) {
-            console.error('Local files list error:', e);
-
-            this.showNotification(
-                `${this.t('notif.errorPrefix')}: ${e.message || 'local files'}`,
-                'error',
-                'error'
-            );
-
-            if (selectEl) {
-                selectEl.disabled = true;
-                selectEl.innerHTML = `<option value="">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</option>`;
-            }
-            if (listEl) {
-                listEl.innerHTML = `<div class="local-files-empty">${this.t('ui.noAuthLocalFiles') || 'Giriş yapılmadı'}</div>`;
-            }
         }
+
+        addLoginButtonToLocalFiles(listEl) {
+        if (!listEl) return;
+        if (listEl.querySelector('#localFilesLoginBtn')) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'local-files-login-cta';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'localFilesLoginBtn';
+        btn.className = 'btn-primary';
+        btn.setAttribute('data-i18n', 'btn.login');
+        btn.textContent = this.t('btn.login') || 'Login';
+
+        wrapper.appendChild(btn);
+        listEl.appendChild(wrapper);
+
+        btn.addEventListener('click', () => {
+            if (settingsManager?.openLoginOnly) {
+                settingsManager.openLoginOnly();
+            } else {
+                settingsManager.open();
+            }
+        });
     }
 
     addSelectionInfo() {

@@ -5,6 +5,7 @@ export class SettingsManager {
         this.tokenKey = "gharmonize_admin_token";
         this.modal = null;
         this.isInitialized = false;
+        this.loginOnly = false;
     }
 
     async initialize() {
@@ -55,9 +56,67 @@ export class SettingsManager {
         `;
     }
 
+    showNotification(message, type = 'info') {
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    if (window.app?.showNotification) {
+        window.app.showNotification(message, type);
+        return;
+    }
+
+    this.showSimpleToast(message, type);
+}
+
+    showSimpleToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${type === 'info' ? 'var(--accent)' :
+                     type === 'success' ? 'var(--success)' :
+                     type === 'error' ? 'var(--error)' : 'var(--accent)'};
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        z-index: 10000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        animation: slideInRight 0.3s ease;
+    `;
+    toast.textContent = message;
+
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.animation = 'slideOutRight 0.3s ease';
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+        }, 300);
+    }, 3000);
+}
+
     getFormViewHTML() {
         return `
             <div id="formView" style="display:none">
+            <div class="form-group">
+                <label
+                    data-i18n="version.updateCheck"
+                >
+                    ${this.t('version.updateCheck')}
+                </label>
+                <div style="display: flex; gap: 8px;">
+                    <button
+                        type="button"
+                        id="checkUpdatesBtn"
+                        class="btn-outline"
+                        style="flex: 1;"
+                        data-i18n="version.checkUpdates"
+                    >
+                        ${this.t('version.checkUpdates')}
+                    </button>
+                </div>
+            </div>
                 <div class="form-group">
                     <label for="f_SPOTIFY_CLIENT_ID" data-i18n="settings.spotifyClientId">SPOTIFY_CLIENT_ID</label>
                     <input id="f_SPOTIFY_CLIENT_ID" type="text" >
@@ -201,21 +260,44 @@ export class SettingsManager {
     }
 
     setupEventListeners() {
-        document.getElementById('settingsClose').onclick = () => this.close();
-        document.getElementById('loginBtn').onclick = () => this.doLogin();
-        document.getElementById('logoutBtn').onclick = () => this.doLogout();
-        document.getElementById('reloadBtn').onclick = () => this.loadSettings();
-        document.getElementById('saveBtn').onclick = () => this.saveSettings();
-        document.getElementById('changePassBtn').onclick = () => this.changePassword();
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && this.modal.style.display === 'flex') {
-                const loginView = document.getElementById('loginView');
-                if (loginView && loginView.style.display !== 'none') {
-                    e.preventDefault();
-                    this.doLogin();
-                }
+    document.getElementById('settingsClose').onclick = () => this.close();
+    document.getElementById('loginBtn').onclick = () => this.doLogin();
+    document.getElementById('logoutBtn').onclick = () => this.doLogout();
+    document.getElementById('checkUpdatesBtn').onclick = () => {
+        if (window.versionManager) {
+            window.versionManager.checkNow();
+            this.showNotification(this.t('version.checkingProgress'), 'info');
+        } else {
+            console.error('VersionManager not available');
+            this.showNotification(this.t('version.systemUnavailable'), 'error');
+        }
+    };
+
+    document.getElementById('reloadBtn').onclick = () => this.loadSettings();
+    document.getElementById('saveBtn').onclick = () => this.saveSettings();
+    document.getElementById('changePassBtn').onclick = () => this.changePassword();
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && this.modal.style.display === 'flex') {
+            const loginView = document.getElementById('loginView');
+            if (loginView && loginView.style.display !== 'none') {
+                e.preventDefault();
+                this.doLogin();
             }
-        });
+        }
+    });
+}
+
+    openLoginOnly() {
+        if (!this.isInitialized) this.initialize();
+
+        this.loginOnly = true;
+
+        this.modal.style.display = 'flex';
+        this.modal.setAttribute('aria-hidden', 'false');
+        this.modal.removeAttribute('inert');
+
+        this.showLogin();
+        requestAnimationFrame(() => document.getElementById('adminPass')?.focus());
     }
 
     open() {
@@ -297,16 +379,17 @@ export class SettingsManager {
             }
 
             const data = await r.json();
-            localStorage.setItem(this.tokenKey, data.token);
-            window.dispatchEvent(new CustomEvent('gharmonize:auth', { detail: { loggedIn: true } }));
-            this.showForm();
-            await this.loadSettings();
 
             localStorage.setItem(this.tokenKey, data.token);
-
             window.dispatchEvent(new CustomEvent('gharmonize:auth', {
                 detail: { loggedIn: true }
             }));
+
+            if (this.loginOnly) {
+                this.loginOnly = false;
+                this.close();
+                return;
+            }
 
             this.showForm();
             await this.loadSettings();

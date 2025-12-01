@@ -3,6 +3,7 @@ import { settingsManager } from './SettingsManager.js';
 import { jobsPanelManager } from './JobsPanelManager.js';
 import { initDiscRipperPanel } from './discRipperPanel.js';
 import { modalManager } from './ModalManager.js';
+import { versionManager } from './VersionManager.js';
 
 window.focusUrlInput = function() {
     const urlInput = document.getElementById('urlInput');
@@ -42,20 +43,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     await settingsManager.initialize();
+    await versionManager.initialize();
+
     jobsPanelManager.initialize();
 
     const settingsBtn = document.getElementById('settingsBtn');
-    if (settingsBtn) {
-        settingsBtn.addEventListener('click', () => {
-            settingsManager.open();
-        });
-    }
+        if (settingsBtn) {
+            const updateSettingsButton = (loggedIn) => {
+                if (loggedIn) {
+                    settingsBtn.dataset.mode = 'settings';
+                    settingsBtn.setAttribute('data-i18n', 'settings.title');
+                    const label = window.i18n?.t('settings.title') || 'Ayarlar';
+                    settingsBtn.textContent = label;
+                    settingsBtn.title = label;
+                } else {
+                    settingsBtn.dataset.mode = 'login';
+                    settingsBtn.setAttribute('data-i18n', 'btn.login');
+                    const label = window.i18n?.t('btn.login') || 'Login';
+                    settingsBtn.textContent = label;
+                    settingsBtn.title = label;
+                }
+            };
+
+            const initialLoggedIn = !!localStorage.getItem(settingsManager.tokenKey);
+            updateSettingsButton(initialLoggedIn);
+            window.addEventListener('gharmonize:auth', (ev) => {
+                const loggedIn = !!ev?.detail?.loggedIn;
+                updateSettingsButton(loggedIn);
+            });
+            settingsBtn.addEventListener('click', () => {
+                const mode = settingsBtn.dataset.mode;
+                if (mode === 'login') {
+                    settingsManager.openLoginOnly();
+                } else {
+                    settingsManager.open();
+                }
+            });
+        }
+
     const app = new MediaConverterApp();
     await app.initialize();
     setupCollapsibleSections();
     setupTitlePositioning();
     initDiscRipperPanel();
-});
+    });
+
+window.versionManager = versionManager;
 
 function setupCollapsibleSections() {
     function setupCollapsible(headerId, contentId) {

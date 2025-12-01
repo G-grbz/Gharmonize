@@ -231,7 +231,6 @@ export class SpotifyManager {
         const listEl = document.getElementById('spotifyPreviewList');
         if (listEl) listEl.innerHTML = '';
         this.integratedRenderedCount = 0;
-
         const isVideoFormat = format === 'mp4' || format === 'mkv';
         const body = {
             url,

@@ -507,7 +507,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       volumeGain,
       stereoConvert = "auto",
       atempoAdjust = "none",
-      videoSettings: rawVideoSettings,
+      videoSettings: rawVideoSettings, // 🔹 Video ayarlarını al
       selectedStreams
     } = body;
 
