@@ -392,11 +392,66 @@ docker run -d \
 
 ---
 
-## License
+## # 📄 License (MIT — Attribution • Fork-Only • Non-Commercial • Written Permission Required)
 
-This project (Gharmonize’s own source code) is licensed under the **MIT License**.
+This project is licensed under the MIT License **with mandatory attribution**,
+**fork-only redistribution**, **non-commercial usage restrictions**, and **written permission requirement for exceptions**.
 
-See the [LICENSE](./LICENSE) file for the full text.
+---
+
+## ✔ Allowed
+
+You are permitted to:
+
+* Use, copy, modify, and distribute this software **for non-commercial purposes only**.
+* Create derivative works.
+* Publish your changes **only as a GitHub fork** of the original repository.
+
+---
+
+## 🚫 Not Allowed
+
+You are **not permitted** to:
+
+* Use this software or any modified version **for commercial purposes**.
+* Remove or alter copyright notices.
+* Remove attribution to the original author.
+* Re-upload, re-brand, or re-publish this project **as a new repository**.
+* Redistribute modified or unmodified copies **outside of a public GitHub fork**.
+* Bypass these restrictions **without obtaining written permission from the original author**.
+
+---
+
+## ✔ Redistribution Rules (Important)
+
+If you redistribute this project (modified or unmodified):
+
+1. It **must** be done as a **public GitHub fork**.
+   → Direct copy → new repo açmak → yayınlamak **yasaktır**.
+
+2. You **must credit the original author:**
+   **“Based on work by G-grbz”**
+
+3. You **must include a link to the original repository:**
+   **[https://github.com/G-grbz/Gharmonize](https://github.com/G-grbz/Gharmonize)**
+
+4. You **must clearly indicate modifications:**
+   **“Modified by XYZ”**
+
+5. You **must obtain *written permission* from the original author (G-grbz) for:**
+
+   * Any commercial usage
+   * Any redistribution outside of a GitHub fork
+   * Any re-branding or re-publication under a new project name
+
+These conditions **cannot be removed, overridden, or ignored**.
+
+---
+
+## ⚠ Disclaimer
+
+This software is provided “as is”, without warranty of any kind.
+Use it at your own risk.
 
 ---
 
