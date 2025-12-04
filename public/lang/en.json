@@ -1,4 +1,5 @@
 {
+  "errors.jobLost": "Server connection lost; all active jobs have been force-closed",
   "label.format": "Codec",
   "label.video": "Video Options",
   "label.audio": "Audio Options",
