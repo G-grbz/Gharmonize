@@ -1,4 +1,5 @@
 {
+  "errors.jobLost": "Serververbindung verloren; alle aktiven Aufträge wurden zwangsbeendet",
   "label.format": "Codec",
   "label.video": "Videooptionen",
   "label.audio": "Audiooptionen",
