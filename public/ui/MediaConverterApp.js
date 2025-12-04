@@ -36,6 +36,7 @@ export class MediaConverterApp {
         }
 
         this.initializeEventListeners();
+        this.jobManager.restoreSessionState();
 
         await this.formatManager.loadFormats();
         this.ensureWarnStyles();
