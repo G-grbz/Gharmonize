@@ -198,6 +198,7 @@ export class SpotifyManager {
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
     const videoSettings = this.app.videoManager?.getSettings() || {};
     const bitDepthSelect = document.getElementById('bitDepthSelect');
+
     let bitDepth = null;
     if (bitDepthSelect && (format === 'flac' || format === 'wav')) {
         bitDepth = bitDepthSelect.value || null;
@@ -231,6 +232,7 @@ export class SpotifyManager {
         const listEl = document.getElementById('spotifyPreviewList');
         if (listEl) listEl.innerHTML = '';
         this.integratedRenderedCount = 0;
+
         const isVideoFormat = format === 'mp4' || format === 'mkv';
         const body = {
             url,
@@ -407,7 +409,6 @@ export class SpotifyManager {
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
         const videoSettings = this.app.videoManager?.getSettings() || {};
         const isVideoFormat = format === 'mp4' || format === 'mkv';
-
         const compressionLevel =
             format === 'flac'
                 ? (document.getElementById('compressionLevelRange')?.value || '5')
@@ -479,7 +480,6 @@ export class SpotifyManager {
                 });
             }
         });
-
         return validItems;
     }
 
@@ -504,7 +504,6 @@ export class SpotifyManager {
                 });
             }
         });
-
         return validItems;
     }
 
