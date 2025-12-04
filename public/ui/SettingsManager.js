@@ -46,12 +46,21 @@ export class SettingsManager {
     getLoginViewHTML() {
         return `
             <div id="loginView">
-                <label for="adminPass" class="settings-field-label" data-i18n="settings.adminPassword">Yönetici Şifresi</label>
-                <input id="adminPass" type="password" class="settings-input" autofocus />
-                <div id="adminError" class="settings-error" aria-live="polite" style="display:none"></div>
-                <div class="settings-actions settings-actions--end">
-                    <button id="loginBtn" class="btn-primary" data-i18n="btn.login">Giriş yap</button>
-                </div>
+                <form id="loginForm" autocomplete="off">
+                <div hidden>
+                        <label
+                            for="adminUserLogin"
+                            class="settings-field-label"
+                        >Admin Kullanıcı Adı</label>
+                        <input id="adminUserLogin" type="text" name="username" autocomplete="username" value="admin" />
+                    </div>
+                    <label for="adminPass" class="settings-field-label" data-i18n="settings.adminPassword">Yönetici Şifresi</label>
+                    <input id="adminPass" type="password" class="settings-input" autocomplete="current-password" autofocus />
+                    <div id="adminError" class="settings-error" aria-live="polite" style="display:none"></div>
+                    <div class="settings-actions settings-actions--end">
+                        <button id="loginBtn" type="button" class="btn-primary" data-i18n="btn.login">Giriş yap</button>
+                    </div>
+                </form>
             </div>
         `;
     }
@@ -99,13 +108,15 @@ export class SettingsManager {
     getFormViewHTML() {
         return `
             <div id="formView" style="display:none">
-            <div class="form-group">
-                <label
+            <form id="settingsForm" autocomplete="off">
+                <div class="form-group">
+                <span
+                    class="settings-field-label"
                     data-i18n="version.updateCheck"
                 >
-                    ${this.t('version.updateCheck')}
-                </label>
-                <div style="display: flex; gap: 8px;">
+                   ${this.t('version.updateCheck')}
+                </span>
+                    <div style="display: flex; gap: 8px;">
                     <button
                         type="button"
                         id="checkUpdatesBtn"
@@ -123,7 +134,7 @@ export class SettingsManager {
                 </div>
                 <div class="form-group">
                     <label for="f_SPOTIFY_CLIENT_SECRET" data-i18n="settings.spotifyClientSecret">SPOTIFY_CLIENT_SECRET</label>
-                    <input id="f_SPOTIFY_CLIENT_SECRET" type="password" placeholder="••••••••" data-i18n-ph="ph.spotifyClientSecret" >
+                    <input id="f_SPOTIFY_CLIENT_SECRET" type="password" placeholder="••••••••" data-i18n-ph="ph.spotifyClientSecret" autocomplete="off" >
                 </div>
                 <div class="form-group">
                     <label for="f_UPLOAD_MAX_BYTES" data-i18n="settings.maxUpload">UPLOAD_MAX_BYTES</label>
@@ -232,30 +243,60 @@ export class SettingsManager {
                         <option value="1">1</option>
                     </select>
                 </div>
+            </form>
+
+            <form id="changePasswordForm" autocomplete="off">
+            <div hidden>
+                    <label
+                        for="adminUserChange"
+                        class="settings-field-label"
+                    >Admin Kullanıcı Adı</label>
+                    <input id="adminUserChange" type="text" name="username" autocomplete="username" value="admin" />
+                </div>
                 <h4 class="settings-section-title" data-i18n="settings.adminPassword">Yönetici Şifresi</h4>
                 <div class="form-group">
                     <label for="f_ADMIN_OLD" class="settings-field-label" data-i18n="settings.currentPassword">Eski Şifre</label>
-                    <input id="f_ADMIN_OLD" type="password" placeholder="••••••••" data-i18n-ph="settings.currentPassword" />
+                    <input
+                        id="f_ADMIN_OLD"
+                        type="password"
+                        placeholder="••••••••"
+                        data-i18n-ph="settings.currentPassword"
+                        autocomplete="current-password"
+                    />
                 </div>
                 <div class="form-group">
                     <label for="f_ADMIN_NEW" class="settings-field-label" data-i18n="settings.newPassword">Yeni Şifre</label>
-                    <input id="f_ADMIN_NEW" type="password" placeholder="En az 6 karakter" data-i18n-ph="settings.newPassword" />
+                    <input
+                        id="f_ADMIN_NEW"
+                        type="password"
+                        placeholder="En az 6 karakter"
+                        data-i18n-ph="settings.newPassword"
+                        autocomplete="new-password"
+                    />
                 </div>
                 <div class="form-group">
                     <label for="f_ADMIN_NEW2" class="settings-field-label" data-i18n="settings.newPassword2">Yeni Şifre (Tekrar)</label>
-                    <input id="f_ADMIN_NEW2" type="password" placeholder="Yeni Şifre (Tekrar)" data-i18n-ph="settings.newPassword2" />
+                    <input
+                        id="f_ADMIN_NEW2"
+                        type="password"
+                        placeholder="Yeni Şifre (Tekrar)"
+                        data-i18n-ph="settings.newPassword2"
+                        autocomplete="new-password"
+                    />
                 </div>
                 <div class="settings-actions settings-actions--end">
-                    <button id="changePassBtn" class="btn-primary" data-i18n="btn.changePassword">Şifreyi Güncelle</button>
+                    <button id="changePassBtn" type="button" class="btn-primary" data-i18n="btn.changePassword">Şifreyi Güncelle</button>
                 </div>
-                <div class="settings-actions settings-actions--between">
-                    <button id="logoutBtn" class="btn-outline" data-i18n="btn.logout">Çıkış</button>
-                    <div class="settings-actions__right">
-                        <button id="reloadBtn" class="btn-outline" data-i18n="btn.reload">Yenile</button>
-                        <button id="saveBtn" class="btn-primary" data-i18n="btn.save">Kaydet</button>
-                    </div>
+            </form>
+
+            <div class="settings-actions settings-actions--between">
+                <button id="logoutBtn" type="button" class="btn-outline" data-i18n="btn.logout">Çıkış</button>
+                <div class="settings-actions__right">
+                    <button id="reloadBtn" type="button" class="btn-outline" data-i18n="btn.reload">Yenile</button>
+                    <button id="saveBtn" type="button" class="btn-primary" data-i18n="btn.save">Kaydet</button>
                 </div>
             </div>
+        </div>
         `;
     }
 
@@ -390,7 +431,6 @@ export class SettingsManager {
                 this.close();
                 return;
             }
-
             this.showForm();
             await this.loadSettings();
 
