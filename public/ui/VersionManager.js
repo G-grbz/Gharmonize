@@ -185,6 +185,7 @@ export class VersionManager {
                 type: 'success',
                 allowHtml: true
             }).then((confirmed) => {
+
                 if (confirmed === true && releaseUrl) {
                     window.open(releaseUrl, '_blank');
                 }
