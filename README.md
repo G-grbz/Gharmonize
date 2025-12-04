@@ -2,7 +2,9 @@
 
 # <img width="128" height="128" alt="Gharmonize Logo" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" />
 
-# Gharmonize -  YouTube / Spotify Downloader & Converter
+# Gharmonize — GPU-Accelerated Media Converter for YouTube/Spotify, Local Files & Disc Ripping
+
+Fast, modular media processing with hardware acceleration, previews, metadata tools, and a powerful job engine.
 
 <img width="1666" height="899" alt="ss" src="https://github.com/user-attachments/assets/449c5f67-4240-4ca0-8da4-b2ca97a3b5bb" />
 
