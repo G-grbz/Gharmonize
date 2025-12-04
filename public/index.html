@@ -70,14 +70,34 @@
         <option value="fr">Français</option>
       </select>
     </div>
-
-    <button id="settingsBtn" class="btn-outline" data-i18n-title="btn.envSettings">⚙️</button>
-    <button id="jobsBell" class="jobs-bell" title="Aktif işler" hidden>
-      <span class="bell-icon">🔔</span>
-      <span id="jobsBadge" class="jobs-badge" hidden>0</span>
+    <button
+      id="settingsBtn"
+      class="btn-outline settings-btn"
+      type="button"
+      data-i18n-title="btn.envSettings"
+      title="Ayarlar"
+    >
+      <span class="settings-btn__icon" aria-hidden="true">⚙️</span>
+      <span class="settings-btn__label sr-only" data-i18n="btn.envSettings">
+        Ayarlar
+      </span>
     </button>
+    <button
+    id="jobsBell"
+    class="jobs-bell"
+    type="button"
+    hidden
+    data-i18n-title="jobsPanel.bellTitle"
+    title="Aktif işler"
+    aria-label="Aktif işler"
+  >
+    <span class="jobs-bell__ring">
+      <span class="jobs-bell__icon" aria-hidden="true">🔔</span>
+      <span class="jobs-bell__ping" aria-hidden="true"></span>
+    </span>
+    <span id="jobsBadge" class="jobs-badge" hidden>0</span>
+  </button>
   </div>
-
     <div class="card-grid">
       <div class="card">
       <h2 data-i18n="section.file">📁 Dosya Yükle</h2>
@@ -379,16 +399,30 @@
           </div>
         </div>
         <div class="form-group" id="discProgressSection">
-          <label data-i18n="disc.progress.label">İlerleme</label>
-          <div class="progress-container">
-            <div class="progress-bar">
-              <div class="progress-fill" id="discProgressFill" style="width:0%"></div>
-              <div class="progress-overlay" id="discProgressOverlay">0%</div>
+            <span
+              id="discProgressLabel"
+              class="form-label"
+              data-i18n="disc.progress.label"
+            >
+              İlerleme
+            </span>
+            <div
+              class="progress-container"
+              role="group"
+              aria-labelledby="discProgressLabel"
+            >
+              <div class="progress-bar">
+                <div class="progress-fill" id="discProgressFill" style="width:0%"></div>
+                <div class="progress-overlay" id="discProgressOverlay">0%</div>
+              </div>
+              <div
+                class="progress-text"
+                id="discProgressText"
+                data-i18n="disc.progress.ready"
+              >
+                Hazır
+              </div>
             </div>
-            <div class="progress-text" id="discProgressText" data-i18n="disc.progress.ready">
-              Hazır
-            </div>
-          </div>
         </div>
         <div id="discTitlesSection" class="collapsible-section" style="display:none;">
           <div class="collapsible-header">
@@ -421,8 +455,19 @@
           </button>
         </div>
         <div class="form-group" id="discLogSection">
-          <label data-i18n="disc.log.label">Log</label>
-          <div class="log-container" id="discLog"></div>
+          <span
+            id="discLogLabel"
+            class="form-label"
+            data-i18n="disc.log.label"
+          >
+            Log
+          </span>
+          <div
+            class="log-container"
+            id="discLog"
+            role="log"
+            aria-labelledby="discLogLabel"
+          ></div>
         </div>
       </div>
     </div>
