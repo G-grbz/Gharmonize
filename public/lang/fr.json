@@ -1,4 +1,5 @@
 {
+  "errors.jobLost": "Connexion au serveur perdue ; tous les travaux actifs ont été forcés à se fermer",
   "label.format": "Codec",
   "label.video": "Options Vidéo",
   "label.audio": "Options Audio",
