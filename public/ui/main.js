@@ -48,38 +48,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     jobsPanelManager.initialize();
 
     const settingsBtn = document.getElementById('settingsBtn');
-        if (settingsBtn) {
-            const updateSettingsButton = (loggedIn) => {
-                if (loggedIn) {
-                    settingsBtn.dataset.mode = 'settings';
-                    settingsBtn.setAttribute('data-i18n', 'settings.title');
-                    const label = window.i18n?.t('settings.title') || 'Ayarlar';
-                    settingsBtn.textContent = label;
-                    settingsBtn.title = label;
-                } else {
-                    settingsBtn.dataset.mode = 'login';
-                    settingsBtn.setAttribute('data-i18n', 'btn.login');
-                    const label = window.i18n?.t('btn.login') || 'Login';
-                    settingsBtn.textContent = label;
-                    settingsBtn.title = label;
-                }
-            };
+    if (settingsBtn) {
+        const labelEl = settingsBtn.querySelector('.settings-btn__label');
 
-            const initialLoggedIn = !!localStorage.getItem(settingsManager.tokenKey);
-            updateSettingsButton(initialLoggedIn);
-            window.addEventListener('gharmonize:auth', (ev) => {
-                const loggedIn = !!ev?.detail?.loggedIn;
-                updateSettingsButton(loggedIn);
-            });
-            settingsBtn.addEventListener('click', () => {
-                const mode = settingsBtn.dataset.mode;
-                if (mode === 'login') {
-                    settingsManager.openLoginOnly();
-                } else {
-                    settingsManager.open();
-                }
-            });
-        }
+        const updateSettingsButton = (loggedIn) => {
+            const key = loggedIn ? 'settings.title' : 'btn.login';
+            const fallback = loggedIn ? 'Ayarlar' : 'Giriş';
+            settingsBtn.dataset.mode = loggedIn ? 'settings' : 'login';
+            settingsBtn.setAttribute('data-i18n-title', key);
+            const label = window.i18n?.t(key) || fallback;
+            if (labelEl) {
+                labelEl.textContent = label;
+                labelEl.setAttribute('data-i18n', key);
+            }
+            settingsBtn.title = label;
+        };
+
+        const initialLoggedIn = !!localStorage.getItem(settingsManager.tokenKey);
+        updateSettingsButton(initialLoggedIn);
+
+        window.addEventListener('gharmonize:auth', (ev) => {
+            const loggedIn = !!ev?.detail?.loggedIn;
+            updateSettingsButton(loggedIn);
+        });
+
+        settingsBtn.addEventListener('click', () => {
+            const mode = settingsBtn.dataset.mode;
+            if (mode === 'login') {
+                settingsManager.openLoginOnly();
+            } else {
+                settingsManager.open();
+            }
+        });
+    }
 
     const app = new MediaConverterApp();
     await app.initialize();
