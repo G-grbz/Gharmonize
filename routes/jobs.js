@@ -27,9 +27,11 @@ import {
 } from "../modules/yt.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
+const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
 const UPLOAD_DIR = path.resolve(BASE_DIR, "uploads");
 const LOCAL_INPUT_DIR = path.resolve(BASE_DIR, process.env.LOCAL_INPUT_DIR || "local-inputs");
 
+fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(LOCAL_INPUT_DIR, { recursive: true });
 
@@ -83,6 +85,70 @@ const upload = multer({
   storage,
   limits: { fileSize: UPLOAD_MAX_BYTES }
 });
+
+function jobHasAnyExistingOutput(job) {
+  const resolveDownloadPath = (downloadPath) => {
+    if (!downloadPath) return null;
+    const rel = decodeURIComponent(
+      String(downloadPath).replace(/^\/download\//, "")
+    );
+    if (!rel) return null;
+
+    return path.join(OUTPUT_DIR, rel);
+  };
+
+  const checkFile = (downloadPath) => {
+    const abs = resolveDownloadPath(downloadPath);
+    if (!abs) return false;
+    try {
+      return fs.existsSync(abs);
+    } catch {
+      return false;
+    }
+  };
+
+  if (job.zipPath && checkFile(job.zipPath)) {
+    return true;
+  }
+
+  const rp = job.resultPath;
+
+  if (Array.isArray(rp)) {
+    return rp.some((r) => {
+      if (!r) return false;
+      const p = typeof r === "string" ? r : r.outputPath;
+      return checkFile(p);
+    });
+  }
+
+  if (rp && typeof rp === "object") {
+    return checkFile(rp.outputPath);
+  }
+
+  if (typeof rp === "string") {
+    return checkFile(rp);
+  }
+
+  return false;
+}
+
+function cleanupCompletedJobsWithoutOutputs() {
+  let removed = 0;
+
+  for (const [id, job] of jobs.entries()) {
+    if (job.status === "completed") {
+      const hasOutput = jobHasAnyExistingOutput(job);
+      if (!hasOutput) {
+        jobs.delete(id);
+        removed++;
+      }
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`[jobs] ${removed} tamamlanmış ama çıktısı olmayan iş temizlendi.`);
+  }
+}
 
 const router = express.Router();
 
@@ -507,7 +573,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       volumeGain,
       stereoConvert = "auto",
       atempoAdjust = "none",
-      videoSettings: rawVideoSettings, // 🔹 Video ayarlarını al
+      videoSettings: rawVideoSettings,
       selectedStreams
     } = body;
 
@@ -661,60 +727,60 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         }
       }
 
-else if (isYouTubeUrl(url)) {
-  const normalized = normalizeYouTubeUrl(url);
-  metadata.source = "youtube";
-  metadata.url = normalized;
-  metadata.originalUrl = url;
+    else if (isYouTubeUrl(url)) {
+      const normalized = normalizeYouTubeUrl(url);
+      metadata.source = "youtube";
+      metadata.url = normalized;
+      metadata.originalUrl = url;
 
-  const playlistUrl = isYouTubePlaylist(normalized);
-  const automixUrl  = isYouTubeAutomix(normalized);
-  metadata.isPlaylist = playlistUrl || automixUrl || (isPlaylist === true || isPlaylist === "true");
-  metadata.isAutomix  = automixUrl;
+      const playlistUrl = isYouTubePlaylist(normalized);
+      const automixUrl  = isYouTubeAutomix(normalized);
+      metadata.isPlaylist = playlistUrl || automixUrl || (isPlaylist === true || isPlaylist === "true");
+      metadata.isAutomix  = automixUrl;
 
-  let sel = null;
-  if (selectedIndices === "all") sel = "all";
-  else if (Array.isArray(selectedIndices)) {
-    sel = selectedIndices.map(Number).filter(n => Number.isFinite(n) && n>0);
-  } else if (typeof selectedIndices === "string" && selectedIndices.trim()) {
-    sel = selectedIndices.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n>0);
-  } else {
-    sel = metadata.isPlaylist ? "all" : null;
-  }
-  metadata.selectedIndices = sel;
-
-  console.log("=== YOUTUBE AUTOMIX DEBUG ===");
-  console.log("URL:", normalized);
-  console.log("isAutomix:", metadata.isAutomix);
-  console.log("selectedIndices:", sel);
-  console.log("req.body.selectedIds:", req.body.selectedIds);
-  console.log("==============================");
-
-  if (metadata.isAutomix && Array.isArray(sel) && sel.length > 0 && sel !== "all") {
-    try {
-      console.log("Automix ID'leri çözümleniyor...");
-
-      if (Array.isArray(req.body.selectedIds) && req.body.selectedIds.length > 0) {
-        metadata.selectedIds = req.body.selectedIds;
-        console.log("selectedIds req.body'den alındı:", metadata.selectedIds);
+      let sel = null;
+      if (selectedIndices === "all") sel = "all";
+      else if (Array.isArray(selectedIndices)) {
+        sel = selectedIndices.map(Number).filter(n => Number.isFinite(n) && n>0);
+      } else if (typeof selectedIndices === "string" && selectedIndices.trim()) {
+        sel = selectedIndices.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n>0);
       } else {
-        const automixData = await resolveAutomixSelectedIds(normalized, sel);
-        if (automixData.ids && automixData.ids.length > 0) {
-          metadata.selectedIds = automixData.ids;
-          metadata.frozenEntries = automixData.entries;
-          metadata.frozenTitle = automixData.title;
-          console.log("selectedIds API'den alındı:", metadata.selectedIds);
+        sel = metadata.isPlaylist ? "all" : null;
+      }
+      metadata.selectedIndices = sel;
+
+      console.log("=== YOUTUBE AUTOMIX DEBUG ===");
+      console.log("URL:", normalized);
+      console.log("isAutomix:", metadata.isAutomix);
+      console.log("selectedIndices:", sel);
+      console.log("req.body.selectedIds:", req.body.selectedIds);
+      console.log("==============================");
+
+      if (metadata.isAutomix && Array.isArray(sel) && sel.length > 0 && sel !== "all") {
+        try {
+          console.log("Automix ID'leri çözümleniyor...");
+
+          if (Array.isArray(req.body.selectedIds) && req.body.selectedIds.length > 0) {
+            metadata.selectedIds = req.body.selectedIds;
+            console.log("selectedIds req.body'den alındı:", metadata.selectedIds);
+          } else {
+            const automixData = await resolveAutomixSelectedIds(normalized, sel);
+            if (automixData.ids && automixData.ids.length > 0) {
+              metadata.selectedIds = automixData.ids;
+              metadata.frozenEntries = automixData.entries;
+              metadata.frozenTitle = automixData.title;
+              console.log("selectedIds API'den alındı:", metadata.selectedIds);
+            }
+          }
+
+          console.log("Final selectedIds:", metadata.selectedIds);
+
+        } catch (error) {
+          console.warn("Automix ID'leri alınamadı:", error.message);
         }
       }
-
-      console.log("Final selectedIds:", metadata.selectedIds);
-
-    } catch (error) {
-      console.warn("Automix ID'leri alınamadı:", error.message);
     }
-  }
-}
-      else if (isDirectMediaUrl(url)) {
+    else if (isDirectMediaUrl(url)) {
         metadata.source = "direct_url";
         inputPath = url;
       } else {
@@ -830,6 +896,8 @@ router.post("/api/playlist/preview", async (req, res) => {
 
 router.get("/api/jobs", requireAuth, (req, res) => {
   try {
+    cleanupCompletedJobsWithoutOutputs();
+
     const status = (req.query.status || "active").toLowerCase();
     const all = Array.from(jobs.values());
     const pick = (j) => ({
@@ -851,26 +919,27 @@ router.get("/api/jobs", requireAuth, (req, res) => {
       lastLog: j.lastLog || null,
       canceledBy: j.canceledBy || null,
       metadata: {
-      source: j.metadata?.source,
-      isPlaylist: !!j.metadata?.isPlaylist,
-      isAutomix: !!j.metadata?.isAutomix,
-      frozenTitle: j.metadata?.frozenTitle || null,
-      extracted: j.metadata?.extracted || null,
-      skipStats: j.metadata?.skipStats || { skippedCount: 0, errorsCount: 0 },
-      spotifyTitle: j.metadata?.spotifyTitle || null,
-      originalName: j.metadata?.originalName || null,
-      includeLyrics: !!j.metadata?.includeLyrics,
-      lyricsStats: j.metadata?.lyricsStats || null,
-      frozenEntries: Array.isArray(j.metadata?.frozenEntries)
-        ? j.metadata.frozenEntries.map(e => ({
-            index: e.index,
-            title: e.title,
-            hasLyrics: !!e.hasLyrics
-          })).slice(0, 500)
-        : null,
-      counters: j.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 }
-        },
+        source: j.metadata?.source,
+        isPlaylist: !!j.metadata?.isPlaylist,
+        isAutomix: !!j.metadata?.isAutomix,
+        frozenTitle: j.metadata?.frozenTitle || null,
+        extracted: j.metadata?.extracted || null,
+        skipStats: j.metadata?.skipStats || { skippedCount: 0, errorsCount: 0 },
+        spotifyTitle: j.metadata?.spotifyTitle || null,
+        originalName: j.metadata?.originalName || null,
+        includeLyrics: !!j.metadata?.includeLyrics,
+        lyricsStats: j.metadata?.lyricsStats || null,
+        frozenEntries: Array.isArray(j.metadata?.frozenEntries)
+          ? j.metadata.frozenEntries.map(e => ({
+              index: e.index,
+              title: e.title,
+              hasLyrics: !!e.hasLyrics
+            })).slice(0, 500)
+          : null,
+        counters: j.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 }
+      },
     });
+
     let items = all.map(pick);
     if (status === "active")      items = items.filter(j => j.status!=="completed" && j.status!=="error");
     else if (status === "error")  items = items.filter(j => j.status==="error");
@@ -883,12 +952,15 @@ router.get("/api/jobs", requireAuth, (req, res) => {
 });
 
 router.get("/api/stream", requireAuth, (req, res) => {
+  cleanupCompletedJobsWithoutOutputs();
+
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
+
   const payload = () => {
     const items = Array.from(jobs.values()).map(j => ({
       id: j.id,
