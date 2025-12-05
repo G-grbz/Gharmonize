@@ -39,7 +39,7 @@ export async function probeMediaFile(filePath) {
     });
 
     ffprobe.on('error', (error) => {
-      reject(new Error(`FFprobe başlatılamadı: ${error.message}`));
+      reject(new Error(`FFprobe failed to initialize: ${error.message}`));
     });
   });
 }

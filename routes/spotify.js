@@ -42,7 +42,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
     } = req.body || {};
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
-    if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL gerekli", 400);
+    if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL is required", 400);
 
     let sp;
     try {
@@ -50,7 +50,12 @@ router.post("/api/spotify/process/start", async (req, res) => {
     } catch (e) {
       const msg = String(e?.message || "");
       if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
-        return sendError(res, 'SPOTIFY_MIX_UNSUPPORTED', "Bu link kişiselleştirilmiş bir Spotify Mix. Spotify Web API bu içerikleri sağlamıyor (404). Lütfen Mix'teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayıp o URL'yi gönderin.", 400);
+        return sendError(
+          res,
+          'SPOTIFY_MIX_UNSUPPORTED',
+          "This link is a personalized Spotify Mix. The Spotify Web API cannot provide this content (404). Please copy the tracks from the Mix into a new playlist in the Spotify app and send that playlist URL instead.",
+          400
+        );
       }
       throw e;
     }
@@ -94,13 +99,13 @@ router.post("/api/spotify/process/start", async (req, res) => {
       id: jobId,
       title: sp.title,
       total: sp.items?.length || 1,
-      message: "Spotify işlemi başlatıldı"
+      message: "Spotify processing started"
     });
 
     processSpotifyIntegrated(jobId, sp, format, bitrate);
 
   } catch (e) {
-    return sendError(res, 'PROCESS_FAILED', e.message || "Spotify işlem hatası", 400);
+    return sendError(res, 'PROCESS_FAILED', e.message || "Spotify processing error", 400);
   }
 });
 
@@ -139,7 +144,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       job.progress = 5 + Math.floor(((idx + 1) / totalItems) * 25);
       job.lastLogKey = 'log.searchingTrack';
       job.lastLogVars = { artist: item.uploader, title: item.title };
-      job.lastLog = `🔍 Aranıyor: ${item.uploader} - ${item.title}`;
+      job.lastLog = `🔍 Searching: ${item.uploader} - ${item.title}`;
 
       if (item.id) {
         matchedCount++;
@@ -170,21 +175,21 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     if (shouldCancel()) { throw new Error("CANCELED"); }
 
     if (matchedCount === 0) {
-      throw new Error("Hiç eşleşen parça bulunamadı");
+      throw new Error("No matching tracks found");
     }
 
     if (isVideoFormatFlag && job.metadata?.source === "spotify") {
-  console.log(`🎬 Spotify Video İşlemeye Yönlendiriliyor: ${matchedCount} parça`);
+    console.log(`🎬 Redirecting Spotify to video processing: ${matchedCount} track(s)`);
 
-  const trackCount = matchedCount;
-  const playlistTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+    const trackCount = matchedCount;
+    const playlistTitle = job.metadata.spotifyTitle || "Spotify Playlist";
 
-  job.lastLogKey = 'log.spotify.videoProcessing';
-  job.lastLogVars = {
-    title: playlistTitle,
-    count: trackCount
-  };
-  job.lastLog = `🎬 Spotify video işleme başlatılıyor: ${playlistTitle} (${trackCount} parça)`;
+    job.lastLogKey = 'log.spotify.videoProcessing';
+    job.lastLogVars = {
+      title: playlistTitle,
+      count: trackCount
+    };
+    job.lastLog = `🎬 Starting Spotify video processing: ${playlistTitle} (${trackCount} track(s))`;
 
   await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
 
@@ -216,7 +221,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
         job.downloadProgress = Math.floor((done / total) * 100);
         job.lastLogKey = 'log.downloading.progress';
         job.lastLogVars = { done, total };
-        job.lastLog = `📥 İndiriliyor: ${done}/${total}`;
+        job.lastLog = `📥 Downloading: ${done}/${total}`;
         const dlPct = total > 0 ? (done / total) : 0;
         if (job.phase === "downloading") {
           job.progress = Math.max(job.progress, Math.floor(30 + dlPct * 40));
@@ -246,14 +251,14 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     job.phase = "downloading"; job.currentPhase = "downloading";
     job.lastLogKey = 'log.downloading.waitAll';
     job.lastLogVars = {};
-    job.lastLog = `⏳ Eşleştirmeler tamamlandı. Tüm indirmelerin bitmesi bekleniyor...`;
+    job.lastLog = `⏳ Matching completed. Waiting for all downloads to finish...`;
     await dlQueue.waitForIdle();
     if (shouldCancel()) { throw new Error("CANCELED"); }
 
     const downloadResults = dlQueue.getResults();
     const successfulDownloads = downloadResults.filter(r => r.filePath);
     if (successfulDownloads.length === 0) {
-      throw new Error("Hiçbir parça indirilemedi");
+      throw new Error("No tracks could be downloaded");
     }
 
     job.phase = "converting"; job.currentPhase = "converting";
@@ -264,7 +269,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     job.playlist.done = 0;
     job.lastLogKey = 'log.converting.batch';
     job.lastLogVars = { total: successfulDownloads.length };
-    job.lastLog = `⚙️ ${successfulDownloads.length} parça dönüştürülüyor...`;
+    job.lastLog = `⚙️ Converting ${successfulDownloads.length} track(s)...`;
 
     const files = successfulDownloads.map(r => r.filePath);
     const results = [];
@@ -331,7 +336,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
         if (shouldCancel()) { throw new Error("CANCELED"); }
         job.lastLogKey = 'log.converting.single';
         job.lastLogVars = { title: entry.title };
-        job.lastLog = `⚙️ Dönüştürülüyor: ${entry.title}`;
+        job.lastLog = `⚙️ Converting: ${entry.title}`;
 
         const result = await convertMedia(
           filePath, format, bitrate, `${jobId}_${i}`,
@@ -364,21 +369,21 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
 
         if (job.metadata.includeLyrics) {
           if (result && result.lyricsPath) {
-            job.lastLog = `🎼 Şarkı sözü eklendi: ${path.basename(result.lyricsPath)}`;
+            job.lastLog = `🎼 Lyrics added: ${path.basename(result.lyricsPath)}`;
           } else {
-            job.lastLog = `🎼 Şarkı sözü bulunamadı: ${entry.title}`;
+            job.lastLog = `🎼 Lyrics not found: ${entry.title}`;
           }
         }
 
         results.push(result);
         job.lastLogKey = 'log.converting.ok';
         job.lastLogVars = { title: entry.title };
-        job.lastLog = `✅ Dönüştürüldü: ${entry.title}`;
-      } catch (convertError) {
-        console.error(`Dönüştürme hatası (${entry.title}):`, convertError);
+        job.lastLog = `✅ Converted: ${entry.title}`;
+        } catch (convertError) {
+        console.error(`Conversion error (${entry.title}):`, convertError);
         job.lastLogKey = 'log.converting.err';
         job.lastLogVars = { title: entry.title, err: convertError.message };
-        job.lastLog = `❌ Dönüştürme hatası: ${entry.title} - ${convertError.message}`;
+        job.lastLog = `❌ Conversion error: ${entry.title} - ${convertError.message}`;
         results.push({ outputPath: null, error: convertError.message });
       }
 
@@ -387,11 +392,11 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
 
     if (job.metadata.includeLyrics && job.metadata.lyricsStats) {
       const stats = job.metadata.lyricsStats;
-      job.lastLog = `📊 Şarkı sözü özeti: ${stats.found} bulundu, ${stats.notFound} bulunamadı`;
+      job.lastLog = `📊 Lyrics summary: ${stats.found} found, ${stats.notFound} not found`;
     }
 
     const successfulResults = results.filter(r => r.outputPath && !r.error);
-    if (successfulResults.length === 0) throw new Error("Hiçbir parça dönüştürülemedi");
+    if (successfulResults.length === 0) throw new Error("No tracks could be converted");
 
     job.resultPath = successfulResults;
     if (shouldCancel()) { throw new Error("CANCELED"); }
@@ -399,16 +404,16 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       const zipTitle = job.metadata.spotifyTitle || "Spotify Playlist";
       job.lastLogKey = 'log.zip.creating';
       job.lastLogVars = {};
-      job.lastLog = `📦 ZIP dosyası oluşturuluyor...`;
+      job.lastLog = `📦 Creating ZIP file...`;
       job.zipPath = await makeZipFromOutputs(jobId, successfulResults, zipTitle, !!job.metadata.includeLyrics);
       job.lastLogKey = 'log.zip.ready';
       job.lastLogVars = { title: zipTitle };
-      job.lastLog = `✅ ZIP dosyası hazır: ${zipTitle}`;
+      job.lastLog = `✅ ZIP file is ready: ${zipTitle}`;
     } catch (e) {
-      console.warn("ZIP oluşturma hatası:", e);
+      console.warn("ZIP creation error:", e);
       job.lastLogKey = 'log.zip.error';
       job.lastLogVars = { err: e.message };
-      job.lastLog = `❌ ZIP oluşturma hatası: ${e.message}`;
+      job.lastLog = `❌ ZIP creation error: ${e.message}`;
     }
 
     job.status = "completed";
@@ -418,7 +423,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     job.phase = "completed"; job.currentPhase = "completed";
     job.lastLogKey = 'log.done';
     job.lastLogVars = { ok: successfulResults.length };
-    job.lastLog = `🎉 Tüm işlemler tamamlandı! ${successfulResults.length} parça başarıyla dönüştürüldü.`;
+    job.lastLog = `🎉 All operations completed! ${successfulResults.length} track(s) converted successfully.`;
 
     cleanupSpotifyTempFiles(jobId, files);
   } catch (error) {
@@ -430,7 +435,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       job.convertProgress = 0;
       job.lastLogKey = 'status.canceled';
       job.lastLogVars = {};
-      job.lastLog = "⛔ İptal edildi";
+      job.lastLog = "⛔ Canceled";
       try { killJobProcesses(jobId); } catch {}
       try { cleanupSpotifyTempFiles(jobId); } catch {}
     } else {
@@ -441,8 +446,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       job.convertProgress = 0;
       job.lastLogKey = 'log.error';
       job.lastLogVars = { err: error.message };
-      job.lastLog = `❌ Hata: ${error.message}`;
-      console.error("Spotify entegre işlem hatası:", error);
+      job.lastLog = `❌ Error: ${error.message}`;
+      console.error("Spotify integrated processing error:", error);
     }
   }
 }
@@ -456,7 +461,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     job.progress = 10;
     job.lastLogKey = 'log.searchingSingleTrack';
     job.lastLogVars = { artist: sp.items[0]?.artist, title: sp.items[0]?.title };
-    job.lastLog = `🔍 Aranıyor: ${sp.items[0]?.artist} - ${sp.items[0]?.title}`;
+    job.lastLog = `🔍 Searching: ${sp.items[0]?.artist} - ${sp.items[0]?.title}`;
 
     let matchedItem = null;
     const shouldCancel = () => {
@@ -492,14 +497,14 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
 
     if (shouldCancel()) { throw new Error("CANCELED"); }
     if (!matchedItem) {
-      throw new Error("Parça eşleştirilemedi");
+      throw new Error("Track could not be matched");
     }
 
     job.phase = "downloading"; job.currentPhase = "downloading";
     job.progress = 30;
     job.lastLogKey = 'log.downloading.single';
     job.lastLogVars = { title: matchedItem.title };
-    job.lastLog = `📥 İndiriliyor: ${matchedItem.title}`;
+    job.lastLog = `📥 Downloading: ${matchedItem.title}`;
 
     const dlQueue = createDownloadQueue(jobId, {
       concurrency: 1,
@@ -533,18 +538,18 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     const successfulDownload = downloadResults.find(r => r.filePath);
 
     if (!successfulDownload) {
-      const firstErr = downloadResults.find(r => r?.error)?.error || "bilinmeyen indirme hatası";
+      const firstErr = downloadResults.find(r => r?.error)?.error || "unknown download error";
       job.lastLogKey  = 'log.downloading.err';
       job.lastLogVars = { err: firstErr };
-      job.lastLog     = `❌ İndirme hatası: ${firstErr}`;
-      throw new Error(`Parça indirilemedi: ${firstErr}`);
+      job.lastLog     = `❌ Download error: ${firstErr}`;
+      throw new Error(`Track could not be downloaded: ${firstErr}`);
     }
 
     job.phase = "converting"; job.currentPhase = "converting";
     job.progress = 80;
     job.lastLogKey = 'log.converting.single';
     job.lastLogVars = { title: matchedItem.title };
-    job.lastLog = `⚙️ Dönüştürülüyor: ${matchedItem.title}`;
+    job.lastLog = `⚙️ Converting: ${matchedItem.title}`;
 
     const filePath = successfulDownload.filePath;
     const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
@@ -624,7 +629,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     job.playlist.done = 1;
     job.lastLogKey = 'log.done.single';
     job.lastLogVars = { title: matchedItem.title };
-    job.lastLog = `🎉 İşlem tamamlandı: ${matchedItem.title}`;
+    job.lastLog = `🎉 Processing completed: ${matchedItem.title}`;
 
     cleanupSpotifyTempFiles(jobId, [filePath]);
 
@@ -635,7 +640,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       job.phase = "canceled"; job.currentPhase = "canceled";
       job.lastLogKey = 'status.canceled';
       job.lastLogVars = {};
-      job.lastLog = "⛔ İptal edildi";
+      job.lastLog = "⛔ Canceled";
       try { killJobProcesses(jobId); } catch {}
       try { cleanupSpotifyTempFiles(jobId); } catch {}
     } else {
@@ -644,8 +649,8 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       job.phase = "error"; job.currentPhase = "error";
       job.lastLogKey = 'log.error';
       job.lastLogVars = { err: error.message };
-      job.lastLog = `❌ Hata: ${error.message}`;
-      console.error("Tekli parça işlem hatası:", error);
+      job.lastLog = `❌ Error: ${error.message}`;
+      console.error("Single track processing error:", error);
     }
   }
 }
@@ -703,14 +708,14 @@ function cleanupSpotifyTempFiles(jobId, files) {
       try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch {}
     }
   } catch (e) {
-    console.warn("Temizleme hatası:", e);
+    console.warn("Cleanup error:", e);
   }
 }
 
 router.post("/api/spotify/preview/start", async (req, res) => {
   try {
     const { url, market: marketIn } = req.body || {};
-    if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL gerekli", 400);
+    if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL is required", 400);
 
     let sp;
     try {
@@ -718,7 +723,12 @@ router.post("/api/spotify/preview/start", async (req, res) => {
     } catch (e) {
       const msg = String(e?.message || "");
       if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
-        return sendError(res, 'SPOTIFY_MIX_UNSUPPORTED', "Bu link kişiselleştirilmiş bir Spotify Mix. Spotify Web API bu içerikleri sağlamıyor (404). Lütfen Mix'teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayıp o URL'yi gönderin.", 400);
+        return sendError(
+          res,
+          'SPOTIFY_MIX_UNSUPPORTED',
+          "This link is a personalized Spotify Mix. The Spotify Web API cannot provide this content (404). Please copy the tracks from the Mix into a new playlist in the Spotify app and send that playlist URL instead.",
+          400
+        );
       }
       throw e;
     }
@@ -753,20 +763,20 @@ router.post("/api/spotify/preview/start", async (req, res) => {
         const listFile = path.join(TEMP_DIR, `${task.id}.urls.txt`);
         fs.writeFileSync(listFile, urls.join("\n"), "utf8");
         task.urlListFile = listFile;
-        console.log(`✅ Spotify URL listesi oluşturuldu: ${listFile}`);
+        console.log(`✅ Spotify URL list created: ${listFile}`);
       }
     }).catch((e) => { task.status = "error"; task.error = e.message; });
 
     return sendOk(res, { mapId: id, title: task.title, total: task.total });
   } catch (e) {
-    return sendError(res, 'PREVIEW_FAILED', e.message || "Spotify başlatma hatası", 400);
+    return sendError(res, 'PREVIEW_FAILED', e.message || "Spotify start error", 400);
   }
 });
 
 router.get("/api/spotify/preview/stream/:id", (req, res) => {
   const { id } = req.params || {};
   const task = spotifyMapTasks.get(id);
-  if (!task) return sendError(res, 'JOB_NOT_FOUND', "Map task bulunamadı", 404);
+  if (!task) return sendError(res, 'JOB_NOT_FOUND', "Map task not found", 404);
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -783,7 +793,7 @@ router.get("/api/spotify/preview/stream/:id", (req, res) => {
 router.get("/api/spotify/preview/stream-logs/:id", (req, res) => {
   const { id } = req.params || {};
   const task = spotifyMapTasks.get(id);
-  if (!task) return sendError(res, 'JOB_NOT_FOUND', "Map task bulunamadı", 404);
+  if (!task) return sendError(res, 'JOB_NOT_FOUND', "Map task not found", 404);
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -797,7 +807,7 @@ router.get("/api/spotify/preview/stream-logs/:id", (req, res) => {
         item,
         logKey: "log.matchFound",
         logVars: { artist: item.uploader, title: item.title },
-        log: `✅ Eşleşme bulundu: ${item.uploader} - ${item.title}`
+        log: `✅ Match found: ${item.uploader} - ${item.title}`
       });
       lastSent++;
     }
@@ -809,7 +819,7 @@ router.get("/api/spotify/preview/stream-logs/:id", (req, res) => {
         error: task.error || null,
         logKey: task.status === "completed" ? "status.allMatchesCompleted" : "log.error",
         logVars: task.status === "completed" ? {} : { err: task.error },
-        log: task.status === "completed" ? "🎉 Tüm eşleştirmeler tamamlandı!" : `❌ Hata: ${task.error}`
+        log: task.status === "completed" ? "🎉 All matches completed!" : `❌ Error: ${task.error}`
       });
       clearInterval(interval); res.end();
     }

@@ -64,12 +64,12 @@ router.post("/api/playlist/preview", async (req, res) => {
     if (!cached) {
       try {
         const all = await extractPlaylistAllFlat(keyUrl);
-        if (!all.count) return sendError(res, 'PREVIEW_FAILED', "Playlist boş ya da okunamadı", 404);
+        if (!all.count) return sendError(res, 'PREVIEW_FAILED', "Playlist is empty or could not be read", 404);
         cached = { title: all.title, count: all.count, isAutomix: false, entries: all.items };
         setCache(keyUrl, cached);
       } catch (e) {
         const meta = await getPlaylistMetaLite(keyUrl);
-        if (!meta.count) return sendError(res, 'PREVIEW_FAILED', "Playlist boş ya da okunamadı", 404);
+        if (!meta.count) return sendError(res, 'PREVIEW_FAILED', "Playlist is empty or could not be read", 404);
         const start = (p - 1) * ps + 1; const end = Math.min(p * ps, meta.count);
         const pageData = await extractPlaylistPage(keyUrl, start, end);
         return sendOk(res, { playlist: { title: pageData.title || meta.title, count: meta.count, isAutomix: false }, page: p, pageSize: ps, items: pageData.items });

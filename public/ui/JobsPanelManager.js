@@ -18,6 +18,7 @@ export class JobsPanelManager {
         this.progressCache = new Map();
         this.completedAtCache = new Map();
         this.storageKey = 'gharmonize_jobs_panel_state';
+        this.outputExistenceCache = new Map();
     }
 
     initialize() {
@@ -187,8 +188,8 @@ export class JobsPanelManager {
     if (this.pollingInterval) {
         clearInterval(this.pollingInterval);
         this.pollingInterval = null;
+        }
     }
-}
 
     destroy() {
         if (this.tokenCheckInterval) {
@@ -204,7 +205,7 @@ export class JobsPanelManager {
     }
 
     startSSE() {
-        try {
+    try {
             const token = localStorage.getItem(this.tokenKey) || "";
             this.eventSource = new EventSource(`/api/stream?token=${encodeURIComponent(token)}`);
 
@@ -385,10 +386,33 @@ export class JobsPanelManager {
     }
 
     rawProg(j) {
-        if (typeof j.progress === 'number') return j.progress;
-        const d = j.downloadProgress || 0;
-        const c = j.convertProgress || 0;
-        return Math.floor((d + c) / 2);
+        const isMultiAudio =
+            !j.metadata?.isPlaylist &&
+            j.metadata?.selectedStreams &&
+            Array.isArray(j.metadata.selectedStreams.audio) &&
+            j.metadata.selectedStreams.audio.length > 1;
+
+        if (typeof j.progress === 'number' && Number.isFinite(j.progress)) {
+            return j.progress;
+        }
+
+        if (isMultiAudio) {
+            const total = Number(j.counters?.cvTotal || j.counters?.dlTotal || 0);
+            const done  = Number(j.counters?.cvDone || j.counters?.dlDone || 0);
+
+            if (total > 0) {
+                const ratio = Math.max(0, Math.min(1, done / total));
+                const pct = Math.floor(ratio * 100);
+                if (pct > 0) return pct;
+            }
+        }
+
+        const d = Number(j.downloadProgress || 0);
+        const c = Number(j.convertProgress || 0);
+        if (d || c) {
+            return Math.floor((d + c) / 2);
+        }
+        return 0;
     }
 
         prog(j) {
@@ -453,94 +477,126 @@ export class JobsPanelManager {
         return 0;
     }
 
-            async jobHasExistingOutputPanel(job) {
-        const s = this.norm(job.status);
-        if (s !== 'completed') return true;
+        async jobHasExistingOutputPanel(job) {
+            const s = this.norm(job.status);
+            if (s !== 'completed') return true;
 
-        const candidates = [];
-        if (typeof job.resultPath === 'string' && job.resultPath) {
-            candidates.push(job.resultPath);
-        }
-        else if (Array.isArray(job.resultPath)) {
-            const firstOk = job.resultPath.find(r => r && r.outputPath && !r.error);
-            if (firstOk && firstOk.outputPath) {
-                candidates.push(firstOk.outputPath);
+            const candidates = [];
+            if (typeof job.resultPath === 'string' && job.resultPath) {
+                candidates.push(job.resultPath);
             }
-            if (!candidates.length && job.zipPath) {
+            else if (Array.isArray(job.resultPath)) {
+                const firstOk = job.resultPath.find(r => r && r.outputPath && !r.error);
+                if (firstOk && firstOk.outputPath) {
+                    candidates.push(firstOk.outputPath);
+                }
+                if (!candidates.length && job.zipPath) {
+                    candidates.push(job.zipPath);
+                }
+            }
+            else if (job.resultPath && typeof job.resultPath === 'object') {
+                if (job.resultPath.outputPath) {
+                    candidates.push(job.resultPath.outputPath);
+                }
+            }
+            else if (job.zipPath) {
                 candidates.push(job.zipPath);
             }
-        }
-        else if (job.resultPath && typeof job.resultPath === 'object') {
-            if (job.resultPath.outputPath) {
-                candidates.push(job.resultPath.outputPath);
+
+            if (!candidates.length) return false;
+
+            const url = candidates[0];
+            const cached = this.outputExistenceCache.get(url);
+            if (cached) {
+                return cached.exists;
             }
-        }
-        else if (job.zipPath) {
-            candidates.push(job.zipPath);
-        }
-
-        if (!candidates.length) return false;
-
-        const url = candidates[0];
-
-        try {
-            const resp = await fetch(url, { method: 'HEAD' });
-            if (resp.status === 404) {
-                return false;
-            }
-            return true;
-        } catch (e) {
-            console.warn('[JobsPanel] jobHasExistingOutputPanel HEAD error:', e);
-            return true;
-        }
-    }
-
-        async prunePlaylistOutputsPanel(job) {
-        const s = this.norm(job.status);
-        if (s !== 'completed') return true;
-
-        if (!Array.isArray(job.resultPath)) return true;
-
-        const keptResults = [];
-
-        for (const r of job.resultPath) {
-            if (!r || r.error) continue;
-
-            let raw = r.outputPath || r.path;
-            if (!raw) continue;
 
             try {
-                const resp = await fetch(raw, { method: 'HEAD' });
+                const resp = await fetch(url, { method: 'HEAD' });
 
                 if (resp.status === 404) {
+                    this.outputExistenceCache.set(url, { exists: false, checkedAt: Date.now() });
+                    return false;
+                }
+
+                this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
+                return true;
+            } catch (e) {
+                console.warn('[JobsPanel] jobHasExistingOutputPanel HEAD error:', e);
+                this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
+                return true;
+            }
+        }
+
+        async prunePlaylistOutputsPanel(job) {
+            const s = this.norm(job.status);
+            if (s !== 'completed') return true;
+
+            if (!Array.isArray(job.resultPath)) return true;
+
+            const keptResults = [];
+
+            for (const r of job.resultPath) {
+                if (!r || r.error) continue;
+
+                let raw = r.outputPath || r.path;
+                if (!raw) continue;
+
+                const url = raw;
+                const cached = this.outputExistenceCache.get(url);
+                if (cached) {
+                    if (cached.exists) {
+                        keptResults.push(r);
+                    }
                     continue;
                 }
 
-                keptResults.push(r);
-            } catch (e) {
-                console.warn('[JobsPanel] prunePlaylistOutputsPanel HEAD error:', e);
-                keptResults.push(r);
-            }
-        }
+                try {
+                    const resp = await fetch(url, { method: 'HEAD' });
 
-        if (job.zipPath) {
-            try {
-                const zipResp = await fetch(job.zipPath, { method: 'HEAD' });
-                if (zipResp.status === 404) {
-                    job.zipPath = null;
+                    if (resp.status === 404) {
+                        this.outputExistenceCache.set(url, { exists: false, checkedAt: Date.now() });
+                        continue;
+                    }
+
+                    this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
+                    keptResults.push(r);
+                } catch (e) {
+                    console.warn('[JobsPanel] prunePlaylistOutputsPanel HEAD error:', e);
+                    this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
+                    keptResults.push(r);
                 }
-            } catch (e) {
-                console.warn('[JobsPanel] prunePlaylistOutputsPanel zip HEAD error:', e);
             }
-        }
 
-        if (keptResults.length === 0 && !job.zipPath) {
-            return false;
-        }
+            if (job.zipPath) {
+                const zipUrl = job.zipPath;
+                const cachedZip = this.outputExistenceCache.get(zipUrl);
 
-        job.resultPath = keptResults;
-        return true;
-    }
+                if (cachedZip && !cachedZip.exists) {
+                    job.zipPath = null;
+                } else if (!cachedZip) {
+                    try {
+                        const zipResp = await fetch(zipUrl, { method: 'HEAD' });
+                        if (zipResp.status === 404) {
+                            this.outputExistenceCache.set(zipUrl, { exists: false, checkedAt: Date.now() });
+                            job.zipPath = null;
+                        } else {
+                            this.outputExistenceCache.set(zipUrl, { exists: true, checkedAt: Date.now() });
+                        }
+                    } catch (e) {
+                        console.warn('[JobsPanel] prunePlaylistOutputsPanel zip HEAD error:', e);
+                        this.outputExistenceCache.set(zipUrl, { exists: true, checkedAt: Date.now() });
+                    }
+                }
+            }
+
+            if (keptResults.length === 0 && !job.zipPath) {
+                return false;
+            }
+
+            job.resultPath = keptResults;
+            return true;
+        }
 
     async cleanupServerItems(items) {
         const cleaned = [];
@@ -2035,12 +2091,28 @@ updateJobUI(job, batchId = null) {
     }
 
     let totalProgress = Number(job.progress || 0);
+    const isMultiAudio =
+        !job.metadata?.isPlaylist &&
+        job.metadata?.selectedStreams &&
+        Array.isArray(job.metadata.selectedStreams.audio) &&
+        job.metadata.selectedStreams.audio.length > 1;
+
     if (!Number.isFinite(totalProgress) || totalProgress <= 0) {
         const dl = Number(job.downloadProgress || 0);
         const cv = Number(job.convertProgress || 0);
 
         if (dl || cv) {
             totalProgress = Math.max(dl, cv);
+        } else if (isMultiAudio) {
+            const total = Number(job.counters?.cvTotal || job.counters?.dlTotal || 0);
+            const done  = Number(job.counters?.cvDone || job.counters?.dlDone || 0);
+
+            if (total > 0) {
+                const ratio = Math.max(0, Math.min(1, done / total));
+                totalProgress = Math.floor(ratio * 100);
+            } else {
+                totalProgress = 0;
+            }
         } else {
             totalProgress = 0;
         }
@@ -2704,12 +2776,12 @@ if (stopBtn) {
 
     async submitJob(payload, isFormData = false) {
         try {
-            console.log("Gönderilen payload:", payload);
+            console.log("Sent payload:", payload);
 
             const format = document.getElementById('formatSelect').value;
 
             if (format === 'mp4' && this.app.videoManager.videoSettings.transcodeEnabled) {
-                console.log("🎬 Video ayarları payload'a ekleniyor:", this.app.videoManager.videoSettings);
+                console.log("🎬 Adding video settings to payload:", this.app.videoManager.videoSettings);
                 if (!isFormData) {
                     payload.videoSettings = this.app.videoManager.videoSettings;
                 } else {
@@ -2766,7 +2838,7 @@ if (stopBtn) {
             }
 
             const result = await response.json();
-            console.log("Job oluşturuldu:", result);
+            console.log("Job created:", result);
 
             if (result.clientBatch) {
                 this.jobToBatch.set(result.id, result.clientBatch);
@@ -2785,7 +2857,7 @@ if (stopBtn) {
             this.app.showNotification(this.app.t('notif.queue'), 'success', 'queue');
             this.saveSessionState();
         } catch (error) {
-            console.error("Job gönderme hatası:", error);
+            console.error("Job submission error:", error);
             this.app.showNotification(`${this.app.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
         }
     }

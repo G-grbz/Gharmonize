@@ -208,7 +208,7 @@ async function detectDiscType(sourcePath) {
       return { type: "DVD", actualPath: path.dirname(sourcePath) };
     }
   } catch (error) {
-    console.error("Disk tipi tespit hatası:", error);
+    console.error("Disc type detection error:", error);
   }
 
   throw new Error(t("disc.error.noValidStructure"));

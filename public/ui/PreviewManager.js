@@ -367,7 +367,7 @@ export class PreviewManager {
                 .map(i => this.currentPreview.indexToId.get(i))
                 .filter(Boolean);
 
-            console.log("Seçilen ID'ler:", selectedIds);
+            console.log("Selected IDs:", selectedIds);
 
             if (sequential && selected.length > 1) {
                 const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -406,7 +406,7 @@ export class PreviewManager {
             this.app.showNotification(this.app.t('notif.tracksQueued', { count: selected.length }), 'success', 'queue');
 
         } catch (error) {
-            console.error('Seçilenleri dönüştürme hatası:', error);
+            console.error('Error converting selected items:', error);
             this.app.showNotification(`${this.app.t('notif.conversionError')}: ${error.message}`, 'error', 'error');
         } finally {
             convertBtn.classList.remove('btn-loading');
@@ -451,7 +451,7 @@ export class PreviewManager {
             this.app.showNotification(this.app.t('notif.allTracksQueued'), 'success', 'queue');
 
         } catch (error) {
-            console.error('Tümünü dönüştürme hatası:', error);
+            console.error('Error converting all items:', error);
             this.app.showNotification(`${this.app.t('notif.conversionError')}: ${error.message}`, 'error', 'error');
         } finally {
             convertAllBtn.classList.remove('btn-loading');

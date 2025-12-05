@@ -134,16 +134,16 @@ export async function ensureJpegCover(
       p.on("close", (code) =>
         code === 0 && fs.existsSync(outJpg)
           ? resolve()
-          : reject(new Error(`Kapak dönüştürülemedi (kod ${code}): ${err}`))
+          : reject(new Error(`Cover conversion failed (code ${code}): ${err}`))
       );
       p.on("error", (e) =>
-        reject(new Error(`ffmpeg başlatma hatası: ${e.message}`))
+        reject(new Error(`Failed to start ffmpeg: ${e.message}`))
       );
     });
 
     return outJpg;
   } catch (e) {
-    console.warn("⚠️ Kapak dönüştürme uyarısı:", e.message);
+    console.warn("⚠️ Cover conversion warning:", e.message);
     return null;
   }
 }
@@ -202,6 +202,16 @@ export async function convertMedia(
   const selectedSubtitleStreams = Array.isArray(selectedStreams?.subtitles)
     ? selectedStreams.subtitles
     : [];
+    try {
+    console.log("🎚 convertMedia selectedStreams:", {
+      inputPath,
+      format,
+      isVideo,
+      selectedAudioStreams,
+      selectedSubtitleStreams,
+      hasVideo: selectedStreams?.hasVideo
+    });
+  } catch {}
   const hasVideoFlag =
     typeof selectedStreams?.hasVideo === "boolean"
       ? selectedStreams.hasVideo
@@ -216,12 +226,12 @@ export async function convertMedia(
   const disableVaapiInDocker = process.env.DISABLE_VAAPI_IN_DOCKER === "1";
 
   if (disableQsvInDocker && videoHwaccel === "qsv") {
-    console.log("⚠️ Docker: QSV devre dışı, NVENC'e düşülüyor");
+    console.log("⚠️ Docker: QSV is disabled in Docker, falling back to NVENC");
     videoHwaccel = "nvenc";
   }
 
   if (disableVaapiInDocker && videoHwaccel === "vaapi") {
-    console.log("⚠️ Docker: VAAPI devre dışı, NVENC'e düşülüyor");
+    console.log("⚠️ Docker: VAAPI is disabled in Docker, falling back to NVENC");
     videoHwaccel = "nvenc";
   }
 
@@ -234,8 +244,8 @@ export async function convertMedia(
   const audioSampleRate = videoSettings.audioTranscodeEnabled ?
                              videoSettings.audioSampleRate : '48000';
 
-       console.log(`🎬 Video Ayarları:`, { isVideo, format, videoSettings, videoHwaccel });
-       console.log(`🎵 Audio Ayarları: Codec=${audioCodec}, Bitrate=${audioBitrate}, Transcode=${videoSettings.audioTranscodeEnabled}`);
+       console.log(`🎬 Video Setting:`, { isVideo, format, videoSettings, videoHwaccel });
+       console.log(`🎵 Audio Setting: Codec=${audioCodec}, Bitrate=${audioBitrate}, Transcode=${videoSettings.audioTranscodeEnabled}`);
 
   const parseFps = (v) => {
      if (v == null) return null;
@@ -249,7 +259,7 @@ export async function convertMedia(
 
  const targetFps = parseFps(videoSettings.fps);
 
- console.log(`🎬 Video Ayarları:`, {
+ console.log(`🎬 Video Settings:`, {
    isVideo,
    format,
    videoSettings,
@@ -345,11 +355,11 @@ export async function convertMedia(
     const selectedSR = parseInt(audioSampleRate);
     if (Number.isFinite(selectedSR) && selectedSR > 0) {
       FINAL_SAMPLE_RATE = Math.min(192000, Math.max(8000, selectedSR));
-      console.log(`🎵 Seçilen Sample Rate: ${audioSampleRate} -> ${FINAL_SAMPLE_RATE} Hz`);
+      console.log(`🎵 Selected sample rate: ${audioSampleRate} -> ${FINAL_SAMPLE_RATE} Hz`);
     }
   } else if (audioSampleRate === 'original') {
     FINAL_SAMPLE_RATE = null;
-    console.log(`🎵 Orijinal Sample Rate korunacak`);
+    console.log(`🎵 Original sample rate will be preserved`);
   }
 
   const srSrc = Number.isFinite(srOpt1)
@@ -361,11 +371,11 @@ export async function convertMedia(
     : "default";
 
   console.log(
-    `🎵 Dönüştürme → in: ${path.basename(
+    `🎵 Conversion → in: ${path.basename(
       inputPath
     )} | fmt=${format} | lyrics=${
-      opts.includeLyrics !== false ? "evet" : "hayır"
-    } | video=${isVideo ? "evet" : "hayır"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}`
+      opts.includeLyrics !== false ? "yes" : "no"
+    } | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}`
   );
 
   const template = isVideo
@@ -400,20 +410,24 @@ export async function convertMedia(
     try {
       coverToUse = await ensureJpegCover(coverPath, jobId, tempDir, ffmpegFromOpts);
     } catch (e) {
-      console.warn("⚠️ Kapak dönüştürme hatası:", e.message);
+      console.warn("⚠️ Cover conversion warning:", e.message);
     }
     if (coverToUse && fs.existsSync(coverToUse)) canEmbedCover = true;
   }
 
   const ffmpegBin = ffmpegFromOpts || resolveFfmpegBin();
-  console.log(`🧭 Kullanılan FFmpeg: ${ffmpegBin}`);
+  console.log(`🧭 Using FFmpeg: ${ffmpegBin}`);
 
   const result = await new Promise((resolve, reject) => {
-    const args = ["-hide_banner", "-nostdin", "-y", "-i", inputPath];
+  const args = ["-hide_banner", "-nostdin", "-y", "-i", inputPath];
 
     if (isCanceled()) return reject(new Error("CANCELED"));
-
-    if (!isVideo && !canEmbedCover) args.push("-vn");
+    if (!isVideo && !canEmbedCover) {
+      if (selectedAudioStreams.length > 0) {
+        args.push("-map", `0:${selectedAudioStreams[0]}`);
+      }
+      args.push("-vn");
+    }
     if (canEmbedCover) args.push("-i", coverToUse);
 
     const tn = Number(resolvedMeta.track_number) || null;
@@ -486,9 +500,13 @@ export async function convertMedia(
     }
 
     if (canEmbedCover) {
+      if (selectedAudioStreams.length > 0) {
+        args.push("-map", `0:${selectedAudioStreams[0]}`);
+      } else {
+        args.push("-map", "0:a");
+      }
+
       args.push(
-        "-map",
-        "0:a",
         "-map",
         "1:v?",
         "-disposition:v",
@@ -528,7 +546,7 @@ export async function convertMedia(
       });
 
       if (format === "mp4") {
-        console.log("🎬 MP4 çıktısına altyazılar mov_text olarak yazılacak");
+        console.log("🎬 Subtitles will be written as mov_text in MP4 output");
         args.push("-c:s", "mov_text");
       } else {
         args.push("-c:s", "copy");
@@ -575,7 +593,7 @@ export async function convertMedia(
   }
 
   if (format === "mp4" || format === "mkv") {
-    console.log(`🎬 Video Transcode: ${videoSettings.transcodeEnabled ? 'AKTİF' : 'PASİF'}`);
+    console.log(`🎬 Video transcode: ${videoSettings.transcodeEnabled ? 'ON' : 'OFF'}`);
     const br = (bitrate || "").toString().trim();
     const isVidMb = /^[0-9]+(\.[0-9]+)?m$/i.test(br);
     const isVidKb = /^[0-9]+k$/i.test(br);
@@ -892,7 +910,7 @@ export async function convertMedia(
 
     args.push(outputPath);
 
-    console.log("🔧 FFmpeg argümanları:", args.join(" "));
+    console.log("🔧 FFmpeg arguments:", args.join(" "));
 
     let triedFallback = false;
     let ffmpeg = spawn(ffmpegBin, args);
@@ -949,7 +967,7 @@ export async function convertMedia(
 
       if (code === 0 && fs.existsSync(outputPath)) {
         progressCallback(100);
-        console.log(`✅ Dönüştürme tamamlandı: ${outputPath}`);
+        console.log(`✅ Conversion completed: ${outputPath}`);
         resolve({
           outputPath: `/download/${encodeURIComponent(outputFileName)}`,
           fileSize: fs.statSync(outputPath).size
@@ -959,13 +977,13 @@ export async function convertMedia(
           if (outputPath && fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
         } catch {}
         const tail = stderrData.split("\n").slice(-10).join("\n");
-        console.error(`❌ FFmpeg hatası (kod ${code}):\n${tail}`);
-        reject(new Error(`FFmpeg hata (kod ${code}): ${tail}`));
+        console.error(`❌ FFmpeg error (code ${code}):\n${tail}`);
+        reject(new Error(`FFmpeg error (code ${code}): ${tail}`));
       }
     });
 
     ffmpeg.on("error", (e) => {
-      console.error(`❌ FFmpeg başlatma hatası: ${e.message}`);
+      console.error(`❌ FFmpeg spawn error: ${e.message}`);
       if (!triedFallback && /ENOENT/i.test(e.message)) {
         triedFallback = true;
         try {
@@ -1001,9 +1019,9 @@ export async function convertMedia(
     const includeLyricsFlag = opts.includeLyrics !== false;
 
     console.log(
-      `🔍 Söz kontrolü → eklenecek mi: ${
-        includeLyricsFlag ? "evet" : "hayır"
-      } | video: ${isVideo ? "evet" : "hayır"} | biçim: ${format} | meta: ${[
+      `🔍 Lyrics check → Will it be added?: ${
+        includeLyricsFlag ? "yes" : "no"
+      } | video: ${isVideo ? "yes" : "no"} | format: ${format} | meta: ${[
         metadata.artist,
         metadata.title || metadata.track
       ]
@@ -1012,7 +1030,7 @@ export async function convertMedia(
     );
 
     if (includeLyricsFlag && !isVideo && result && result.outputPath) {
-      console.log("🎵 Sözler ekleniyor...");
+      console.log("🎵 Adding lyrics...");
       const actualOutputPath = path.join(
         outputDir,
         decodeURIComponent(result.outputPath.replace("/download/", ""))
@@ -1029,7 +1047,7 @@ export async function convertMedia(
             : typeof message === "string"
             ? message
             : JSON.stringify(message);
-        console.log(`[Söz ${jobId}] ${line}`);
+        console.log(`[Lyrics ${jobId}] ${line}`);
 
         const job = jobs.get(jobId.split("_")[0]);
         if (job) {
@@ -1054,14 +1072,14 @@ export async function convertMedia(
         });
 
         if (lyricsPath) {
-          console.log(`✅ Sözler başarıyla eklendi: ${lyricsPath}`);
+          console.log(`✅ lyrics added successfully: ${lyricsPath}`);
           result.lyricsPath = `/download/${encodeURIComponent(
             path.basename(lyricsPath)
           )}`;
 
           const job = jobs.get(jobId.split("_")[0]);
           if (job) {
-            job.lastLog = `🎼 Söz dosyası eklendi: ${path.basename(
+            job.lastLog = `🎼 Lyrics file added: ${path.basename(
               lyricsPath
             )}`;
             if (!job.metadata.lyricsStats) {
@@ -1070,11 +1088,11 @@ export async function convertMedia(
             job.metadata.lyricsStats.found++;
           }
         } else {
-          console.log("ℹ️ Söz bulunamadı veya eklenemedi");
+          console.log("ℹ️ Lyrics could not be found or added");
           const job = jobs.get(jobId.split("_")[0]);
           if (job) {
-            job.lastLog = `🎼 Söz bulunamadı: ${
-              metadata.title || "Bilinmiyor"
+            job.lastLog = `🎼 Lyrics not found: ${
+              metadata.title || "Unknown"
             }`;
             if (!job.metadata.lyricsStats) {
               job.metadata.lyricsStats = { found: 0, notFound: 0 };
@@ -1083,23 +1101,23 @@ export async function convertMedia(
           }
         }
       } catch (lyricsError) {
-        console.warn("❌ Söz ekleme hatası (ana işlem devam ediyor):", lyricsError);
+        console.warn("❌ Error adding lyrics (main process in progress):", lyricsError);
         const job = jobs.get(jobId.split("_")[0]);
         if (job) {
-          job.lastLog = `❌ Söz hatası: ${lyricsError.message}`;
+         job.lastLog = `❌ Lyrics error: ${lyricsError.message}`;
         }
       }
     } else {
       console.log(
-        `⚙️ Söz eklenmedi → eklensin mi: ${
-          includeLyricsFlag ? "evet" : "hayır"
-        } | sebep: ${isVideo ? "Video biçimi" : "Devre dışı"}`
+        `⚙️ no lyrics added → Will it be added?: ${
+          includeLyricsFlag ? "yes" : "no"
+        } | reason: ${isVideo ? "Video format" : "Disabled"}`
       );
     }
 
     return result;
   } catch (error) {
-    console.error("❌ Söz işleme hatası:", error);
+    console.error("❌ Lyrics processing error:", error);
     return result;
   }
 }

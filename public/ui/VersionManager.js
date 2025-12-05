@@ -8,9 +8,8 @@ export class VersionManager {
             }
         })();
 
-        this.currentVersion = cached || '1.0.5';
+        this.currentVersion = cached || '1.0.4';
         this.githubRepo = 'G-grbz/Gharmonize';
-
         this.checkInterval = 24 * 60 * 60 * 1000;
         this.lastCheckKey = 'gharmonize_last_version_check';
         this.latestVersionKey = 'gharmonize_latest_version';
@@ -26,11 +25,11 @@ export class VersionManager {
         const response = await fetch('/api/version');
         if (response.ok) {
             const data = await response.json();
-            this.currentVersion = data.version || '1.0.5';
+            this.currentVersion = data.version || '1.0.4';
             try {
                 localStorage.setItem('gharmonize_current_version', this.currentVersion);
             } catch (e) {
-                console.warn('gharmonize_current_version kaydedilemedi:', e);
+                console.warn('gharmonize_current_version could not be saved:', e);
             }
 
             console.log(`🔍 ${this.t('version.current')}: v${this.currentVersion}`);

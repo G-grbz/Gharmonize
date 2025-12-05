@@ -130,13 +130,13 @@ function getTokenFromReq(req) {
 
 function authMiddleware(req, res, next) {
   const ok = verify(getTokenFromReq(req))
-  if (!ok) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Yetkisiz' } })
+  if (!ok) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } })
   next()
 }
 
 export function requireAuth(req, res, next) {
   const ok = verify(getTokenFromReq(req))
-  if (!ok) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Yetkisiz' } })
+  if (!ok) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } })
   next()
 }
 
@@ -144,18 +144,18 @@ router.post('/auth/login', express.json(), (req, res) => {
   const { password } = req.body || {}
   const current = getAdminPassword()
   if (!current) {
-    return res.status(500).json({ error: { code: 'NO_ADMIN_PASSWORD', message: 'ADMIN_PASSWORD tanımlı değil' } })
+    return res.status(500).json({ error: { code: 'NO_ADMIN_PASSWORD', message: 'ADMIN_PASSWORD is not set' } })
   }
   if (!password || password !== current) {
-    return res.status(401).json({ error: { code: 'BAD_PASSWORD', message: 'Hatalı şifre' } })
+    return res.status(401).json({ error: { code: 'BAD_PASSWORD', message: 'Invalid password' } })
   }
   const token = sign({ iat: Date.now(), role: 'admin' })
   res.json({ token })
 })
 
 router.get('/auth/verify', authMiddleware, (req, res) => {
-    res.json({ valid: true, message: 'Token is valid' });
-});
+  res.json({ valid: true, message: 'Token is valid' })
+})
 
 router.get('/settings', authMiddleware, (req, res) => {
   const env = parseEnv()
@@ -168,7 +168,7 @@ router.get('/settings', authMiddleware, (req, res) => {
   res.json({ settings: data })
 })
 
-const NO_CLEAR_KEYS = ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET'];
+const NO_CLEAR_KEYS = ['SPOTIFY_CLIENT_ID', 'SPOTIFY_CLIENT_SECRET']
 
 router.post('/settings', authMiddleware, express.json(), (req, res) => {
   const incoming = (req.body && req.body.settings) || {}
@@ -192,20 +192,31 @@ router.post('/auth/change-password', authMiddleware, express.json(), (req, res) 
   const { oldPassword, newPassword, newPassword2 } = req.body || {}
   const fail = (code, message) => res.status(400).json({ error: { code, message } })
 
-  if (!oldPassword || !newPassword || !newPassword2) return fail('FIELDS_REQUIRED', 'Tüm alanlar zorunludur.')
-  if (newPassword !== newPassword2) return fail('PASSWORD_MISMATCH', 'Yeni şifreler eşleşmiyor.')
-  if (String(newPassword).length < 6) return fail('PASSWORD_TOO_SHORT', 'Yeni şifre en az 6 karakter olmalıdır.')
+  if (!oldPassword || !newPassword || !newPassword2) {
+    return fail('FIELDS_REQUIRED', 'All fields are required.')
+  }
+  if (newPassword !== newPassword2) {
+    return fail('PASSWORD_MISMATCH', 'New passwords do not match.')
+  }
+  if (String(newPassword).length < 6) {
+    return fail('PASSWORD_TOO_SHORT', 'New password must be at least 6 characters long.')
+  }
 
   const current = getAdminPassword() || ''
   if (current && oldPassword !== current) {
-    return res.status(401).json({ error: { code: 'BAD_PASSWORD', message: 'Eski şifre hatalı.' } })
+    return res.status(401).json({ error: { code: 'BAD_PASSWORD', message: 'Old password is incorrect.' } })
   }
 
   try {
     setAdminPasswordSync(newPassword)
     return res.json({ ok: true, logout: true })
   } catch (e) {
-    return res.status(500).json({ error: { code: 'PASSWORD_SAVE_FAILED', message: e.message || 'Kaydedilemedi.' } })
+    return res.status(500).json({
+      error: {
+        code: 'PASSWORD_SAVE_FAILED',
+        message: e.message || 'Could not save password.'
+      }
+    })
   }
 })
 

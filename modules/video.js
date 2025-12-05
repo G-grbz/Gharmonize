@@ -131,7 +131,7 @@ export async function processYouTubeVideoJob(job, {
   const videoSettings = job.videoSettings || {};
   const transcodeEnabled = videoSettings.transcodeEnabled === true;
 
-  console.log(`🎬 Video Job Ayarları:`, {
+  console.log(`🎬 Video job settings:`, {
    jobId: job.id,
    format: format,
    targetHeight: TARGET_H,
@@ -141,7 +141,7 @@ export async function processYouTubeVideoJob(job, {
  });
 
   if (job.metadata?.source === "spotify") {
-    console.log(`🎬 Spotify Video İşleme: ${job.metadata.spotifyTitle}`);
+    console.log(`🎬 Spotify video processing: ${job.metadata.spotifyTitle}`);
     await processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings });
     return;
   }
@@ -249,7 +249,7 @@ export async function processYouTubeVideoJob(job, {
     );
 
     if (!Array.isArray(mediaFiles) || !mediaFiles.length) {
-      throw new Error("Playlist/Automix video dosyaları bulunamadı.");
+      throw new Error("Playlist/Automix video files not found.");
     }
 
     job.downloadProgress = 100;
@@ -345,7 +345,7 @@ export async function processYouTubeVideoJob(job, {
 
       if (!transcodeEnabled) {
         const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
-        console.log(`🎬 Transcode PASIF - direkt taşıma: ${filePath} -> ${targetAbs}`);
+        console.log(`🎬 Transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
         safeMoveSync(filePath, targetAbs);
 
         results.push({
@@ -374,7 +374,7 @@ export async function processYouTubeVideoJob(job, {
 
         const convJobId = `${job.id}_v${i + 1}`;
 
-        console.log(`🎬 ConvertMedia çağrılıyor:`, {
+        console.log(`🎬 ConvertMedia called:`, {
         inputPath: filePath,
         format: format,
         bitrate: job.bitrate || "auto",
@@ -536,7 +536,7 @@ export async function processYouTubeVideoJob(job, {
 }
 
 async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings }) {
-  console.log(`🎬 Spotify Video İşleme Başlatılıyor: ${job.metadata.spotifyTitle}`);
+  console.log(`🎬 Starting Spotify video processing: ${job.metadata.spotifyTitle}`);
 
   job.counters = job.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 };
   job.currentPhase = "downloading";
@@ -544,7 +544,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
 
   const selectedIds = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : [];
   if (!selectedIds.length) {
-    throw new Error("Spotify URL listesi boş");
+    throw new Error("Spotify URL list is empty");
   }
 
   const transcodeEnabled = videoSettings.transcodeEnabled === true;
@@ -554,7 +554,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
     title: job.metadata.spotifyTitle || "Spotify Playlist",
     count: selectedIds.length
   };
-  job.lastLog = `🎬 Spotify video işleme başlatılıyor: ${job.metadata.spotifyTitle} (${selectedIds.length} parça)`;
+  job.lastLog = `🎬 Starting Spotify video processing: ${job.metadata.spotifyTitle} (${selectedIds.length} tracks)`;
 
   const onProgress = (p) => {
     if (p && typeof p === "object" && p.__event) {
@@ -583,7 +583,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
             done: done,
             total: total
           };
-          job.lastLog = `📥 İndirildi: ${p.item.uploader} - ${p.item.title} (${done}/${total})`;
+          job.lastLog = `📥 Downloaded: ${p.item.uploader} - ${p.item.title} (${done}/${total})`;
         }
       }
       return;
@@ -631,7 +631,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
             title: item.title,
             progress: Math.floor(progress)
           };
-          job.lastLog = `📥 İndiriliyor (${Math.floor(progress)}%): ${item.uploader} - ${item.title}`;
+          job.lastLog = `📥 Downloading (${Math.floor(progress)}%): ${item.uploader} - ${item.title}`;
         }
       }
     }
@@ -643,7 +643,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
   );
 
   if (!Array.isArray(mediaFiles) || !mediaFiles.length) {
-    throw new Error("Spotify video dosyaları bulunamadı.");
+    throw new Error("Spotify video files not found.");
   }
 
   job.downloadProgress = 100;
@@ -707,7 +707,6 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
     const ext = path.extname(filePath);
     const rawBase = path.basename(filePath);
     const cleaned = stripLeadingPrefix(rawBase, job.id).replace(ext, "").trim();
-
     const artistRaw = feEntry?.uploader || "Spotify Artist";
     const titleRaw  =
       feEntry?.title ||
@@ -727,13 +726,13 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
       current: i + 1,
       total: sorted.length
     };
-    job.lastLog = `⚙️ Dönüştürülüyor (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+    job.lastLog = `⚙️ Converting (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
 
     console.log("🎧 Spotify cleanTitle:", { cleanTitle, artistRaw, titleRaw });
 
     if (!transcodeEnabled) {
       const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
-      console.log(`🎬 Spotify Transcode PASIF - direkt taşıma: ${filePath} -> ${targetAbs}`);
+      console.log(`🎬 Spotify transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
       safeMoveSync(filePath, targetAbs);
 
       results.push({
@@ -743,7 +742,6 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
 
       job.playlist.done   = i + 1;
       job.counters.cvDone = i + 1;
-
       const overallConv = ((i + 1) / sorted.length) * 100;
       job.convertProgress = Math.floor(overallConv);
       job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
@@ -754,7 +752,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         current: i + 1,
         total: sorted.length
       };
-      job.lastLog = `✅ Dönüştürüldü (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+      job.lastLog = `✅ Converted (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
 
     } else {
       const srcHeight = await probeVideoHeight(filePath);
@@ -772,7 +770,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
 
       const convJobId = `${job.id}_v${i + 1}`;
 
-      console.log(`🎬 Spotify ConvertMedia çağrılıyor:`, {
+      console.log(`🎬 Spotify ConvertMedia called:`, {
         inputPath: filePath,
         format: format,
         bitrate: job.bitrate || "auto",
@@ -804,7 +802,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
               current: i + 1,
               total: sorted.length
             };
-            job.lastLog = `⚙️ Dönüştürülüyor (${Math.floor(p)}%) (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+            job.lastLog = `⚙️ Converting (${Math.floor(p)}%) (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
           }
         },
         meta,
@@ -835,7 +833,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         current: i + 1,
         total: sorted.length
       };
-      job.lastLog = `✅ Dönüştürüldü (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+      job.lastLog = `✅ Converted (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
     }
   }
 
@@ -851,7 +849,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
     title: job.metadata.spotifyTitle || "Spotify Playlist",
     count: sorted.length
   };
-  job.lastLog = `🎉 Spotify video işlemi tamamlandı: ${job.metadata.spotifyTitle} (${sorted.length} parça)`;
+  job.lastLog = `🎉 Spotify video processing completed: ${job.metadata.spotifyTitle} (${sorted.length} tracks)`;
 
   cleanupTempForJob(TEMP_DIR, job.id);
 }

@@ -37,7 +37,7 @@ export class VideoSettingsManager {
                 this.videoSettings.audioChannels = this.videoSettings.audioChannels || 'original';
                 this.videoSettings.audioSampleRate = this.videoSettings.audioSampleRate || '48000';
             } catch (e) {
-                console.warn('Video ayarları yüklenemedi:', e);
+                console.warn('Failed to load video settings:', e);
             }
         }
     }

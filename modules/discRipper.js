@@ -177,10 +177,9 @@ async function estimateDvdTitleSize(videoTsPath, titleIndex) {
       const stats = await fs.stat(f);
       total += stats.size;
     } catch (err) {
-      console.warn("VOB boyutu okunamadı:", f, err.message);
+      console.warn("Failed to read VOB size:", f, err.message);
     }
   }
-
   return total;
 }
 
@@ -356,11 +355,11 @@ async function ripDvdTitle(
     }
 
     if (progressCallback)
-      progressCallback(10, "VOB/IFO dosyaları aranıyor...");
+    progressCallback(10, "Searching VOB/IFO files...");
     const vobFiles = await getMainVOBFilesForTitle(videoTsPath, titleIndex);
 
     if (vobFiles.length === 0) {
-      throw new Error(`Title ${titleIndex} için VOB bulunamadı`);
+      throw new Error(`No VOB found for title ${titleIndex}`);
     }
 
     const expectedSizeBytes = await estimateDvdTitleSize(
@@ -421,9 +420,9 @@ async function ripDvdTitle(
       stdout = result.stdout;
       stderr = result.stderr;
 
-      if (progressCallback) progressCallback(100, "Başarıyla tamamlandı");
-    } catch (execError) {
-      if (execError.message === "RIP_CANCELLED") {
+      if (progressCallback) progressCallback(100, "Completed successfully");
+        } catch (execError) {
+        if (execError.message === "RIP_CANCELLED") {
         throw execError;
       }
 
@@ -439,7 +438,7 @@ async function ripDvdTitle(
           return {
             success: true,
             outputPath,
-            message: `DVD title ${titleIndex} MKV olarak oluşturuldu - Bazı uyarılar var`
+            message: `DVD title ${titleIndex} created as MKV - completed with warnings`
           };
         }
       } catch (accessError) {
@@ -455,22 +454,22 @@ async function ripDvdTitle(
     try {
       await fs.access(outputPath);
       const stats = await fs.stat(outputPath);
-      console.log(`Oluşturulan dosya boyutu: ${stats.size} bytes`);
+      console.log(`Created file size: ${stats.size} bytes`);
 
       if (stats.size === 0) {
-        throw new Error("Oluşturulan dosya boş");
+        throw new Error("Created file is empty");
       }
     } catch (accessError) {
-      throw new Error("Çıktı dosyası oluşturulamadı: " + accessError.message);
+      throw new Error("Output file could not be created: " + accessError.message);
     }
 
     return {
       success: true,
       outputPath,
-      message: `DVD title ${titleIndex} MKV olarak oluşturuldu`
+      message: `DVD title ${titleIndex} created as MKV`
     };
   } catch (error) {
-    if (progressCallback) progressCallback(0, `Hata: ${error.message}`);
+    if (progressCallback) progressCallback(0, `Error: ${error.message}`);
     throw error;
   }
 }
@@ -492,7 +491,7 @@ async function ripBluRayTitle(
 
     if (!playlistFile) {
       throw new Error(
-        `Blu-ray title ${titleIndex} için playlist (mpls) bilgisi yok`
+        `No playlist (mpls) info for Blu-ray title ${titleIndex}`
       );
     }
 
@@ -506,7 +505,7 @@ async function ripBluRayTitle(
     try {
       await fs.access(playlistPath);
     } catch {
-      throw new Error(`Playlist dosyası bulunamadı: ${playlistPath}`);
+      throw new Error(`Playlist file not found: ${playlistPath}`);
     }
 
     if (progressCallback) progressCallback(15, { __i18n: true, key: "disc.progress.gettingTrackInfo", vars: {} });
@@ -531,7 +530,7 @@ async function ripBluRayTitle(
       });
     } catch (err) {
       console.warn(
-        "Blu-ray track ID analizi başarısız, tüm trackler dahil edilecek:",
+        "Blu-ray track ID analysis failed, all tracks will be included:",
         err.message
       );
     }
@@ -600,22 +599,22 @@ async function ripBluRayTitle(
     try {
       await fs.access(outputPath);
       const stats = await fs.stat(outputPath);
-      console.log(`Oluşturulan dosya boyutu: ${stats.size} bytes`);
+      console.log(`Created file size: ${stats.size} bytes`);
 
       if (stats.size === 0) {
-        throw new Error("Oluşturulan dosya boş");
+        throw new Error("Created file is empty");
       }
     } catch (accessError) {
-      throw new Error("Çıktı dosyası oluşturulamadı: " + accessError.message);
+      throw new Error("Output file could not be created: " + accessError.message);
     }
 
     return {
       success: true,
       outputPath,
-      message: "Blu-ray title MKV olarak oluşturuldu"
+      message: "Blu-ray title created as MKV"
     };
   } catch (error) {
-    if (progressCallback) progressCallback(0, `Hata: ${error.message}`);
+    if (progressCallback) progressCallback(0, `Error: ${error.message}`);
     throw error;
   }
 }
@@ -644,7 +643,7 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
           const stats = await fs.stat(fullPath);
           total += stats.size;
         } catch (err) {
-          console.warn("M2TS boyutu okunamadı:", fullPath, err.message);
+          console.warn("Failed to read M2TS size:", fullPath, err.message);
         }
       }
 
@@ -677,7 +676,7 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
           legacyTotal += stats.size;
         } catch (err) {
           console.warn(
-            "M2TS boyutu okunamadı (legacy):",
+            "Failed to read M2TS size (legacy):",
             fullPath,
             err.message
           );
@@ -693,11 +692,10 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
       );
       return legacyTotal;
     }
-
-    console.log("Blu-ray size tahmini yapılamadı, 0 döndürülüyor");
+    console.log("Blu-ray size could not be estimated, returning 0");
     return 0;
   } catch (err) {
-    console.warn("Blu-ray size tahmini hatası:", err.message);
+    console.warn("Blu-ray size estimation error:", err.message);
     return 0;
   }
 }
@@ -727,7 +725,7 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
   try {
     const vobFiles = await getMainVOBFilesForTitle(videoTsPath, titleIndex);
     if (!vobFiles.length) {
-      throw new Error(`Title ${titleIndex} için VOB bulunamadı`);
+      throw new Error(`No VOB found for title ${titleIndex}`);
     }
 
     const sampleVob = vobFiles[0];
@@ -738,7 +736,7 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
     return parseTracks(info);
   } catch (error) {
     console.log(
-      "DVD track analiz hatası, varsayılan değerler kullanılıyor:",
+      "DVD track analysis error, using fallback defaults:",
       error.message
     );
     return {
@@ -776,7 +774,7 @@ async function getMainVOBFilesForTitle(videoTsPath, titleIndex) {
 
     return vobFiles;
   } catch (err) {
-    throw new Error(`VOB arama hatası: ${err.message}`);
+    throw new Error(`VOB search error: ${err.message}`);
   }
 }
 

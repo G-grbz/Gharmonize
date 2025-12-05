@@ -29,7 +29,7 @@ export async function makeSpotify() {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    throw new Error("SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET gerekli");
+    throw new Error("SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET is required");
   }
   const api = new SpotifyWebApi({ clientId, clientSecret });
   const grant = await api.clientCredentialsGrant();
@@ -145,7 +145,7 @@ async function fetchTrack(api, id, market) {
     const r = await api.getTrack(id, { ...(mkt ? { market: mkt } : {}) });
     return r?.body || null;
   }, resolveMarket(market));
-  if (!t) throw new Error("Track getirilemedi");
+  if (!t) throw new Error("Track could not be fetched");
   const meta = trackToId3Meta(t);
 
     let albumInfo = null, artistGenres = [];
@@ -286,7 +286,7 @@ async function fetchAlbumItems(api, id, market) {
       };
     }
   } catch (e) {
-    console.warn("Album info alınamadı:", e);
+    console.warn("Album info could not be fetched:", e);
   }
 
   while (true) {
@@ -342,7 +342,7 @@ async function fetchAlbumItems(api, id, market) {
 
 export async function resolveSpotifyUrl(url, { market } = {}) {
   const { type, id } = parseSpotifyUrl(url);
-  if (!id || type === "unknown") throw new Error("Desteklenmeyen Spotify URL");
+  if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
 
   const api = await makeSpotify();
 
@@ -354,7 +354,7 @@ export async function resolveSpotifyUrl(url, { market } = {}) {
 
   if (type === "playlist") {
     if (isPersonalizedMixId(id)) {
-      throw new Error("SPOTIFY_MIX_UNSUPPORTED: Bu URL Spotify’ın kişiselleştirilmiş Mix formatında. Spotify Web API bu içerikleri sağlamaz (404). Lütfen mix’teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayın ve o listenin URL’sini kullanın.");
+      throw new Error("SPOTIFY_MIX_UNSUPPORTED: This URL is a personalized Spotify Mix. The Spotify Web API does not provide this content (404). Please copy the tracks from the mix into a new playlist in the Spotify app and use that playlist URL instead.");
     }
     let plTitle = "Spotify Playlist";
     try {
@@ -368,7 +368,7 @@ export async function resolveSpotifyUrl(url, { market } = {}) {
       const msg = String(e?.message || "");
       const notFound = /Resource not found|status\s*:\s*404/i.test(msg);
       if (notFound || isPersonalizedMixId(id)) {
-        throw new Error("SPOTIFY_MIX_UNSUPPORTED: Bu URL kişiselleştirilmiş/erişilemeyen bir Mix olabilir. Spotify Web API bu içerikleri sağlamaz (404). Lütfen mix’teki parçaları Spotify uygulamasında yeni bir oynatma listesine kopyalayın ve o listenin URL’sini kullanın.");
+        throw new Error("SPOTIFY_MIX_UNSUPPORTED: This URL may be a personalized or inaccessible Mix. The Spotify Web API does not provide this content (404). Please copy the tracks from the mix into a new playlist in the Spotify app and use that playlist URL instead.");
       }
       throw e;
     }
@@ -390,7 +390,7 @@ export async function resolveSpotifyUrl(url, { market } = {}) {
         albumArtist = albumData.artists?.[0]?.name || "";
       }
     } catch (e) {
-      console.warn("Album başlık alınamadı:", e);
+      console.warn("Album title could not be retrieved:", e);
     }
 
     const items = await fetchAlbumItems(api, id, market);
@@ -399,7 +399,7 @@ export async function resolveSpotifyUrl(url, { market } = {}) {
     return { kind: "playlist", title, items };
   }
 
-  throw new Error("Bu Spotify URL tipi henüz destekli değil");
+  throw new Error("This type of Spotify URL is not supported yet");
 }
 
 export async function findSpotifyMetaByQuery(artist, title, market) {

@@ -76,7 +76,7 @@ export class ModalManager {
             const backdrop = this.modalContainer;
 
             if (!backdrop) {
-                console.error('❌ modalContainer bulunamadı');
+                console.error('❌ modalContainer not found');
                 resolve(false);
                 return;
             }
@@ -187,7 +187,7 @@ export class ModalManager {
             const backdrop = this.modalContainer;
 
             if (!backdrop) {
-                console.error('❌ modalContainer bulunamadı');
+                console.error('❌ modalContainer not found');
                 resolve();
                 return;
             }

@@ -10,7 +10,7 @@ export class FormatManager {
             this.updateFormatOptions(data.formats);
             this.handleFormatChange();
         } catch (error) {
-            console.error('Formatlar yüklenemedi:', error);
+            console.error('Failed to load formats:', error);
         }
     }
 

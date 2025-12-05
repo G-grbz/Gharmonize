@@ -7,4 +7,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
   versions: process.versions
 });
 
-console.log('✅ Electron ön yükleme betiği yüklendi');
+console.log('✅ Electron boot script installed');

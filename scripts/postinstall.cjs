@@ -5,15 +5,15 @@ const flag =
   String(process.env.npm_config_build_electron || '').toLowerCase() === 'true';
 
 if (!flag) {
-  console.log('postinstall: electron-builder bağımlılık kurulumu atlandı (BUILD_ELECTRON!=1).');
+  console.log('post-installation: electron-builder dependency installation skipped (BUILD_ELECTRON!=1).');
   process.exit(0);
 }
 
 try {
-  console.log('postinstall: electron-builder bağımlılık kurulumu başlıyor…');
+  console.log('Post-installation: electron-builder dependency installation begins…');
   execSync('npx electron-builder install-app-deps', { stdio: 'inherit', shell: true });
-  console.log('postinstall: electron-builder bağımlılık kurulumu bitti.');
+  console.log('postinstall: electron-builder dependency installation completed.');
 } catch (err) {
-  console.error('postinstall: electron-builder kurulumu başarısız:', err?.message || err);
+  console.error('post installation: electron-builder installation failed:', err?.message || err);
   process.exit(1);
 }

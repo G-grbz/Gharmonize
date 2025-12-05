@@ -164,7 +164,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
       const selectedIds = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : [];
       if (!selectedIds.length) {
-        throw new Error("Spotify URL listesi boş");
+        throw new Error("Spotify URL list is empty");
       }
 
       job.counters = job.counters || {};
@@ -200,7 +200,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         {
           video: isVideoFormat(format),
           onSkipUpdate: handleSkipUpdate,
-          maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
+          maxHeight: isVideoFormat(format) ? qualityToHeight(bitrate) : undefined
         },
         { isCanceled: () => !!job.canceled }
       );
@@ -210,7 +210,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       job.currentPhase = "converting";
       job.convertProgress = 0;
 
-      if (!Array.isArray(files) || !files.length) throw new Error("Spotify indirildi ama dosya bulunamadı");
+      if (!Array.isArray(files) || !files.length) {
+        throw new Error("Spotify download completed but no files were found");
+      }
 
       const frozen = Array.isArray(job.metadata.frozenEntries) ? job.metadata.frozenEntries : [];
       const byId = new Map();
@@ -455,7 +457,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           {
             video: isVideoFormat(format),
             onSkipUpdate: handleSkipUpdate,
-            maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
+            maxHeight: isVideoFormat(format) ? qualityToHeight(bitrate) : undefined
           },
           { isCanceled: () => !!job.canceled }
         );
@@ -465,7 +467,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         job.currentPhase = "converting";
         job.convertProgress = 0;
 
-        if (!Array.isArray(files) || !files.length) throw new Error("Playlist/Automix dosyaları bulunamadı.");
+        if (!Array.isArray(files) || !files.length) {
+          throw new Error("Playlist/Automix media files not found");
+        }
 
         const entryById = new Map();
         if (Array.isArray(job.metadata.frozenEntries)) {
@@ -565,7 +569,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 };
               }
             } catch (error) {
-              console.warn(`Spotify metadata zenginleştirme hatası: ${error.message}`);
+              console.warn(`Spotify metadata enrichment error: ${error.message}`);
             }
           }
 
@@ -609,7 +613,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               }
             }
           } catch (error) {
-            console.warn(`ID3 strict çözümleme hatası: ${error.message}`);
+            console.warn(`ID3 strict resolution error: ${error.message}`);
           }
 
           const existingOut = findExistingOutput(`${jobId}_${i}`, format, OUTPUT_DIR);
@@ -714,7 +718,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         {
           video: isVideoFormat(format),
           onSkipUpdate: handleSkipUpdate,
-          maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
+          maxHeight: isVideoFormat(format) ? qualityToHeight(bitrate) : undefined
         },
         { isCanceled: () => !!job.canceled }
       );
@@ -726,7 +730,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       actualInputPath = filePath;
     }
 
-    const isVideo = format === "mp4";
+        const isVideo = format === "mp4";
     const isEac3Ac3 = format === "eac3" || format === "ac3" || format === "aac";
     if (!coverPath && typeof actualInputPath === "string") {
       const baseNoExt = actualInputPath.replace(/\.[^.]+$/, "");
@@ -757,6 +761,97 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     }
 
     job.counters = job.counters || {};
+
+    const selectedAudioStreams = Array.isArray(selectedStreams.audio)
+      ? selectedStreams.audio.filter((idx) => Number.isInteger(idx) && idx >= 0)
+      : [];
+
+    const isAudioFormat = !isVideoFormatFlag;
+    const multiAudioOutputs = isAudioFormat && selectedAudioStreams.length > 1;
+
+    if (multiAudioOutputs) {
+      const results = [];
+      const total = selectedAudioStreams.length;
+
+      job.counters.cvTotal = total;
+      job.counters.cvDone = job.counters.cvDone || 0;
+
+      for (let i = 0; i < total; i++) {
+        const aIdx = selectedAudioStreams[i];
+        const perStreamSelected = {
+          ...(selectedStreams || {}),
+          audio: [aIdx]
+        };
+
+        const perJobId = `${jobId}_a${i}`;
+        const existingOut = findExistingOutput(perJobId, format, OUTPUT_DIR);
+        const progressForStream = (p) => {
+          const base = (i / total) * 100;
+          const cur = base + (Number(p || 0) / total);
+          job.convertProgress = Math.floor(cur);
+          job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+        };
+
+        let r;
+        if (existingOut) {
+          r = { outputPath: `/download/${encodeURIComponent(path.basename(existingOut))}` };
+          progressForStream(100);
+        } else {
+          r = await convertMedia(
+            actualInputPath,
+            format,
+            bitrate,
+            perJobId,
+            progressForStream,
+            {
+              ...singleMeta,
+              __maxHeight: undefined
+            },
+            coverPath,
+            false,
+            OUTPUT_DIR,
+            TEMP_DIR,
+            {
+              onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
+              includeLyrics: !!job.metadata.includeLyrics,
+              sampleRate: sampleRate,
+              compressionLevel: job.metadata?.compressionLevel ?? null,
+              bitDepth: job.bitDepth || null,
+              isCanceled: () => !!jobs.get(jobId)?.canceled,
+              onLog: handleLyricsLog,
+              onLyricsStats: handleLyricsStats,
+              volumeGain: effectiveVolumeGain,
+              stereoConvert: job.metadata?.stereoConvert || "auto",
+              selectedStreams: perStreamSelected,
+              atempoAdjust: job.metadata?.atempoAdjust || "none",
+              videoSettings: job.videoSettings || {}
+            }
+          );
+        }
+
+        results.push(r);
+        bump(job.counters, "cvDone", 1);
+
+        if (job.metadata?.includeLyrics) {
+          updateLyricsStatsLive(job.counters.cvDone, total);
+        }
+
+        if (job.canceled) {
+          throw new Error("CANCELED");
+        }
+      }
+
+      job.resultPath = results.length === 1 ? results[0] : results;
+
+      job.status = "completed";
+      job.progress = 100;
+      job.downloadProgress = 100;
+      job.convertProgress = 100;
+      job.currentPhase = "completed";
+      cleanupTempFiles(jobId, inputPath, actualInputPath);
+      return;
+    }
+
     job.counters.cvTotal = 1;
 
     const existingSingle = findExistingOutput(jobId, format, OUTPUT_DIR);
@@ -773,7 +868,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           },
           {
             ...singleMeta,
-            __maxHeight: (format === "mp4") ? qualityToHeight(bitrate) : undefined
+            __maxHeight: isVideoFormatFlag ? qualityToHeight(bitrate) : undefined
           },
           coverPath,
           isVideoFormat(format),
@@ -790,7 +885,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             onLyricsStats: handleLyricsStats,
             volumeGain: effectiveVolumeGain,
             stereoConvert: job.metadata?.stereoConvert || "auto",
-            selectedStreams: job.metadata.selectedStreams,
+            selectedStreams: selectedStreams,
             atempoAdjust: job.metadata?.atempoAdjust || "none",
             videoSettings: job.videoSettings || {}
           }
@@ -965,6 +1060,6 @@ function cleanupTempFiles(jobId, originalInputPath, downloadedPath = null) {
       });
     } catch {}
   } catch (e) {
-    console.warn("Temizleme uyarısı:", e.message);
+    console.warn("Cleanup warning:", e.message);
   }
 }

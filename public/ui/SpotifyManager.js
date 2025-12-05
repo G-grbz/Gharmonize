@@ -357,7 +357,7 @@ export class SpotifyManager {
         };
 
         eventSource.onerror = (error) => {
-            console.error('Entegre log SSE error:', error);
+            console.error('Integrated log SSE error:', error);
             const logEntry = document.createElement('div');
             logEntry.className = 'log-entry error';
             logEntry.textContent = `[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('errors.streamDisconnected')}`;

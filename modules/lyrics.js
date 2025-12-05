@@ -3,6 +3,7 @@ import path from "path";
 import { getCache, setCache } from "./cache.js";
 
 const LYRICS_CACHE_TTL = 24 * 60 * 60 * 1000;
+
 function emitLog(onLog, payload) {
   if (payload?.fallback) console.log(payload.fallback);
   if (onLog) onLog(payload);
@@ -20,7 +21,7 @@ export class LyricsFetcher {
     const searchLogMsg = {
       logKey: "log.lyrics.searching",
       logVars: { artist, title },
-      fallback: `🔍 Şarkı sözleri aranıyor: "${artist}" - "${title}"`,
+      fallback: `🔍 Searching lyrics: "${artist}" - "${title}"`,
     };
     emitLog(onLog, searchLogMsg);
 
@@ -29,7 +30,7 @@ export class LyricsFetcher {
       const cachedLogMsg = {
         logKey: "log.lyrics.cached",
         logVars: { title },
-        fallback: `✅ Önbellekten yüklendi: ${title}`,
+        fallback: `✅ Loaded from cache: ${title}`,
       };
       emitLog(onLog, cachedLogMsg);
       return cached.data;
@@ -46,7 +47,7 @@ export class LyricsFetcher {
       }
 
       const apiUrl = `${this.baseURL}/get?${params}`;
-      console.log(`🌐 LRCLib API çağrısı: ${apiUrl}`);
+      console.log(`🌐 LRCLib API request: ${apiUrl}`);
 
       const response = await fetch(apiUrl);
 
@@ -55,7 +56,7 @@ export class LyricsFetcher {
           const notFoundLogMsg = {
             logKey: "log.lyrics.notFound",
             logVars: { title },
-            fallback: `❌ Şarkı sözleri bulunamadı: ${title}`,
+            fallback: `❌ Lyrics not found: ${title}`,
           };
           emitLog(onLog, notFoundLogMsg);
           return null;
@@ -64,13 +65,13 @@ export class LyricsFetcher {
       }
 
       const data = await response.json();
-      console.log("📄 API yanıtı:", data ? "Veri alındı" : "Boş yanıt");
+      console.log("📄 API response:", data ? "Data received" : "Empty response");
 
       if (!data || (!data.syncedLyrics && !data.plainLyrics)) {
         const noContentLogMsg = {
           logKey: "log.lyrics.noContent",
           logVars: { title },
-          fallback: `❌ Geçerli söz içeriği yok: ${title}`,
+          fallback: `❌ No valid lyrics content: ${title}`,
         };
         emitLog(onLog, noContentLogMsg);
         return null;
@@ -84,7 +85,7 @@ export class LyricsFetcher {
       const foundLogMsg = {
         logKey: "log.lyrics.found",
         logVars: { title },
-        fallback: `✅ Şarkı sözleri bulundu: ${title}`,
+        fallback: `✅ Lyrics found: ${title}`,
       };
       emitLog(onLog, foundLogMsg);
       return data;
@@ -92,7 +93,7 @@ export class LyricsFetcher {
       const errorLogMsg = {
         logKey: "log.lyrics.error",
         logVars: { artist, title, err: error.message },
-        fallback: `❌ Şarkı sözleri aranırken hata oluştu (${artist} - ${title}): ${error.message}`,
+        fallback: `❌ Error while searching lyrics (${artist} - ${title}): ${error.message}`,
       };
       emitLog(onLog, errorLogMsg);
       return null;
@@ -106,7 +107,7 @@ export class LyricsFetcher {
       const downloadingLogMsg = {
         logKey: "log.lyrics.downloading",
         logVars: { artist, title },
-        fallback: `📥 Şarkı sözleri indiriliyor: "${artist}" - "${title}"`,
+        fallback: `📥 Downloading lyrics: "${artist}" - "${title}"`,
       };
       emitLog(onLog, downloadingLogMsg);
 
@@ -116,7 +117,7 @@ export class LyricsFetcher {
         const nothingToDownloadLogMsg = {
           logKey: "log.lyrics.nothingToDownload",
           logVars: { title },
-          fallback: `❌ İndirilecek söz bulunamadı: ${title}`,
+          fallback: `❌ No lyrics to download: ${title}`,
         };
         emitLog(onLog, nothingToDownloadLogMsg);
         return null;
@@ -125,28 +126,28 @@ export class LyricsFetcher {
       let lyricsContent = "";
 
       if (lyricsData.syncedLyrics) {
-      lyricsContent = lyricsData.syncedLyrics;
-      const usingSyncedLogMsg = {
-        logKey: "log.lyrics.usingSynced",
-        logVars: { title },
-        fallback: `🎵 Zamanlı (synced) sözler kullanılıyor: ${title}`,
-      };
-      emitLog(onLog, usingSyncedLogMsg);
-    } else if (lyricsData.plainLyrics) {
-      lyricsContent = lyricsData.plainLyrics;
-      const usingPlainLogMsg = {
-        logKey: "log.lyrics.usingPlain",
-        logVars: { title },
-        fallback: `📝 Düz metin sözler (plain) kullanılıyor: ${title}`,
-      };
-      emitLog(onLog, usingPlainLogMsg);
-    }
+        lyricsContent = lyricsData.syncedLyrics;
+        const usingSyncedLogMsg = {
+          logKey: "log.lyrics.usingSynced",
+          logVars: { title },
+          fallback: `🎵 Using synced lyrics: ${title}`,
+        };
+        emitLog(onLog, usingSyncedLogMsg);
+      } else if (lyricsData.plainLyrics) {
+        lyricsContent = lyricsData.plainLyrics;
+        const usingPlainLogMsg = {
+          logKey: "log.lyrics.usingPlain",
+          logVars: { title },
+          fallback: `📝 Using plain text lyrics: ${title}`,
+        };
+        emitLog(onLog, usingPlainLogMsg);
+      }
 
       if (!lyricsContent.trim()) {
         const emptyContentLogMsg = {
           logKey: "log.lyrics.emptyContent",
           logVars: { title },
-          fallback: `❌ Söz içeriği boş: ${title}`,
+          fallback: `❌ Lyrics content is empty: ${title}`,
         };
         emitLog(onLog, emptyContentLogMsg);
         return null;
@@ -156,7 +157,7 @@ export class LyricsFetcher {
       const savingLogMsg = {
         logKey: "log.lyrics.saving",
         logVars: { path: lrcPath },
-        fallback: `💾 Sözler kaydediliyor: ${lrcPath}`,
+        fallback: `💾 Saving lyrics: ${lrcPath}`,
       };
       emitLog(onLog, savingLogMsg);
 
@@ -165,7 +166,7 @@ export class LyricsFetcher {
       const savedLogMsg = {
         logKey: "log.lyrics.saved",
         logVars: { path: lrcPath },
-        fallback: `✅ Sözler kaydedildi: ${lrcPath}`,
+        fallback: `✅ Lyrics saved: ${lrcPath}`,
       };
       emitLog(onLog, savedLogMsg);
       return lrcPath;
@@ -173,7 +174,7 @@ export class LyricsFetcher {
       const downloadErrorLogMsg = {
         logKey: "log.lyrics.downloadError",
         logVars: { artist, title, err: error.message },
-        fallback: `❌ Söz indirme hatası (${artist} - ${title}): ${error.message}`,
+        fallback: `❌ Lyrics download error (${artist} - ${title}): ${error.message}`,
       };
       emitLog(onLog, downloadErrorLogMsg);
       return null;
@@ -206,7 +207,7 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
     const disabledLogMsg = {
       logKey: "log.lyrics.disabled",
       logVars: { file: path.basename(filePath) },
-      fallback: `⚙️ Söz ekleme özelliği devre dışı — ${path.basename(filePath)}`,
+      fallback: `⚙️ Lyrics embedding is disabled — ${path.basename(filePath)}`,
     };
     emitLog(onLog, disabledLogMsg);
     return null;
@@ -220,7 +221,7 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
     const searchingForFileLogMsg = {
       logKey: "log.lyrics.searchingForFile",
       logVars: { artist, title, file: path.basename(filePath) },
-      fallback: `🎵 Şarkı sözleri aranıyor: "${artist}" - "${title}" - ${path.basename(filePath)}`,
+      fallback: `🎵 Searching lyrics: "${artist}" - "${title}" - ${path.basename(filePath)}`,
     };
     emitLog(onLog, searchingForFileLogMsg);
 
@@ -228,7 +229,7 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
       const missingMetadataLogMsg = {
         logKey: "log.lyrics.missingMetadata",
         logVars: { artist, title },
-        fallback: `❌ Sanatçı veya başlık eksik — Sanatçı: "${artist}", Başlık: "${title}"`,
+        fallback: `❌ Artist or title missing — Artist: "${artist}", Title: "${title}"`,
       };
       emitLog(onLog, missingMetadataLogMsg);
       return null;
@@ -248,14 +249,14 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
       const attachedLogMsg = {
         logKey: "log.lyrics.attached",
         logVars: { file: path.basename(lyricsPath) },
-        fallback: `✅ Sözler başarıyla eklendi: ${path.basename(lyricsPath)}`,
+        fallback: `✅ Lyrics successfully attached: ${path.basename(lyricsPath)}`,
       };
       emitLog(onLog, attachedLogMsg);
     } else {
       const notFoundForTrackLogMsg = {
         logKey: "log.lyrics.notFoundForTrack",
         logVars: { artist, title },
-        fallback: `❌ Şarkı sözleri bulunamadı: "${artist}" - "${title}"`,
+        fallback: `❌ Lyrics not found: "${artist}" - "${title}"`,
       };
       emitLog(onLog, notFoundForTrackLogMsg);
     }
@@ -265,7 +266,7 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
     const attachmentErrorLogMsg = {
       logKey: "log.lyrics.attachmentError",
       logVars: { err: error.message, file: path.basename(filePath) },
-      fallback: `❌ Söz eklenirken hata oluştu: ${error.message} — ${path.basename(filePath)}`,
+      fallback: `❌ Error while attaching lyrics: ${error.message} — ${path.basename(filePath)}`,
     };
     emitLog(onLog, attachmentErrorLogMsg);
     return null;

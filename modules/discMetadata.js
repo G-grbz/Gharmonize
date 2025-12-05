@@ -50,7 +50,7 @@ export async function writeMetadataToMKV(mkvPath, metadata) {
     await execAsync(command);
     return { success: true };
   } catch (error) {
-    console.warn("Metadata yazma hatası:", error.message);
+    console.warn("Metadata write error:", error.message);
     return { success: false, error: error.message };
   }
 }

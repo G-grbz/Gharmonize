@@ -42,7 +42,7 @@ export class MediaConverterApp {
         this.ensureWarnStyles();
         this.loadLocalFiles();
         this.loadBinaryVersions().catch(err => {
-            console.error('Binary versiyonları yüklenemedi:', err);
+            console.error('Failed to load binary versions:', err);
         });
     }
 
@@ -144,7 +144,7 @@ export class MediaConverterApp {
                 try {
                     await window.i18n?.setLang(nextLang);
                 } catch (err) {
-                    console.error('Dil değiştirilemedi:', err);
+                    console.error('Failed to change language:', err);
                 }
             });
         }
@@ -626,7 +626,7 @@ export class MediaConverterApp {
             await this.handleUrlSubmit(e);
             await waitFirstUpdate;
         } catch (error) {
-            console.error('URL gönderme hatası:', error);
+            console.error('URL submission error:', error);
             this.showNotification(`${this.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
         } finally {
             this.hideButtonSpinner(startConvertBtn, startConvertBtn?.querySelector('.btn-spinner') || null, startConvertBtn?.querySelector('.btn-text') || null);

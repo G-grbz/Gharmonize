@@ -115,7 +115,6 @@ export function resolveYtDlp() {
   return null;
 }
 
-
 export function idsToMusicUrls(ids) {
   return ids.map(id => YT_USE_MUSIC ?
     `https://music.youtube.com/watch?v=${id}` :
@@ -175,7 +174,7 @@ export function withYT403Workarounds(baseArgs, { stripCookies = false } = {}) {
 export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOUT) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) {
-    throw new Error("yt-dlp bulunamadı. Lütfen kurun veya YTDLP_BIN ile yol belirtin.");
+    throw new Error("yt-dlp not found. Please install it or set YTDLP_BIN to its path.");
   }
 
   return new Promise((resolve, reject) => {
@@ -186,7 +185,7 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
 
     const timeoutId = setTimeout(() => {
       try { process.kill("SIGKILL"); } catch {}
-      reject(new Error(`[${label}] zaman aşımı (${timeout}ms)`));
+      reject(new Error(`[${label}] timeout (${timeout}ms)`));
     }, timeout);
 
     process.stdout.on("data", chunk => stdoutData += chunk.toString());
@@ -200,16 +199,16 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
           const result = JSON.parse(stdoutData);
           resolve(result);
         } catch (error) {
-          reject(new Error(`[${label}] JSON parse hatası: ${error.message}\n${stderrData}`));
+          reject(new Error(`[${label}] JSON parse error: ${error.message}\n${stderrData}`));
         }
       } else {
-        reject(new Error(`[${label}] çıkış kodu ${code}\n${stderrData.slice(-500)}`));
+        reject(new Error(`[${label}] exit code ${code}\n${stderrData.slice(-500)}`));
       }
     });
 
     process.on("error", (error) => {
       clearTimeout(timeoutId);
-      reject(new Error(`[${label}] başlatılamadı: ${error.message}`));
+      reject(new Error(`[${label}] failed to start: ${error.message}`));
     });
   });
 }
@@ -380,7 +379,7 @@ export async function ensureAutomixUpto(url, upto, batchSize = 50) {
 
 export async function fetchYtMetadata(url, isPlaylist = false) {
   const YTDLP_BIN = resolveYtDlp();
-  if (!YTDLP_BIN) throw new Error("yt-dlp bulunamadı.");
+  if (!YTDLP_BIN) throw new Error("yt-dlp not found.");
 
   const buildArgs = (flat = false, { stripCookies = false } = {}) => {
     let args = buildBaseArgs();
@@ -405,7 +404,7 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
       const child = spawn(YTDLP_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
       const timeoutId = setTimeout(() => {
         try { child.kill("SIGKILL"); } catch {}
-        reject(new Error(`[${label}] zaman aşımı`));
+        reject(new Error(`[${label}] timeout`));
       }, 30000);
 
       child.stdout.on("data", chunk => stdoutData += chunk.toString());
@@ -417,17 +416,17 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
           try {
             resolve(JSON.parse(stdoutData));
           } catch (error) {
-            reject(new Error(`[${label}] JSON parse hatası: ${error.message}\n${stderrData}`));
+            reject(new Error(`[${label}] JSON parse error: ${error.message}\n${stderrData}`));
           }
         } else {
           const tail = stderrData.split("\n").slice(-20).join("\n");
-          reject(new Error(`[${label}] çıkış kodu ${code}\n${tail}`));
+          reject(new Error(`[${label}] exit code ${code}\n${tail}`));
         }
       });
 
       child.on("error", (error) => {
         clearTimeout(timeoutId);
-        reject(new Error(`[${label}] başlatılamadı: ${error.message}`));
+        reject(new Error(`[${label}] failed to start: ${error.message}`));
       });
     });
 
@@ -454,7 +453,7 @@ for (const attempt of attempts) {
   }
 }
 
-throw new Error(`Tüm metadata denemeleri başarısız. Son hata: ${lastError?.message}`);
+throw new Error(`All metadata attempts failed. Last error: ${lastError?.message}`);
 }
 
 export async function resolvePlaylistSelectedIds(url, indices = []) {
@@ -498,7 +497,7 @@ export async function downloadYouTubeVideo(
   } catch {}
 
   const YTDLP_BIN = resolveYtDlp();
-  if (!YTDLP_BIN) throw new Error("yt-dlp bulunamadı.");
+  if (!YTDLP_BIN) throw new Error("yt-dlp not found.");
   if ((isAutomix || isPlaylist) && Array.isArray(selectedIds) && selectedIds.length) {
     return downloadSelectedIds(
       YTDLP_BIN,
@@ -722,11 +721,11 @@ async function downloadSelectedIds(
       }
 
       const errorTail = String(stderrBuf).split("\n").slice(-20).join("\n");
-      return reject(new Error(`yt-dlp hatası (selected-ids): ${code}\n${errorTail}`));
+      return reject(new Error(`yt-dlp error (selected-ids): ${code}\n${errorTail}`));
     });
 
     child.on("error", (error) => {
-      reject(new Error(`yt-dlp başlatılamadı: ${error.message}`));
+      reject(new Error(`yt-dlp failed to start: ${error.message}`));
     });
   });
 }
@@ -1044,9 +1043,9 @@ async function downloadStandard(
 
         if (code !== 0) {
           const tail = stderrBuf.split("\n").slice(-20).join("\n");
-          return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
+          return reject(new Error(`yt-dlp error: ${code}\n${tail}`));
         }
-        return reject(new Error("Playlist klasörü oluştu ama dosya bulunamadı"));
+        return reject(new Error("Download appears successful but output file was not found"));
       } else {
         const files = getDownloadedFiles(tempDir, false, jobId);
         if (files.length > 0) {
@@ -1055,15 +1054,15 @@ async function downloadStandard(
         }
         if (code !== 0) {
           const tail = stderrBuf.split("\n").slice(-20).join("\n");
-          return reject(new Error(`yt-dlp hatası: ${code}\n${tail}`));
+          return reject(new Error(`yt-dlp error: ${code}\n${tail}`));
         }
-        return reject(new Error("İndirme başarılı görünüyor ama dosya bulunamadı"));
+        return reject(new Error("Download appears successful but output file was not found"));
       }
     });
 
     child.on("error", (err) => {
       clearInterval(cancelTick);
-      reject(new Error(`yt-dlp başlatılamadı: ${err.message}`));
+      reject(new Error(`yt-dlp failed to start: ${err.message}`));
     });
   });
 }
