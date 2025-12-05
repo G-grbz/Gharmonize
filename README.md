@@ -167,7 +167,7 @@ npm i
 
 These paths are **not** general application directories. They are created automatically only when running AppImage or Windows .exe builds, and store the default-generated `.env` file:
 
-* **Windows:** `C:\Users\<Username>\AppData\Roaming\Gharmonize`
+* **Windows:** `%appdata%\Gharmonize`
 * **Linux:** `~/.config/Gharmonize/`
 * **Default Password:** `123456`
 
