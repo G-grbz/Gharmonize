@@ -56,14 +56,30 @@ export class MediaConverterApp {
     initializeTheme() {
         const savedTheme = localStorage.getItem('theme') || 'light';
         document.documentElement.setAttribute('data-theme', savedTheme);
+        setTimeout(() => {
+            document.documentElement.classList.remove('no-theme-transition');
+        }, 100);
 
         const themeToggle = document.getElementById('themeToggle');
         if (themeToggle) {
             themeToggle.addEventListener('click', () => {
+                document.documentElement.classList.add('no-transition');
                 const currentTheme = document.documentElement.getAttribute('data-theme');
                 const newTheme = currentTheme === 'light' ? 'dark' : 'light';
                 document.documentElement.setAttribute('data-theme', newTheme);
                 localStorage.setItem('theme', newTheme);
+                const meta = document.querySelector('meta[name="color-scheme"]');
+                if (meta) {
+                    meta.content = newTheme;
+                }
+                setTimeout(() => {
+                    document.documentElement.classList.remove('no-transition');
+                }, 2);
+
+                themeToggle.classList.add('switching');
+                setTimeout(() => {
+                    themeToggle.classList.remove('switching');
+                }, 50);
             });
         }
     }
