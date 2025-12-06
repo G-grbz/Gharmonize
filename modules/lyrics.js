@@ -9,6 +9,34 @@ function emitLog(onLog, payload) {
   if (onLog) onLog(payload);
 }
 
+function normalizeArtistName(name = "") {
+  if (!name) return "";
+
+  return name
+    .replace(/\bofficial\b/gi, "")
+    .replace(/\btopic\b/gi, "")
+    .replace(/\bvevo\b/gi, "")
+    .replace(/\((.*?)official(.*?)\)/gi, "")
+    .replace(/\((.*?)video(.*?)\)/gi, "")
+    .replace(/\((.*?)audio(.*?)\)/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeTitle(name = "") {
+  if (!name) return "";
+
+  return name
+    .replace(/\((.*?)official(.*?)\)/gi, "")
+    .replace(/\((.*?)video(.*?)\)/gi, "")
+    .replace(/\((.*?)audio(.*?)\)/gi, "")
+    .replace(/\[(.*?)official(.*?)\]/gi, "")
+    .replace(/\[(.*?)video(.*?)\]/gi, "")
+    .replace(/\[(.*?)audio(.*?)\]/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export class LyricsFetcher {
   constructor() {
     this.baseURL = "https://lrclib.net/api";
@@ -214,9 +242,63 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
   }
 
   try {
-    const artist = metadata.artist || metadata.uploader || "";
-    const title = metadata.title || metadata.track || "";
+    metadata = metadata || {};
+
+    const fileName = path.basename(filePath);
+    const baseName = fileName.replace(/\.[^/.]+$/, "");
+
+    let artist =
+      metadata.artist ||
+      metadata.album_artist ||
+      metadata.uploader ||
+      "";
+    let title =
+      metadata.title ||
+      metadata.track ||
+      "";
+
     const duration = metadata.duration;
+
+    if (!artist || !title || artist === title) {
+      const parts = baseName.split(/\s*[-–—]\s*/);
+      if (parts.length >= 2) {
+        const fileArtist = parts[0].trim();
+        const fileTitle = parts.slice(1).join(" - ").trim();
+
+        if (!artist) artist = fileArtist;
+        if (
+          !title ||
+          title === baseName ||
+          title.toLowerCase() === artist.toLowerCase()
+        ) {
+          title = fileTitle;
+        }
+      }
+    }
+
+    const rawArtist = artist;
+    const rawTitle = title;
+
+    artist = normalizeArtistName(artist);
+    title = normalizeTitle(title);
+
+    if (artist !== rawArtist) {
+      const normalizedArtistLogMsg = {
+        logKey: "log.lyrics.normalizedArtist",
+        logVars: { from: rawArtist, to: artist },
+        fallback: `✂️ Normalized artist for lyrics: "${rawArtist}" → "${artist}"`,
+      };
+      emitLog(onLog, normalizedArtistLogMsg);
+    }
+
+    if (title !== rawTitle) {
+      const normalizedTitleLogMsg = {
+        logKey: "log.lyrics.normalizedTitle",
+        logVars: { from: rawTitle, to: title },
+        fallback: `✂️ Normalized title for lyrics: "${rawTitle}" → "${title}"`,
+      };
+      emitLog(onLog, normalizedTitleLogMsg);
+    }
 
     const searchingForFileLogMsg = {
       logKey: "log.lyrics.searchingForFile",
@@ -235,7 +317,13 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
       return null;
     }
 
-    const lyricsPath = await lyricsFetcher.downloadLyrics(artist, title, duration, filePath, { onLog });
+    const lyricsPath = await lyricsFetcher.downloadLyrics(
+      artist,
+      title,
+      duration,
+      filePath,
+      { onLog }
+    );
 
     if (onLyricsStats) {
       if (lyricsPath) {
