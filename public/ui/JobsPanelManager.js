@@ -407,8 +407,15 @@ export class JobsPanelManager {
             }
         }
 
+        const phase = this.norm(j.currentPhase || j.phase);
+
         const d = Number(j.downloadProgress || 0);
-        const c = Number(j.convertProgress || 0);
+        let c = 0;
+
+        if (phase === 'converting' || phase === 'completed') {
+            c = Number(j.convertProgress || 0);
+        }
+
         if (d || c) {
             return Math.floor((d + c) / 2);
         }
@@ -1804,17 +1811,23 @@ updateJobUI(job, batchId = null) {
                 </div>
             `;
         } else {
+            const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
+            const dlPct = Math.floor(job.downloadProgress || 0);
+            const cvPct = (phaseNorm === 'converting' || phaseNorm === 'completed')
+                ? Math.floor(job.convertProgress || 0)
+                : 0;
+
             phaseDetails = `
                 <div class="phase-details" style="margin-top: 8px;">
                     <div class="phase-details__title" style="margin-bottom: 6px;">${currentPhaseText}</div>
                         <div class="phase-details__grid">
                             <span class="phase-details__item">
                                 📥 ${this.app.t('ui.downloading')}:
-                                <span class="phase-details__value">${Math.floor(job.downloadProgress || 0)}%</span>
+                                <span class="phase-details__value">${dlPct}%</span>
                             </span>
-                                <span class="phase-details__item">
+                            <span class="phase-details__item">
                                 ⚡ ${this.app.t('ui.converting')}:
-                                <span class="phase-details__value">${Math.floor(job.convertProgress || 0)}%</span>
+                                <span class="phase-details__value">${cvPct}%</span>
                             </span>
                         </div>
                     </div>
@@ -2449,8 +2462,12 @@ if (stopBtn) {
                 continue;
             }
 
+            const phase = this.normalizeStatus(j.currentPhase || j.phase);
             const dl = Number(j.downloadProgress ?? j.progress ?? 0) || 0;
-            const cv = Number(j.convertProgress ?? 0) || 0;
+            let cv = 0;
+            if (phase === 'converting' || phase === 'completed') {
+                cv = Number(j.convertProgress ?? 0) || 0;
+            }
 
             let single;
             if (dl && cv) {
@@ -2458,7 +2475,6 @@ if (stopBtn) {
             } else {
                 single = dl || cv;
             }
-
             totalProgressSum += Math.max(0, Math.min(100, single));
         }
 
