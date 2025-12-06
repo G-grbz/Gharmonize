@@ -6,7 +6,7 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     (function() {
-      try {
+    try {
         var saved = localStorage.getItem('theme');
         var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         var theme = saved || (prefersDark ? 'dark' : 'light');
@@ -18,10 +18,10 @@
         meta.content = 'light dark';
         document.head.appendChild(meta);
         requestAnimationFrame(function() {
-          docEl.classList.remove('no-theme-transition');
+            docEl.classList.remove('no-theme-transition');
         });
-      } catch(e) {}
-    })();
+    } catch(e) {}
+})();
   </script>
 
   <title>🎵 Gharmonize</title>
