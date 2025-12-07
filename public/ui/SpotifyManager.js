@@ -234,6 +234,15 @@ export class SpotifyManager {
         this.integratedRenderedCount = 0;
 
         const isVideoFormat = format === 'mp4' || format === 'mkv';
+        let spotifyConcurrency = null;
+        const concEl = document.getElementById('spotifyConcurrencyInput');
+        if (concEl) {
+            const v = parseInt(concEl.value, 10);
+            if (Number.isFinite(v) && v > 0) {
+                spotifyConcurrency = v;
+            }
+        }
+
         const body = {
             url,
             format,
@@ -243,7 +252,8 @@ export class SpotifyManager {
             volumeGain: this.app.currentVolumeGain || 1.0,
             ...(compressionLevel != null ? { compressionLevel } : {}),
             ...(bitDepth != null ? { bitDepth } : {}),
-            ...(isVideoFormat ? { videoSettings } : {})
+            ...(isVideoFormat ? { videoSettings } : {}),
+            ...(spotifyConcurrency != null ? { spotifyConcurrency } : {})
         };
 
         const response = await fetch('/api/spotify/process/start', {
@@ -420,6 +430,15 @@ export class SpotifyManager {
             return;
         }
 
+        let spotifyConcurrency = null;
+        const concEl = document.getElementById('spotifyConcurrencyInput');
+        if (concEl) {
+            const v = parseInt(concEl.value, 10);
+            if (Number.isFinite(v) && v > 0) {
+                spotifyConcurrency = v;
+            }
+        }
+
         const payload = {
             url: document.getElementById('urlInput').value.trim(),
             format,
@@ -434,6 +453,7 @@ export class SpotifyManager {
             metadata: {
                 source: "spotify",
                 spotifyTitle: document.getElementById('spotifyTitle').textContent,
+                ...(spotifyConcurrency != null ? { spotifyConcurrency } : {}),
                 selectedIds: validItems.map(item => item.id),
                 frozenEntries: validItems,
                 spotifyMapId: this.currentSpotifyTask.id,
