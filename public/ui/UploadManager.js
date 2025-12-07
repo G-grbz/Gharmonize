@@ -3,13 +3,14 @@ export class UploadManager {
     this.app = app;
     this.uploadCanceled = false;
     this.currentUploadId = null;
+
     this.currentXhr = null;
     this.currentChunkAbortController = null;
     this.currentProbeAbortController = null;
   }
 
   async probeAndShowStreamSelection(file, isLocalFile = false, currentFormat = 'mp4') {
-    console.log('🔍 probeAndShowStreamSelection called:', { file, isLocalFile, currentFormat });
+  console.log('🔍 probeAndShowStreamSelection called:', { file, isLocalFile, currentFormat });
     const controller = new AbortController();
     this.currentProbeAbortController = controller;
 
@@ -55,8 +56,10 @@ export class UploadManager {
       const audioStreams = streams.audio || [];
       const subtitleStreams = streams.subtitle || [];
       const videoStreams = streams.video || [];
+
       const hasVideo = videoStreams.length > 0;
       const hasMultipleAudio = audioStreams.length > 1;
+
       const audioLanguages = {};
       audioStreams.forEach(s => (audioLanguages[s.index] = s.language || 'und'));
 
@@ -78,9 +81,11 @@ export class UploadManager {
             audioLanguages,
             subtitleLanguages
           };
+
           if (probeResult.finalPath) {
             baseResult.probedFinalPath = probeResult.finalPath;
           }
+
           return baseResult;
         }
         console.log('🎬 Video detected + multiple audio tracks → opening AUDIO FORMAT modal...');
@@ -114,9 +119,11 @@ export class UploadManager {
       result.audioLanguages = audioLanguages;
       result.subtitleLanguages = subtitleLanguages;
       result.hasVideo = hasVideo;
+
       if (probeResult.finalPath) {
         result.probedFinalPath = probeResult.finalPath;
       }
+
       return result;
     } catch (error) {
       this.currentProbeAbortController = null;
@@ -432,6 +439,7 @@ export class UploadManager {
     const isVideoFormat = (format === 'mp4' || format === 'mkv');
     const isAudioFormat = audioOutputFormats.includes(format);
     const shouldProbeForStreams = isVideoFormat || isAudioFormat;
+
     if (sourceType === 'local') {
             console.log('🏠 Starting local file processing');
             const checked = Array.from(document.querySelectorAll('input[name="localFileItem"]:checked'));
@@ -724,6 +732,7 @@ export class UploadManager {
       ...payload,
       finalUploadPath: finalPath
     };
+
     return this.submitJobWithProgress(jobPayload, false);
   }
 
@@ -820,7 +829,6 @@ export class UploadManager {
 
     const controller = new AbortController();
     this.currentChunkAbortController = controller;
-
     this.createUploadProgressBar();
     this.updateUploadProgress(0);
 
@@ -903,7 +911,6 @@ export class UploadManager {
         console.warn('XHR abort failed:', e);
       }
     }
-
     if (this.currentChunkAbortController) {
       try {
         this.currentChunkAbortController.abort();
@@ -911,7 +918,6 @@ export class UploadManager {
         console.warn('Chunk abort failed:', e);
       }
     }
-
     if (this.currentProbeAbortController) {
       try {
         this.currentProbeAbortController.abort();
@@ -1178,7 +1184,6 @@ export class UploadManager {
                   if (clientBatch) {
                     fallbackPayload.clientBatch = clientBatch;
                   }
-
                   this.submitLargeFileWithChunks(file, fallbackPayload, false)
                     .then(resolve)
                     .catch(reject);
