@@ -1696,17 +1696,35 @@ updateJobUI(job, batchId = null) {
 
         if (job.playlist && job.playlist.total) {
             if (job.metadata?.source === 'spotify') {
-                let downloaded, converted;
+                const total = Number(job.playlist.total || 0) || 0;
+                const done  = Number(job.playlist.done  || 0) || 0;
+                const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
 
-                if (job.currentPhase === 'downloading') {
-                    downloaded = job.playlist.done || 0;
-                    converted = 0;
-                } else if (job.currentPhase === 'converting') {
-                    downloaded = job.playlist.total;
-                    converted = job.playlist.done || 0;
+                let downloaded = done;
+                let converted  = 0;
+
+                if (phaseNorm === 'downloading') {
+                    downloaded = done;
+                    converted  = 0;
+                } else if (phaseNorm === 'converting') {
+                    downloaded = done;
+                    converted  = done;
+                } else if (phaseNorm === 'completed') {
+                    downloaded = total;
+                    converted  = total;
                 } else {
-                    downloaded = job.playlist.done || 0;
-                    converted = job.playlist.done || 0;
+                    downloaded = done;
+                    converted  = done;
+                }
+
+                let currentTrack;
+                if (Number.isFinite(job.playlist.current)) {
+                    currentTrack = job.playlist.current + 1;
+                } else {
+                    const base = done || 0;
+                    currentTrack = total > 0
+                        ? Math.min(total, Math.max(1, base || 1))
+                        : (base || 1);
                 }
 
                 phaseDetails = `
@@ -1715,15 +1733,15 @@ updateJobUI(job, batchId = null) {
                         <div class="phase-details__grid">
                             <span class="phase-details__item">
                                 🎵 ${this.app.t('ui.current')}:
-                                <span class="phase-details__value">${(job.playlist.current || job.playlist.done || 0) + 1}</span>
+                                <span class="phase-details__value">${currentTrack}</span>
                             </span>
                             <span class="phase-details__item">
                                 📥 ${this.app.t('ui.downloading')}:
-                                <span class="phase-details__value">${downloaded}/${job.playlist.total}</span>
+                                <span class="phase-details__value">${downloaded}/${total || '?'}</span>
                             </span>
                             <span class="phase-details__item">
                                 ⚡ ${this.app.t('ui.converting')}:
-                                <span class="phase-details__value">${converted}/${job.playlist.total}</span>
+                                <span class="phase-details__value">${converted}/${total || '?'}</span>
                             </span>
                         </div>
                     </div>
