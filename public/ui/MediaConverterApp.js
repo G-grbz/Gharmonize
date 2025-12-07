@@ -463,17 +463,20 @@ export class MediaConverterApp {
 
     onUrlInputChange(url) {
         const isSpotify = this.isSpotifyUrl(url);
+        const spotifyConcContainer = document.getElementById('spotifyConcurrencyContainer');
 
         if (isSpotify) {
             document.getElementById('playlistCheckboxContainer').style.display = 'none';
             document.getElementById('normalUrlActions').style.display = 'none';
             document.getElementById('urlSpotifyActions').style.display = 'flex';
             document.getElementById('spotifyPreviewCard').style.display = 'block';
+            if (spotifyConcContainer) spotifyConcContainer.style.display = 'block';
         } else {
             document.getElementById('playlistCheckboxContainer').style.display = 'flex';
             document.getElementById('normalUrlActions').style.display = 'flex';
             document.getElementById('urlSpotifyActions').style.display = 'none';
             document.getElementById('spotifyPreviewCard').style.display = 'none';
+            if (spotifyConcContainer) spotifyConcContainer.style.display = 'none';
         }
     }
 
