@@ -1,4 +1,6 @@
 {
+  "label.spotifyConcurrency": "Max. gleichzeitige Downloads/Konvertierungen",
+  "ui.spotifyConcurrencyHelp": "Legt die maximale Anzahl gleichzeitiger Downloads und Konvertierungen fest, sofern genügend Treffer vorhanden sind. Höhere Werte können CPU-/Festplattenauslastung erhöhen.",
   "errors.jobLost": "Serververbindung verloren; alle aktiven Aufträge wurden zwangsbeendet",
   "label.format": "Codec",
   "label.video": "Videooptionen",

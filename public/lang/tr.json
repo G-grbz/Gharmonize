@@ -1,4 +1,6 @@
 {
+  "label.spotifyConcurrency": "Maks. Eşzamanlı indirme/dönüştürme",
+  "ui.spotifyConcurrencyHelp": "Eşleşmeler yeterli sayıda ise eş zamanlı maks. indirme ve dönüştürme sayısı. Yüksek değerler CPU / disk kullanımını artırabilir.",
   "errors.jobLost": "Piston aşağı indi, tüm işler iptal",
   "label.format": "Kodek",
   "label.video": "Video Seçenekleri",
