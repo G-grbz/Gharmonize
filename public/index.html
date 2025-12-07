@@ -156,13 +156,30 @@
             <label for="playlistCheckbox" data-i18n="label.playlist">Bu bir YouTube playlist'i</label>
           </div>
 
+          <div class="form-group" id="spotifyConcurrencyContainer" style="display:none;">
+            <label for="spotifyConcurrencyInput" data-i18n="label.spotifyConcurrency">
+              Maks. Eşzamanlı indirme/dönüştürme
+            </label>
+            <input
+              type="number"
+              id="spotifyConcurrencyInput"
+              min="1"
+              max="16"
+              step="1"
+              value="4"
+              style="max-width: 120px;"
+            />
+            <small class="muted" data-i18n="ui.spotifyConcurrencyHelp">
+              Eşleşmeler yeterli sayıda ise eş zamanlı maks. indirme ve dönüştürme sayısı. Yüksek değerler CPU / disk kullanımını artırabilir.
+            </small>
+          </div>
+
           <div class="checkbox-group" id="lyricsCheckboxContainer">
             <input type="checkbox" id="lyricsCheckbox" />
             <label for="lyricsCheckbox" data-i18n="label.includeLyrics">Şarkı sözlerini dahil et</label>
           </div>
 
           <div class="spotify-actions" id="urlSpotifyActions" style="display: none;">
-            <button id="startSpotifyBtn" class="btn-primary" data-i18n="btn.spotifyPreview">Spotify Eşleştirmeyi Başlat</button>
             <button id="startIntegratedBtn" class="btn-primary" data-i18n="btn.spotifyIntegrated">Eşleştir ve İndir</button>
           </div>
 
