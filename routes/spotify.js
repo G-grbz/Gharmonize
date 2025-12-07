@@ -4,7 +4,7 @@ import fs from "fs";
 import { sendOk, sendError, uniqueId } from "../modules/utils.js";
 import { idsToMusicUrls, mapSpotifyToYtm, downloadMatchedSpotifyTracks, createDownloadQueue } from "../modules/sp.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
-import { spotifyMapTasks, spotifyDownloadTasks, jobs, killJobProcesses, createJob } from "../modules/store.js";
+import { spotifyMapTasks, spotifyDownloadTasks, jobs, killJobProcesses, createJob, registerJobProcess } from "../modules/store.js";
 import { processJob } from "../modules/processor.js";
 import { convertMedia, downloadThumbnail } from "../modules/media.js";
 import archiver from "archiver";
@@ -29,20 +29,33 @@ function makeMapId() { return uniqueId("map"); }
 router.post("/api/spotify/process/start", async (req, res) => {
   try {
     const {
-      url,
-      format = "mp3",
-      bitrate = "192k",
-      sampleRate = "48000",
-      market: marketIn,
-      includeLyrics,
-      volumeGain,
-      compressionLevel,
-      bitDepth,
-      videoSettings = {}
-    } = req.body || {};
+  url,
+  format = "mp3",
+  bitrate = "192k",
+  sampleRate = "48000",
+  market: marketIn,
+  includeLyrics,
+  volumeGain,
+  compressionLevel,
+  bitDepth,
+  videoSettings = {},
+  spotifyConcurrency
+} = req.body || {};
+
+    console.log('[Spotify] UI sent spotifyConcurrency =', spotifyConcurrency);
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
     if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL is required", 400);
+
+    const userConc = Number(spotifyConcurrency);
+    const effectiveSpotifyConcurrency = Number.isFinite(userConc) && userConc > 0
+      ? Math.min(Math.max(userConc, 1), 16)
+      : 4;
+
+    console.log('[Spotify] effectiveSpotifyConcurrency =', {
+      userConc,
+      effectiveSpotifyConcurrency
+    });
 
     let sp;
     try {
@@ -61,53 +74,83 @@ router.post("/api/spotify/process/start", async (req, res) => {
     }
 
     const job = createJob({
-      status: "running",
-      progress: 0,
-      format,
-      bitrate,
-      sampleRate: parseInt(sampleRate) || 48000,
+    status: "running",
+    progress: 0,
+    format,
+    bitrate,
+    sampleRate: parseInt(sampleRate) || 48000,
+    volumeGain: volumeGainNum,
+    compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
+    bitDepth: bitDepth || null,
+    videoSettings: (format === "mp4" || format === "mkv") ? videoSettings : null,
+    metadata: {
+      source: "spotify",
+      spotifyUrl: url,
+      spotifyKind: sp.kind,
+      spotifyTitle: sp.title,
+      isPlaylist: sp.kind === "playlist",
+      isAlbum: sp.kind === "album",
+      isAutomix: false,
+      includeLyrics: (includeLyrics === true || includeLyrics === "true"),
       volumeGain: volumeGainNum,
       compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
       bitDepth: bitDepth || null,
-      videoSettings: (format === "mp4" || format === "mkv") ? videoSettings : null,
-      metadata: {
-        source: "spotify",
-        spotifyUrl: url,
-        spotifyKind: sp.kind,
-        spotifyTitle: sp.title,
-        isPlaylist: sp.kind === "playlist",
-        isAlbum: sp.kind === "album",
-        isAutomix: false,
-        includeLyrics: (includeLyrics === true || includeLyrics === "true"),
-        volumeGain: volumeGainNum,
-        compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
-        bitDepth: bitDepth || null
-      },
-      resultPath: null,
-      error: null,
-      playlist: { total: sp.items?.length || 1, done: 0 },
-      phase: "mapping",
-      currentPhase: "mapping",
-      lastLog: "",
-      lastLogKey: null,
-      lastLogVars: null
-    });
-    const jobId = job.id;
+      spotifyConcurrency: effectiveSpotifyConcurrency
+    },
+        resultPath: null,
+        error: null,
+        playlist: { total: sp.items?.length || 1, done: 0 },
+        phase: "mapping",
+        currentPhase: "mapping",
+        lastLog: "",
+        lastLogKey: null,
+        lastLogVars: null
+      });
+      const jobId = job.id;
 
-    sendOk(res, {
-      jobId,
-      id: jobId,
-      title: sp.title,
-      total: sp.items?.length || 1,
-      message: "Spotify processing started"
-    });
+      sendOk(res, {
+        jobId,
+        id: jobId,
+        title: sp.title,
+        total: sp.items?.length || 1,
+        message: "Spotify processing started"
+      });
 
-    processSpotifyIntegrated(jobId, sp, format, bitrate);
+      processSpotifyIntegrated(jobId, sp, format, bitrate);
 
-  } catch (e) {
-    return sendError(res, 'PROCESS_FAILED', e.message || "Spotify processing error", 400);
-  }
+    } catch (e) {
+      return sendError(res, 'PROCESS_FAILED', e.message || "Spotify processing error", 400);
+    }
 });
+
+function createLimiter(max) {
+  let active = 0;
+  const queue = [];
+
+  const run = (fn) => new Promise((resolve, reject) => {
+    const task = () => {
+      active++;
+      Promise.resolve()
+        .then(fn)
+        .then(resolve, reject)
+        .finally(() => {
+          active--;
+          if (queue.length > 0) {
+            const next = queue.shift();
+            next();
+          }
+        });
+    };
+
+    if (active < max) {
+      task();
+    } else {
+      queue.push(task);
+    }
+  });
+
+  return run;
+}
 
 async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
   const job = jobs.get(jobId);
@@ -119,7 +162,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
         ? job.metadata.volumeGain
         : (job.volumeGain != null ? job.volumeGain : null);
 
-    job.phase = "mapping"; job.currentPhase = "mapping";
+    job.phase = "mapping";
+    job.currentPhase = "mapping";
     job.progress = 5;
     job.downloadProgress = 0;
     job.convertProgress = 0;
@@ -131,28 +175,197 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
 
     let matchedCount = 0;
     const totalItems = sp.items.length;
+
     job.playlist.total = totalItems;
     job.playlist.done = 0;
+    job.playlist.downloaded = 0;
+    job.playlist.converted = 0;
+    job.playlist.downloadTotal = 0;
+    job.playlist.convertTotal = 0;
 
     const shouldCancel = () => {
-      const j = jobs.get(jobId);
-      return !!(j && (j.canceled || j.status === "canceled"));
+    const j = jobs.get(jobId);
+    return !!(j && (j.canceled || j.status === "canceled"));
+  };
+
+  const isCanceledError = (err) =>
+    String(err?.message || "").toUpperCase() === "CANCELED";
+
+    const parallel = Math.max(
+      1,
+      Math.min(
+        16,
+        Number(job.metadata?.spotifyConcurrency || process.env.SPOTIFY_CONCURRENCY || 4)
+      )
+    );
+
+    console.log(`[Spotify ${jobId}] download/convert parallel =`, parallel);
+
+    const results = new Array(totalItems);
+    const allFiles = [];
+    const convertPromises = [];
+    const runLimitedConvert = createLimiter(parallel);
+    const convertDownloadedItem = async (dlResult, idxZeroBased) => {
+      if (shouldCancel()) {
+        console.log(`[Spotify ${jobId}] convertDownloadedItem → canceled before start, skipping`);
+        return;
+      }
+
+      const filePath = dlResult.filePath;
+      const entry = dlResult.item;
+      const logicalIndex = (dlResult.index != null ? dlResult.index - 1 : idxZeroBased);
+
+      let spInfo = null;
+      if (Array.isArray(sp.items) && sp.items.length) {
+        spInfo = sp.items.find(x =>
+          x.title?.toLowerCase() === entry.title?.toLowerCase() &&
+          (x.artist || "").toLowerCase().includes((entry.uploader || "").toLowerCase())
+        ) || null;
+      }
+
+      const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
+      const fileMeta = (preferSpotify && spInfo) ? {
+        title: spInfo.title,
+        track: spInfo.title,
+        artist: spInfo.artist,
+        uploader: spInfo.artist,
+        album: spInfo.album || "",
+        playlist_title: job.metadata.spotifyTitle,
+        webpage_url: spInfo.spUrl || entry.webpage_url,
+        release_year: spInfo.year || "",
+        release_date: spInfo.date || "",
+        track_number: spInfo.track_number,
+        disc_number:  spInfo.disc_number,
+        track_total:  spInfo.track_total,
+        disc_total:   spInfo.disc_total,
+        isrc:         spInfo.isrc,
+        album_artist: spInfo.album_artist || "",
+        genre:        spInfo.genre || "",
+        label:        spInfo.label || "",
+        publisher:    spInfo.label || "",
+        copyright:    spInfo.copyright || ""
+      } : {
+        title: entry.title,
+        track: entry.title,
+        uploader: entry.uploader,
+        artist: entry.uploader,
+        album: job.metadata.spotifyTitle,
+        playlist_title: job.metadata.spotifyTitle,
+        webpage_url: entry.webpage_url
+      };
+
+      let itemCover = null;
+      const baseNoExt = filePath.replace(/\.[^.]+$/, "");
+      const coverExts = [".jpg", ".jpeg", ".png", ".webp"];
+      for (const ext of coverExts) {
+        const cand = `${baseNoExt}${ext}`;
+        if (fs.existsSync(cand)) { itemCover = cand; break; }
+      }
+      if (!itemCover && preferSpotify && spInfo?.coverUrl) {
+        try {
+          const dl = await downloadThumbnail(spInfo.coverUrl, `${baseNoExt}.spotify_cover`);
+          if (dl) itemCover = dl;
+        } catch {}
+      }
+
+      try {
+        if (shouldCancel()) { throw new Error("CANCELED"); }
+        if (job.phase !== "converting") {
+          job.phase = "converting";
+          job.currentPhase = "converting";
+          job.progress = Math.max(job.progress, 70);
+          job.downloadProgress = Math.max(job.downloadProgress || 0, 100);
+          job.convertProgress = job.convertProgress || 0;
+          job.playlist.total = job.playlist.total || totalItems;
+          job.playlist.done = job.playlist.done || 0;
+          job.lastLogKey = 'log.converting.batch';
+          job.lastLogVars = { total: job.playlist.total };
+          job.lastLog = `⚙️ Converting ${job.playlist.total} track(s)...`;
+        }
+
+        job.lastLogKey = 'log.converting.single';
+        job.lastLogVars = { title: entry.title };
+        job.lastLog = `⚙️ Converting: ${entry.title}`;
+
+        const result = await convertMedia(
+          filePath, format, bitrate, `${jobId}_${logicalIndex}`,
+          (progress) => {
+            const totalForProgress = job.playlist.total || totalItems || 1;
+            const fileProgress = (logicalIndex / totalForProgress) * 25;
+            const cur = (progress / 100) * (25 / totalForProgress);
+            job.convertProgress = Math.min(
+              100,
+              Math.floor(70 + fileProgress + cur)
+            );
+            job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+          },
+          fileMeta,
+          itemCover,
+          (format === "mp4"),
+          OUTPUT_DIR,
+          TEMP_DIR,
+          {
+            onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
+            includeLyrics: !!job.metadata.includeLyrics,
+            sampleRate: job.sampleRate || 48000,
+            volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
+            compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
+            bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
+            onLyricsStats: (delta) => {
+              if (!delta) return;
+              const m = job.metadata || (job.metadata = {});
+              const cur = m.lyricsStats || { found: 0, notFound: 0 };
+              cur.found += Number(delta.found || 0);
+              cur.notFound += Number(delta.notFound || 0);
+              m.lyricsStats = cur;
+            }
+          }
+        );
+
+        if (job.metadata.includeLyrics) {
+          if (result && result.lyricsPath) {
+            job.lastLog = `🎼 Lyrics added: ${path.basename(result.lyricsPath)}`;
+          } else {
+            job.lastLog = `🎼 Lyrics not found: ${entry.title}`;
+          }
+        }
+
+        results[logicalIndex] = result;
+        job.lastLogKey = 'log.converting.ok';
+        job.lastLogVars = { title: entry.title };
+        job.lastLog = `✅ Converted: ${entry.title}`;
+      } catch (convertError) {
+        if (isCanceledError(convertError)) {
+          console.log(`[Spotify ${jobId}] Conversion canceled for: ${entry.title}`);
+          return;
+        }
+
+        console.error(`Conversion error (${entry.title}):`, convertError);
+        job.lastLogKey = 'log.converting.err';
+        job.lastLogVars = { title: entry.title, err: convertError.message };
+        job.lastLog = `❌ Conversion error: ${entry.title} - ${convertError.message}`;
+        results[logicalIndex] = { outputPath: null, error: convertError.message };
+      } finally {
+        job.playlist.converted = (job.playlist.converted || 0) + 1;
+        job.playlist.done = job.playlist.converted;
+      }
     };
 
     const dlQueue = !isVideoFormatFlag
       ? createDownloadQueue(jobId, {
-          concurrency: 4,
+          concurrency: parallel,
           onProgress: (done, _queueTotal) => {
-            job.playlist.done = done;
-            job.downloadProgress = Math.floor((done / Math.max(1, totalItems)) * 100);
-            job.lastLogKey = 'log.downloading.progress';
-            job.lastLogVars = { done, total: totalItems };
-            job.lastLog = `📥 Downloading: ${done}/${totalItems}`;
-            const dlPct = totalItems > 0 ? (done / totalItems) : 0;
-            if (job.phase === "downloading") {
-              job.progress = Math.max(job.progress, Math.floor(30 + dlPct * 40));
-            }
-          },
+          job.playlist.downloaded = done;
+          job.downloadProgress = Math.floor((done / Math.max(1, totalItems)) * 100);
+          job.lastLogKey = 'log.downloading.progress';
+          job.lastLogVars = { done, total: totalItems };
+          job.lastLog = `📥 Downloading: ${done}/${totalItems}`;
+
+          const dlPct = totalItems > 0 ? (done / totalItems) : 0;
+          if (job.phase === "downloading") {
+            job.progress = Math.max(job.progress, Math.floor(30 + dlPct * 40));
+          }
+        },
           onLog: (payload) => {
             const { logKey, logVars, fallback } =
               (typeof payload === 'string')
@@ -163,10 +376,27 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
             job.lastLog     = fallback || '';
             console.log(`[Spotify ${jobId}] ${fallback || job.lastLogKey || ''}`);
           },
-          shouldCancel
+          shouldCancel,
+          onItemDone: (dlResult, idx) => {
+            if (!dlResult || !dlResult.filePath) return;
+            if (shouldCancel()) {
+              console.log(`[Spotify ${jobId}] onItemDone → job canceled, skipping convert enqueue`);
+              return;
+            }
+
+            allFiles.push(dlResult.filePath);
+
+            const p = runLimitedConvert(() => convertDownloadedItem(dlResult, idx))
+              .catch(err => {
+                if (!isCanceledError(err)) {
+                  console.error(`[Spotify ${jobId}] convert pipeline error:`, err);
+                }
+              });
+
+            convertPromises.push(p);
+          }
         })
       : null;
-
     await mapSpotifyToYtm(
       sp,
       (idx, item) => {
@@ -224,6 +454,9 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       throw new Error("No matching tracks found");
     }
 
+    job.playlist.downloadTotal = matchedCount;
+    job.playlist.convertTotal  = matchedCount;
+
     if (isVideoFormatFlag && job.metadata?.source === "spotify") {
       console.log(`🎬 Redirecting Spotify to video processing: ${matchedCount} track(s)`);
 
@@ -256,160 +489,29 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     }
 
     dlQueue.end();
-    job.phase = "downloading"; job.currentPhase = "downloading";
+    job.phase = "downloading";
+    job.currentPhase = "downloading";
     job.lastLogKey = 'log.downloading.waitAll';
     job.lastLogVars = {};
-    job.lastLog = `⏳ Matching completed. Waiting for all downloads to finish...`;
+    job.lastLog = `⏳ Matching completed. Starting download + convert pipeline...`;
 
     await dlQueue.waitForIdle();
     if (shouldCancel()) { throw new Error("CANCELED"); }
 
-    const downloadResults = dlQueue.getResults();
-    const successfulDownloads = downloadResults.filter(r => r.filePath);
-    if (successfulDownloads.length === 0) {
-      throw new Error("No tracks could be downloaded");
-    }
-
-    job.phase = "converting"; job.currentPhase = "converting";
-    job.progress = 70;
-    job.downloadProgress = 100;
-    job.convertProgress = 0;
-    job.playlist.total = successfulDownloads.length;
-    job.playlist.done  = 0;
-    job.lastLogKey = 'log.converting.batch';
-    job.lastLogVars = { total: successfulDownloads.length };
-    job.lastLog = `⚙️ Converting ${successfulDownloads.length} track(s)...`;
-
-    const files = successfulDownloads.map(r => r.filePath);
-    const results = [];
-
-    const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
-
-    for (let i = 0; i < files.length; i++) {
-      if (shouldCancel()) { throw new Error("CANCELED"); }
-      const filePath = files[i];
-      const entry = successfulDownloads[i].item;
-
-      let spInfo = null;
-      if (Array.isArray(sp.items) && sp.items.length) {
-        spInfo = sp.items.find(x =>
-          x.title?.toLowerCase() === entry.title?.toLowerCase() &&
-          (x.artist||"").toLowerCase().includes((entry.uploader||"").toLowerCase())
-        ) || null;
-      }
-
-      const fileMeta = (preferSpotify && spInfo) ? {
-        title: spInfo.title,
-        track: spInfo.title,
-        artist: spInfo.artist,
-        uploader: spInfo.artist,
-        album: spInfo.album || "",
-        playlist_title: job.metadata.spotifyTitle,
-        webpage_url: spInfo.spUrl || entry.webpage_url,
-        release_year: spInfo.year || "",
-        release_date: spInfo.date || "",
-        track_number: spInfo.track_number,
-        disc_number:  spInfo.disc_number,
-        track_total:  spInfo.track_total,
-        disc_total:   spInfo.disc_total,
-        isrc:         spInfo.isrc,
-        album_artist: spInfo.album_artist || "",
-        genre:        spInfo.genre || "",
-        label:        spInfo.label || "",
-        publisher:    spInfo.label || "",
-        copyright:    spInfo.copyright || ""
-      } : {
-        title: entry.title,
-        track: entry.title,
-        uploader: entry.uploader,
-        artist: entry.uploader,
-        album: job.metadata.spotifyTitle,
-        playlist_title: job.metadata.spotifyTitle,
-        webpage_url: entry.webpage_url
-      };
-
-      let itemCover = null;
-      const baseNoExt = filePath.replace(/\.[^.]+$/, "");
-      const coverExts = [".jpg", ".jpeg", ".png", ".webp"];
-      for (const ext of coverExts) {
-        const cand = `${baseNoExt}${ext}`;
-        if (fs.existsSync(cand)) { itemCover = cand; break; }
-      }
-      if (!itemCover && preferSpotify && spInfo?.coverUrl) {
-        try {
-          const dl = await downloadThumbnail(spInfo.coverUrl, `${baseNoExt}.spotify_cover`);
-          if (dl) itemCover = dl;
-        } catch {}
-      }
-
-      try {
-        if (shouldCancel()) { throw new Error("CANCELED"); }
-        job.lastLogKey = 'log.converting.single';
-        job.lastLogVars = { title: entry.title };
-        job.lastLog = `⚙️ Converting: ${entry.title}`;
-
-        const result = await convertMedia(
-          filePath, format, bitrate, `${jobId}_${i}`,
-          (progress) => {
-            const fileProgress = (i / files.length) * 25;
-            const cur = (progress / 100) * (25 / files.length);
-            job.convertProgress = Math.floor(70 + fileProgress + cur);
-            job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-          },
-          fileMeta, itemCover, (format === "mp4"),
-          OUTPUT_DIR,
-          TEMP_DIR,
-          {
-            onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
-            includeLyrics: !!job.metadata.includeLyrics,
-            sampleRate: job.sampleRate || 48000,
-            volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
-            compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
-            bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
-            onLyricsStats: (delta) => {
-              if (!delta) return;
-              const m = job.metadata || (job.metadata = {});
-              const cur = m.lyricsStats || { found: 0, notFound: 0 };
-              cur.found += Number(delta.found || 0);
-              cur.notFound += Number(delta.notFound || 0);
-              m.lyricsStats = cur;
-            }
-          }
-        );
-
-        if (job.metadata.includeLyrics) {
-          if (result && result.lyricsPath) {
-            job.lastLog = `🎼 Lyrics added: ${path.basename(result.lyricsPath)}`;
-          } else {
-            job.lastLog = `🎼 Lyrics not found: ${entry.title}`;
-          }
-        }
-
-        results.push(result);
-        job.lastLogKey = 'log.converting.ok';
-        job.lastLogVars = { title: entry.title };
-        job.lastLog = `✅ Converted: ${entry.title}`;
-      } catch (convertError) {
-        console.error(`Conversion error (${entry.title}):`, convertError);
-        job.lastLogKey = 'log.converting.err';
-        job.lastLogVars = { title: entry.title, err: convertError.message };
-        job.lastLog = `❌ Conversion error: ${entry.title} - ${convertError.message}`;
-        results.push({ outputPath: null, error: convertError.message });
-      }
-
-      job.playlist.done = i + 1;
-    }
+    await Promise.all(convertPromises);
+    if (shouldCancel()) { throw new Error("CANCELED"); }
 
     if (job.metadata.includeLyrics && job.metadata.lyricsStats) {
       const stats = job.metadata.lyricsStats;
       job.lastLog = `📊 Lyrics summary: ${stats.found} found, ${stats.notFound} not found`;
     }
 
-    const successfulResults = results.filter(r => r.outputPath && !r.error);
-    if (successfulResults.length === 0) throw new Error("No tracks could be converted");
+    const successfulResults = results.filter(r => r && r.outputPath && !r.error);
+    if (!successfulResults.length) {
+      throw new Error("No tracks could be converted");
+    }
 
     job.resultPath = successfulResults;
-    if (shouldCancel()) { throw new Error("CANCELED"); }
 
     try {
       const zipTitle = job.metadata.spotifyTitle || "Spotify Playlist";
@@ -431,12 +533,14 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     job.progress = 100;
     job.downloadProgress = 100;
     job.convertProgress = 100;
-    job.phase = "completed"; job.currentPhase = "completed";
+    job.phase = "completed";
+    job.currentPhase = "completed";
     job.lastLogKey = 'log.done';
     job.lastLogVars = { ok: successfulResults.length };
     job.lastLog = `🎉 All operations completed! ${successfulResults.length} track(s) converted successfully.`;
 
-    cleanupSpotifyTempFiles(jobId, files);
+    cleanupSpotifyTempFiles(jobId, allFiles);
+
   } catch (error) {
     if (String(error?.message || "").toUpperCase() === "CANCELED") {
       job.status = "canceled";
