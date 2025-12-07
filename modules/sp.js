@@ -391,7 +391,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
 
 export function createDownloadQueue(
   jobId,
-  { concurrency = 4, onProgress, onLog, shouldCancel } = {}
+  { concurrency = 4, onProgress, onLog, shouldCancel, onItemDone } = {}
 ) {
   const downloadDir = path.join(TEMP_DIR, jobId);
   fs.mkdirSync(downloadDir, { recursive: true });
@@ -431,28 +431,43 @@ export function createDownloadQueue(
           `${jobId}_${idx}`,
           downloadDir
         );
-        results.push({
+
+        const dlResult = {
           index: item.index,
           title: item.title,
           uploader: item.uploader,
           filePath,
           item,
-        });
+        };
+
+        results.push(dlResult);
+
         if (onLog)
           onLog({
             logKey: "log.downloading.ok",
             logVars: { artist: item.uploader, title: item.title },
             fallback: `✅ Downloaded: ${item.uploader} - ${item.title}`,
           });
+
+        if (onItemDone && filePath) {
+          try {
+            onItemDone(dlResult, idx);
+          } catch (e) {
+            console.warn("[downloadQueue] onItemDone error:", e);
+          }
+        }
       } catch (e) {
-        results.push({
+        const dlResult = {
           index: item.index,
           title: item.title,
           uploader: item.uploader,
           filePath: null,
           item,
           error: e.message,
-        });
+        };
+
+        results.push(dlResult);
+
         if (onLog)
           onLog({
             logKey: "log.downloading.err",
@@ -463,20 +478,20 @@ export function createDownloadQueue(
             },
             fallback: `❌ Download error: ${item.uploader} - ${item.title} - ${e.message}`,
           });
-      } finally {
-        done++;
-        if (onProgress) onProgress(done, total);
-        running--;
-        if (shouldCancel && shouldCancel()) {
-          q.length = 0;
-          if (running === 0 && idleResolve) idleResolve();
-          return;
+        } finally {
+          done++;
+          if (onProgress) onProgress(done, total);
+          running--;
+          if (shouldCancel && shouldCancel()) {
+            q.length = 0;
+            if (running === 0 && idleResolve) idleResolve();
+            return;
+          }
+          if (q.length) pump();
+          else if (ended && running === 0 && idleResolve) idleResolve();
         }
-        if (q.length) pump();
-        else if (ended && running === 0 && idleResolve) idleResolve();
       }
-    }
-  };
+    };
 
   return {
     enqueue(item, idxZeroBased) {
