@@ -1,4 +1,5 @@
 {
+  "ui.youtubeConcurrencyHelp": "Nombre maximal de téléchargements et conversions simultanés. Des valeurs plus élevées peuvent augmenter l’utilisation du processeur et du disque.",
   "label.spotifyConcurrency": "Téléchargements/Conversions simultanés max.",
   "ui.spotifyConcurrencyHelp": "Définit le nombre maximal de téléchargements et conversions simultanés si suffisamment de correspondances sont disponibles. Des valeurs plus élevées peuvent augmenter l’utilisation du CPU/disque.",
   "errors.jobLost": "Connexion au serveur perdue ; tous les travaux actifs ont été forcés à se fermer",

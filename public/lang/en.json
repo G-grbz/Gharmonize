@@ -1,4 +1,5 @@
 {
+  "ui.youtubeConcurrencyHelp": "Maximum number of simultaneous downloads and conversions. Higher values may increase CPU and disk usage.",
   "label.spotifyConcurrency": "Max concurrent downloads/conversions",
   "ui.spotifyConcurrencyHelp": "If enough matches are available, sets the maximum number of concurrent downloads and conversions. Higher values may increase CPU/disk usage.",
   "errors.jobLost": "Server connection lost; all active jobs have been force-closed",
