@@ -174,6 +174,24 @@
             </small>
           </div>
 
+          <div class="form-group" id="youtubeConcurrencyContainer" style="display:none;">
+            <label for="youtubeConcurrencyInput" data-i18n="label.spotifyConcurrency">
+              Maks. Eşzamanlı indirme/dönüştürme
+            </label>
+            <input
+              type="number"
+              id="youtubeConcurrencyInput"
+              min="1"
+              max="16"
+              step="1"
+              value="4"
+              style="max-width: 120px;"
+            />
+            <small class="muted" data-i18n="ui.youtubeConcurrencyHelp">
+              Playlist dönüşümlerinde eş zamanlı maks. indirme ve dönüştürme sayısı.
+            </small>
+          </div>
+
           <div class="checkbox-group" id="lyricsCheckboxContainer">
             <input type="checkbox" id="lyricsCheckbox" />
             <label for="lyricsCheckbox" data-i18n="label.includeLyrics">Şarkı sözlerini dahil et</label>
