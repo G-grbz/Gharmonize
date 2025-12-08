@@ -380,7 +380,7 @@ export async function convertMedia(
 
   const template = isVideo
     ? process.env.FILENAME_TEMPLATE_VIDEO || "%(title)s"
-    : process.env.FILENAME_TEMPLATE || "%(artist)s - %(track|title)s";
+    : process.env.FILENAME_TEMPLATE || "%(artist|album_artist)s - %(track|title)s";
 
   const resolvedMeta = { ...metadata, title: maybeCleanTitle(metadata?.title) };
   const VIDEO_MAX_H = Number(resolvedMeta.__maxHeight) || 1080;
@@ -422,6 +422,7 @@ export async function convertMedia(
   const args = ["-hide_banner", "-nostdin", "-y", "-i", inputPath];
 
     if (isCanceled()) return reject(new Error("CANCELED"));
+
     if (!isVideo && !canEmbedCover) {
       if (selectedAudioStreams.length > 0) {
         args.push("-map", `0:${selectedAudioStreams[0]}`);

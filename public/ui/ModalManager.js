@@ -188,7 +188,7 @@ export class ModalManager {
 
             if (!backdrop) {
                 console.error('❌ modalContainer not found');
-                resolve();
+                resolve(false);
                 return;
             }
 
@@ -204,22 +204,20 @@ export class ModalManager {
                 backdrop.removeEventListener('click', backdropHandler);
             };
 
-            const resolveAndCleanup = () => {
+            const resolveAndCleanup = (value) => {
                 cleanup();
-                resolve();
+                resolve(value);
             };
 
-            const okHandler = () => resolveAndCleanup();
-
+            const okHandler = () => resolveAndCleanup(true);
             const escHandler = (e) => {
                 if (e.key === 'Escape') {
-                    okHandler();
+                    resolveAndCleanup(false);
                 }
             };
-
             const backdropHandler = (e) => {
                 if (e.target === backdrop) {
-                    okHandler();
+                    resolveAndCleanup(false);
                 }
             };
 

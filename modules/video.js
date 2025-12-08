@@ -130,6 +130,8 @@ export async function processYouTubeVideoJob(job, {
   const format = job.format || "mp4";
   const videoSettings = job.videoSettings || {};
   const transcodeEnabled = videoSettings.transcodeEnabled === true;
+  const youtubeConcurrency =
+    Number(job.metadata?.youtubeConcurrency) || undefined;
 
   console.log(`🎬 Video job settings:`, {
    jobId: job.id,
@@ -240,7 +242,11 @@ export async function processYouTubeVideoJob(job, {
       selectedIds,
       TEMP_DIR,
       onProgress,
-      { video: true, maxHeight: TARGET_H }
+      {
+        video: true,
+        maxHeight: TARGET_H,
+        youtubeConcurrency,
+      }
     );
 
     const VIDEO_EXTS = new Set([".mp4", ".m4v", ".mov", ".mkv", ".webm"]);

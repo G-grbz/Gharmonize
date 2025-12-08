@@ -52,8 +52,40 @@ function isVideoFormat(fmt) {
   return f === "mp4" || f === "mkv";
 }
 
+function createLimiter(max) {
+  let active = 0;
+  const queue = [];
+
+  const run = (fn) =>
+    new Promise((resolve, reject) => {
+      const task = () => {
+        active++;
+        Promise.resolve()
+          .then(fn)
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            if (queue.length > 0) {
+              const next = queue.shift();
+              next();
+            }
+          });
+      };
+
+      if (active < max) {
+        task();
+      } else {
+        queue.push(task);
+      }
+    });
+
+  return run;
+}
+
 export async function processJob(jobId, inputPath, format, bitrate) {
-  try { killJobProcesses(jobId); } catch {}
+  try {
+    killJobProcesses(jobId);
+  } catch {}
 
   const job = jobs.get(jobId);
   if (!job) return;
@@ -64,8 +96,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     job.metadata?.volumeGain != null
       ? job.metadata.volumeGain
       : job.videoSettings?.volumeGain != null
-        ? job.videoSettings.volumeGain
-        : null;
+      ? job.videoSettings.volumeGain
+      : null;
 
   job.canceled = false;
 
@@ -88,7 +120,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     const target = { found: foundSafe, notFound: notFoundLive };
 
     if (Number.isFinite(totalCount) && totalCount != null) {
-      target.notFound = Math.max(notFoundLive, Math.max(0, Number(totalCount) - foundSafe));
+      target.notFound = Math.max(
+        notFoundLive,
+        Math.max(0, Number(totalCount) - foundSafe)
+      );
     }
 
     if (prev.found !== target.found || prev.notFound !== target.notFound) {
@@ -124,14 +159,24 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     job.convertProgress = 0;
     job.currentPhase = "preparing";
     job.metadata = job.metadata || {};
-    job.counters = job.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 };
+    job.counters = job.counters || {
+      dlTotal: 0,
+      dlDone: 0,
+      cvTotal: 0,
+      cvDone: 0
+    };
     const isVideoFormatFlag = isVideoFormat(format);
 
-      if (isVideoFormatFlag && job.metadata?.source === "youtube") {
+    if (isVideoFormatFlag && job.metadata?.source === "youtube") {
       await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
 
       try {
-        if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch && format !== "mp4") {
+        if (
+          Array.isArray(job.resultPath) &&
+          job.resultPath.length > 1 &&
+          !job.clientBatch &&
+          format !== "mp4"
+        ) {
           const titleHint =
             job.metadata?.frozenTitle ||
             job.metadata?.extracted?.title ||
@@ -162,7 +207,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         playlist_title: toNFC(job.metadata.spotifyTitle || "Spotify Playlist")
       };
 
-      const selectedIds = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : [];
+      const selectedIds = Array.isArray(job.metadata.selectedIds)
+        ? job.metadata.selectedIds
+        : [];
       if (!selectedIds.length) {
         throw new Error("Spotify URL list is empty");
       }
@@ -182,25 +229,51 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         selectedIds,
         TEMP_DIR,
         (progress) => {
-          if (progress && typeof progress === 'object' && progress.__event && progress.type === 'file-done') {
-              const t = Number(progress.total || job.counters?.dlTotal || selectedIds.length || 0);
-              job.counters.dlTotal = t;
-              job.counters.dlDone = Math.min(t, Number(progress.downloaded || 0));
-              job.downloadProgress = Math.floor((job.counters.dlDone / Math.max(1, t)) * 100);
-            } else {
-              job.downloadProgress = 20 + (Number(progress || 0) * 0.8);
-              const t = Number(job.counters?.dlTotal || selectedIds.length || 0);
-              if (t > 0) {
-               const approx = clampInt((Number(progress || 0) / 100) * t, 0, t);
-                if ((job.counters.dlDone || 0) < approx) job.counters.dlDone = approx;
-              }
+          if (
+            progress &&
+            typeof progress === "object" &&
+            progress.__event &&
+            progress.type === "file-done"
+          ) {
+            const t = Number(
+              progress.total ||
+                job.counters?.dlTotal ||
+                selectedIds.length ||
+                0
+            );
+            job.counters.dlTotal = t;
+            job.counters.dlDone = Math.min(
+              t,
+              Number(progress.downloaded || 0)
+            );
+            job.downloadProgress = Math.floor(
+              (job.counters.dlDone / Math.max(1, t)) * 100
+            );
+          } else {
+            job.downloadProgress = 20 + Number(progress || 0) * 0.8;
+            const t = Number(
+              job.counters?.dlTotal || selectedIds.length || 0
+            );
+            if (t > 0) {
+              const approx = clampInt(
+                ((Number(progress || 0) / 100) * t) | 0,
+                0,
+                t
+              );
+              if ((job.counters.dlDone || 0) < approx)
+                job.counters.dlDone = approx;
             }
-            job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+          }
+          job.progress = Math.floor(
+            (job.downloadProgress + job.convertProgress) / 2
+          );
         },
         {
           video: isVideoFormat(format),
           onSkipUpdate: handleSkipUpdate,
-          maxHeight: isVideoFormat(format) ? qualityToHeight(bitrate) : undefined
+          maxHeight: isVideoFormat(format)
+            ? qualityToHeight(bitrate)
+            : undefined
         },
         { isCanceled: () => !!job.canceled }
       );
@@ -214,121 +287,174 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         throw new Error("Spotify download completed but no files were found");
       }
 
-      const frozen = Array.isArray(job.metadata.frozenEntries) ? job.metadata.frozenEntries : [];
+      const frozen = Array.isArray(job.metadata.frozenEntries)
+        ? job.metadata.frozenEntries
+        : [];
       const byId = new Map();
       for (const e of frozen) if (e?.id) byId.set(e.id, e);
-      const sorted = files.map((fp, i) => ({ fp, auto: i + 1 })).sort((a, b) => a.auto - b.auto);
-      const results = [];
+      const sorted = files
+        .map((fp, i) => ({ fp, auto: i + 1 }))
+        .sort((a, b) => a.auto - b.auto);
+
+      const spotifyConcurrency = job.metadata?.spotifyConcurrency || 4;
+      const spotifyLimiter = createLimiter(spotifyConcurrency);
+
+      const results = new Array(sorted.length);
       job.playlist = { total: sorted.length, done: 0 };
       job.counters.cvTotal = sorted.length;
 
+      const convertPromisesSpotify = [];
+
       for (let i = 0; i < sorted.length; i++) {
-        const { fp: filePath, auto } = sorted[i];
-        const pinnedId = selectedIds[auto - 1];
-        const entry = (pinnedId ? byId.get(pinnedId) : null) || {};
-        const fallbackTitle = path.basename(filePath, path.extname(filePath)).replace(/^\d+\s*-\s*/, "");
-        const title = toNFC(entry.title || fallbackTitle);
-        const fileMeta = {
-          title,
-          track: title,
-          uploader: entry.uploader || "",
-          artist: entry.artist || entry.uploader || "",
-          album: entry.album || "",
-          album_artist: entry.album_artist || entry.artist || entry.uploader || "",
-          playlist_title: job.metadata.spotifyTitle || "Spotify Playlist",
-          webpage_url: entry.webpage_url || "",
-          release_year: entry.year || "",
-          release_date: entry.date || "",
-          track_number: entry.track_number,
-          disc_number: entry.disc_number,
-          track_total: entry.track_total,
-          disc_total: entry.disc_total,
-          isrc: entry.isrc,
-          genre: entry.genre || "",
-          label: entry.label || null,
-          publisher: entry.label || null,
-          copyright: entry.copyright || "",
-        };
+        const convertPromise = spotifyLimiter(async () => {
+          const { fp: filePath, auto } = sorted[i];
+          const pinnedId = selectedIds[auto - 1];
+          const entry = (pinnedId ? byId.get(pinnedId) : null) || {};
+          const fallbackTitle = path
+            .basename(filePath, path.extname(filePath))
+            .replace(/^\d+\s*-\s*/, "");
+          const title = toNFC(entry.title || fallbackTitle);
+          const fileMeta = {
+            title,
+            track: title,
+            uploader: entry.uploader || "",
+            artist: entry.artist || entry.uploader || "",
+            album: entry.album || "",
+            album_artist:
+              entry.album_artist || entry.artist || entry.uploader || "",
+            playlist_title: job.metadata.spotifyTitle || "Spotify Playlist",
+            webpage_url: entry.webpage_url || "",
+            release_year: entry.year || "",
+            release_date: entry.date || "",
+            track_number: entry.track_number,
+            disc_number: entry.disc_number,
+            track_total: entry.track_total,
+            disc_total: entry.disc_total,
+            isrc: entry.isrc,
+            genre: entry.genre || "",
+            label: entry.label || null,
+            publisher: entry.label || null,
+            copyright: entry.copyright || ""
+          };
 
-        let itemCover = null;
-        const baseNoExt = filePath.replace(/\.[^.]+$/, "");
-        const sidecarJpg = `${baseNoExt}.jpg`;
-        if (fs.existsSync(sidecarJpg)) itemCover = sidecarJpg;
+          let itemCover = null;
+          const baseNoExt = filePath.replace(/\.[^.]+$/, "");
+          const sidecarJpg = `${baseNoExt}.jpg`;
+          if (fs.existsSync(sidecarJpg)) itemCover = sidecarJpg;
 
-        const existingOut = findExistingOutput(`${jobId}_${i}`, format, OUTPUT_DIR);
-        let r;
-        if (existingOut) {
-          r = { outputPath: `/download/${encodeURIComponent(path.basename(existingOut))}` };
-          const fileProgress = (i / sorted.length) * 100;
-          job.convertProgress = Math.floor(fileProgress + (100 / sorted.length));
-          job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-        } else {
-          r = await convertMedia(
-            filePath,
-            format,
-            bitrate,
+          const existingOut = findExistingOutput(
             `${jobId}_${i}`,
-            (progress) => {
-              const baseProgress = (i / sorted.length) * 100;
-              const currentFileProgress = (progress / 100) * (100 / sorted.length);
-              job.convertProgress = Math.floor(baseProgress + currentFileProgress);
-
-              if (job.playlist) {
-                job.playlist.current = i;
-              }
-              job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-            },
-            fileMeta,
-            itemCover,
-            isVideoFormat(format),
-            OUTPUT_DIR,
-            TEMP_DIR,
-            {
-              onProcess: (child) => {
-                try { registerJobProcess(jobId, child); } catch {}
-              },
-              includeLyrics: job.metadata.includeLyrics,
-              sampleRate: sampleRate,
-              bitDepth: job.bitDepth || null,
-              compressionLevel: job.metadata?.compressionLevel ?? null,
-              isCanceled: () => !!jobs.get(jobId)?.canceled,
-              onLog: handleLyricsLog,
-              volumeGain: effectiveVolumeGain,
-              onLyricsStats: handleLyricsStats,
-              stereoConvert: job.metadata?.stereoConvert || "auto",
-              atempoAdjust: job.metadata?.atempoAdjust || "none",
-              selectedStreams: job.metadata.selectedStreams,
-              videoSettings: job.videoSettings || {}
-            }
+            format,
+            OUTPUT_DIR
           );
-        }
+          let r;
+          if (existingOut) {
+            r = {
+              outputPath: `/download/${encodeURIComponent(
+                path.basename(existingOut)
+              )}`
+            };
+            const fileProgress = (i / sorted.length) * 100;
+            job.convertProgress = Math.floor(
+              fileProgress + 100 / sorted.length
+            );
+            job.progress = Math.floor(
+              (job.downloadProgress + job.convertProgress) / 2
+            );
+          } else {
+            r = await convertMedia(
+              filePath,
+              format,
+              bitrate,
+              `${jobId}_${i}`,
+              (progress) => {
+                const baseProgress = (i / sorted.length) * 100;
+                const currentFileProgress =
+                  (progress / 100) * (100 / sorted.length);
+                job.convertProgress = Math.floor(
+                  baseProgress + currentFileProgress
+                );
 
-        const hasLrc = !!r?.lyricsPath;
-        if (Array.isArray(job.metadata.frozenEntries)) {
-          const fe = job.metadata.frozenEntries.find(x => x.index === (i + 1));
-          if (fe) fe.hasLyrics = hasLrc;
-        }
+                if (job.playlist) {
+                  job.playlist.current = i;
+                }
+                job.progress = Math.floor(
+                  (job.downloadProgress + job.convertProgress) / 2
+                );
+              },
+              fileMeta,
+              itemCover,
+              isVideoFormat(format),
+              OUTPUT_DIR,
+              TEMP_DIR,
+              {
+                onProcess: (child) => {
+                  try {
+                    registerJobProcess(jobId, child);
+                  } catch {}
+                },
+                includeLyrics: job.metadata.includeLyrics,
+                sampleRate: sampleRate,
+                bitDepth: job.bitDepth || null,
+                compressionLevel: job.metadata?.compressionLevel ?? null,
+                isCanceled: () => !!jobs.get(jobId)?.canceled,
+                onLog: handleLyricsLog,
+                volumeGain: effectiveVolumeGain,
+                onLyricsStats: handleLyricsStats,
+                stereoConvert: job.metadata?.stereoConvert || "auto",
+                atempoAdjust: job.metadata?.atempoAdjust || "none",
+                selectedStreams: job.metadata.selectedStreams,
+                videoSettings: job.videoSettings || {}
+              }
+            );
+          }
 
-        results.push(r);
-        job.playlist.done = i + 1;
-        bump(job.counters, "cvDone", 1);
-        updateLyricsStatsLive(job.playlist.done);
+          const hasLrc = !!r?.lyricsPath;
+          if (Array.isArray(job.metadata.frozenEntries)) {
+            const fe = job.metadata.frozenEntries.find(
+              (x) => x.index === i + 1
+            );
+            if (fe) fe.hasLyrics = hasLrc;
+          }
+
+          results[i] = r;
+          job.playlist.done = i + 1;
+          bump(job.counters, "cvDone", 1);
+          updateLyricsStatsLive(job.playlist.done);
+
+          return r;
+        });
+
+        convertPromisesSpotify.push(convertPromise);
       }
 
-      if (results.length === 1) {
-        job.resultPath = results[0]?.outputPath || null;
+      await Promise.all(convertPromisesSpotify);
+
+      const finalResults = results.filter((r) => r);
+
+      if (finalResults.length === 1) {
+        job.resultPath = finalResults[0]?.outputPath || null;
       } else {
-        job.resultPath = results;
+        job.resultPath = finalResults;
         if (!job.clientBatch) {
           try {
-            const zipTitle = job.metadata.spotifyTitle || "Spotify Playlist";
-            job.zipPath = await makeZipFromOutputs(jobId, results, zipTitle, job.metadata.includeLyrics);
+            const zipTitle =
+              job.metadata.spotifyTitle || "Spotify Playlist";
+            job.zipPath = await makeZipFromOutputs(
+              jobId,
+              finalResults,
+              zipTitle,
+              job.metadata.includeLyrics
+            );
           } catch (e) {}
         }
       }
 
       if (job.metadata?.includeLyrics) {
-        updateLyricsStatsLive(job.playlist?.done || results.length, job.playlist?.total || results.length);
+        updateLyricsStatsLive(
+          job.playlist?.done || finalResults.length,
+          job.playlist?.total || finalResults.length
+        );
       }
 
       job.status = "completed";
@@ -352,24 +478,41 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
       let ytMeta = null;
       if (isAutomix) {
-        ytMeta = { title: "YouTube Automix", uploader: "YouTube", playlist_title: "Automix" };
+        ytMeta = {
+          title: "YouTube Automix",
+          uploader: "YouTube",
+          playlist_title: "Automix"
+        };
       } else {
-        ytMeta = await fetchYtMetadata(job.metadata.url, job.metadata.isPlaylist);
+        ytMeta = await fetchYtMetadata(
+          job.metadata.url,
+          job.metadata.isPlaylist
+        );
       }
 
       const flat = {
         title: toNFC(ytMeta?.title || ""),
         uploader: toNFC(ytMeta?.uploader || ytMeta?.channel || ""),
-        artist: toNFC(ytMeta?.artist || ytMeta?.creator || ytMeta?.uploader || ytMeta?.channel || ""),
+        artist: toNFC(
+          ytMeta?.artist ||
+            ytMeta?.creator ||
+            ytMeta?.uploader ||
+            ytMeta?.channel ||
+            ""
+        ),
         track: ytMeta?.track || "",
         album: toNFC(ytMeta?.album || ""),
-        release_year: (ytMeta?.release_year && String(ytMeta.release_year)) ||
-          (ytMeta?.release_date && String(ytMeta.release_date).slice(0, 4)) || "",
+        release_year:
+          (ytMeta?.release_year && String(ytMeta.release_year)) ||
+          (ytMeta?.release_date &&
+            String(ytMeta.release_date).slice(0, 4)) ||
+          "",
         upload_date: ytMeta?.upload_date || "",
         webpage_url: ytMeta?.webpage_url || job.metadata.url,
-        thumbnail: (ytMeta?.thumbnails && ytMeta.thumbnails.length
-          ? ytMeta.thumbnails[ytMeta.thumbnails.length - 1].url
-          : ytMeta?.thumbnail) || "",
+        thumbnail:
+          (ytMeta?.thumbnails && ytMeta.thumbnails.length
+            ? ytMeta.thumbnails[ytMeta.thumbnails.length - 1].url
+            : ytMeta?.thumbnail) || "",
         playlist_title: toNFC(ytMeta?.playlist_title || "")
       };
       job.metadata.extracted = flat;
@@ -397,17 +540,24 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         job.downloadProgress = 10;
 
         const selectedIndicesVar =
-          (job.metadata.selectedIndices === "all" || !job.metadata.selectedIndices)
+          job.metadata.selectedIndices === "all" ||
+          !job.metadata.selectedIndices
             ? null
             : job.metadata.selectedIndices;
-        const selectedIdsVar = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : null;
+        const selectedIdsVar = Array.isArray(job.metadata.selectedIds)
+          ? job.metadata.selectedIds
+          : null;
 
         const totalGuess =
-          (selectedIdsVar && selectedIdsVar.length) ? selectedIdsVar.length :
-          (selectedIndicesVar && selectedIndicesVar.length) ? selectedIndicesVar.length :
-          (Number.isFinite(ytMeta?.n_entries) ? ytMeta.n_entries :
-            Number.isFinite(ytMeta?.playlist_count) ? ytMeta.playlist_count :
-              (Array.isArray(ytMeta?.entries) ? ytMeta.entries.length : null));
+          (selectedIdsVar && selectedIdsVar.length) ||
+          (selectedIndicesVar && selectedIndicesVar.length) ||
+          (Number.isFinite(ytMeta?.n_entries)
+            ? ytMeta.n_entries
+            : Number.isFinite(ytMeta?.playlist_count)
+            ? ytMeta.playlist_count
+            : Array.isArray(ytMeta?.entries)
+            ? ytMeta.entries.length
+            : null);
 
         if (Number.isFinite(totalGuess) && totalGuess > 0) {
           job.playlist = { total: totalGuess, done: 0 };
@@ -421,139 +571,102 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
         const indices = selectedIndicesVar;
         const selectedIds = selectedIdsVar;
-
-        const files = await downloadYouTubeVideo(
-        job.metadata.url,
-        jobId,
-        true,
-        indices,
-        isAutomix,
-        selectedIds,
-        TEMP_DIR,
-        (progress) => {
-          const totalGuess = Number(job.counters?.dlTotal || job.playlist?.total || 0);
-            if (progress && typeof progress === 'object' && progress.__event && progress.type === 'file-done') {
-             const t = Number(progress.total || totalGuess || 0);
-              job.counters.dlTotal = t || totalGuess;
-              job.counters.dlDone = Math.min(job.counters.dlTotal || t, Number(progress.downloaded || 0));
-              job.downloadProgress = Math.max(10, Math.min(100, 10 + ((job.counters.dlDone / Math.max(1, (job.counters.dlTotal || t || 1))) * 90)));
-              if (job.playlist && job.currentPhase === 'downloading') {
-                job.playlist.current = Math.max(0, (job.counters.dlDone - 1));
-              }
-            } else {
-              const pct = Number(progress || 0);
-              job.downloadProgress = Math.max(10, Math.min(100, 10 + (pct * 0.9)));
-              const t = totalGuess;
-             if (t > 0) {
-                const approx = clampInt((pct / 100) * t, 0, t);
-                if ((job.counters.dlDone || 0) < approx) job.counters.dlDone = approx;
-                if (job.playlist && job.currentPhase === 'downloading') {
-                  job.playlist.current = Math.max(0, Math.min(t - 1, approx - 1));
-                }
-              }
-            }
-            job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-        },
-          {
-            video: isVideoFormat(format),
-            onSkipUpdate: handleSkipUpdate,
-            maxHeight: isVideoFormat(format) ? qualityToHeight(bitrate) : undefined
-          },
-          { isCanceled: () => !!job.canceled }
-        );
-
-        job.counters.dlDone = job.counters.dlTotal;
-        job.downloadProgress = 100;
-        job.currentPhase = "converting";
-        job.convertProgress = 0;
-
-        if (!Array.isArray(files) || !files.length) {
-          throw new Error("Playlist/Automix media files not found");
+        const metaEntries = Array.isArray(ytMeta?.entries)
+          ? ytMeta.entries
+          : [];
+        const byIndex = buildEntriesMap(ytMeta);
+        const byIdRaw = new Map();
+        for (const e of metaEntries) {
+          if (e?.id) byIdRaw.set(e.id, e);
         }
-
-        const entryById = new Map();
-        if (Array.isArray(job.metadata.frozenEntries)) {
-          for (const e of job.metadata.frozenEntries) if (e?.id) entryById.set(e.id, e);
-        }
-        if (!Array.isArray(job.metadata.frozenEntries) || job.metadata.frozenEntries.length === 0) {
-          const fe = [];
-          const byIndex = buildEntriesMap(ytMeta);
-          const byId = new Map();
-          const metaEntries = Array.isArray(ytMeta?.entries) ? ytMeta.entries : [];
-          for (const e of metaEntries) {
-            if (e?.id) byId.set(e.id, e);
-          }
-          for (let i = 0; i < files.length; i++) {
-            const filePath = files[i];
-            const idxFromName = parsePlaylistIndexFromPath(filePath);
-            let src = null;
-            if (Number.isFinite(idxFromName) && byIndex.has(idxFromName)) {
-              src = byIndex.get(idxFromName);
-            } else if (Array.isArray(selectedIds) && selectedIds[i] && byId.has(selectedIds[i])) {
-              src = byId.get(selectedIds[i]);
-            }
-            const title = (src?.title || src?.alt_title || path.basename(filePath, path.extname(filePath)).replace(/^\d+\s*-\s*/, "") || "").toString();
-            const uploader = (src?.uploader || src?.channel || ytMeta?.uploader || ytMeta?.channel || "").toString();
-            const id = (src?.id || (Array.isArray(selectedIds) ? selectedIds[i] : null) || "").toString();
-            const webpage_url = (src?.webpage_url || src?.url || job.metadata.url || "").toString();
-            const index = Number.isFinite(idxFromName) ? idxFromName : (i + 1);
-            fe.push({ index, id, title, uploader, webpage_url });
-            if (id) entryById.set(id, fe[fe.length - 1]);
-          }
-          job.metadata.frozenEntries = fe;
-          job.metadata.frozenTitle =
-            job.metadata.frozenTitle ||
-            ytMeta?.title ||
-            ytMeta?.playlist_title ||
-            (isAutomix ? "YouTube Automix" : "");
-        }
-
-        const sorted = files
-          .map((fp, i) => ({ fp, auto: i + 1 }))
-          .sort((a, b) => a.auto - b.auto);
-
+        const trackLyricsMap = new Map();
+        const youtubeConcurrency = job.metadata?.youtubeConcurrency || 4;
+        console.log("⚡ Processing with youtubeConcurrency:", youtubeConcurrency);
+        const youtubeLimiter = createLimiter(youtubeConcurrency);
         const results = [];
-        job.playlist = { total: sorted.length, done: 0 };
-        job.counters.cvTotal = sorted.length;
+        const convertPromisesYouTube = [];
+        let autoCounter = 0;
 
-        for (let i = 0; i < sorted.length; i++) {
-          const { fp: filePath, auto } = sorted[i];
+        async function convertPlaylistItem(
+          autoIndex,
+          filePath,
+          explicitPlaylistIndex = null
+        ) {
+          const playlistIndex =
+            Number.isFinite(explicitPlaylistIndex) &&
+            explicitPlaylistIndex != null
+              ? explicitPlaylistIndex
+              : parsePlaylistIndexFromPath(filePath) || autoIndex + 1;
+
           let entry = {};
+
           if (Array.isArray(selectedIds) && selectedIds.length) {
-            const pinnedId = selectedIds[(auto - 1)];
-            entry = (pinnedId ? entryById.get(pinnedId) : null) || {};
+            const pinnedId =
+              selectedIds[autoIndex] ||
+              selectedIds[playlistIndex - 1] ||
+              null;
+            if (pinnedId && byIdRaw.has(pinnedId)) {
+              entry = byIdRaw.get(pinnedId) || {};
+            }
           }
 
-          const fallbackTitle = path.basename(filePath, path.extname(filePath)).replace(/^\d+\s*-\s*/, "");
-          const title = toNFC(entry.title || fallbackTitle);
+          if (!entry || Object.keys(entry).length === 0) {
+            if (Number.isFinite(playlistIndex) && byIndex.has(playlistIndex)) {
+              entry = byIndex.get(playlistIndex) || {};
+            }
+          }
+
+          const fallbackTitle = path
+            .basename(filePath, path.extname(filePath))
+            .replace(/^\d+\s*-\s*/, "");
+          const title = toNFC(entry?.title || fallbackTitle);
 
           let fileMeta = {
             ...flat,
             title,
             track: title,
-            uploader: toNFC(entry.uploader || flat.uploader),
-            artist: toNFC(entry.artist || entry.uploader || flat.artist || flat.uploader),
-            album: flat.album || (ytMeta?.title || ytMeta?.playlist_title || job.metadata.frozenTitle || ""),
-            webpage_url: entry.webpage_url || entry.url || flat.webpage_url,
+            uploader: toNFC(entry?.uploader || flat.uploader),
+            artist: toNFC(
+              entry?.artist ||
+                entry?.uploader ||
+                flat.artist ||
+                flat.uploader
+            ),
+            album:
+              flat.album ||
+              (ytMeta?.title ||
+                ytMeta?.playlist_title ||
+                job.metadata.frozenTitle ||
+                ""),
+            webpage_url: entry?.webpage_url || entry?.url || flat.webpage_url,
             genre: "",
             label: "",
             publisher: "",
             copyright: "",
             album_artist: ""
           };
-          fileMeta.album_artist = toNFC((entry && entry.album_artist) || fileMeta.artist || "");
+
+          fileMeta.album_artist = toNFC(
+            (entry && entry.album_artist) || fileMeta.artist || ""
+          );
           if (/^(youtube|youtube\s+mix)$/i.test((fileMeta.artist || "").trim())) {
             fileMeta.artist = "";
           }
 
           try {
-            const ytMusic = await probeYoutubeMusicMeta(entry?.webpage_url || entry?.id);
+            const ytMusic = await probeYoutubeMusicMeta(
+              entry?.webpage_url || entry?.id
+            );
             fileMeta = mergeMeta(fileMeta, ytMusic);
           } catch {}
 
           if (process.env.ENRICH_SPOTIFY_FOR_YT === "1") {
             try {
-              const spMeta = await findSpotifyMetaByQuery(fileMeta.artist, fileMeta.track, job?.metadata?.market);
+              const spMeta = await findSpotifyMetaByQuery(
+                fileMeta.artist,
+                fileMeta.track,
+                job?.metadata?.market
+              );
               if (spMeta) {
                 fileMeta = {
                   ...fileMeta,
@@ -569,7 +682,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 };
               }
             } catch (error) {
-              console.warn(`Spotify metadata enrichment error: ${error.message}`);
+              console.warn(
+                `Spotify metadata enrichment error: ${error.message}`
+              );
             }
           }
 
@@ -580,7 +695,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           else if (coverPath && fs.existsSync(coverPath)) itemCover = coverPath;
           else if (fileMeta?.coverUrl) {
             try {
-              const dl = await downloadThumbnail(fileMeta.coverUrl, `${baseNoExt}.cover`);
+              const dl = await downloadThumbnail(
+                fileMeta.coverUrl,
+                `${baseNoExt}.cover`
+              );
               if (dl) itemCover = dl;
             } catch {}
           }
@@ -606,7 +724,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 album_artist: fileMeta.album_artist || strictMeta.album_artist,
                 webpage_url: strictMeta.spotifyUrl || fileMeta.webpage_url
               };
-              fileMeta.album_artist = toNFC(fileMeta.album_artist || fileMeta.artist || "");
+              fileMeta.album_artist = toNFC(
+                fileMeta.album_artist || fileMeta.artist || ""
+              );
               if (strictMeta.label) {
                 if (!fileMeta.label) fileMeta.label = strictMeta.label;
                 if (!fileMeta.publisher) fileMeta.publisher = strictMeta.label;
@@ -616,78 +736,304 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             console.warn(`ID3 strict resolution error: ${error.message}`);
           }
 
-          const existingOut = findExistingOutput(`${jobId}_${i}`, format, OUTPUT_DIR);
+                    const totalTracks = job.playlist?.total || totalGuess || 1;
+          const existingOut = findExistingOutput(
+            `${jobId}_${autoIndex}`,
+            format,
+            OUTPUT_DIR
+          );
           let r;
           if (existingOut) {
-            r = { outputPath: `/download/${encodeURIComponent(path.basename(existingOut))}` };
-            const fileProgress = (i / sorted.length) * 100;
-            job.convertProgress = Math.floor(fileProgress + (100 / sorted.length));
-            job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+            r = {
+              outputPath: `/download/${encodeURIComponent(
+                path.basename(existingOut)
+              )}`
+            };
+            const fileProgress = (autoIndex / totalTracks) * 100;
+            job.convertProgress = Math.floor(
+              fileProgress + 100 / totalTracks
+            );
+            job.progress = Math.floor(
+              (job.downloadProgress + job.convertProgress) / 2
+            );
             if (job.canceled) throw new Error("CANCELED");
           } else {
-            r = await convertMedia(
-              filePath,
-              format,
-              bitrate,
-              `${jobId}_${i}`,
-              (progress) => {
-                const baseProgress = (i / sorted.length) * 100;
-                const currentFileProgress = (progress / 100) * (100 / sorted.length);
-                job.convertProgress = Math.floor(baseProgress + currentFileProgress);
-                if (job.playlist) {
-                  job.playlist.current = i;
-                }
-                job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
-              },
-              fileMeta,
-              itemCover,
-              isVideoFormat(format),
-              OUTPUT_DIR,
-              TEMP_DIR,
-              {
-                onProcess: (child) => {
-                  try { registerJobProcess(jobId, child); } catch {}
+            try {
+              r = await convertMedia(
+                filePath,
+                format,
+                bitrate,
+                `${jobId}_${autoIndex}`,
+                (progress) => {
+                  const baseProgress = (autoIndex / totalTracks) * 100;
+                  const currentFileProgress =
+                    (progress / 100) * (100 / totalTracks);
+                  job.convertProgress = Math.floor(
+                    baseProgress + currentFileProgress
+                  );
+                  if (job.playlist) {
+                    job.playlist.current = autoIndex;
+                  }
+                  job.progress = Math.floor(
+                    (job.downloadProgress + job.convertProgress) / 2
+                  );
                 },
-                includeLyrics: job.metadata.includeLyrics,
-                sampleRate: sampleRate,
-                bitDepth: job.bitDepth || null,
-                compressionLevel: job.metadata?.compressionLevel ?? null,
-                isCanceled: () => !!jobs.get(jobId)?.canceled,
-                onLog: handleLyricsLog,
-                volumeGain: effectiveVolumeGain,
-                onLyricsStats: handleLyricsStats,
-                stereoConvert: job.metadata?.stereoConvert || "auto",
-                atempoAdjust: job.metadata?.atempoAdjust || "none"
+                fileMeta,
+                itemCover,
+                isVideoFormat(format),
+                OUTPUT_DIR,
+                TEMP_DIR,
+                {
+                  onProcess: (child) => {
+                    try {
+                      registerJobProcess(jobId, child);
+                    } catch {}
+                  },
+                  includeLyrics: job.metadata.includeLyrics,
+                  sampleRate: sampleRate,
+                  bitDepth: job.bitDepth || null,
+                  compressionLevel: job.metadata?.compressionLevel ?? null,
+                  isCanceled: () => !!jobs.get(jobId)?.canceled,
+                  onLog: handleLyricsLog,
+                  volumeGain: effectiveVolumeGain,
+                  onLyricsStats: handleLyricsStats,
+                  stereoConvert: job.metadata?.stereoConvert || "auto",
+                  atempoAdjust: job.metadata?.atempoAdjust || "none"
+                }
+              );
+            } catch (err) {
+              if (String(err?.message || "").toUpperCase() === "CANCELED") {
+                const jobRef = jobs.get(jobId);
+                if (jobRef) {
+                  jobRef.status = "canceled";
+                  jobRef.currentPhase = "canceled";
+                  jobRef.error = null;
+                  jobRef.canceled = true;
+                }
+                return null;
               }
-            );
+              throw err;
+            }
           }
 
           const hasLrc = !!r?.lyricsPath;
-          if (Array.isArray(job.metadata.frozenEntries)) {
-            const fe = job.metadata.frozenEntries.find(x => x.index === (auto));
-            if (fe) fe.hasLyrics = hasLrc;
+          if (hasLrc && Number.isFinite(playlistIndex)) {
+            trackLyricsMap.set(playlistIndex, true);
           }
 
-          results.push(r);
-          job.playlist.done = i + 1;
+          results[autoIndex] = r;
           bump(job.counters, "cvDone", 1);
-          updateLyricsStatsLive(job.playlist.done);
+          if (job.playlist) {
+            job.playlist.done = (job.playlist.done || 0) + 1;
+          }
+          updateLyricsStatsLive(job.playlist?.done || 0, totalTracks);
+
+          return r;
         }
 
-        if (results.length === 1) {
-          job.resultPath = results[0]?.outputPath || null;
+        const filesPromise = downloadYouTubeVideo(
+        job.metadata.url,
+        jobId,
+        true,
+        indices,
+        isAutomix,
+        selectedIds,
+        TEMP_DIR,
+          (progress) => {
+            const tGuess = Number(
+              job.counters?.dlTotal || job.playlist?.total || 0
+            );
+            if (
+              progress &&
+              typeof progress === "object" &&
+              progress.__event &&
+              progress.type === "file-done"
+            ) {
+              const t = Number(progress.total || tGuess || 0);
+              job.counters.dlTotal = t || tGuess;
+              job.counters.dlDone = Math.min(
+                job.counters.dlTotal || t,
+                Number(progress.downloaded || 0)
+              );
+              job.downloadProgress = Math.max(
+                10,
+                Math.min(
+                  100,
+                  10 +
+                    (job.counters.dlDone /
+                      Math.max(1, job.counters.dlTotal || t || 1)) *
+                      90
+                )
+              );
+              if (job.playlist && job.currentPhase === "downloading") {
+                job.playlist.current = Math.max(
+                  0,
+                  (job.counters.dlDone - 1) | 0
+                );
+              }
+            } else {
+              const pct = Number(progress || 0);
+              job.downloadProgress = Math.max(
+                10,
+                Math.min(100, 10 + pct * 0.9)
+              );
+              const t = tGuess;
+              if (t > 0) {
+                const approx = clampInt((pct / 100) * t, 0, t);
+                if ((job.counters.dlDone || 0) < approx)
+                  job.counters.dlDone = approx;
+                if (job.playlist && job.currentPhase === "downloading") {
+                  job.playlist.current = Math.max(
+                    0,
+                    Math.min(t - 1, approx - 1)
+                  );
+                }
+              }
+            }
+            job.progress = Math.floor(
+              (job.downloadProgress + job.convertProgress) / 2
+            );
+          },
+          {
+            video: isVideoFormat(format),
+            onSkipUpdate: handleSkipUpdate,
+            maxHeight: isVideoFormat(format)
+              ? qualityToHeight(bitrate)
+              : undefined,
+            youtubeConcurrency,
+            onFileDone: ({ filePath, playlistIndex }) => {
+              const myIndex = autoCounter++;
+              const p = youtubeLimiter(() =>
+                convertPlaylistItem(myIndex, filePath, playlistIndex)
+              );
+              convertPromisesYouTube.push(p);
+            }
+          },
+          { isCanceled: () => !!job.canceled }
+        );
+
+        const files = await filesPromise;
+
+        job.counters.dlDone = job.counters.dlTotal;
+        job.downloadProgress = 100;
+        job.currentPhase = "converting";
+        job.convertProgress = job.convertProgress || 0;
+
+        if (!Array.isArray(files) || !files.length) {
+          throw new Error("Playlist/Automix media files not found");
+        }
+
+        const entryById = new Map();
+        if (Array.isArray(job.metadata.frozenEntries)) {
+          for (const e of job.metadata.frozenEntries) {
+            if (e?.id) entryById.set(e.id, e);
+          }
+        }
+        if (
+          !Array.isArray(job.metadata.frozenEntries) ||
+          job.metadata.frozenEntries.length === 0
+        ) {
+          const fe = [];
+          const byIdMeta = new Map();
+          for (const e of metaEntries) {
+            if (e?.id) byIdMeta.set(e.id, e);
+          }
+          for (let i = 0; i < files.length; i++) {
+            const filePath = files[i];
+            const idxFromName = parsePlaylistIndexFromPath(filePath);
+            let src = null;
+            if (Number.isFinite(idxFromName) && byIndex.has(idxFromName)) {
+              src = byIndex.get(idxFromName);
+            } else if (
+              Array.isArray(selectedIds) &&
+              selectedIds[i] &&
+              byIdMeta.has(selectedIds[i])
+            ) {
+              src = byIdMeta.get(selectedIds[i]);
+            }
+            const title = (
+              src?.title ||
+              src?.alt_title ||
+              path
+                .basename(filePath, path.extname(filePath))
+                .replace(/^\d+\s*-\s*/, "") ||
+              ""
+            ).toString();
+            const uploader = (
+              src?.uploader ||
+              src?.channel ||
+              ytMeta?.uploader ||
+              ytMeta?.channel ||
+              ""
+            ).toString();
+            const id = (
+              src?.id ||
+              (Array.isArray(selectedIds) ? selectedIds[i] : null) ||
+              ""
+            ).toString();
+            const webpage_url = (
+              src?.webpage_url ||
+              src?.url ||
+              job.metadata.url ||
+              ""
+            ).toString();
+            const index = Number.isFinite(idxFromName)
+              ? idxFromName
+              : i + 1;
+            const hasLyrics = !!trackLyricsMap.get(index);
+            const entry = {
+              index,
+              id,
+              title,
+              uploader,
+              webpage_url,
+              hasLyrics
+            };
+            fe.push(entry);
+            if (id) entryById.set(id, entry);
+          }
+          job.metadata.frozenEntries = fe;
+          job.metadata.frozenTitle =
+            job.metadata.frozenTitle ||
+            ytMeta?.title ||
+            ytMeta?.playlist_title ||
+            (isAutomix ? "YouTube Automix" : "");
         } else {
-          job.resultPath = results;
+          for (const fe of job.metadata.frozenEntries) {
+            if (!fe || typeof fe.index !== "number") continue;
+            if (trackLyricsMap.has(fe.index)) {
+              fe.hasLyrics = !!trackLyricsMap.get(fe.index);
+            }
+          }
+        }
+
+        await Promise.all(convertPromisesYouTube);
+        const finalResults = results.filter(Boolean);
+
+        if (finalResults.length === 1) {
+          job.resultPath = finalResults[0]?.outputPath || null;
+        } else {
+          job.resultPath = finalResults;
           if (!job.clientBatch) {
             try {
-              const zipTitle = ytMeta?.title || ytMeta?.playlist_title || (isAutomix ? "YouTube Automix" : "Playlist");
-              job.zipPath = await makeZipFromOutputs(jobId, results, zipTitle, job.metadata.includeLyrics);
+              const zipTitle =
+                ytMeta?.title ||
+                ytMeta?.playlist_title ||
+                (isAutomix ? "YouTube Automix" : "Playlist");
+              job.zipPath = await makeZipFromOutputs(
+                jobId,
+                finalResults,
+                zipTitle,
+                job.metadata.includeLyrics
+              );
             } catch (e) {}
           }
         }
 
         if (job.metadata?.includeLyrics) {
-          updateLyricsStatsLive(job.playlist?.done || results.length, job.playlist?.total || results.length);
+          const doneCount = job.playlist?.done || finalResults.length;
+          const totalCount = job.playlist?.total || totalGuess || finalResults.length;
+          updateLyricsStatsLive(doneCount, totalCount);
         }
 
         job.status = "completed";
@@ -712,13 +1058,18 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           job.counters = job.counters || {};
           job.counters.dlTotal = 1;
           const approx = progress >= 100 ? 1 : 0;
-          if ((job.counters.dlDone || 0) < approx) job.counters.dlDone = approx;
-          job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+          if ((job.counters.dlDone || 0) < approx)
+            job.counters.dlDone = approx;
+          job.progress = Math.floor(
+            (job.downloadProgress + job.convertProgress) / 2
+          );
         },
         {
           video: isVideoFormat(format),
           onSkipUpdate: handleSkipUpdate,
-          maxHeight: isVideoFormat(format) ? qualityToHeight(bitrate) : undefined
+          maxHeight: isVideoFormat(format)
+            ? qualityToHeight(bitrate)
+            : undefined
         },
         { isCanceled: () => !!job.canceled }
       );
@@ -730,8 +1081,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       actualInputPath = filePath;
     }
 
-        const isVideo = format === "mp4";
-    const isEac3Ac3 = format === "eac3" || format === "ac3" || format === "aac";
+    const isVideo = format === "mp4";
+    const isEac3Ac3 =
+      format === "eac3" || format === "ac3" || format === "aac";
     if (!coverPath && typeof actualInputPath === "string") {
       const baseNoExt = actualInputPath.replace(/\.[^.]+$/, "");
       const sidecar = `${baseNoExt}.jpg`;
@@ -740,22 +1092,33 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
     let singleMeta = { ...(job.metadata.extracted || {}) };
     try {
-      const ytMusicSingle = await probeYoutubeMusicMeta(singleMeta.webpage_url || job.metadata.url);
+      const ytMusicSingle = await probeYoutubeMusicMeta(
+        singleMeta.webpage_url || job.metadata.url
+      );
       singleMeta = mergeMeta(singleMeta, ytMusicSingle);
     } catch {}
     if (process.env.ENRICH_SPOTIFY_FOR_YT === "1") {
       try {
-        const spSingle = await findSpotifyMetaByQuery(singleMeta.artist, singleMeta.track, job?.metadata?.market);
+        const spSingle = await findSpotifyMetaByQuery(
+          singleMeta.artist,
+          singleMeta.track,
+          job?.metadata?.market
+        );
         singleMeta = mergeMeta(singleMeta, spSingle);
-        if (!singleMeta.publisher && spSingle?.label) singleMeta.publisher = spSingle.label;
+        if (!singleMeta.publisher && spSingle?.label)
+          singleMeta.publisher = spSingle.label;
       } catch {}
     }
-    singleMeta.album_artist = singleMeta.album_artist || singleMeta.artist || "";
+    singleMeta.album_artist =
+      singleMeta.album_artist || singleMeta.artist || "";
 
     if (!coverPath && singleMeta?.coverUrl && typeof actualInputPath === "string") {
       try {
         const baseNoExt = actualInputPath.replace(/\.[^.]+$/, "");
-        const dl = await downloadThumbnail(singleMeta.coverUrl, `${baseNoExt}.cover`);
+        const dl = await downloadThumbnail(
+          singleMeta.coverUrl,
+          `${baseNoExt}.cover`
+        );
         if (dl) coverPath = dl;
       } catch {}
     }
@@ -763,7 +1126,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     job.counters = job.counters || {};
 
     const selectedAudioStreams = Array.isArray(selectedStreams.audio)
-      ? selectedStreams.audio.filter((idx) => Number.isInteger(idx) && idx >= 0)
+      ? selectedStreams.audio.filter(
+          (idx) => Number.isInteger(idx) && idx >= 0
+        )
       : [];
 
     const isAudioFormat = !isVideoFormatFlag;
@@ -784,17 +1149,27 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         };
 
         const perJobId = `${jobId}_a${i}`;
-        const existingOut = findExistingOutput(perJobId, format, OUTPUT_DIR);
+        const existingOut = findExistingOutput(
+          perJobId,
+          format,
+          OUTPUT_DIR
+        );
         const progressForStream = (p) => {
           const base = (i / total) * 100;
           const cur = base + (Number(p || 0) / total);
           job.convertProgress = Math.floor(cur);
-          job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+          job.progress = Math.floor(
+            (job.downloadProgress + job.convertProgress) / 2
+          );
         };
 
         let r;
         if (existingOut) {
-          r = { outputPath: `/download/${encodeURIComponent(path.basename(existingOut))}` };
+          r = {
+            outputPath: `/download/${encodeURIComponent(
+              path.basename(existingOut)
+            )}`
+          };
           progressForStream(100);
         } else {
           r = await convertMedia(
@@ -812,7 +1187,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             OUTPUT_DIR,
             TEMP_DIR,
             {
-              onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
+              onProcess: (child) => {
+                try {
+                  registerJobProcess(jobId, child);
+                } catch {}
+              },
               includeLyrics: !!job.metadata.includeLyrics,
               sampleRate: sampleRate,
               compressionLevel: job.metadata?.compressionLevel ?? null,
@@ -856,7 +1235,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
     const existingSingle = findExistingOutput(jobId, format, OUTPUT_DIR);
     const r = existingSingle
-      ? { outputPath: `/download/${encodeURIComponent(path.basename(existingSingle))}` }
+      ? {
+          outputPath: `/download/${encodeURIComponent(
+            path.basename(existingSingle)
+          )}`
+        }
       : await convertMedia(
           actualInputPath,
           format,
@@ -864,18 +1247,26 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           jobId,
           (p) => {
             job.convertProgress = Math.floor(p);
-            job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+            job.progress = Math.floor(
+              (job.downloadProgress + job.convertProgress) / 2
+            );
           },
           {
             ...singleMeta,
-            __maxHeight: isVideoFormatFlag ? qualityToHeight(bitrate) : undefined
+            __maxHeight: isVideoFormatFlag
+              ? qualityToHeight(bitrate)
+              : undefined
           },
           coverPath,
           isVideoFormat(format),
           OUTPUT_DIR,
           TEMP_DIR,
           {
-            onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
+            onProcess: (child) => {
+              try {
+                registerJobProcess(jobId, child);
+              } catch {}
+            },
             includeLyrics: !!job.metadata.includeLyrics,
             sampleRate: sampleRate,
             compressionLevel: job.metadata?.compressionLevel ?? null,
@@ -891,21 +1282,51 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           }
         );
 
-    job.resultPath = r;
+        job.resultPath = r;
     try {
       if (r?.outputPath) {
-        const extMap = { mp3: ".mp3", flac: ".flac", wav: ".wav", ogg: ".ogg", mp4: ".mp4" };
-        const desiredExt = extMap[format] || ('.' + String(format || 'mp3'));
-        let baseTitle =
-          job.metadata?.originalName ||
+        const extMap = {
+          mp3: ".mp3",
+          flac: ".flac",
+          wav: ".wav",
+          ogg: ".ogg",
+          mp4: ".mp4"
+        };
+        const desiredExt =
+          extMap[format] || "." + String(format || "mp3");
+        const artistCandidate =
+          singleMeta?.artist ||
+          singleMeta?.album_artist ||
+          job.metadata?.artist ||
+          job.metadata?.extracted?.artist ||
+          "";
+
+        const titleCandidate =
           singleMeta?.title ||
+          job.metadata?.title ||
           job.metadata?.extracted?.title ||
-          `job_${jobId}`;
+          "";
+
+        let baseTitle;
+        if (artistCandidate && titleCandidate) {
+          baseTitle = `${artistCandidate} - ${titleCandidate}`;
+        } else if (titleCandidate) {
+          baseTitle = titleCandidate;
+        } else {
+          baseTitle =
+            job.metadata?.originalName ||
+            singleMeta?.title ||
+            job.metadata?.extracted?.title ||
+            `job_${jobId}`;
+        }
+
         baseTitle = baseTitle.replace(/\.[^.]*$/, "");
         const safeBase = sanitizeFilename(toNFC(baseTitle)) || "output";
 
         let targetName = `${safeBase}${desiredExt}`;
-        const currentRel = decodeURIComponent(String(r.outputPath).replace(/^\/download\//, ""));
+        const currentRel = decodeURIComponent(
+          String(r.outputPath).replace(/^\/download\//, "")
+        );
         const currentAbs = path.join(OUTPUT_DIR, currentRel);
         let targetAbs = path.join(OUTPUT_DIR, targetName);
         if (fs.existsSync(targetAbs)) {
@@ -921,17 +1342,22 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
         if (fs.existsSync(currentAbs)) {
           fs.renameSync(currentAbs, targetAbs);
-          job.resultPath = { outputPath: `/download/${encodeURIComponent(targetName)}` };
+          job.resultPath = {
+            outputPath: `/download/${encodeURIComponent(targetName)}`
+          };
           const oldLrc = currentAbs.replace(/\.[^/.]+$/, "") + ".lrc";
           if (fs.existsSync(oldLrc)) {
             const newLrc = targetAbs.replace(/\.[^/.]+$/, "") + ".lrc";
-            try { fs.renameSync(oldLrc, newLrc); } catch {}
+            try {
+              fs.renameSync(oldLrc, newLrc);
+            } catch {}
           }
         }
       }
     } catch (e) {
       console.warn("Output rename warning:", e.message);
     }
+
     job.counters.cvDone = 1;
     if (job.metadata?.includeLyrics) {
       updateLyricsStatsLive(1, 1);
@@ -959,23 +1385,28 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     if (!error || String(error.message).toUpperCase() !== "CANCELED") {
       console.error("Job error:", error);
     }
-    try { killJobProcesses(jobId); } catch {}
+    try {
+      killJobProcesses(jobId);
+    } catch {}
     cleanupTempFiles(jobId, inputPath);
   }
 }
 
 function findExistingOutput(idPrefix, format, outDir) {
   try {
-    const exts = {
-      mp3: ["mp3"],
-      flac: ["flac"],
-      wav: ["wav"],
-      ogg: ["ogg", "oga"],
-      mp4: ["mp4", "m4a"]
-    }[format] || [format];
+    const exts =
+      {
+        mp3: ["mp3"],
+        flac: ["flac"],
+        wav: ["wav"],
+        ogg: ["ogg", "oga"],
+        mp4: ["mp4", "m4a"]
+      }[format] || [format];
     const files = fs.readdirSync(outDir);
-    const hit = files.find(f =>
-      f.startsWith(`${idPrefix}.`) && exts.some(e => f.toLowerCase().endsWith(`.${e}`))
+    const hit = files.find(
+      (f) =>
+        f.startsWith(`${idPrefix}.`) &&
+        exts.some((e) => f.toLowerCase().endsWith(`.${e}`))
     );
     return hit ? path.join(outDir, hit) : null;
   } catch {
@@ -983,8 +1414,15 @@ function findExistingOutput(idPrefix, format, outDir) {
   }
 }
 
-async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includeLyrics = false) {
-  const safeBase = sanitizeFilename(`${titleHint || "playlist"}_${jobId}`).normalize("NFC");
+async function makeZipFromOutputs(
+  jobId,
+  outputs,
+  titleHint = "playlist",
+  includeLyrics = false
+) {
+  const safeBase = sanitizeFilename(
+    `${titleHint || "playlist"}_${jobId}`
+  ).normalize("NFC");
   const zipName = `${safeBase}.zip`;
   const zipAbs = path.join(OUTPUT_DIR, zipName);
 
@@ -992,14 +1430,18 @@ async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includ
     const output = fs.createWriteStream(zipAbs);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
-    output.on("close", () => resolve(`/download/${encodeURIComponent(zipName)}`));
-    archive.on("error", err => reject(err));
+    output.on("close", () =>
+      resolve(`/download/${encodeURIComponent(zipName)}`)
+    );
+    archive.on("error", (err) => reject(err));
 
     archive.pipe(output);
 
     for (const r of outputs) {
       if (!r?.outputPath) continue;
-      const rel = decodeURIComponent(r.outputPath.replace(/^\/download\//, ""));
+      const rel = decodeURIComponent(
+        r.outputPath.replace(/^\/download\//, "")
+      );
       const abs = path.join(OUTPUT_DIR, rel);
       if (fs.existsSync(abs)) {
         const nfcName = path.basename(abs).normalize("NFC");
@@ -1022,13 +1464,17 @@ function cleanupTempFiles(jobId, originalInputPath, downloadedPath = null) {
     if (
       typeof originalInputPath === "string" &&
       fs.existsSync(originalInputPath) &&
-      originalInputPath.includes(path.resolve(process.cwd(), "uploads"))
+      originalInputPath.includes(
+        path.resolve(process.cwd(), "uploads")
+      )
     ) {
-      try { fs.unlinkSync(originalInputPath); } catch {}
+      try {
+        fs.unlinkSync(originalInputPath);
+      } catch {}
     }
 
     if (Array.isArray(downloadedPath)) {
-      downloadedPath.forEach(f => {
+      downloadedPath.forEach((f) => {
         try {
           if (
             typeof f === "string" &&
@@ -1041,21 +1487,27 @@ function cleanupTempFiles(jobId, originalInputPath, downloadedPath = null) {
       });
       const playlistDir = path.join(TEMP_DIR, jobId);
       if (fs.existsSync(playlistDir)) {
-        try { fs.rmSync(playlistDir, { recursive: true, force: true }); } catch {}
+        try {
+          fs.rmSync(playlistDir, { recursive: true, force: true });
+        } catch {}
       }
     } else if (
       typeof downloadedPath === "string" &&
       fs.existsSync(downloadedPath) &&
       downloadedPath.startsWith(TEMP_DIR + path.sep)
     ) {
-      try { fs.unlinkSync(downloadedPath); } catch {}
+      try {
+        fs.unlinkSync(downloadedPath);
+      } catch {}
     }
 
     try {
       const files = fs.readdirSync(TEMP_DIR);
       files.forEach((f) => {
         if (f.startsWith(jobId)) {
-          try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch {}
+          try {
+            fs.unlinkSync(path.join(TEMP_DIR, f));
+          } catch {}
         }
       });
     } catch {}

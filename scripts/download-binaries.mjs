@@ -199,7 +199,7 @@ const DEFAULTS = {
       out: 'mkvmerge'
     },
     ytdlp: {
-      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.11.12/yt-dlp',
+      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.12.08/yt-dlp',
       type: 'direct',
       out: 'yt-dlp'
     }
@@ -207,12 +207,12 @@ const DEFAULTS = {
 
   win32: {
     ffmpeg: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip',
       type: 'zip',
       find: 'ffmpeg.exe'
     },
     ffprobe: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip',
       type: 'zip',
       find: 'ffprobe.exe'
     },
@@ -222,7 +222,7 @@ const DEFAULTS = {
       find: 'mkvmerge.exe'
     },
     ytdlp: {
-      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.11.12/yt-dlp.exe',
+      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.12.08/yt-dlp.exe',
       type: 'direct',
       out: 'yt-dlp.exe'
     }

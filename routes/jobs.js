@@ -645,6 +645,7 @@ router.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
 router.post("/api/jobs", upload.single("file"), async (req, res) => {
   try {
     const body = req.body || {};
+    console.log("📦 RAW req.body.youtubeConcurrency:", body.youtubeConcurrency, "typeof:", typeof body.youtubeConcurrency);
     const metadata = {};
 
     const finalUploadPath = body.finalUploadPath;
@@ -693,8 +694,18 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       stereoConvert = "auto",
       atempoAdjust = "none",
       videoSettings: rawVideoSettings,
-      selectedStreams
+      selectedStreams,
+      youtubeConcurrency
     } = body;
+
+    const parsedYoutubeConc = Number(youtubeConcurrency);
+    const youtubeConcurrencyNormalized =
+      Number.isFinite(parsedYoutubeConc) && parsedYoutubeConc > 0
+        ? Math.min(16, Math.max(1, Math.round(parsedYoutubeConc)))
+        : 4;
+
+    console.log("🎛️ UI youtubeConcurrency:", youtubeConcurrency);
+    console.log("🎛️ Normalized concurrency:", youtubeConcurrencyNormalized);
 
     let selectedStreamsParsed = null;
     if (selectedStreams) {
@@ -925,6 +936,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         atempoAdjust: atempoAdjust,
         compressionLevel: normalizedCompressionLevel,
         selectedStreams: selectedStreamsParsed,
+        youtubeConcurrency: youtubeConcurrencyNormalized,
         volumeGain:
           volumeGain != null
             ? Number(volumeGain)

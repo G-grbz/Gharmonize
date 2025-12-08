@@ -464,19 +464,24 @@ export class MediaConverterApp {
     onUrlInputChange(url) {
         const isSpotify = this.isSpotifyUrl(url);
         const spotifyConcContainer = document.getElementById('spotifyConcurrencyContainer');
+        const youtubeConcContainer = document.getElementById('youtubeConcurrencyContainer');
 
         if (isSpotify) {
             document.getElementById('playlistCheckboxContainer').style.display = 'none';
             document.getElementById('normalUrlActions').style.display = 'none';
             document.getElementById('urlSpotifyActions').style.display = 'flex';
             document.getElementById('spotifyPreviewCard').style.display = 'block';
-            if (spotifyConcContainer) spotifyConcContainer.style.display = 'block';
+            if (spotifyConcContainer) spotifyConcContainer.style.display = 'flex';
+            if (youtubeConcContainer) youtubeConcContainer.style.display = 'none';
         } else {
             document.getElementById('playlistCheckboxContainer').style.display = 'flex';
             document.getElementById('normalUrlActions').style.display = 'flex';
             document.getElementById('urlSpotifyActions').style.display = 'none';
             document.getElementById('spotifyPreviewCard').style.display = 'none';
             if (spotifyConcContainer) spotifyConcContainer.style.display = 'none';
+            if (youtubeConcContainer) {
+            youtubeConcContainer.style.display = 'flex';
+            }
         }
     }
 
@@ -495,6 +500,7 @@ export class MediaConverterApp {
         const sequential = document.getElementById('sequentialChk')?.checked;
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
         const volumeGain = this.currentVolumeGain || 1.0;
+        const youtubeConcurrency = document.getElementById('youtubeConcurrencyInput')?.value || '4';
 
         let compressionLevel = null;
         let bitDepth = null;
@@ -525,47 +531,55 @@ export class MediaConverterApp {
         }
 
         if (isPlaylist) {
-            const selectedIndices = Array.from(this.previewManager.currentPreview.selected);
-            if (sequential && selectedIndices.length > 1) {
-                const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-                this.jobManager.ensureBatch(batchId, selectedIndices.length, { format, bitrate, source: this.t('ui.youtubePlaylist') });
-                for (const idx of selectedIndices) {
-                    const payload = {
-                        url, format, bitrate,
-                        sampleRate: sampleRate,
-                        isPlaylist: true,
-                        selectedIndices: [idx],
-                        clientBatch: batchId,
-                        includeLyrics,
-                        volumeGain,
-                        compressionLevel,
-                        bitDepth
-                    };
-                    this.jobManager.submitJob(payload);
-                }
-            } else {
-                const payload = {
-                    url, format, bitrate,
-                    isPlaylist: true,
-                    sampleRate: sampleRate,
-                    selectedIndices: selectedIndices.length ? selectedIndices : 'all',
-                    includeLyrics,
-                    volumeGain,
-                    compressionLevel,
-                    bitDepth
-                };
-                await this.jobManager.submitJob(payload);
-            }
-        } else {
-            const payload = {
-                url, format, bitrate,
-                isPlaylist: false,
-                sampleRate: Number(sampleRate),
-                includeLyrics,
-                volumeGain
-            };
-            await this.jobManager.submitJob(payload);
-        }
+    const selectedIndices = Array.from(this.previewManager.currentPreview.selected);
+
+    if (sequential && selectedIndices.length > 1) {
+      const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+      this.jobManager.ensureBatch(batchId, selectedIndices.length, {
+        format,
+        bitrate,
+        source: this.t('ui.youtubePlaylist')
+      });
+
+      for (const idx of selectedIndices) {
+        const payload = {
+          url, format, bitrate,
+          sampleRate: sampleRate,
+          isPlaylist: true,
+          selectedIndices: [idx],
+          clientBatch: batchId,
+          includeLyrics,
+          volumeGain,
+          compressionLevel,
+          bitDepth,
+          youtubeConcurrency: Number(youtubeConcurrency) || 4
+        };
+        this.jobManager.submitJob(payload);
+      }
+    } else {
+      const payload = {
+        url, format, bitrate,
+        isPlaylist: true,
+        sampleRate: sampleRate,
+        selectedIndices: selectedIndices.length ? selectedIndices : 'all',
+        includeLyrics,
+        volumeGain,
+        compressionLevel,
+        bitDepth,
+        youtubeConcurrency: Number(youtubeConcurrency) || 4
+      };
+      await this.jobManager.submitJob(payload);
+    }
+  } else {
+    const payload = {
+      url, format, bitrate,
+      isPlaylist: false,
+      sampleRate: Number(sampleRate),
+      includeLyrics,
+      volumeGain
+    };
+    await this.jobManager.submitJob(payload);
+  }
 
         document.getElementById('urlForm').reset();
         document.getElementById('playlistCheckbox').checked = false;

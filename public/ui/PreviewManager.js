@@ -363,9 +363,13 @@ export class PreviewManager {
             format === 'flac'
                 ? (document.getElementById('compressionLevelRange')?.value || '5')
                 : undefined;
+
+            const ytConcEl = document.getElementById('youtubeConcurrencyInput');
+            const youtubeConcurrency = ytConcEl ? Number(ytConcEl.value) || 4 : 4;
+
             const selectedIds = selected
-                .map(i => this.currentPreview.indexToId.get(i))
-                .filter(Boolean);
+            .map(i => this.currentPreview.indexToId.get(i))
+            .filter(Boolean);
 
             console.log("Selected IDs:", selectedIds);
 
@@ -386,7 +390,8 @@ export class PreviewManager {
                         sampleRate: sampleRate,
                         clientBatch: batchId,
                         includeLyrics,
-                        volumeGain
+                        volumeGain,
+                        youtubeConcurrency,
                     });
                 }
             } else {
@@ -399,7 +404,8 @@ export class PreviewManager {
                     bitrate,
                     sampleRate: sampleRate,
                     includeLyrics,
-                    volumeGain
+                    volumeGain,
+                    youtubeConcurrency,
                 });
             }
 
@@ -434,6 +440,8 @@ export class PreviewManager {
             const sampleRate = document.getElementById('sampleRateSelect').value;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
             const volumeGain = this.app.currentVolumeGain || 1.0;
+            const ytConcEl = document.getElementById('youtubeConcurrencyInput');
+            const youtubeConcurrency = ytConcEl ? Number(ytConcEl.value) || 4 : 4;
             const allIds = this.currentPreview.items.map(item => item.id).filter(Boolean);
 
             await this.app.jobManager.submitJob({
@@ -445,7 +453,8 @@ export class PreviewManager {
                 bitrate,
                 sampleRate: sampleRate,
                 includeLyrics,
-                volumeGain
+                volumeGain,
+                youtubeConcurrency,
             });
 
             this.app.showNotification(this.app.t('notif.allTracksQueued'), 'success', 'queue');
