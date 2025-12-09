@@ -113,6 +113,7 @@ TITLE_CLEAN_PIPE=1
 
 # Spotify region preferences
 SPOTIFY_MARKET=US
+SPOTIFY_DEBUG_MARKET=0
 SPOTIFY_FALLBACK_MARKETS=TR,GB,DE,FR
 
 # Server
@@ -122,6 +123,24 @@ PORT=5174
 LOCAL_INPUT_DIR=/path/to/local-inputs
 # Optional: If not set, the app will use the default built-in local-inputs directory.
 # Media placed in this folder becomes selectable in the UI without uploading (admin-only).
+
+# Title cleaning presets
+CLEAN_SUFFIXES="topic,official"
+CLEAN_PHRASES="official channel"
+CLEAN_PARENS="official"
+
+# CLEAN_SUFFIXES catches:
+#   Artist Name - Topic
+#   Artist Name - Official
+# Also catches single-word suffixes without hyphens:
+#   Artist Name Topic
+#   Artist Name Official
+
+# CLEAN_PHRASES catches multi-word endings:
+#   Artist Name - Official Channel
+
+# CLEAN_PARENS catches parenthesized forms:
+#   Artist Name (Official)
 
 ```
 
