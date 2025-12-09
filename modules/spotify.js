@@ -60,51 +60,57 @@ function _norm(s=""){
 export async function searchSpotifyBestTrackStrict(
   artist, title, market,
   {
-    targetDurationSec=null,
-    minScore=7,
-    titleRaw=null
+    targetDurationSec = null,
+    minScore = 7,
+    titleRaw = null
   } = {}
-){
+) {
   const api = await makeSpotify();
   const q = [artist, title].filter(Boolean).join(" ").trim();
-  const items = await withMarketFallback(async (mkt) => {
-    const resp = await api.searchTracks(q, { limit: 10, ...(mkt ? { market: mkt } : {}) });
-    const arr = resp?.body?.tracks?.items || [];
-    return arr.length ? arr : null;
-  }, resolveMarket(market));
+
+  const mkt = resolveMarket(market);
+  const resp = await api.searchTracks(q, {
+    limit: 10,
+    ...(mkt ? { market: mkt } : {})
+  });
+
+  const items = resp?.body?.tracks?.items || [];
   if (!items.length) return null;
 
-  const aN = _norm(artist||"");
-  const tN = _norm(title||"");
-  const tRawN = _norm(titleRaw||title||"");
+  const aN = _norm(artist || "");
+  const tN = _norm(title || "");
+  const tRawN = _norm(titleRaw || title || "");
 
-  const score = (it)=>{
-    const spTitle = _norm(it?.name||"");
-    const spArtist = _norm(it?.artists?.[0]?.name||"");
+  const score = (it) => {
+    const spTitle = _norm(it?.name || "");
+    const spArtist = _norm(it?.artists?.[0]?.name || "");
     let s = 0;
     if (spTitle === tN || spTitle === tRawN) s += 4;
     else if (spTitle.includes(tN) || tN.includes(spTitle)) s += 2;
-    if (aN){
+    if (aN) {
       if (spArtist === aN) s += 3;
       else if (spArtist.includes(aN) || aN.includes(spArtist)) s += 1;
     }
 
-    if (Number.isFinite(targetDurationSec) && it?.duration_ms){
-      const spSec = Math.round(it.duration_ms/1000);
-      const tol = Math.max(2, Math.round(targetDurationSec*0.02));
+    if (Number.isFinite(targetDurationSec) && it?.duration_ms) {
+      const spSec = Math.round(it.duration_ms / 1000);
+      const tol = Math.max(2, Math.round(targetDurationSec * 0.02));
       if (Math.abs(spSec - targetDurationSec) <= tol) s += 2;
     }
     return s;
   };
 
-  let best = null, bestScore = -1;
-  for (const it of items){
+  let best = null,
+    bestScore = -1;
+  for (const it of items) {
     const s = score(it);
-    if (s > bestScore){ best = it; bestScore = s; }
+    if (s > bestScore) {
+      best = it;
+      bestScore = s;
+    }
   }
-  return (bestScore >= minScore) ? best : null;
+  return bestScore >= minScore ? best : null;
 }
-
 
 export function trackToId3Meta(track) {
   if (!track) return null;
