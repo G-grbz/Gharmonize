@@ -41,6 +41,10 @@ export class PreviewManager {
             this.app.showNotification(this.app.t('notif.needUrl'), 'error', 'error');
             return;
         }
+
+        this.currentPreview.isSpotify = false;
+        this.currentPreview.streaming = false;
+
         if (this.app.isSpotifyUrl(url)) {
             try {
                 btn?.classList.add('btn-loading');
