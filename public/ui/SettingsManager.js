@@ -128,6 +128,10 @@ export class SettingsManager {
                     </button>
                 </div>
             </div>
+            <div class="form-group">
+                    <label for="f_UPLOAD_MAX_BYTES" data-i18n="settings.maxUpload">UPLOAD_MAX_BYTES</label>
+                    <input id="f_UPLOAD_MAX_BYTES" type="text" placeholder='' data-i18n-ph="ph.maxUpload">
+                </div>
                 <div class="form-group">
                     <label for="f_SPOTIFY_CLIENT_ID" data-i18n="settings.spotifyClientId">SPOTIFY_CLIENT_ID</label>
                     <input id="f_SPOTIFY_CLIENT_ID" type="text" >
@@ -137,12 +141,15 @@ export class SettingsManager {
                     <input id="f_SPOTIFY_CLIENT_SECRET" type="password" placeholder="••••••••" data-i18n-ph="ph.spotifyClientSecret" autocomplete="off" >
                 </div>
                 <div class="form-group">
-                    <label for="f_UPLOAD_MAX_BYTES" data-i18n="settings.maxUpload">UPLOAD_MAX_BYTES</label>
-                    <input id="f_UPLOAD_MAX_BYTES" type="text" placeholder='' data-i18n-ph="ph.maxUpload">
-                </div>
-                <div class="form-group">
                     <label for="f_SPOTIFY_MARKET" data-i18n="settings.spotifyMarket">SPOTIFY_MARKET</label>
                     <input id="f_SPOTIFY_MARKET" type="text" placeholder="TR, US, GB vb." data-i18n-ph="ph.spotifyMarket" >
+                </div>
+                <div class="form-group">
+                    <label for="f_SPOTIFY_DEBUG_MARKET" data-i18n="settings.spotifyDebugMarket">SPOTIFY_DEBUG_MARKET</label>
+                    <select id="f_SPOTIFY_DEBUG_MARKET">
+                        <option value="1">1</option>
+                        <option value="0">0</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label for="f_SPOTIFY_FALLBACK_MARKETS" data-i18n="settings.spotifyFallbackMarkets">SPOTIFY_FALLBACK_MARKETS</label>
@@ -168,6 +175,18 @@ export class SettingsManager {
                         <option value="1">1</option>
                         <option value="0">0</option>
                     </select>
+                </div>
+                <div class="form-group">
+                    <label for="f_CLEAN_SUFFIXES" data-i18n="settings.cSuffixes">CLEAN_SUFFIXES</label>
+                    <input id="f_CLEAN_SUFFIXES" type="text" placeholder="''" data-i18n-ph="ph.cSuffixes">
+                </div>
+                <div class="form-group">
+                    <label for="f_CLEAN_PHRASES" data-i18n="settings.cPhrases">CLEAN_PHRASES</label>
+                    <input id="f_CLEAN_PHRASES" type="text" placeholder="''" data-i18n-ph="ph.cPhrases">
+                </div>
+                <div class="form-group">
+                    <label for="f_CLEAN_PARENS" data-i18n="settings.cParens">CLEAN_PARENS</label>
+                    <input id="f_CLEAN_PARENS" type="text" placeholder="''" data-i18n-ph="ph.cParens">
                 </div>
                 <div class="form-group">
                     <label for="f_YTDLP_BIN" data-i18n="settings.ytdlpBin">YTDLP_BIN</label>
@@ -481,12 +500,16 @@ export class SettingsManager {
 
             document.getElementById('f_SPOTIFY_CLIENT_ID').value = s.SPOTIFY_CLIENT_ID || '';
             document.getElementById('f_SPOTIFY_CLIENT_SECRET').value = '';
+            document.getElementById('f_SPOTIFY_DEBUG_MARKET').value = s.SPOTIFY_DEBUG_MARKET || '';
             document.getElementById('f_SPOTIFY_MARKET').value = s.SPOTIFY_MARKET || '';
             document.getElementById('f_SPOTIFY_FALLBACK_MARKETS').value = s.SPOTIFY_FALLBACK_MARKETS || '';
             document.getElementById('f_YT_USE_MUSIC').value = s.YT_USE_MUSIC || '1';
             document.getElementById('f_PREFER_SPOTIFY_TAGS').value = s.PREFER_SPOTIFY_TAGS || '1';
             document.getElementById('f_TITLE_CLEAN_PIPE').value = s.TITLE_CLEAN_PIPE || '1';
             document.getElementById('f_YTDLP_UA').value = s.YTDLP_UA || '';
+            document.getElementById('f_CLEAN_SUFFIXES').value = s.CLEAN_SUFFIXES || '';
+            document.getElementById('f_CLEAN_PHRASES').value = s.CLEAN_PHRASES || '';
+            document.getElementById('f_CLEAN_PARENS').value = s.CLEAN_PARENS || '';
             document.getElementById('f_YTDLP_COOKIES').value = s.YTDLP_COOKIES || '';
             document.getElementById('f_YTDLP_COOKIES_FROM_BROWSER').value = s.YTDLP_COOKIES_FROM_BROWSER || '';
             document.getElementById('f_YTDLP_EXTRA').value = s.YTDLP_EXTRA || '';
@@ -519,11 +542,15 @@ export class SettingsManager {
             settings: {
                 SPOTIFY_CLIENT_ID: document.getElementById('f_SPOTIFY_CLIENT_ID').value.trim(),
                 SPOTIFY_CLIENT_SECRET: document.getElementById('f_SPOTIFY_CLIENT_SECRET').value.trim(),
+                SPOTIFY_DEBUG_MARKET: document.getElementById('f_SPOTIFY_DEBUG_MARKET').value.trim(),
                 SPOTIFY_MARKET: document.getElementById('f_SPOTIFY_MARKET').value.trim(),
                 SPOTIFY_FALLBACK_MARKETS: document.getElementById('f_SPOTIFY_FALLBACK_MARKETS').value.trim(),
                 YT_USE_MUSIC: document.getElementById('f_YT_USE_MUSIC').value,
                 PREFER_SPOTIFY_TAGS: document.getElementById('f_PREFER_SPOTIFY_TAGS').value,
                 TITLE_CLEAN_PIPE: document.getElementById('f_TITLE_CLEAN_PIPE').value,
+                CLEAN_SUFFIXES: document.getElementById('f_CLEAN_SUFFIXES').value,
+                CLEAN_PHRASES: document.getElementById('f_CLEAN_PHRASES').value,
+                CLEAN_PARENS: document.getElementById('f_CLEAN_PARENS').value,
                 YTDLP_UA: document.getElementById('f_YTDLP_UA').value,
                 YTDLP_COOKIES: document.getElementById('f_YTDLP_COOKIES').value,
                 YTDLP_COOKIES_FROM_BROWSER: document.getElementById('f_YTDLP_COOKIES_FROM_BROWSER').value,

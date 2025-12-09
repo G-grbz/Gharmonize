@@ -1,4 +1,13 @@
 {
+  "settings.cSuffixes": "Einwort-Titelbereinigung (mit Kommas trennen)",
+  "ph.cSuffixes": "entfernt Wörter wie - Topic oder - Official aus dem Titel, z. B.: topic, official",
+  "settings.cPhrases": "Mehrwort-Titelbereinigung (mit Kommas trennen)",
+  "ph.cPhrases": "entfernt Ausdrücke wie Offizieller Kanal oder Offizielles Video aus dem Titel, z. B.: offizieller kanal, offizielles video",
+  "settings.cParens": "Titelbereinigung für '( ... )' (mit Kommas trennen)",
+  "ph.cParens": "entfernt Elemente wie (Topic) oder (Official) aus dem Titel, z. B.: topic, official",
+  "settings.spotifyDebugMarket": "Spotify-Markt-Debug aktiviert (1 = ja)",
+  "settings.ytAcceptLang": "YouTube-Anfragesprache",
+  "notif.autoPlaylistChecked": "Diese URL sieht wie eine YouTube-Playlist aus. Bitte starte die Konvertierungen im Vorschaufenster.",
   "ui.youtubeConcurrencyHelp": "Maximale Anzahl gleichzeitiger Downloads und Konvertierungen. Höhere Werte können die CPU- und Festplattenauslastung steigern.",
   "label.spotifyConcurrency": "Max. gleichzeitige Downloads/Konvertierungen",
   "ui.spotifyConcurrencyHelp": "Legt die maximale Anzahl gleichzeitiger Downloads und Konvertierungen fest, sofern genügend Treffer vorhanden sind. Höhere Werte können CPU-/Festplattenauslastung erhöhen.",

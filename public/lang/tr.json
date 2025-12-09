@@ -1,4 +1,13 @@
 {
+  "settings.cSuffixes": "Tek Kelimeli Başlık Temizliği (virgül ile ayarın)",
+  "ph.cSuffixes": "başlıktaki  - Konu yada - Official gibi kelimeleri kaldırır örn: konu,official vb",
+  "settings.cPhrases": " Çok Kelimeli Başlık Temizliği (virgül ile ayarın)",
+  "ph.cPhrases": "başlıktaki Resmi Kanal yada  Official Kanal gibi kelimeleri kaldırır. örn: official kanal,official video",
+  "settings.cParens": "' ( ... ) ' li Başlık Temizliği (virgül ile ayarın)",
+  "ph.cParens": "başlıktaki  (Konu) yada  (Official) gibi kelimeleri kaldırır. örn: konu,official vb",
+  "settings.spotifyDebugMarket": "Spotify Maket Debug Etkin (1= evet)",
+  "settings.ytAcceptLang": "Yt İstek Dil Tercihi",
+  "notif.autoPlaylistChecked": "Bu URL YouTube playlist gibi görünüyor. Lütfen dönüşümleri önizleme penceresinden başlatın.",
   "ui.youtubeConcurrencyHelp": "Maksimum eş zamanlı indirme ve dönüştürme sayısı. Daha yüksek değerler CPU ve disk kullanımını artırabilir.",
   "label.spotifyConcurrency": "Maks. Eşzamanlı indirme/dönüştürme",
   "ui.spotifyConcurrencyHelp": "Eşleşmeler yeterli sayıda ise eş zamanlı maks. indirme ve dönüştürme sayısı. Yüksek değerler CPU / disk kullanımını artırabilir.",

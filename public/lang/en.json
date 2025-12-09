@@ -1,4 +1,13 @@
 {
+  "settings.cSuffixes": "Single-Word Title Cleaning (separate with commas)",
+  "ph.cSuffixes": "removes words like - Topic or - Official from the title, e.g.: topic, official",
+  "settings.cPhrases": "Multi-Word Title Cleaning (separate with commas)",
+  "ph.cPhrases": "removes phrases like Official Channel or Official Video from the title, e.g.: official channel, official video",
+  "settings.cParens": "Title Cleaning for '( ... )' (separate with commas)",
+  "ph.cParens": "removes things like (Topic) or (Official) from the title, e.g.: topic, official",
+  "settings.spotifyDebugMarket": "Spotify Market Debug Enabled (1 = yes)",
+  "settings.ytAcceptLang": "YouTube Request Language Preference",
+  "notif.autoPlaylistChecked": "This URL looks like a YouTube playlist. Please start conversions from the preview window.",
   "ui.youtubeConcurrencyHelp": "Maximum number of simultaneous downloads and conversions. Higher values may increase CPU and disk usage.",
   "label.spotifyConcurrency": "Max concurrent downloads/conversions",
   "ui.spotifyConcurrencyHelp": "If enough matches are available, sets the maximum number of concurrent downloads and conversions. Higher values may increase CPU/disk usage.",

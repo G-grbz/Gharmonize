@@ -11,6 +11,17 @@ export class PreviewManager {
         this.previewAbort = null;
     }
 
+    cleanUploader(uploader = '') {
+    let s = String(uploader).trim().replace(/\s+/g, ' ');
+
+    s = s.replace(/\s*-\s*(topic)\s*$/i, '');
+    s = s.replace(/\s*-\s*(official)(?:\s+(channel))?\s*$/i, '');
+    s = s.replace(/\s+(official|topic)\s*$/i, '');
+    s = s.replace(/\s*\((official)\)\s*$/i, '');
+
+    return s.trim();
+}
+
     async handlePreviewClick() {
         const url = document.getElementById('urlInput').value.trim();
         if (this.app.isSpotifyUrl(url)) {
@@ -24,6 +35,8 @@ export class PreviewManager {
         const url = document.getElementById('urlInput').value.trim();
         const isPlaylist = document.getElementById('playlistCheckbox').checked;
         const btn = document.getElementById('previewBtn');
+        const startConvertBtn = document.getElementById('startConvertBtn');
+
         if (!url) {
             this.app.showNotification(this.app.t('notif.needUrl'), 'error', 'error');
             return;
@@ -33,6 +46,9 @@ export class PreviewManager {
                 btn?.classList.add('btn-loading');
                 btn?.setAttribute('disabled', 'disabled');
                 btn.textContent = this.app.t('ui.loading');
+
+                startConvertBtn?.setAttribute('disabled', 'disabled');
+
                 const batchSize = Number(document.getElementById('pageSizeSel').value) || 10;
                 await this.streamPreviewByPaging(url, Math.max(1, Math.min(50, batchSize)));
             } catch (e) {
@@ -41,20 +57,28 @@ export class PreviewManager {
                 btn?.classList.remove('btn-loading');
                 btn?.removeAttribute('disabled');
                 btn.textContent = this.app.t('btn.preview');
+
+                startConvertBtn?.removeAttribute('disabled');
             }
             return;
         }
+
         if (!isPlaylist) {
             this.app.showNotification(this.app.t('notif.checkPlaylist'), 'error', 'error');
             return;
         }
+
         this.currentPreview.url = url;
         this.currentPreview.page = 1;
         this.currentPreview.pageSize = Number(document.getElementById('pageSizeSel').value) || 25;
+
         try {
             btn?.classList.add('btn-loading');
             btn?.setAttribute('disabled', 'disabled');
             btn.textContent = this.app.t('ui.loading');
+
+            startConvertBtn?.setAttribute('disabled', 'disabled');
+
             if (this.previewAbort) this.previewAbort.abort();
             this.previewAbort = new AbortController();
             const res = await fetch('/api/playlist/preview', {
@@ -86,6 +110,8 @@ export class PreviewManager {
             btn?.classList.remove('btn-loading');
             btn?.removeAttribute('disabled');
             btn.textContent = this.app.t('btn.preview');
+
+            startConvertBtn?.removeAttribute('disabled');
         }
     }
 
@@ -148,13 +174,16 @@ export class PreviewManager {
             if (item && Number.isFinite(item.index) && item.title) {
                 this.currentPreview.indexToTitle.set(item.index, item.title);
             }
+
+            const cleanUploader = this.cleanUploader(item.uploader || '');
+
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
                 <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
                 <div>
                     <div class="preview-title">${item.index}. ${this.app.escapeHtml(item.title || '')}</div>
-                    <div class="muted">${this.app.escapeHtml(item.uploader || '')}</div>
+                    <div class="muted">${this.app.escapeHtml(cleanUploader)}</div>
                 </div>
                 <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
                 <div class="row-right"><input type="checkbox" data-index="${item.index}" /></div>
@@ -266,13 +295,16 @@ export class PreviewManager {
             if (item && Number.isFinite(item.index) && item.title) {
                 this.currentPreview.indexToTitle.set(item.index, item.title);
             }
+
+            const cleanUploader = this.cleanUploader(item.uploader || '');
+
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
                 <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
                 <div>
                     <div class="preview-title">${item.index}. ${this.app.escapeHtml(item.title || '')}</div>
-                    <div class="muted">${this.app.escapeHtml(item.uploader || '')}</div>
+                    <div class="muted">${this.app.escapeHtml(cleanUploader)}</div>
                 </div>
                 <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
                 <div class="row-right"><input type="checkbox" data-index="${item.index}" /></div>
@@ -339,7 +371,7 @@ export class PreviewManager {
             return;
         }
 
-        const selected = Array.from(this.currentPreview.selected);
+        const selected = Array.from(this.currentPreview.selected).sort((a, b) => a - b);
         if (!selected.length) {
             this.app.showNotification(this.app.t('notif.selectAtLeastOne'), 'error', 'error');
             return;
@@ -371,7 +403,16 @@ export class PreviewManager {
             .map(i => this.currentPreview.indexToId.get(i))
             .filter(Boolean);
 
-            console.log("Selected IDs:", selectedIds);
+            const frozenEntries = this.currentPreview.items
+                .filter(item => selected.includes(item.index))
+                .map(item => ({
+                    index: item.index,
+                    id: item.id || null,
+                    title: item.title || '',
+                    uploader: item.uploader || '',
+                    duration: item.duration || null,
+                    webpage_url: item.webpage_url || ''
+                }));
 
             if (sequential && selected.length > 1) {
                 const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -380,6 +421,8 @@ export class PreviewManager {
                     const idFromMap = this.currentPreview.indexToId.get(idx);
                     const itemId = idFromMap ? [idFromMap] : null;
 
+                    const frozenForIdx = frozenEntries.filter(e => e.index === idx);
+
                     await this.app.jobManager.submitJob({
                         url: this.currentPreview.url,
                         isPlaylist: true,
@@ -387,11 +430,12 @@ export class PreviewManager {
                         selectedIds: itemId,
                         format,
                         bitrate,
-                        sampleRate: sampleRate,
+                        sampleRate,
                         clientBatch: batchId,
                         includeLyrics,
                         volumeGain,
                         youtubeConcurrency,
+                        frozenEntries: frozenForIdx
                     });
                 }
             } else {
@@ -402,10 +446,11 @@ export class PreviewManager {
                     selectedIds: selectedIds.length ? selectedIds : null,
                     format,
                     bitrate,
-                    sampleRate: sampleRate,
+                    sampleRate,
                     includeLyrics,
                     volumeGain,
                     youtubeConcurrency,
+                    frozenEntries
                 });
             }
 
@@ -444,6 +489,15 @@ export class PreviewManager {
             const youtubeConcurrency = ytConcEl ? Number(ytConcEl.value) || 4 : 4;
             const allIds = this.currentPreview.items.map(item => item.id).filter(Boolean);
 
+            const frozenEntries = this.currentPreview.items.map(item => ({
+                index: item.index,
+                id: item.id || null,
+                title: item.title || '',
+                uploader: item.uploader || '',
+                duration: item.duration || null,
+                webpage_url: item.webpage_url || ''
+            }));
+
             await this.app.jobManager.submitJob({
                 url: this.currentPreview.url,
                 isPlaylist: true,
@@ -451,10 +505,11 @@ export class PreviewManager {
                 selectedIds: allIds,
                 format,
                 bitrate,
-                sampleRate: sampleRate,
+                sampleRate,
                 includeLyrics,
                 volumeGain,
                 youtubeConcurrency,
+                frozenEntries
             });
 
             this.app.showNotification(this.app.t('notif.allTracksQueued'), 'success', 'queue');

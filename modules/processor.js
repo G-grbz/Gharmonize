@@ -4,7 +4,7 @@ import archiver from "archiver";
 import { resolveId3StrictForYouTube } from "./tags.js";
 import { resolveMarket } from "./market.js";
 import { jobs, registerJobProcess, killJobProcesses } from "./store.js";
-import { sanitizeFilename, toNFC } from "./utils.js";
+import { sanitizeFilename, toNFC, normalizeTitle } from "./utils.js";
 import { processYouTubeVideoJob, qualityToHeight } from "./video.js";
 import {
   isYouTubeAutomix,
@@ -35,6 +35,53 @@ function clampInt(v, min, max) {
 
 function bump(obj, key, inc = 1) {
   obj[key] = (obj[key] || 0) + inc;
+}
+
+function cleanNameDynamic(name) {
+  if (!name) return "";
+  let s = String(name).trim().replace(/\s+/g, " ");
+
+  const suffixes = (process.env.CLEAN_SUFFIXES || "")
+    .split(",")
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  const phrases = (process.env.CLEAN_PHRASES || "")
+    .split(",")
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  const parens = (process.env.CLEAN_PARENS || "")
+    .split(",")
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  if (suffixes.length) {
+    const sufRegex = new RegExp(`\\s*-\\s*(${suffixes.join("|")})\\s*$`, "i");
+    s = s.replace(sufRegex, "");
+  }
+
+  if (suffixes.length) {
+    const sufEndRegex = new RegExp(`\\s+(${suffixes.join("|")})\\s*$`, "i");
+    s = s.replace(sufEndRegex, "");
+  }
+
+  if (phrases.length) {
+    const phrRegex = new RegExp(
+      `\\s*-?\\s*(${phrases.map(x => x.replace(/\s+/g, "\\s+")).join("|")})\\s*$`,
+      "i"
+    );
+    s = s.replace(phrRegex, "");
+  }
+
+  if (parens.length) {
+    const parRegex = new RegExp(
+      `\\s*\\((${parens.join("|")})\\)\\s*$`,
+      "i"
+    );
+    s = s.replace(parRegex, "");
+  }
+  return s.trim();
 }
 
 function mergeMeta(base, extra) {
@@ -88,7 +135,14 @@ export async function processJob(jobId, inputPath, format, bitrate) {
   } catch {}
 
   const job = jobs.get(jobId);
-  if (!job) return;
+if (!job) return;
+
+console.log("🧊 job.metadata.frozenEntries snapshot:",
+  Array.isArray(job.metadata?.frozenEntries)
+    ? { len: job.metadata.frozenEntries.length,
+        sample: job.metadata.frozenEntries.slice(0, 3) }
+    : job.metadata?.frozenEntries
+);
 
   const selectedStreams = job.metadata?.selectedStreams || {};
 
@@ -492,13 +546,15 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
       const flat = {
         title: toNFC(ytMeta?.title || ""),
-        uploader: toNFC(ytMeta?.uploader || ytMeta?.channel || ""),
+        uploader: toNFC(cleanNameDynamic(ytMeta?.uploader || ytMeta?.channel || "")),
         artist: toNFC(
-          ytMeta?.artist ||
-            ytMeta?.creator ||
-            ytMeta?.uploader ||
-            ytMeta?.channel ||
-            ""
+          cleanNameDynamic(
+            ytMeta?.artist ||
+              ytMeta?.creator ||
+              ytMeta?.uploader ||
+              ytMeta?.channel ||
+              ""
+          )
         ),
         track: ytMeta?.track || "",
         album: toNFC(ytMeta?.album || ""),
@@ -580,6 +636,24 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           if (e?.id) byIdRaw.set(e.id, e);
         }
         const trackLyricsMap = new Map();
+        const frozenByIndex = new Map();
+        const frozenById = new Map();
+
+        if (Array.isArray(job.metadata?.frozenEntries)) {
+          for (const e of job.metadata.frozenEntries) {
+            if (!e) continue;
+
+            const idx = Number(e.index);
+            if (Number.isFinite(idx)) {
+              frozenByIndex.set(idx, { ...e, index: idx });
+            }
+
+            if (e.id) {
+              frozenById.set(e.id, { ...e, index: Number.isFinite(idx) ? idx : e.index });
+            }
+          }
+        }
+
         const youtubeConcurrency = job.metadata?.youtubeConcurrency || 4;
         console.log("⚡ Processing with youtubeConcurrency:", youtubeConcurrency);
         const youtubeLimiter = createLimiter(youtubeConcurrency);
@@ -592,28 +666,50 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           filePath,
           explicitPlaylistIndex = null
         ) {
-          const playlistIndex =
-            Number.isFinite(explicitPlaylistIndex) &&
-            explicitPlaylistIndex != null
-              ? explicitPlaylistIndex
-              : parsePlaylistIndexFromPath(filePath) || autoIndex + 1;
+          const baseName = path.basename(filePath);
 
-          let entry = {};
+        const fromParser = parsePlaylistIndexFromPath(baseName);
+        const regexMatch = baseName.match(/^(\d+)\s*-\s*/);
+        const indexFromName = Number.isFinite(fromParser)
+          ? fromParser
+          : (regexMatch ? Number(regexMatch[1]) : NaN);
 
-          if (Array.isArray(selectedIds) && selectedIds.length) {
-            const pinnedId =
-              selectedIds[autoIndex] ||
-              selectedIds[playlistIndex - 1] ||
-              null;
-            if (pinnedId && byIdRaw.has(pinnedId)) {
-              entry = byIdRaw.get(pinnedId) || {};
+        const playlistIndex =
+          Number.isFinite(indexFromName)
+            ? indexFromName
+            : (Number.isFinite(explicitPlaylistIndex) && explicitPlaylistIndex != null
+                ? explicitPlaylistIndex
+                : autoIndex + 1);
+
+          let frozen = null;
+          if (Number.isFinite(playlistIndex)) {
+            frozen = frozenByIndex.get(playlistIndex) || null;
+          }
+
+          if (!frozen && Array.isArray(selectedIds) && selectedIds.length) {
+            const pinnedId = selectedIds[playlistIndex - 1] || null;
+            if (pinnedId && frozenById.has(pinnedId)) {
+              frozen = frozenById.get(pinnedId);
             }
           }
 
-          if (!entry || Object.keys(entry).length === 0) {
-            if (Number.isFinite(playlistIndex) && byIndex.has(playlistIndex)) {
-              entry = byIndex.get(playlistIndex) || {};
-            }
+          let entry = {};
+
+          if (frozen?.id && byIdRaw.has(frozen.id)) {
+            entry = byIdRaw.get(frozen.id) || {};
+          } else if (Number.isFinite(playlistIndex) && byIndex.has(playlistIndex)) {
+            entry = byIndex.get(playlistIndex) || {};
+          }
+
+          if (frozen) {
+            entry = {
+              ...entry,
+              id: frozen.id || entry.id,
+              title: frozen.title || entry.title,
+              uploader: frozen.uploader || entry.uploader,
+              artist: frozen.artist || entry.artist,
+              webpage_url: frozen.webpage_url || entry.webpage_url
+            };
           }
 
           const fallbackTitle = path
@@ -652,6 +748,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           if (/^(youtube|youtube\s+mix)$/i.test((fileMeta.artist || "").trim())) {
             fileMeta.artist = "";
           }
+
+          fileMeta.uploader = cleanNameDynamic(fileMeta.uploader);
+          fileMeta.artist = cleanNameDynamic(fileMeta.artist);
+          fileMeta.album_artist = cleanNameDynamic(fileMeta.album_artist);
 
           try {
             const ytMusic = await probeYoutubeMusicMeta(
@@ -713,6 +813,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               },
               { market: resolveMarket(), isPlaylist: true }
             );
+
             if (strictMeta) {
               fileMeta = {
                 ...fileMeta,
@@ -731,12 +832,40 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 if (!fileMeta.label) fileMeta.label = strictMeta.label;
                 if (!fileMeta.publisher) fileMeta.publisher = strictMeta.label;
               }
+            } else {
+              const guess = buildId3FromYouTube({
+                title: fileMeta.title,
+                uploader: fileMeta.artist || fileMeta.uploader,
+                thumbnail: itemCover ? null : flat.thumbnail,
+                webpage_url: fileMeta.webpage_url
+              });
+
+              if (guess) {
+                fileMeta = {
+                  ...fileMeta,
+                  title: guess.title || fileMeta.title,
+                  track: guess.track || fileMeta.track || guess.title || fileMeta.title,
+                  artist: guess.artist || fileMeta.artist,
+                  uploader: guess.uploader || fileMeta.uploader,
+                  genre: fileMeta.genre,
+                  label: fileMeta.label,
+                  publisher: fileMeta.publisher,
+                  copyright: fileMeta.copyright,
+                  album_artist:
+                    fileMeta.album_artist ||
+                    guess.artist ||
+                    fileMeta.artist
+                };
+                fileMeta.album_artist = toNFC(
+                  fileMeta.album_artist || fileMeta.artist || ""
+                );
+              }
             }
           } catch (error) {
             console.warn(`ID3 strict resolution error: ${error.message}`);
           }
 
-                    const totalTracks = job.playlist?.total || totalGuess || 1;
+          const totalTracks = job.playlist?.total || totalGuess || 1;
           const existingOut = findExistingOutput(
             `${jobId}_${autoIndex}`,
             format,
@@ -856,13 +985,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 Number(progress.downloaded || 0)
               );
               job.downloadProgress = Math.max(
-                10,
-                Math.min(
-                  100,
-                  10 +
-                    (job.counters.dlDone /
-                      Math.max(1, job.counters.dlTotal || t || 1)) *
-                      90
+              10,
+              Math.min(
+              100,
+              10 +
+                (job.counters.dlDone /
+                  Math.max(1, job.counters.dlTotal || t || 1)) *
+                  90
                 )
               );
               if (job.playlist && job.currentPhase === "downloading") {
@@ -1110,7 +1239,27 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       } catch {}
     }
     singleMeta.album_artist =
-      singleMeta.album_artist || singleMeta.artist || "";
+    singleMeta.album_artist || singleMeta.artist || "";
+    singleMeta.uploader = cleanNameDynamic(singleMeta.uploader);
+    singleMeta.artist = cleanNameDynamic(singleMeta.artist);
+    singleMeta.album_artist = cleanNameDynamic(singleMeta.album_artist);
+
+    try {
+      const artistForMeta =
+        singleMeta?.artist ||
+        singleMeta?.album_artist ||
+        job.metadata?.artist ||
+        job.metadata?.extracted?.artist ||
+        "";
+
+      if (singleMeta.title && artistForMeta) {
+        const coreTitle = normalizeTitle(singleMeta.title, artistForMeta);
+        singleMeta.title =
+          artistForMeta && coreTitle
+            ? `${artistForMeta} - ${coreTitle}`
+            : singleMeta.title;
+      }
+    } catch {}
 
     if (!coverPath && singleMeta?.coverUrl && typeof actualInputPath === "string") {
       try {
@@ -1294,12 +1443,6 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         };
         const desiredExt =
           extMap[format] || "." + String(format || "mp3");
-        const artistCandidate =
-          singleMeta?.artist ||
-          singleMeta?.album_artist ||
-          job.metadata?.artist ||
-          job.metadata?.extracted?.artist ||
-          "";
 
         const titleCandidate =
           singleMeta?.title ||
@@ -1307,15 +1450,28 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           job.metadata?.extracted?.title ||
           "";
 
+        const artistForName =
+          singleMeta?.artist ||
+          singleMeta?.album_artist ||
+          job.metadata?.artist ||
+          job.metadata?.extracted?.artist ||
+          "";
+
+        const titleForFilename = normalizeTitle(
+          titleCandidate,
+          artistForName
+        );
+
         let baseTitle;
-        if (artistCandidate && titleCandidate) {
-          baseTitle = `${artistCandidate} - ${titleCandidate}`;
+
+        if (artistForName && titleForFilename) {
+          baseTitle = `${artistForName} - ${titleForFilename}`;
         } else if (titleCandidate) {
           baseTitle = titleCandidate;
         } else {
           baseTitle =
             job.metadata?.originalName ||
-            singleMeta?.title ||
+            singleMeta?.track ||
             job.metadata?.extracted?.title ||
             `job_${jobId}`;
         }

@@ -7,7 +7,7 @@ import {
   isYouTubeAutomix,
   idsToMusicUrls
 } from "./yt.js";
-import { sanitizeFilename } from "./utils.js";
+import { sanitizeFilename, normalizeTitle } from "./utils.js"
 import { convertMedia } from "./media.js";
 import "dotenv/config";
 import { spawn as spawnChild } from "child_process";
@@ -337,10 +337,15 @@ export async function processYouTubeVideoJob(job, {
         flat.uploader ||
         "";
 
-      const titleRaw =
+      let titleRaw =
         feEntry?.title ||
         cleaned ||
         "video";
+
+      if (artistRaw && titleRaw) {
+        const core = normalizeTitle(titleRaw, artistRaw);
+        if (core) titleRaw = core;
+      }
 
       const baseTitle = artistRaw
         ? `${artistRaw} - ${titleRaw}`
@@ -460,7 +465,12 @@ export async function processYouTubeVideoJob(job, {
   const cleaned = stripLeadingPrefix(rawBase, job.id).replace(ext, "").trim();
 
   const artistRaw = flat.uploader || "";
-  const titleRaw  = flat.title || cleaned || "video";
+  let titleRaw  = flat.title || cleaned || "video";
+
+  if (artistRaw && titleRaw) {
+    const core = normalizeTitle(titleRaw, artistRaw);
+    if (core) titleRaw = core;
+  }
 
   const baseTitle = artistRaw
     ? `${artistRaw} - ${titleRaw}`

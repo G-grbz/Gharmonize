@@ -1,4 +1,13 @@
 {
+  "settings.cSuffixes": "Nettoyage des titres (mots simples) (séparez par des virgules)",
+  "ph.cSuffixes": "supprime des mots comme - Topic ou - Official dans le titre, ex. : topic, official",
+  "settings.cPhrases": "Nettoyage des titres (expressions multiples) (séparez par des virgules)",
+  "ph.cPhrases": "supprime des expressions comme Chaîne Officielle ou Vidéo Officielle du titre, ex. : chaîne officielle, vidéo officielle",
+  "settings.cParens": "Nettoyage des titres avec '( ... )' (séparez par des virgules)",
+  "ph.cParens": "supprime des éléments comme (Topic) ou (Official) du titre, ex. : topic, official",
+  "settings.spotifyDebugMarket": "Débogage du marché Spotify activé (1 = oui)",
+  "settings.ytAcceptLang": "Préférence de langue pour les requêtes YouTube",
+  "notif.autoPlaylistChecked": "Cette URL ressemble à une playlist YouTube. Veuillez démarrer les conversions depuis la fenêtre d’aperçu.",
   "ui.youtubeConcurrencyHelp": "Nombre maximal de téléchargements et conversions simultanés. Des valeurs plus élevées peuvent augmenter l’utilisation du processeur et du disque.",
   "label.spotifyConcurrency": "Téléchargements/Conversions simultanés max.",
   "ui.spotifyConcurrencyHelp": "Définit le nombre maximal de téléchargements et conversions simultanés si suffisamment de correspondances sont disponibles. Des valeurs plus élevées peuvent augmenter l’utilisation du CPU/disque.",

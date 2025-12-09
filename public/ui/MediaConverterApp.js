@@ -26,6 +26,7 @@ export class MediaConverterApp {
         this.formatManager = new FormatManager(this);
         this.notificationManager = notificationManager;
         this.modalManager = modalManager;
+        this.lastPreviewedPlaylistUrl = null;
     }
 
     async initialize() {
@@ -128,9 +129,37 @@ export class MediaConverterApp {
             this.spotifyManager.startIntegratedSpotifyProcess();
         });
 
-        const urlForm = document.getElementById('urlForm');
+                const urlForm = document.getElementById('urlForm');
         if (urlForm) {
             urlForm.addEventListener('submit', (e) => this.handleUrlSubmitWithSpinner(e));
+        }
+
+        const startConvertBtn = document.getElementById('startConvertBtn');
+        if (startConvertBtn) {
+            startConvertBtn.addEventListener('click', (ev) => {
+                const urlInput = document.getElementById('urlInput');
+                const url = urlInput?.value.trim();
+                const playlistCheckboxEl = document.getElementById('playlistCheckbox');
+
+                if (
+                    url &&
+                    !this.isSpotifyUrl(url) &&
+                    this.isYoutubePlaylistUrl(url) &&
+                    playlistCheckboxEl &&
+                    !playlistCheckboxEl.checked
+                ) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    playlistCheckboxEl.checked = true;
+                    this.onPlaylistToggle(true);
+                    this.showNotification(
+                        this.t('notif.autoPlaylistChecked') ||
+                        'Bu URL bir YouTube playlist gibi görünüyor. Playlist modunu açtım, önce listeyi önizleyip sonra dönüştürebilirsin.',
+                        'info',
+                        'default'
+                    );
+                }
+            });
         }
 
         const startSpotifyBtn = document.getElementById('startSpotifyBtn');
@@ -452,19 +481,21 @@ export class MediaConverterApp {
     }
 
     onPlaylistToggle(isChecked) {
-        if (isChecked) {
-            const url = document.getElementById('urlInput').value.trim();
-            if (!url) { this.previewManager.hidePreview(); return; }
-            this.previewManager.previewPlaylist();
-        } else {
-            this.previewManager.hidePreview();
+            if (isChecked) {
+                const url = document.getElementById('urlInput').value.trim();
+                if (!url) { this.previewManager.hidePreview(); return; }
+                this.previewManager.previewPlaylist();
+            } else {
+                this.previewManager.hidePreview();
+            }
         }
-    }
 
-    onUrlInputChange(url) {
+        onUrlInputChange(url) {
         const isSpotify = this.isSpotifyUrl(url);
+        const isYoutubePl = !isSpotify && this.isYoutubePlaylistUrl(url);
         const spotifyConcContainer = document.getElementById('spotifyConcurrencyContainer');
         const youtubeConcContainer = document.getElementById('youtubeConcurrencyContainer');
+        const playlistCheckboxEl = document.getElementById('playlistCheckbox');
 
         if (isSpotify) {
             document.getElementById('playlistCheckboxContainer').style.display = 'none';
@@ -473,113 +504,129 @@ export class MediaConverterApp {
             document.getElementById('spotifyPreviewCard').style.display = 'block';
             if (spotifyConcContainer) spotifyConcContainer.style.display = 'flex';
             if (youtubeConcContainer) youtubeConcContainer.style.display = 'none';
-        } else {
-            document.getElementById('playlistCheckboxContainer').style.display = 'flex';
-            document.getElementById('normalUrlActions').style.display = 'flex';
-            document.getElementById('urlSpotifyActions').style.display = 'none';
-            document.getElementById('spotifyPreviewCard').style.display = 'none';
-            if (spotifyConcContainer) spotifyConcContainer.style.display = 'none';
-            if (youtubeConcContainer) {
-            youtubeConcContainer.style.display = 'flex';
-            }
+
+            this.lastPreviewedPlaylistUrl = null;
+            return;
         }
+
+        document.getElementById('playlistCheckboxContainer').style.display = 'flex';
+        document.getElementById('normalUrlActions').style.display = 'flex';
+        document.getElementById('urlSpotifyActions').style.display = 'none';
+        document.getElementById('spotifyPreviewCard').style.display = 'none';
+        if (spotifyConcContainer) spotifyConcContainer.style.display = 'none';
+        if (youtubeConcContainer) youtubeConcContainer.style.display = 'flex';
+
+        const trimmed = (url || '').trim();
+
+        if (!isYoutubePl || !trimmed) {
+            this.lastPreviewedPlaylistUrl = null;
+            return;
+        }
+
+        if (this.lastPreviewedPlaylistUrl === trimmed) {
+            return;
+        }
+        this.lastPreviewedPlaylistUrl = trimmed;
+
+        if (playlistCheckboxEl) {
+            playlistCheckboxEl.checked = true;
+        }
+        this.onPlaylistToggle(true);
     }
 
-    isSpotifyUrl(u) {
+        isSpotifyUrl(u) {
         return /^(https?:\/\/open\.spotify\.com|spotify:)/i.test(String(u || ""));
     }
 
-    async handleUrlSubmit(e) {
-        e.preventDefault();
-        const url = document.getElementById('urlInput').value.trim();
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
-        const sampleRateSelect = document.getElementById('sampleRateSelect');
-        const sampleRate = sampleRateSelect ? parseInt(sampleRateSelect.value) : 48000;
-        const isPlaylist = document.getElementById('playlistCheckbox').checked;
-        const sequential = document.getElementById('sequentialChk')?.checked;
-        const includeLyrics = document.getElementById('lyricsCheckbox').checked;
-        const volumeGain = this.currentVolumeGain || 1.0;
-        const youtubeConcurrency = document.getElementById('youtubeConcurrencyInput')?.value || '4';
+    isYoutubePlaylistUrl(u) {
+        if (!u) return false;
+        const str = String(u);
 
-        let compressionLevel = null;
-        let bitDepth = null;
+        try {
+            const url = new URL(str, window.location.origin);
 
-        const bitDepthSelect = document.getElementById('bitDepthSelect');
-        if (bitDepthSelect && (format === 'flac' || format === 'wav')) {
-            bitDepth = bitDepthSelect.value || null;
-        }
+            const host = url.hostname.toLowerCase();
+            const isYoutubeHost =
+                host.includes('youtube.com') ||
+                host.includes('youtu.be') ||
+                host.includes('music.youtube.com');
 
-        const compRange = document.getElementById('compressionLevelRange');
-        if (compRange && format === 'flac') {
-            compressionLevel = parseInt(compRange.value, 10);
-            if (!Number.isFinite(compressionLevel)) compressionLevel = null;
-        }
-
-        if ((format === 'eac3' || format === 'ac3' || format === 'aac') && !sampleRate) {
-            this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
-            return;
-        }
-
-        if (this.isSpotifyUrl(url)) {
-            if (!this.spotifyManager.currentSpotifyTask.completed) {
-                this.showNotification(this.t('notif.completeSpotifyFirst'), 'error', 'error');
-                return;
+            if (isYoutubeHost) {
+                if (url.searchParams.has('list')) return true;
+                if (/\/playlist/i.test(url.pathname)) return true;
             }
-            await this.spotifyManager.convertMatchedSpotify();
+        } catch {
+    }
+
+        if (/[?&]list=/.test(str)) return true;
+        if (/\/playlist/i.test(str)) return true;
+
+        return false;
+    }
+
+    async handleUrlSubmit(e) {
+    e.preventDefault();
+    const url = document.getElementById('urlInput').value.trim();
+    const format = document.getElementById('formatSelect').value;
+    const bitrate = document.getElementById('bitrateSelect').value;
+    const sampleRateSelect = document.getElementById('sampleRateSelect');
+    const sampleRate = sampleRateSelect ? parseInt(sampleRateSelect.value) : 48000;
+    const playlistCheckboxEl = document.getElementById('playlistCheckbox');
+    const isPlaylist = playlistCheckboxEl?.checked;
+    const sequential = document.getElementById('sequentialChk')?.checked;
+    const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+    const volumeGain = this.currentVolumeGain || 1.0;
+    const youtubeConcurrency = document.getElementById('youtubeConcurrencyInput')?.value || '4';
+
+    let compressionLevel = null;
+    let bitDepth = null;
+
+    const bitDepthSelect = document.getElementById('bitDepthSelect');
+    if (bitDepthSelect && (format === 'flac' || format === 'wav')) {
+        bitDepth = bitDepthSelect.value || null;
+    }
+
+    const compRange = document.getElementById('compressionLevelRange');
+    if (compRange && format === 'flac') {
+        compressionLevel = parseInt(compRange.value, 10);
+        if (!Number.isFinite(compressionLevel)) compressionLevel = null;
+    }
+
+    if ((format === 'eac3' || format === 'ac3' || format === 'aac') && !sampleRate) {
+        this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
+        return;
+    }
+
+    if (this.isSpotifyUrl(url)) {
+        if (!this.spotifyManager.currentSpotifyTask.completed) {
+            this.showNotification(this.t('notif.completeSpotifyFirst'), 'error', 'error');
             return;
         }
-
-        if (isPlaylist) {
-    const selectedIndices = Array.from(this.previewManager.currentPreview.selected);
-
-    if (sequential && selectedIndices.length > 1) {
-      const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-      this.jobManager.ensureBatch(batchId, selectedIndices.length, {
-        format,
-        bitrate,
-        source: this.t('ui.youtubePlaylist')
-      });
-
-      for (const idx of selectedIndices) {
-        const payload = {
-          url, format, bitrate,
-          sampleRate: sampleRate,
-          isPlaylist: true,
-          selectedIndices: [idx],
-          clientBatch: batchId,
-          includeLyrics,
-          volumeGain,
-          compressionLevel,
-          bitDepth,
-          youtubeConcurrency: Number(youtubeConcurrency) || 4
-        };
-        this.jobManager.submitJob(payload);
-      }
-    } else {
-      const payload = {
-        url, format, bitrate,
-        isPlaylist: true,
-        sampleRate: sampleRate,
-        selectedIndices: selectedIndices.length ? selectedIndices : 'all',
-        includeLyrics,
-        volumeGain,
-        compressionLevel,
-        bitDepth,
-        youtubeConcurrency: Number(youtubeConcurrency) || 4
-      };
-      await this.jobManager.submitJob(payload);
+        await this.spotifyManager.convertMatchedSpotify();
+        return;
     }
-  } else {
-    const payload = {
-      url, format, bitrate,
-      isPlaylist: false,
-      sampleRate: Number(sampleRate),
-      includeLyrics,
-      volumeGain
-    };
-    await this.jobManager.submitJob(payload);
-  }
+
+    if (isPlaylist && this.isYoutubePlaylistUrl(url)) {
+        this.onPlaylistToggle(true);
+        this.showNotification(
+            this.t('notif.usePlaylistControls') ||
+            'Bu URL bir playlist. Dönüştürmek için playlist önizleme kartındaki butonları kullan.',
+            'info',
+            'default'
+        );
+        return;
+    }
+
+        const payload = {
+            url,
+            format,
+            bitrate,
+            isPlaylist: false,
+            sampleRate: Number(sampleRate),
+            includeLyrics,
+            volumeGain
+        };
+        await this.jobManager.submitJob(payload);
 
         document.getElementById('urlForm').reset();
         document.getElementById('playlistCheckbox').checked = false;
@@ -638,6 +685,29 @@ export class MediaConverterApp {
     async handleUrlSubmitWithSpinner(e) {
         e.preventDefault();
 
+        const urlInput = document.getElementById('urlInput');
+        const url = urlInput?.value.trim();
+        const playlistCheckboxEl = document.getElementById('playlistCheckbox');
+
+        if (
+            url &&
+            !this.isSpotifyUrl(url) &&
+            this.isYoutubePlaylistUrl(url)
+        ) {
+            if (playlistCheckboxEl) {
+                playlistCheckboxEl.checked = true;
+            }
+            this.onPlaylistToggle(true);
+
+            this.showNotification(
+                this.t('notif.autoPlaylistChecked') ||
+                'Bu URL bir YouTube playlist gibi görünüyor. Lütfen dönüşümleri önizleme penceresinden başlatın.',
+                'info',
+                'default'
+            );
+            return;
+        }
+
         const startConvertBtn =
             document.getElementById('startConvertBtn') ||
             document.querySelector('#urlForm [type="submit"]');
@@ -662,7 +732,11 @@ export class MediaConverterApp {
             console.error('URL submission error:', error);
             this.showNotification(`${this.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
         } finally {
-            this.hideButtonSpinner(startConvertBtn, startConvertBtn?.querySelector('.btn-spinner') || null, startConvertBtn?.querySelector('.btn-text') || null);
+            this.hideButtonSpinner(
+                startConvertBtn,
+                startConvertBtn?.querySelector('.btn-spinner') || null,
+                startConvertBtn?.querySelector('.btn-text') || null
+            );
         }
     }
 

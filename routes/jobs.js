@@ -678,25 +678,46 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
   }
 
     const {
-      url,
-      format = "mp3",
-      bitrate = "192k",
-      sampleRate = "48000",
-      bitDepth,
-      sampleRateHz,
-      compressionLevel,
-      isPlaylist = false,
-      selectedIndices,
-      clientBatch,
-      spotifyMapId,
-      includeLyrics = false,
-      volumeGain,
-      stereoConvert = "auto",
-      atempoAdjust = "none",
-      videoSettings: rawVideoSettings,
-      selectedStreams,
-      youtubeConcurrency
-    } = body;
+  url,
+  format = "mp3",
+  bitrate = "192k",
+  sampleRate = "48000",
+  bitDepth,
+  sampleRateHz,
+  compressionLevel,
+  isPlaylist = false,
+  selectedIndices,
+  clientBatch,
+  spotifyMapId,
+  includeLyrics = false,
+  volumeGain,
+  stereoConvert = "auto",
+  atempoAdjust = "none",
+  videoSettings: rawVideoSettings,
+  selectedStreams,
+  youtubeConcurrency,
+  frozenEntries: rawFrozenEntries
+} = body;
+
+let frozenEntriesParsed = null;
+if (rawFrozenEntries) {
+  if (typeof rawFrozenEntries === "string") {
+    try {
+      const parsed = JSON.parse(rawFrozenEntries);
+      if (Array.isArray(parsed)) {
+        frozenEntriesParsed = parsed;
+      } else {
+        console.warn("frozenEntries (string) JSON parsed but not an array");
+      }
+    } catch (e) {
+      console.warn("Failed to parse frozenEntries JSON:", e.message);
+    }
+  } else if (Array.isArray(rawFrozenEntries)) {
+    frozenEntriesParsed = rawFrozenEntries;
+  } else {
+    console.warn("Unsupported frozenEntries type:", typeof rawFrozenEntries);
+  }
+}
 
     const parsedYoutubeConc = Number(youtubeConcurrency);
     const youtubeConcurrencyNormalized =
@@ -878,36 +899,44 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         sel = metadata.isPlaylist ? "all" : null;
       }
       metadata.selectedIndices = sel;
+      if (Array.isArray(req.body.selectedIds) && req.body.selectedIds.length > 0) {
+        metadata.selectedIds = req.body.selectedIds;
+      }
 
-      console.log("=== YOUTUBE AUTOMIX DEBUG ===");
+      console.log("=== YOUTUBE DEBUG ===");
       console.log("URL:", normalized);
+      console.log("isPlaylist:", metadata.isPlaylist);
       console.log("isAutomix:", metadata.isAutomix);
       console.log("selectedIndices:", sel);
       console.log("req.body.selectedIds:", req.body.selectedIds);
-      console.log("==============================");
+      console.log("metadata.selectedIds (after merge):", metadata.selectedIds);
+      console.log("================================");
 
-      if (metadata.isAutomix && Array.isArray(sel) && sel.length > 0 && sel !== "all") {
+      if (Array.isArray(frozenEntriesParsed) && frozenEntriesParsed.length > 0) {
+    metadata.frozenEntries = frozenEntriesParsed;
+    console.log("📌 YT frozenEntries attached from client. len =", frozenEntriesParsed.length);
+  }
+
+      if (metadata.isAutomix &&
+          !metadata.selectedIds &&
+          Array.isArray(sel) &&
+          sel.length > 0 &&
+          sel !== "all") {
         try {
-          console.log("Resolving Automix IDs...");
-
-          if (Array.isArray(req.body.selectedIds) && req.body.selectedIds.length > 0) {
-            metadata.selectedIds = req.body.selectedIds;
-            console.log("selectedIds taken from req.body:", metadata.selectedIds);
-          } else {
-            const automixData = await resolveAutomixSelectedIds(normalized, sel);
-            if (automixData.ids && automixData.ids.length > 0) {
-              metadata.selectedIds = automixData.ids;
-              metadata.frozenEntries = automixData.entries;
-              metadata.frozenTitle = automixData.title;
-              console.log("selectedIds fetched from API:", metadata.selectedIds);
-            }
+          console.log("Resolving Automix IDs (fallback)...");
+          const automixData = await resolveAutomixSelectedIds(normalized, sel);
+          if (automixData.ids && automixData.ids.length > 0) {
+            metadata.selectedIds = automixData.ids;
+            metadata.frozenEntries = automixData.entries;
+            metadata.frozenTitle = automixData.title;
+            console.log("selectedIds fetched from API:", metadata.selectedIds);
           }
-          console.log("Final selectedIds:", metadata.selectedIds);
         } catch (error) {
           console.warn("Could not retrieve Automix IDs:", error.message);
         }
       }
     }
+
     else if (isDirectMediaUrl(url)) {
         metadata.source = "direct_url";
         inputPath = url;

@@ -2814,6 +2814,12 @@ if (stopBtn) {
 
             const format = document.getElementById('formatSelect').value;
 
+            if (!isFormData && payload.youtubeConcurrency != null) {
+            payload.youtubeConcurrency = Number(payload.youtubeConcurrency) || 4;
+        } else if (isFormData && payload.youtubeConcurrency != null && typeof payload.append === 'function') {
+            payload.append('youtubeConcurrency', String(payload.youtubeConcurrency));
+        }
+
             if (format === 'mp4' && this.app.videoManager.videoSettings.transcodeEnabled) {
                 console.log("🎬 Adding video settings to payload:", this.app.videoManager.videoSettings);
                 if (!isFormData) {

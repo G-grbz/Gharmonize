@@ -16,6 +16,23 @@ export const ERR = {
   INTERNAL: 'INTERNAL'
 };
 
+export function escapeRegExp(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function normalizeTitle(rawTitle, artist) {
+  if (!rawTitle) return rawTitle;
+  const a = String(artist || "").trim();
+  let title = String(rawTitle).trim();
+  if (!a) return title;
+
+  const escaped = escapeRegExp(a);
+  const re = new RegExp(`^(?:${escaped}\\s*[-_–]+\\s*)+`, "i");
+  title = title.replace(re, "").trim();
+
+  return title;
+}
+
 export function sendOk(res, payload = {}, status = 200) {
   return res.status(status).json({ ok: true, ...payload });
 }
