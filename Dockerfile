@@ -6,21 +6,52 @@ WORKDIR /usr/src/app
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ffmpeg \
-        mkvtoolnix \
         curl \
+        wget \
         python3 \
         ca-certificates \
         tzdata \
         intel-media-va-driver \
         libva-drm2 \
-        vainfo; \
-    rm -rf /var/lib/apt/lists/*; \
-    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+        vainfo \
+        fuse3 \
+        xz-utils \
+        unzip \
+        gnupg; \
+    \
+
+    YTDLP_VERSION=2025.12.08; \
+    curl -L "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" \
       -o /usr/local/bin/yt-dlp; \
     chmod a+rx /usr/local/bin/yt-dlp; \
+    \
+
+    FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"; \
+    cd /tmp; \
+    curl -L "$FFMPEG_URL" -o ffmpeg.tar.xz; \
+    tar -xJf ffmpeg.tar.xz; \
+    cd ffmpeg-master-latest-linux64-gpl; \
+    cp -a bin/ffmpeg bin/ffprobe /usr/local/bin/; \
+    chmod a+rx /usr/local/bin/ffmpeg /usr/local/bin/ffprobe; \
+    cd /; \
+    rm -rf /tmp/ffmpeg*; \
+    \
+
+    mkdir -p /etc/apt/keyrings; \
+    wget -O /etc/apt/keyrings/gpg-pub-moritzbunkus.gpg \
+      https://mkvtoolnix.download/gpg-pub-moritzbunkus.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/gpg-pub-moritzbunkus.gpg] https://mkvtoolnix.download/debian/ bookworm main" \
+      > /etc/apt/sources.list.d/mkvtoolnix.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends mkvtoolnix; \
+    \
+
+    rm -rf /var/lib/apt/lists/*; \
+    \
+
     echo "yt-dlp version:" && /usr/local/bin/yt-dlp --version; \
     echo "ffmpeg version:" && ffmpeg -version; \
+    echo "ffprobe version:" && ffprobe -version; \
     echo "mkvmerge version:" && mkvmerge --version; \
     echo "FFmpeg NVENC/QSV encoders:" && ffmpeg -hide_banner -encoders | grep -E 'nvenc|_qsv' || true
 
@@ -41,8 +72,8 @@ COPY . .
 ENV NODE_ENV=production \
     PORT=5174 \
     YTDLP_BIN=/usr/local/bin/yt-dlp \
-    FFMPEG_BIN=/usr/bin/ffmpeg \
-    FFPROBE_BIN=/usr/bin/ffprobe \
+    FFMPEG_BIN=/usr/local/bin/ffmpeg \
+    FFPROBE_BIN=/usr/local/bin/ffprobe \
     MKVMERGE_BIN=/usr/bin/mkvmerge \
     DISABLE_QSV_IN_DOCKER=1 \
     DISABLE_VAAPI_IN_DOCKER=1
