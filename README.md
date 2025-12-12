@@ -10,6 +10,7 @@ Fast, modular media processing with hardware acceleration, previews, metadata to
 
 </div>
 
+---
 
 ## 📘 Table of Contents
 
@@ -17,6 +18,7 @@ Fast, modular media processing with hardware acceleration, previews, metadata to
 * [Features](#features)
 * [Requirements](#requirements)
 * [Environment Variables (.env)](#environment-variables-env)
+* [Docker vs Local Usage Notes](#docker-vs-local-usage-notes)
 * [Quick Start (Local – Node & npm)](#quick-start-local--node--npm)
 * [Quick Start (Docker Compose)](#quick-start-docker-compose)
 * [Notes & Troubleshooting](#notes--troubleshooting)
@@ -26,10 +28,15 @@ Fast, modular media processing with hardware acceleration, previews, metadata to
 
 ## Overview
 
-**Gharmonize** is a media automation toolkit that runs as a Node.js server with an optional Electron desktop shell. 
+**Gharmonize** is a media automation toolkit running as a Node.js server with an optional Electron desktop shell.
+It bundles multiple third‑party utilities (FFmpeg, MKVToolNix, yt-dlp, deno etc.) to provide:
 
-Gharmonize bundles several third-party command-line tools (FFmpeg/FFprobe, MKVToolNix tools, yt-dlp) to provide reliable downloading, ripping and transcoding.  
-For detailed license information, see the **Third-Party Licenses** section and the `LICENSES.md` file in this repository.
+* High‑reliability downloading
+* Disc/media processing
+* Transcoding with GPU acceleration
+* Smart metadata extraction and automatic tagging
+
+License details are available in **Third-Party Licenses** and `LICENSES.md`.
 
 ---
 
@@ -67,6 +74,7 @@ For detailed license information, see the **Third-Party Licenses** section and t
 * **Deployment & Config**
   * Docker image & Docker Compose setup
   * Settings API for runtime configuration from the UI
+  * Electron builds for Windows/Linux
   * `.env`-driven configuration for server, YouTube, Spotify and processing behavior
 
 ---
@@ -76,9 +84,9 @@ For detailed license information, see the **Third-Party Licenses** section and t
 | Requirement      | Version  | Description              |
 | ---------------- | -------- | ------------------------ |
 | Node.js          | >= 20    | Required                 |
-| ffmpeg           | Any      | Included in Docker image |
-| yt-dlp           | Latest   | Included in Docker image |
-| Spotify API Keys | Optional | For Spotify mapping      |
+| ffmpeg           | Any      | Included in Docker       |
+| yt-dlp           | Latest   | Included in Docker       |
+| Spotify API Keys | Optional | Enables Spotify metadata |
 
 ---
 
@@ -87,62 +95,500 @@ For detailed license information, see the **Third-Party Licenses** section and t
 Create a `.env` file in the project root:
 
 ```dotenv
+########################################
+# Preview / Fetch Limits
+########################################
+
+PREVIEW_MAX_ENTRIES=
+# Maximum number of entries shown in Automix / playlist preview.
+# Higher value → more entries → more processing time.
+# Acts as a safety limit in case YouTube returns extremely long lists.
+# Example:
+#   PREVIEW_MAX_ENTRIES=1000
+
+
+AUTOMIX_ALL_TIMEOUT_MS=
+# Timeout (in ms) for fetching the entire Automix list in a single request.
+# If this timeout is hit, the system falls back to paginated mode.
+# Example:
+#   AUTOMIX_ALL_TIMEOUT_MS=45000
+
+
+AUTOMIX_PAGE_TIMEOUT_MS=
+# Timeout (in ms) for each paginated Automix request (e.g., 50 items per page).
+# Used when flat/one-shot mode times out.
+# Example:
+#   AUTOMIX_PAGE_TIMEOUT_MS=45000
+
+
+PLAYLIST_ALL_TIMEOUT_MS=
+# Timeout (in ms) for fetching a full playlist using --flat-playlist.
+# Large playlists or slow YouTube may cause a fallback to page mode.
+# Example:
+#   PLAYLIST_ALL_TIMEOUT_MS=35000
+
+
+PLAYLIST_PAGE_TIMEOUT_MS=
+# Timeout (in ms) for each paginated playlist fetch (e.g., 50 items per page).
+# Example:
+#   PLAYLIST_PAGE_TIMEOUT_MS=25000
+
+
+PLAYLIST_META_TIMEOUT_MS=
+# Timeout (in ms) for fetching playlist metadata (title, total item count, etc.).
+# Example:
+#   PLAYLIST_META_TIMEOUT_MS=30000
+
+
+PLAYLIST_META_FALLBACK_TIMEOUT_MS=
+# Timeout (in ms) for the fallback metadata attempt
+# (e.g., "if full metadata fails, try using only the first item").
+# Example:
+#   PLAYLIST_META_FALLBACK_TIMEOUT_MS=20000
+
+
+########################################
+# yt-dlp Binary & Download Behavior
+########################################
+
+YTDLP_BIN=
+# Absolute path to the yt-dlp executable.
+# If left empty, the app may try to resolve it from PATH or built-in locations.
+# Examples:
+#   YTDLP_BIN=/usr/local/bin/yt-dlp
+#   YTDLP_BIN=C:\\tools\\yt-dlp.exe
+
+
+YTDLP_EXTRA=
+# Extra yt-dlp arguments applied to all audio downloads
+# (downloadSelectedIds, downloadSelectedIdsParallel, downloadStandard in audio mode).
+# Space-separated string; each token becomes an argument.
+# Example:
+#   YTDLP_EXTRA=--some-yt-dlp-flag --another-flag=1
+
+
+YTDLP_ARGS_EXTRA=
+# Alternative name used when YTDLP_EXTRA is not defined.
+# Priority order:
+#   1) YTDLP_EXTRA
+#   2) YTDLP_ARGS_EXTRA
+#   3) no extra args
+# Example:
+#   YTDLP_ARGS_EXTRA=--some-yt-dlp-flag --another-flag=1
+
+
+YTDLP_AUDIO_LIMIT_RATE=
+# Rate limit for single-video audio downloads (not playlist mode).
+# Passed as --limit-rate to yt-dlp.
+# Examples:
+#   YTDLP_AUDIO_LIMIT_RATE=500K
+#   YTDLP_AUDIO_LIMIT_RATE=1M
+#   YTDLP_AUDIO_LIMIT_RATE=2M
+
+
+########################################
+# Preview Cache
+########################################
+
+PREVIEW_CACHE_TTL_MS=
+# Time-to-live (in ms) for playlist/automix preview results stored in memory.
+# After this duration:
+#   - getCache(url) treats the entry as expired,
+#   - the record is removed,
+#   - metadata/preview is fetched again.
+# Example (30 minutes):
+#   PREVIEW_CACHE_TTL_MS=1800000
+
+
+########################################
+# Upload Limits
+########################################
+
+UPLOAD_MAX_BYTES=
+# Maximum allowed upload file size.
+# Supported formats:
+#   - pure number → treated as bytes          (e.g., 104857600)
+#   - "<number>mb" → number * 1024 * 1024    (e.g., 100mb → ~104 MB)
+# Used by multer as limits.fileSize.
+# If invalid, the app logs a warning and falls back to ~1000 MB.
+# Examples:
+#   UPLOAD_MAX_BYTES=104857600
+#   UPLOAD_MAX_BYTES=100mb
+
+
+########################################
+# Data Directories
+########################################
+
+DATA_DIR=
+# Root directory for all application data.
+# Typical structure:
+#   DATA_DIR/outputs/       → exported / processed files
+#   DATA_DIR/uploads/       → uploaded files / merged chunks
+#   DATA_DIR/local-inputs/  → source directory for /api/local-files (if enabled)
+# If empty, defaults to process.cwd() (the app’s working directory).
+# Examples:
+#   DATA_DIR=/var/lib/gharmonize
+#   DATA_DIR=/home/youruser/gharmonize-data
+
+
+LOCAL_INPUT_DIR=
+# Relative directory under DATA_DIR for local file browsing.
+# Resolved as: path.resolve(DATA_DIR || process.cwd(), LOCAL_INPUT_DIR)
+# Used by:
+#   - /api/local-files → recursively lists supported media
+#   - /api/probe/local → only accepts files under this directory (security check)
+# Default (when empty) is usually "local-inputs".
+# Examples:
+#   LOCAL_INPUT_DIR=local-inputs
+#   LOCAL_INPUT_DIR=my-local-media
+
+
+########################################
+# Spotify API
+########################################
+
 SPOTIFY_CLIENT_ID=
+# Spotify Web API client ID.
+# Obtain from Spotify Developer Dashboard.
+# Used when requesting access tokens.
+# ❗ Do NOT commit real credentials to public repositories.
+
+
 SPOTIFY_CLIENT_SECRET=
+# Spotify Web API client secret.
+# Used together with SPOTIFY_CLIENT_ID to obtain access tokens.
+# ❗ Keep this secret. Never expose in logs, frontend, or public repos.
 
-# YouTube behavior
-YT_USE_MUSIC=1
-YT_FORCE_IPV4=1
-YT_403_WORKAROUNDS=0
-YT_LANG=en-US
-YT_DEFAULT_REGION=
-YT_ACCEPT_LANGUAGE="en-US,en;q=0.8"
 
-# yt-dlp tweaks
-YTDLP_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-YTDLP_COOKIES=./cookies/cookies.txt
-YTDLP_COOKIES_FROM_BROWSER=chrome
-YTDLP_EXTRA="--http-chunk-size 16M --concurrent-fragments 1"
-YT_STRIP_COOKIES=1
+SPOTIFY_MARKET=
+# Default market (country code) for Spotify API requests.
+# Affects which tracks/albums are considered available.
+# Examples:
+#   SPOTIFY_MARKET=US
+#   SPOTIFY_MARKET=FR
+#   SPOTIFY_MARKET=DE
 
-# App auth & behavior
-ADMIN_PASSWORD=123456
+
+SPOTIFY_FALLBACK_MARKETS=
+# Comma-separated list of fallback markets.
+# Logic example:
+#   - Try SPOTIFY_MARKET first
+#   - If not available there, try these markets in order.
+# Examples:
+#   SPOTIFY_FALLBACK_MARKETS=US,GB,DE,FR
+
+
+SPOTIFY_DEBUG_MARKET=
+# Enable extra debug logging related to market selection and fallbacks.
+#   1 → verbose logs (good for development)
+#   0 → quiet (recommended for production)
+# Example:
+#   SPOTIFY_DEBUG_MARKET=1
+
+
+PREFER_SPOTIFY_TAGS=
+# When writing tags (ID3, etc.), prefer metadata coming from Spotify.
+# Behavior:
+#   1 → If both YouTube and Spotify metadata exist, favor Spotify’s cleaner data.
+#   0 → Favor YouTube (or other resolvers).
+# Example:
+#   PREFER_SPOTIFY_TAGS=1
+
+
+########################################
+# Title Cleaning
+########################################
+
+TITLE_CLEAN_PIPE=
+# If set to 1, when a title contains the '|' character,
+# the part AFTER the last '|' is kept.
+# Example:
+#   "Artist Name | Official Video" → "Official Video"
+# This is applied before other CLEAN_* rules.
+# Example:
+#   TITLE_CLEAN_PIPE=1
+
+
+CLEAN_SUFFIXES=
+# Comma-separated list of suffix tokens to remove from the END of titles.
+# Examples of matches:
+#   "Song Name (Official)" → suffix "Official"
+#   "Artist - Track (Topic)" → suffix "Topic"
+# Example:
+#   CLEAN_SUFFIXES=topic,official
+
+
+CLEAN_PHRASES=
+# Phrases to completely remove when they appear in title text.
+# Typical usage:
+#   "Song Name (Official Video)"     → remove "Official Video"
+#   "Artist - Track [official channel]" → remove "official channel"
+# Example:
+#   CLEAN_PHRASES="official channel,Official Video"
+
+
+CLEAN_PARENS=
+# Words that, when found inside parentheses, cause that whole "(...)" segment to be removed.
+# Examples:
+#   "Song Name (official)" → remove "(official)"
+#   "Song Name (topic)"    → remove "(topic)"
+# Example:
+#   CLEAN_PARENS=official,topic
+
+
+########################################
+# Authentication & App Secret
+########################################
+
+ADMIN_PASSWORD=
+# Password for admin panel / protected endpoints.
+# Keep this out of logs and public repositories.
+# For production, use a long, random, strong password.
+# Example:
+#   ADMIN_PASSWORD=change_this_in_production
+
+
 APP_SECRET=
-PREFER_SPOTIFY_TAGS=1
-TITLE_CLEAN_PIPE=1
+# Global secret key for the application.
+# May be used for JWT signing, session cookies, CSRF tokens, etc.
+# Must be long, random, and kept private.
+# Example (DO NOT reuse this exact string):
+#   APP_SECRET=your_super_long_random_hex_or_base64_value
 
-# Spotify region preferences
-SPOTIFY_MARKET=US
-SPOTIFY_DEBUG_MARKET=0
-SPOTIFY_FALLBACK_MARKETS=TR,GB,DE,FR
 
-# Server
-PORT=5174
+########################################
+# Cookies & yt-dlp Cookie Behavior
+########################################
 
-# Local media directory (optional)
-LOCAL_INPUT_DIR=/path/to/local-inputs
-# Optional: If not set, the app will use the default built-in local-inputs directory.
-# Media placed in this folder becomes selectable in the UI without uploading (admin-only).
+YT_STRIP_COOKIES=
+# Master switch that disables both YTDLP_COOKIES and YTDLP_COOKIES_FROM_BROWSER when set.
+# Typical behavior:
+#   1 → disable all cookie-based usage
+#   0 → allow cookie configuration below to take effect
+# Example:
+#   YT_STRIP_COOKIES=0
 
-# Title cleaning presets
-CLEAN_SUFFIXES="topic,official"
-CLEAN_PHRASES="official channel"
-CLEAN_PARENS="official"
 
-# CLEAN_SUFFIXES catches:
-#   Artist Name - Topic
-#   Artist Name - Official
-# Also catches single-word suffixes without hyphens:
-#   Artist Name Topic
-#   Artist Name Official
+YTDLP_COOKIES=
+# Path to cookies.txt.
+# If empty, a default "cookies" directory may be used as fallback.
+# This is to keep the YouTube/Gharmonize interface behavior consistent and to allow downloading age-restricted (and similar) content.
+# Examples:
+#   YTDLP_COOKIES=./cookies/cookies.txt
+#   YTDLP_COOKIES=/opt/gharmonize/cookies/cookies.txt
 
-# CLEAN_PHRASES catches multi-word endings:
-#   Artist Name - Official Channel
 
-# CLEAN_PARENS catches parenthesized forms:
-#   Artist Name (Official)
+YTDLP_COOKIES_FROM_BROWSER=
+# If cookies.txt is not present in the cookies directory,
+# and this variable is set, yt-dlp may try to import cookies from the specified browser.
+# You must be logged into YouTube on the same server/machine where Gharmonize is installed (in a supported browser profile).
+# This is to keep the YouTube/Gharmonize interface behavior consistent and to allow downloading age-restricted (and similar) content.
+# Examples:
+#   YTDLP_COOKIES_FROM_BROWSER=chrome
+#   YTDLP_COOKIES_FROM_BROWSER=firefox
+
+YT_UI_FORCE_COOKIES=
+# When YT_STRIP_COOKIES=1 is enabled, this setting is used to keep YouTube lists consistent between YouTube and the Gharmonize UI.
+# This setting has no effect on downloads.
+# Requires cookies.txt or YTDLP_COOKIES_FROM_BROWSER to work.
+#
+# Example usage:
+#   YT_UI_FORCE_COOKIES=1  # enabled
+#   YT_UI_FORCE_COOKIES=0  # disabled
+
+########################################
+# YouTube / yt-dlp Language & Region
+########################################
+
+YT_LANG=
+# Primary UI language (locale) to emulate for YouTube requests.
+# This affects:
+#   • Suggested content
+#   • Subtitle/metadata language
+#   • Locale-based responses from YouTube
+# Leave empty to let YouTube decide automatically.
+# Example usage:
+#   YT_LANG=en-US   # English (United States)
+#   YT_LANG=de-DE   # German (Germany)
+
+
+YT_FORCE_IPV4=
+# Forces requests to be made over IPv4 when enabled.
+# Example:
+#   YT_FORCE_IPV4=1   # force IPv4
+#   YT_FORCE_IPV4=0   # allow default behavior
+
+
+YT_ACCEPT_LANGUAGE=
+# Exact value for the HTTP "Accept-Language" header.
+# Like a browser, you can specify priorities with q-values.
+# This influences which language YouTube prefers for content/subtitles.
+# Example:
+#   YT_ACCEPT_LANGUAGE=en-US,en;q=0.9,fr;q=0.8
+
+
+YT_DEFAULT_REGION=
+# Region / country code (ISO 3166-1 alpha-2) used for geolocation-related behavior.
+# Passed to yt-dlp as:
+#   --geo-bypass-country=<code>
+# Helps with region-locked videos, e.g. "pretend we are in US".
+# Example:
+#   YT_DEFAULT_REGION=US
+
+
+ENRICH_SPOTIFY_FOR_YT=
+# When converting YouTube videos, optionally enrich metadata using Spotify:
+#   1 → enabled (pull extra info like genre, label, year, ISRC, etc. when possible)
+#   0 → disabled (use YouTube + existing resolvers only)
+# Example:
+#   ENRICH_SPOTIFY_FOR_YT=1
+
+
+YT_403_WORKAROUNDS=
+# Toggle special handling for HTTP 403 Forbidden errors from YouTube.
+#   0 = disabled
+#   1 = enabled (recommended in many environments)
+# Example:
+#   YT_403_WORKAROUNDS=1
+
+
+YT_USE_MUSIC=
+# Controls whether downloads are made against youtube.com or music.youtube.com.
+#   0 → normal youtube.com
+#   1 → music.youtube.com (YouTube Music)
+# Example:
+#   YT_USE_MUSIC=1
+
+
+YTDLP_UA=
+# User-Agent string used by yt-dlp when talking to YouTube.
+# A stable, commonly-used Chrome UA often works best.
+# Example:
+#   YTDLP_UA=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36
+
+
+########################################
+# Media Tagging / FFmpeg
+########################################
+
+MEDIA_COMMENT=
+# Any text you place here will be written into the ID3 comment tag of generated files.
+# Example:
+#   MEDIA_COMMENT=Created with Gharmonize
+
+
+FFMPEG_BIN=
+# Path to the ffmpeg executable.
+# If left empty, the app may attempt to find "ffmpeg" from PATH
+# or use a downloaded binary if available.
+# Examples:
+#   FFMPEG_BIN=/usr/local/bin/ffmpeg
+#   FFMPEG_BIN=C:\\ffmpeg\\bin\\ffmpeg.exe
 
 ```
+
+---
+
+# Docker vs Local Usage Notes
+
+This section explains the differences between Docker and non-Docker setups.
+
+---
+
+## 🍪 Cookie & Browser Behavior
+
+### **Outside Docker**
+
+Setting:
+
+```dotenv
+YTDLP_COOKIES_FROM_BROWSER=chrome
+```
+
+allows Gharmonize to extract YouTube cookies **directly from your browser**, enabling:
+
+* Age-restricted content downloads
+* No need for `cookies.txt`
+
+You must be logged into YouTube on the same server/machine where Gharmonize is installed (in a supported browser profile).
+
+### **Inside Docker**
+
+Browser cookie extraction **cannot work** (Docker cannot access host browser profiles). Keep it empty:
+
+```dotenv
+YTDLP_COOKIES_FROM_BROWSER=
+```
+
+---
+
+## 📦 Docker Usage
+
+When using Docker, leave all binary paths in `.env` **empty**:
+
+```dotenv
+YTDLP_BIN=
+FFMPEG_BIN=
+DATA_DIR=
+```
+
+Docker images include:
+
+* yt-dlp
+* ffmpeg
+* deno
+* mkvmerge suite
+
+**Docker is fully self‑contained.** No manual binary installation is required.
+
+---
+
+## 🖥️ Local Usage (Node.js / AppImage / EXE / Electron)
+
+Outside Docker, install the required binaries:
+
+```bash
+npm run download:binaries
+```
+
+This installs into:
+
+```
+build/bin/
+```
+
+including:
+
+* yt-dlp
+* ffmpeg
+* deno (**required for age‑restricted YouTube content**)
+
+This step is **mandatory** for desktop builds.
+
+---
+
+## 🔞 Age‑Restricted YouTube Content
+
+To download age‑restricted content, you need:
+
+* Cookies (browser or cookies.txt), **AND**
+* `deno` in `build/bin/` (Linux → `deno`, Windows → `deno.exe`)
+
+Cookies alone are **not** sufficient.
+
+Docker already bundles **deno**, so no extra setup is needed.
+
+---
+
+## 📊 Environment Comparison Table
+
+| Environment                   | cookies.txt Required? | Browser Extraction | Binaries Needed?  | Notes                               |
+| ----------------------------- | --------------------- | ------------------ | ----------------- | ----------------------------------- |
+| **Docker**                    | Optional                   | ❌ Disabled         | ❌ Included        | Leave binary paths empty            |
+| **Local (Node.js)**           | Optional              | ✅ Yes              | ✅ Required        | Run `npm run download:binaries`     |
+| **AppImage / EXE / Electron** | Optional              | ✅ Yes              | ✅ Required        | Must bundle binaries; deno required |
+| **Age‑restricted videos**     | Not enough            | Helps              | **deno required** | Docker includes it                  |
 
 ---
 
@@ -413,7 +859,8 @@ docker run -d \
 
 ---
 
-## # 📄 License (MIT — Attribution • Fork-Only • Non-Commercial • Written Permission Required)
+## License
+(MIT — Attribution • Fork-Only • Non-Commercial • Written Permission Required)
 
 This project is licensed under the MIT License **with mandatory attribution**,
 **fork-only redistribution**, **non-commercial usage restrictions**, and **written permission requirement for exceptions**.
@@ -487,17 +934,19 @@ Gharmonize bundles several third-party command-line tools in its desktop and Doc
   - `mkvinfo`
   - `mkvpropedit`
 - **yt-dlp**
+- **deno**
 
 These tools are *not* licensed under MIT. They keep their original licenses:
 
 - FFmpeg / FFprobe → GNU GPL/LGPL (depending on the specific build)
 - MKVToolNix tools → GNU General Public License v2 (GPLv2)
 - yt-dlp → The Unlicense (public domain)
+- deno → MIT License
 
 Detailed license texts are included in the distributed builds under:
 
 - `build/licenses/FFmpeg-LICENSE.txt`
 - `build/licenses/MKVToolNix-GPLv2.txt`
 - `build/licenses/yt-dlp-Unlicense.txt`
-
+- `build/licenses/Deno-LICENSE.txt`
 ---
