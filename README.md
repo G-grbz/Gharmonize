@@ -737,6 +737,7 @@ services:
   web:
     image: ggrbz/gharmonize:latest
     container_name: Gharmonize
+    user: "${PUID:-1000}:${PGID:-1000}"
     # Enable access to the NVIDIA GPU
     gpus: all
     environment:
@@ -757,11 +758,16 @@ services:
       - /opt/gharmonize/outputs:/usr/src/app/outputs
       - /opt/gharmonize/temp:/usr/src/app/temp
       - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
-      - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
+      - /opt/gharmonize/cookies:/usr/src/app/cookies
       - /opt/gharmonize/.env:/usr/src/app/.env
       - /home:/home:ro
       - /run/media:/run/media:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-5174}/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 ```
 
 ### 4. Start with Docker Compose
@@ -811,7 +817,7 @@ docker run -d \
   -v /opt/gharmonize/outputs:/usr/src/app/outputs \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
   -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
-  -v /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro \
+  -v /opt/gharmonize/cookies/:/usr/src/app/cookies/cookies.txt:ro \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   -v /home:/home:ro \
   -v /run/media:/run/media:ro \
@@ -839,7 +845,7 @@ docker run -d \
   -v /opt/gharmonize/uploads:/usr/src/app/uploads \
   -v /opt/gharmonize/outputs:/usr/src/app/outputs \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
-  -v /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro \
+  -v /opt/gharmonize/cookies:/usr/src/app/cookies/cookies.txt:ro \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   -v /home:/home:ro \
   -v /run/media:/run/media:ro \
