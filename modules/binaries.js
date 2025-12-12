@@ -49,6 +49,7 @@ export const FFMPEG_BIN   = resolveBin("FFMPEG_BIN",   "ffmpeg");
 export const FFPROBE_BIN  = resolveBin("FFPROBE_BIN",  "ffprobe");
 export const MKVMERGE_BIN = resolveBin("MKVMERGE_BIN", "mkvmerge");
 export const YTDLP_BIN    = resolveBin("YTDLP_BIN",    "yt-dlp");
+export const DENO_BIN     = resolveBin("DENO_BIN",     "deno");
 
 export function debugBinaries() {
   console.log("[binaries] isElectron:", isElectron);
@@ -59,4 +60,5 @@ export function debugBinaries() {
   console.log("[binaries] YTDLP_BIN:", YTDLP_BIN);
   console.log("[binaries] FFPROBE_BIN:", FFPROBE_BIN);
   console.log("[binaries] MKVMERGE_BIN:", MKVMERGE_BIN);
+  console.log("[binaries] DENO_BIN:", DENO_BIN);
 }

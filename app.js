@@ -1,10 +1,10 @@
+import dotenv from "dotenv";
 import express from 'express'
 import multer from 'multer'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
-import dotenv from 'dotenv'
 import { exec } from 'child_process'
 import formatsRoute from './routes/formats.js'
 import { getBinariesInfo } from './modules/binariesInfo.js';
@@ -18,7 +18,8 @@ import {
   FFMPEG_BIN,
   YTDLP_BIN,
   FFPROBE_BIN,
-  MKVMERGE_BIN
+  MKVMERGE_BIN,
+  DENO_BIN
 } from './modules/binaries.js'
 
 const defaultEnv = process.env.ENV_DEFAULT_PATH
@@ -64,20 +65,19 @@ const isPackagedElectron =
 
 let rawCookiesEnv = process.env.YTDLP_COOKIES || '';
 
-if (!rawCookiesEnv && isPackagedElectron) {
-  const userDataDir = process.env.DATA_DIR || BASE_DIR;
-  const cookieDir = path.join(userDataDir, 'cookies');
+if (!rawCookiesEnv) {
+  const cookieDir = path.join(BASE_DIR, 'cookies');
 
   try {
     fs.mkdirSync(cookieDir, { recursive: true });
-  } catch {}
+  } catch (err) {
+    console.warn('🍪 Cookie klasörü oluşturulamadı:', err.message);
+  }
 
   process.env.YTDLP_COOKIES = path.join(cookieDir, 'cookies.txt');
-  console.log('🍪 YTDLP_COOKIES (desktop default):', process.env.YTDLP_COOKIES);
+  console.log('🍪 YTDLP_COOKIES (default → BASE_DIR/cookies):', process.env.YTDLP_COOKIES);
   console.log('🍪 Cookie file exists?:', fs.existsSync(process.env.YTDLP_COOKIES));
-}
-
-else if (rawCookiesEnv && rawCookiesEnv.startsWith('./')) {
+} else if (rawCookiesEnv.startsWith('./')) {
   process.env.YTDLP_COOKIES = path.join(BASE_DIR, rawCookiesEnv.slice(2));
   console.log('🍪 YTDLP_COOKIES (relative → BASE_DIR):', process.env.YTDLP_COOKIES);
   console.log('🍪 Cookie file exists?:', fs.existsSync(process.env.YTDLP_COOKIES));
@@ -85,7 +85,7 @@ else if (rawCookiesEnv && rawCookiesEnv.startsWith('./')) {
 
 function checkDependencies() {
   return new Promise((resolve) => {
-    const results = { ytDlp: false, ffmpeg: false }
+    const results = { ytDlp: false, ffmpeg: false, deno: false }
 
     exec(`"${YTDLP_BIN}" --version`, (error, stdout) => {
       if (!error && stdout.trim()) {
@@ -104,7 +104,16 @@ function checkDependencies() {
           console.log(`❌ ffmpeg is NOT available at ${FFMPEG_BIN}`)
         }
 
-        resolve(results)
+        exec(`"${DENO_BIN}" --version`, (error, stdout) => {
+          if (!error && stdout.trim()) {
+            results.deno = true
+            const firstLine = stdout.trim().split('\n')[0]
+            console.log(`✅ deno OK (${DENO_BIN}) — ${firstLine}`)
+          } else {
+            console.log(`❌ deno is NOT available at ${DENO_BIN}`)
+          }
+          resolve(results)
+        })
       })
     })
   })
@@ -113,6 +122,8 @@ function checkDependencies() {
 async function runStartupDiagnostics() {
   console.log('\n🔎 Startup Diagnostics')
   console.log('────────────────────────────────────────────────')
+
+  console.log(`🍪 Cookies file: ${process.env.YTDLP_COOKIES || '(not set)'}`);
 
   const inDocker = fs.existsSync('/.dockerenv')
   console.log(`🧠 Node.js: ${process.version} (${process.platform}/${process.arch})`)
@@ -131,7 +142,8 @@ async function runStartupDiagnostics() {
     'yt-dlp': YTDLP_BIN || 'yt-dlp',
     ffmpeg: FFMPEG_BIN || 'ffmpeg',
     ffprobe: FFPROBE_BIN || 'ffprobe',
-    mkvmerge: MKVMERGE_BIN || 'mkvmerge'
+    mkvmerge: MKVMERGE_BIN || 'mkvmerge',
+    deno: DENO_BIN || 'deno'
   }
 
   const checkBin = async (name, bin, args = '--version') => {
@@ -150,6 +162,7 @@ async function runStartupDiagnostics() {
   await checkBin('ffmpeg', bins.ffmpeg, '-version')
   await checkBin('ffprobe', bins.ffprobe, '-version')
   await checkBin('mkvmerge', bins.mkvmerge, '--version')
+  await checkBin('deno', bins.deno, '--version')
 
   console.log('\n🎛 FFmpeg Hardware Encoder Support')
   console.log('────────────────────────────────────────────────')
@@ -265,6 +278,7 @@ checkDependencies().then((results) => {
     console.log('⚠️ Dependency Status:')
     console.log(`   ${results.ytDlp ? '✅' : '❌'} yt-dlp`)
     console.log(`   ${results.ffmpeg ? '✅' : '❌'} ffmpeg`)
+    console.log(`   ${results.deno ? '✅' : '❌'} deno`)
 
     await runStartupDiagnostics()
   })

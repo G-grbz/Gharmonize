@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { DENO_BIN } from "./binaries.js";
 
 export const ERR = {
   INVALID_FORMAT: 'INVALID_FORMAT',
@@ -87,4 +88,45 @@ export function uniqueId(prefix) {
     const fallback = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     return prefix ? `${prefix}_${fallback}` : fallback;
   }
+}
+
+export function addCookieArgs(args, { ui = false } = {}) {
+  if (ui && process.env.YT_UI_FORCE_COOKIES === "1") {
+    const cookieBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER;
+    const cookieFile = process.env.YTDLP_COOKIES;
+
+    if (cookieBrowser) {
+      args.push("--cookies-from-browser", cookieBrowser);
+    } else if (cookieFile) {
+      args.push("--cookies", cookieFile);
+    }
+    return args;
+  }
+
+  const stripEnv = process.env.YT_STRIP_COOKIES;
+  if (stripEnv === "1") return args;
+
+  const cookieBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER;
+  const cookieFile = process.env.YTDLP_COOKIES;
+
+  if (cookieBrowser) {
+    args.push("--cookies-from-browser", cookieBrowser);
+  } else if (cookieFile) {
+    args.push("--cookies", cookieFile);
+  }
+
+  return args;
+}
+
+export function getJsRuntimeArgs() {
+  const envVal = (process.env.YTDLP_JS_RUNTIME || "").trim();
+  if (envVal) {
+    return ["--js-runtimes", envVal];
+  }
+  try {
+    if (DENO_BIN && fs.existsSync(DENO_BIN) && path.isAbsolute(DENO_BIN)) {
+      return ["--js-runtimes", `deno:${DENO_BIN}`];
+    }
+  } catch {}
+  return [];
 }

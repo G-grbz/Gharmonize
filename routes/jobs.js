@@ -1006,51 +1006,6 @@ if (rawFrozenEntries) {
   }
 });
 
-router.post("/api/playlist/preview", async (req, res) => {
-  try {
-    const { url, page = 1, pageSize = 50 } = req.body || {};
-    if (!url) return res.status(400).json({ error: { code: "URL_REQUIRED", message: "URL is required" } });
-    const meta = await getPlaylistMetaLite(url);
-    const total = Math.max(1, Number(meta?.count || 50));
-    const size = Math.min(100, Math.max(1, Number(pageSize) || 50));
-    const maxPage = Math.max(1, Math.ceil(total / size));
-    const curPage = Math.min(Math.max(1, Number(page) || 1), maxPage);
-    const start = (curPage - 1) * size + 1;
-    const end   = Math.min(start + size - 1, total);
-    const isAutomix = isYouTubeAutomix(url);
-    let pageData;
-    if (isAutomix) {
-      const existing = inFlightAutomix.get(url);
-      const runner = (async () => {
-        await ensureAutomixUpto(url, end, Math.max(100, size));
-      })();
-      inFlightAutomix.set(url, runner);
-      try { await runner; } finally { if (existing === runner) inFlightAutomix.delete(url); }
-
-      const c = getCache(url);
-      if (c && Array.isArray(c.entries) && c.entries.length >= start) {
-        pageData = { title: c.title || meta?.title || "YouTube Automix", items: c.entries.slice(start-1, end) };
-      } else {
-        pageData = await extractAutomixPage(url, start, end);
-      }
-    } else {
-      pageData = await extractPlaylistPage(url, start, end);
-    }
-    return res.json({
-      page: curPage,
-      items: Array.isArray(pageData?.items) ? pageData.items : [],
-      playlist: {
-        title: pageData?.title || meta?.title || "",
-        count: total
-      }
-    });
-  } catch (e) {
-    return res.status(500).json({
-      error: { code: "PREVIEW_FAILED", message: e?.message || "Preview failed" }
-    });
-  }
-});
-
 router.get("/api/jobs", requireAuth, (req, res) => {
   try {
     cleanupCompletedJobsWithoutOutputs();

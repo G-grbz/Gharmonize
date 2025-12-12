@@ -3,7 +3,7 @@ import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
 import fs from 'node:fs'
-import { FFMPEG_BIN, FFPROBE_BIN, MKVMERGE_BIN, YTDLP_BIN } from '../modules/binaries.js';
+import { FFMPEG_BIN, FFPROBE_BIN, MKVMERGE_BIN, YTDLP_BIN, DENO_BIN } from '../modules/binaries.js';
 
 const HOST = '127.0.0.1'
 const PORT = process.env.PORT || '5174'
@@ -131,7 +131,8 @@ function checkDesktopBinaries() {
     { name: 'ffmpeg', bin: FFMPEG_BIN },
     { name: 'ffprobe', bin: FFPROBE_BIN },
     { name: 'mkvmerge', bin: MKVMERGE_BIN },
-    { name: 'yt-dlp', bin: YTDLP_BIN }
+    { name: 'yt-dlp', bin: YTDLP_BIN },
+    { name: 'deno', bin: DENO_BIN }
   ];
 
   console.log('🔍 Checking bundled binaries:');

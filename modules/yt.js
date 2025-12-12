@@ -3,18 +3,42 @@ import fs from "fs";
 import { spawn, execFile } from "child_process";
 import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
-import { findOnPATH, isExecutable, toNFC } from "./utils.js";
+import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs } from "./utils.js";
 import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
-import "dotenv/config";
-import { YTDLP_BIN as BINARY_YTDLP_BIN } from "./binaries.js";
+import { YTDLP_BIN as BINARY_YTDLP_BIN, DENO_BIN } from "./binaries.js";
 
-export const YT_USE_MUSIC = FLAGS.USE_MUSIC;
+export function isMusicEnabled() {
+  const v = process.env.YT_USE_MUSIC;
+  if (v === "0") return false;
+  if (v === "1") return true;
+  return false;
+}
+
+export const YT_USE_MUSIC = isMusicEnabled();
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_USER_AGENT = getUserAgent();
 const DEFAULT_HEADERS = getYouTubeHeaders();
 const SKIP_RE = /(private|members\s*only|copyright|blocked|region|geo|not\s+available|unavailable|age[-\s]?restricted|signin|sign\s*in|skipp?ed|removed)/i;
 const ERROR_WORD = /\berror\b/i;
 const DEFAULT_FRAGMENT_CONCURRENCY = 4;
+const AUTOMIX_ALL_TIMEOUT =
+  Number(process.env.AUTOMIX_ALL_TIMEOUT_MS || 25000);
+
+const AUTOMIX_PAGE_TIMEOUT =
+  Number(process.env.AUTOMIX_PAGE_TIMEOUT_MS || 45000);
+
+const PLAYLIST_ALL_TIMEOUT =
+  Number(process.env.PLAYLIST_ALL_TIMEOUT_MS || 30000);
+
+const PLAYLIST_PAGE_TIMEOUT =
+  Number(process.env.PLAYLIST_PAGE_TIMEOUT_MS || 20000);
+
+const PLAYLIST_META_TIMEOUT =
+  Number(process.env.PLAYLIST_META_TIMEOUT_MS || 25000);
+
+const PLAYLIST_META_FALLBACK_TIMEOUT =
+  Number(process.env.PLAYLIST_META_FALLBACK_TIMEOUT_MS || 15000);
+
 
 function isBenignSabrWarning(line) {
   if (!line) return false;
@@ -62,11 +86,9 @@ async function runWithConcurrency(limit, tasks) {
           });
       }
     };
-
     next();
   });
 }
-
 
 function headersToArgs(headersObj) {
   const out = [];
@@ -167,18 +189,22 @@ export function idsToMusicUrls(ids) {
 }
 
 export function idsToWatchUrls(ids) {
-  return ids.map(id => `https://www.youtube.com/watch?v=${id}`);
+  return ids.map(id =>
+    normalizeYouTubeUrl(`https://www.youtube.com/watch?v=${id}`)
+  );
 }
 
 function buildBaseArgs(additionalArgs = []) {
   const args = [
-   "--ignore-config", "--no-warnings",
-   "--socket-timeout", "15",
-   "--extractor-args", "youtube:player_client=android,web",
+    "--ignore-config", "--no-warnings",
+    "--socket-timeout", "15",
+    "--extractor-args", "youtube:player_client=android,web",
     "--user-agent", DEFAULT_USER_AGENT,
     "--retries", "3", "--retry-sleep", "1",
-    "--sleep-requests", "0.1", "-J"
+    "--sleep-requests", "0.1",
+    "-J"
   ];
+
   if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
 
   Object.entries(DEFAULT_HEADERS).forEach(([key, value]) => {
@@ -188,11 +214,32 @@ function buildBaseArgs(additionalArgs = []) {
   const extra = getExtraArgs();
   if (extra.length) args.push(...extra);
 
+  addCookieArgs(args, { ui: true });
+  args.push(...getJsRuntimeArgs());
+
   return [...args, ...additionalArgs];
+}
+
+function shouldStripCookies(explicit = false) {
+  const env = process.env.YT_STRIP_COOKIES;
+
+  if (env === "1") {
+    return true;
+  }
+
+  if (env === "0") {
+    return false;
+  }
+
+  if (FLAGS.STRIP_COOKIES) {
+    return true;
+  }
+  return !!explicit;
 }
 
 export function withYT403Workarounds(baseArgs, { stripCookies = false } = {}) {
   let args = [...baseArgs];
+
   if (FLAGS.APPLY_403_WORKAROUNDS) {
     const tweaks = [
       ["--http-chunk-size", "16M"],
@@ -204,7 +251,9 @@ export function withYT403Workarounds(baseArgs, { stripCookies = false } = {}) {
     args = addGeoArgs(args);
   }
 
-  if (stripCookies || FLAGS.STRIP_COOKIES) {
+  const finalStrip = shouldStripCookies(stripCookies);
+
+  if (finalStrip) {
     const cookieFlags = ["--cookies", "--cookies-from-browser"];
     cookieFlags.forEach(flag => {
       const index = args.indexOf(flag);
@@ -279,9 +328,13 @@ function processEntries(entries, maxEntries = PREVIEW_MAX_ENTRIES) {
 }
 
 export async function extractPlaylistAllFlat(url) {
-  const data = await runYtJson([
-    "--yes-playlist", "--flat-playlist", "--ignore-errors", url
-  ], "playlist-all-flat");
+  const data = await runYtJson(
+    [
+      "--yes-playlist", "--flat-playlist", "--ignore-errors", url
+    ],
+    "playlist-all-flat",
+    PLAYLIST_ALL_TIMEOUT
+  );
 
   const title = data?.title || data?.playlist_title || "";
   const rawEntries = Array.isArray(data?.entries) ? data.entries : [];
@@ -296,12 +349,16 @@ export async function getPlaylistMetaLite(url) {
 
   if (isAutomix) {
     try {
-      const data = await runYtJson([
-        "--yes-playlist", "--flat-playlist", "--ignore-errors", url
-      ], "automix-meta", 40000);
+      const data = await runYtJson(
+        ["--yes-playlist", "--flat-playlist", "--ignore-errors", url],
+        "automix-meta",
+        40000
+      );
 
       const title = data?.title || data?.playlist_title || "YouTube Automix";
-      const count = Number(data?.n_entries) || (Array.isArray(data?.entries) ? data.entries.length : 50) || 50;
+      const count = Number(data?.n_entries) ||
+                    (Array.isArray(data?.entries) ? data.entries.length : 50) ||
+                    50;
 
       setCache(url, { title, count: Math.max(1, count), entries: [] });
       return { title, count: Math.max(1, count), isAutomix: true };
@@ -312,9 +369,11 @@ export async function getPlaylistMetaLite(url) {
   }
 
   try {
-    const data = await runYtJson([
-      "--yes-playlist", "--flat-playlist", "--ignore-errors", url
-    ], "playlist-meta", 25000);
+    const data = await runYtJson(
+      ["--yes-playlist", "--flat-playlist", "--ignore-errors", url],
+      "playlist-meta",
+      PLAYLIST_META_TIMEOUT
+    );
 
     const title = data?.title || data?.playlist_title || "";
     const count = Number(data?.n_entries) || Number(data?.playlist_count) ||
@@ -323,9 +382,11 @@ export async function getPlaylistMetaLite(url) {
     return { title, count: Math.max(1, count), isAutomix: false };
   } catch {
     try {
-      const data = await runYtJson([
-        "--yes-playlist", "--skip-download", "--playlist-items", "1", url
-      ], "playlist-meta-fallback", 15000);
+      const data = await runYtJson(
+        ["--yes-playlist", "--skip-download", "--playlist-items", "1", url],
+        "playlist-meta-fallback",
+        PLAYLIST_META_FALLBACK_TIMEOUT
+      );
 
       const title = data?.title || data?.playlist_title || "";
       const count = Number(data?.n_entries) || Number(data?.playlist_count) || 1;
@@ -339,9 +400,15 @@ export async function getPlaylistMetaLite(url) {
 
 export async function extractPlaylistPage(url, start, end) {
   try {
-    const data = await runYtJson([
-      "--yes-playlist", "--flat-playlist", "--playlist-items", `${start}-${end}`, url
-    ], `playlist-page-${start}-${end}`, 20000);
+    const data = await runYtJson(
+      [
+        "--yes-playlist", "--flat-playlist",
+        "--playlist-items", `${start}-${end}`,
+        url
+      ],
+      `playlist-page-${start}-${end}`,
+      PLAYLIST_PAGE_TIMEOUT
+    );
 
     const entries = Array.isArray(data?.entries) ? data.entries : [];
     const items = entries.map(processEntry);
@@ -356,7 +423,7 @@ export async function extractPlaylistPage(url, start, end) {
 export async function extractAutomixAllFlat(url) {
   const data = await runYtJson([
     "--yes-playlist", "--flat-playlist", "--ignore-errors", url
-  ], "automix-all-flat", 25000);
+  ], "automix-all-flat", AUTOMIX_ALL_TIMEOUT);
 
   const title = data?.title || data?.playlist_title || "YouTube Automix";
   const rawEntries = Array.isArray(data?.entries) ? data.entries : [];
@@ -376,10 +443,14 @@ export async function extractAutomixAllFlat(url) {
 
 export async function extractAutomixPage(url, start, end) {
   try {
-    const data = await runYtJson([
-      "--yes-playlist", "--flat-playlist", "--ignore-errors",
-      "--playlist-items", `${start}-${end}`, url
-    ], `automix-page-${start}-${end}`, 45000);
+    const data = await runYtJson(
+      [
+        "--yes-playlist", "--flat-playlist", "--ignore-errors",
+        "--playlist-items", `${start}-${end}`, url
+      ],
+      `automix-page-${start}-${end}`,
+      AUTOMIX_PAGE_TIMEOUT
+    );
 
     const entries = Array.isArray(data?.entries) ? data.entries : [];
     const items = entries.map((entry, index) => ({
@@ -542,6 +613,7 @@ export async function downloadYouTubeVideo(
 
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp not found.");
+  url = normalizeYouTubeUrl(url);
 
   const hasSelectedIds =
     (isAutomix || isPlaylist) &&
@@ -692,6 +764,8 @@ if (opts.video) {
       args.push(...extraEnv.split(/\s+/).filter(Boolean));
     }
   }
+  addCookieArgs(args);
+  args.push(...getJsRuntimeArgs());
 
   return new Promise((resolve, reject) => {
     let stderrBuf = "";
@@ -932,6 +1006,9 @@ async function downloadSelectedIdsParallel(
       }
     }
 
+    addCookieArgs(args);
+    args.push(...getJsRuntimeArgs());
+
     return new Promise((resolve, reject) => {
       let stderrBuf = "";
 
@@ -1117,6 +1194,13 @@ async function downloadStandard(
       );
     }
 
+    const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
+    if (extraEnv) {
+      args.push(...extraEnv.split(/\s+/).filter(Boolean));
+    }
+    addCookieArgs(args);
+    args.push(...getJsRuntimeArgs());
+
     args.push(url);
       } else {
       args = [
@@ -1168,12 +1252,12 @@ async function downloadStandard(
     if (extraEnv) {
       args.push(...extraEnv.split(/\s+/).filter(Boolean));
     }
-
+    addCookieArgs(args);
+    args.push(...getJsRuntimeArgs());
     args.push(url);
   }
 
   const finalArgs = args;
-
   return new Promise((resolve, reject) => {
     const child = spawn(ytDlpBin, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
     try { registerJobProcess(jobId, child); } catch {}
@@ -1257,74 +1341,57 @@ async function downloadStandard(
     }
 
     if (destinationRe.test(line)) {
-    const m = line.match(/Destination:\s*(.+)$/i);
-    const dest = (m?.[1] || "").trim();
+      const m = line.match(/Destination:\s*(.+)$/i);
+      const dest = (m?.[1] || "").trim();
 
-    if (isPlaylist || isAutomix) {
-      const ext  = path.extname(dest).toLowerCase();
-      const base = path.basename(dest);
+      if (isPlaylist || isAutomix) {
+        downloadedFiles++;
 
-      const isThumb   = /\.(jpe?g|png|webp)$/i.test(ext);
-      const isSegment = /\.f\d+\./i.test(base);
-
-      if (isThumb || isSegment) {
-        return;
-      }
-
-      if (typeof opts.onFileDone === "function") {
-        let absPath = dest;
-        if (!path.isAbsolute(absPath)) {
-          const playlistDir = path.join(tempDir, jobId);
-          absPath = path.join(playlistDir, dest);
+        const total = seenTotal || downloadedFiles;
+        if (progressCallback) {
+          const progress = (downloadedFiles / total) * 100;
+          progressCallback(progress);
         }
 
-        const playlistIndex = parsePlaylistIndexFromPath(absPath);
-        try {
-          opts.onFileDone({
-            filePath: absPath,
-            playlistIndex: playlistIndex
-          });
-        } catch {}
+        emitEvent(progressCallback, opts, {
+          type: "file-done",
+          downloaded: downloadedFiles,
+          total: seenTotal || downloadedFiles,
+          jobId
+        });
+
+        if (typeof opts.onFileDone === "function" && dest) {
+          let absPath = dest;
+          if (!path.isAbsolute(absPath)) {
+            const playlistDir = path.join(tempDir, jobId);
+            absPath = path.join(playlistDir, dest);
+          }
+
+          const playlistIndex = parsePlaylistIndexFromPath(absPath);
+          try {
+            opts.onFileDone({
+              filePath: absPath,
+              playlistIndex
+            });
+          } catch {}
+        }
       }
+      return;
     }
 
-    downloadedFiles++;
-    curFilePct = 100;
-
-    if (isPlaylist || isAutomix) {
-      const total = seenTotal || downloadedFiles;
-      if (progressCallback) {
-        const progress = (downloadedFiles / total) * 100;
-        progressCallback(progress);
-      }
-      emitEvent(progressCallback, opts, {
-        type: "file-done",
-        downloaded: downloadedFiles,
-        total: seenTotal || downloadedFiles,
-        jobId
-      });
-    } else if (progressCallback) {
-      if (progressCallback) progressCallback(100);
+    const pctMatch = line.match(pctRe);
+    if (pctMatch) {
+      curFilePct = parseFloat(pctMatch[1]) || 0;
+      bumpProgress();
     }
-    return;
-  }
 
-  const pctMatch = line.match(pctRe);
-  if (pctMatch) {
-    curFilePct = parseFloat(pctMatch[1]) || 0;
-    bumpProgress();
-  }
-
-  const mItem = line.match(itemRe);
-  if (mItem) {
-    const idx = parseInt(mItem[1], 10);
-    const tot = parseInt(mItem[2], 10);
-    if (Number.isFinite(tot) && tot > 0) seenTotal = tot;
-    if (Number.isFinite(idx)) {
+    const mItem = line.match(itemRe);
+    if (mItem) {
+      const idx = parseInt(mItem[1], 10);
+      const tot = parseInt(mItem[2], 10);
+      if (Number.isFinite(tot) && tot > 0) seenTotal = tot;
     }
-  }
-};
-
+  };
     child.stdout.on("data", (d) => {
       if (abortIfCanceled()) return;
       const s = d.toString();
@@ -1440,7 +1507,6 @@ export function buildEntriesMap(ytMetadata) {
       map.set(index, entry);
     }
   });
-
   return map;
 }
 

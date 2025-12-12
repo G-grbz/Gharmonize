@@ -25,7 +25,6 @@ export function getFallbackMarkets(opts = {}) {
   const { includeEnv = true, includeDefault = true } = opts || {};
   const seen = new Set();
   const out = [];
-
   const pushUnique = (code) => {
     const n = normalizeMarketCode(code);
     if (!n) return;

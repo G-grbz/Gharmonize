@@ -4,7 +4,8 @@ import {
   FFMPEG_BIN,
   FFPROBE_BIN,
   MKVMERGE_BIN,
-  YTDLP_BIN
+  YTDLP_BIN,
+  DENO_BIN
 } from './binaries.js';
 
 const execFileAsync = promisify(execFile);
@@ -49,14 +50,15 @@ export async function getBinariesInfo() {
     return cache;
   }
 
-  const [ffmpeg, ffprobe, mkvmerge, ytdlp] = await Promise.all([
+  const [ffmpeg, ffprobe, mkvmerge, ytdlp, deno] = await Promise.all([
     getSingleVersion(FFMPEG_BIN),
     getSingleVersion(FFPROBE_BIN),
     getSingleVersion(MKVMERGE_BIN, ['--version']),
-    getSingleVersion(YTDLP_BIN, ['--version'])
+    getSingleVersion(YTDLP_BIN, ['--version']),
+    getSingleVersion(DENO_BIN, ['--version'])
   ]);
 
-  cache = { ffmpeg, ffprobe, mkvmerge, ytdlp };
+  cache = { ffmpeg, ffprobe, mkvmerge, ytdlp, deno };
   cacheTime = now;
   return cache;
 }

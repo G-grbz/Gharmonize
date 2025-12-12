@@ -13,8 +13,7 @@ import {
   buildEntriesMap,
   parsePlaylistIndexFromPath
 } from "./yt.js";
-import { downloadThumbnail } from "./media.js";
-import { convertMedia } from "./media.js";
+import { downloadThumbnail, convertMedia, maybeCleanTitle } from "./media.js";
 import { buildId3FromYouTube } from "./tags.js";
 import { probeYoutubeMusicMeta } from "./yt.js";
 import { findSpotifyMetaByQuery } from "./spotify.js";
@@ -31,6 +30,27 @@ function clampInt(v, min, max) {
   if (v < min) return min;
   if (v > max) return max;
   return v;
+}
+
+function cleanTitleLike(s) {
+  if (!s) return s;
+  let out = String(s);
+  out = maybeCleanTitle(out);
+  out = cleanNameDynamic(out);
+  return out;
+}
+
+function applyGlobalMetaCleaning(meta) {
+  if (!meta) return meta;
+  const m = { ...meta };
+
+  if (m.title) m.title = cleanTitleLike(m.title);
+  if (m.track) m.track = cleanTitleLike(m.track);
+  if (m.playlist_title) m.playlist_title = cleanTitleLike(m.playlist_title);
+  if (m.artist) m.artist = cleanNameDynamic(m.artist);
+  if (m.album_artist) m.album_artist = cleanNameDynamic(m.album_artist);
+  if (m.uploader) m.uploader = cleanNameDynamic(m.uploader);
+  return m;
 }
 
 function bump(obj, key, inc = 1) {
@@ -391,6 +411,8 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
             copyright: entry.copyright || ""
           };
 
+          fileMeta = applyGlobalMetaCleaning(fileMeta);
+
           let itemCover = null;
           const baseNoExt = filePath.replace(/\.[^.]+$/, "");
           const sidecarJpg = `${baseNoExt}.jpg`;
@@ -544,33 +566,32 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
         );
       }
 
-      const flat = {
-        title: toNFC(ytMeta?.title || ""),
-        uploader: toNFC(cleanNameDynamic(ytMeta?.uploader || ytMeta?.channel || "")),
-        artist: toNFC(
-          cleanNameDynamic(
-            ytMeta?.artist ||
-              ytMeta?.creator ||
-              ytMeta?.uploader ||
-              ytMeta?.channel ||
-              ""
-          )
-        ),
-        track: ytMeta?.track || "",
-        album: toNFC(ytMeta?.album || ""),
-        release_year:
-          (ytMeta?.release_year && String(ytMeta.release_year)) ||
-          (ytMeta?.release_date &&
-            String(ytMeta.release_date).slice(0, 4)) ||
-          "",
-        upload_date: ytMeta?.upload_date || "",
-        webpage_url: ytMeta?.webpage_url || job.metadata.url,
-        thumbnail:
-          (ytMeta?.thumbnails && ytMeta.thumbnails.length
-            ? ytMeta.thumbnails[ytMeta.thumbnails.length - 1].url
-            : ytMeta?.thumbnail) || "",
-        playlist_title: toNFC(ytMeta?.playlist_title || "")
-      };
+      let flat = {
+      title: toNFC(ytMeta?.title || ""),
+      uploader: toNFC(ytMeta?.uploader || ytMeta?.channel || ""),
+      artist: toNFC(
+        ytMeta?.artist ||
+          ytMeta?.creator ||
+          ytMeta?.uploader ||
+          ytMeta?.channel ||
+          ""
+      ),
+      track: ytMeta?.track || "",
+      album: toNFC(ytMeta?.album || ""),
+            release_year:
+              (ytMeta?.release_year && String(ytMeta.release_year)) ||
+              (ytMeta?.release_date &&
+                String(ytMeta.release_date).slice(0, 4)) ||
+              "",
+            upload_date: ytMeta?.upload_date || "",
+            webpage_url: ytMeta?.webpage_url || job.metadata.url,
+            thumbnail:
+              (ytMeta?.thumbnails && ytMeta.thumbnails.length
+                ? ytMeta.thumbnails[ytMeta.thumbnails.length - 1].url
+                : ytMeta?.thumbnail) || "",
+            playlist_title: toNFC(ytMeta?.playlist_title || "")
+          };
+      flat = applyGlobalMetaCleaning(flat);
       job.metadata.extracted = flat;
 
       try {
@@ -715,7 +736,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
           const fallbackTitle = path
             .basename(filePath, path.extname(filePath))
             .replace(/^\d+\s*-\s*/, "");
-          const title = toNFC(entry?.title || fallbackTitle);
+          let title = toNFC(entry?.title || fallbackTitle);
 
           let fileMeta = {
             ...flat,
@@ -741,7 +762,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
             copyright: "",
             album_artist: ""
           };
-
+          fileMeta = applyGlobalMetaCleaning(fileMeta);
           fileMeta.album_artist = toNFC(
             (entry && entry.album_artist) || fileMeta.artist || ""
           );
@@ -864,6 +885,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
           } catch (error) {
             console.warn(`ID3 strict resolution error: ${error.message}`);
           }
+          fileMeta = applyGlobalMetaCleaning(fileMeta);
 
           const totalTracks = job.playlist?.total || totalGuess || 1;
           const existingOut = findExistingOutput(
@@ -1220,12 +1242,14 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
     }
 
     let singleMeta = { ...(job.metadata.extracted || {}) };
+
     try {
       const ytMusicSingle = await probeYoutubeMusicMeta(
         singleMeta.webpage_url || job.metadata.url
       );
       singleMeta = mergeMeta(singleMeta, ytMusicSingle);
     } catch {}
+
     if (process.env.ENRICH_SPOTIFY_FOR_YT === "1") {
       try {
         const spSingle = await findSpotifyMetaByQuery(
@@ -1240,9 +1264,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
     }
     singleMeta.album_artist =
     singleMeta.album_artist || singleMeta.artist || "";
-    singleMeta.uploader = cleanNameDynamic(singleMeta.uploader);
-    singleMeta.artist = cleanNameDynamic(singleMeta.artist);
-    singleMeta.album_artist = cleanNameDynamic(singleMeta.album_artist);
+    singleMeta = applyGlobalMetaCleaning(singleMeta);
 
     try {
       const artistForMeta =

@@ -108,214 +108,502 @@ export class SettingsManager {
     getFormViewHTML() {
         return `
             <div id="formView" style="display:none">
-            <form id="settingsForm" autocomplete="off">
+                <form id="settingsForm" autocomplete="off">
+                    <div class="form-group">
+                        <span
+                            class="settings-field-label"
+                            data-i18n="version.updateCheck"
+                        >
+                        ${this.t('version.updateCheck')}
+                        </span>
+                        <div style="display: flex; gap: 8px;">
+                            <button
+                                type="button"
+                                id="checkUpdatesBtn"
+                                class="btn-outline"
+                                style="flex: 1;"
+                                data-i18n="version.checkUpdates"
+                            >
+                                ${this.t('version.checkUpdates')}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="f_UPLOAD_MAX_BYTES" class="settings-field-label">
+                            UPLOAD_MAX_BYTES
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.maxUpload"></div>
+                        <input id="f_UPLOAD_MAX_BYTES" type="text" placeholder='' data-i18n-ph="ph.maxUpload">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_SPOTIFY_CLIENT_ID" class="settings-field-label">
+                            SPOTIFY_CLIENT_ID
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.spotifyClientId"></div>
+                        <input id="f_SPOTIFY_CLIENT_ID" type="text">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_SPOTIFY_CLIENT_SECRET" class="settings-field-label">
+                            SPOTIFY_CLIENT_SECRET
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.spotifyClientSecret"></div>
+                        <input
+                            id="f_SPOTIFY_CLIENT_SECRET"
+                            type="password"
+                            placeholder="••••••••"
+                            data-i18n-ph="ph.spotifyClientSecret"
+                            autocomplete="off"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_SPOTIFY_MARKET" class="settings-field-label">
+                            SPOTIFY_MARKET
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.spotifyMarket"></div>
+                        <input
+                            id="f_SPOTIFY_MARKET"
+                            type="text"
+                            placeholder="TR, US, GB vb."
+                            data-i18n-ph="ph.spotifyMarket"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_SPOTIFY_DEBUG_MARKET" class="settings-field-label">
+                            SPOTIFY_DEBUG_MARKET
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.spotifyDebugMarket"></div>
+                        <select id="f_SPOTIFY_DEBUG_MARKET">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_SPOTIFY_FALLBACK_MARKETS" class="settings-field-label">
+                            SPOTIFY_FALLBACK_MARKETS
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.spotifyFallbackMarkets"></div>
+                        <input
+                            id="f_SPOTIFY_FALLBACK_MARKETS"
+                            type="text"
+                            placeholder="US,GB,DE,FR"
+                            data-i18n-ph="ph.spotifyFallbackMarkets"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_UI_FORCE_COOKIES" class="settings-field-label">
+                            YT_UI_FORCE_COOKIES
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytUiForceCookies">YouTube kullanıcı arayüzü için cookie zorlama (1=aktif, 0=pasif)</div>
+                        <select id="f_YT_UI_FORCE_COOKIES">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_USE_MUSIC" class="settings-field-label">
+                            YT_USE_MUSIC
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytUseMusic"></div>
+                        <select id="f_YT_USE_MUSIC">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_PREFER_SPOTIFY_TAGS" class="settings-field-label">
+                            PREFER_SPOTIFY_TAGS
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.preferSpotifyTags"></div>
+                        <select id="f_PREFER_SPOTIFY_TAGS">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_TITLE_CLEAN_PIPE" class="settings-field-label">
+                            TITLE_CLEAN_PIPE
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.titleCleanPipe"></div>
+                        <select id="f_TITLE_CLEAN_PIPE">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_CLEAN_SUFFIXES" class="settings-field-label">
+                            CLEAN_SUFFIXES
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.cSuffixes"></div>
+                        <input
+                            id="f_CLEAN_SUFFIXES"
+                            type="text"
+                            placeholder="''"
+                            data-i18n-ph="ph.cSuffixes"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_CLEAN_PHRASES" class="settings-field-label">
+                            CLEAN_PHRASES
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.cPhrases"></div>
+                        <input
+                            id="f_CLEAN_PHRASES"
+                            type="text"
+                            placeholder="''"
+                            data-i18n-ph="ph.cPhrases"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_CLEAN_PARENS" class="settings-field-label">
+                            CLEAN_PARENS
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.cParens"></div>
+                        <input
+                            id="f_CLEAN_PARENS"
+                            type="text"
+                            placeholder="''"
+                            data-i18n-ph="ph.cParens"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YTDLP_BIN" class="settings-field-label">
+                            YTDLP_BIN
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytdlpBin"></div>
+                        <input
+                            id="f_YTDLP_BIN"
+                            type="text"
+                            placeholder="'C:/tools/yt-dlp.exe'"
+                            data-i18n-ph="ph.ytdlpBin"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_DEFAULT_REGION" class="settings-field-label">
+                            YT_DEFAULT_REGION
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytDefaultRegion"></div>
+                        <input
+                            id="f_YT_DEFAULT_REGION"
+                            type="text"
+                            placeholder="ör: TR, US (boş = kapalı)"
+                            data-i18n-ph="ph.ytDefaultRegion"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_LANG" class="settings-field-label">
+                            YT_LANG
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytLang"></div>
+                        <input
+                            id="f_YT_LANG"
+                            type="text"
+                            placeholder="en-US, tr-TR ..."
+                            data-i18n-ph="ph.ytLang"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_ACCEPT_LANGUAGE" class="settings-field-label">
+                            YT_ACCEPT_LANGUAGE
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytAcceptLang"></div>
+                        <input
+                            id="f_YT_ACCEPT_LANGUAGE"
+                            type="text"
+                            placeholder="en-US,en;q=0.8 (opsiyonel)"
+                            data-i18n-ph="ph.ytAcceptLang"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_FORCE_IPV4" class="settings-field-label">
+                            YT_FORCE_IPV4
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytForceIpv4"></div>
+                        <select id="f_YT_FORCE_IPV4">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_ENRICH_SPOTIFY_FOR_YT" class="settings-field-label">
+                            ENRICH_SPOTIFY_FOR_YT
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.enrichSpforYy"></div>
+                        <select id="f_ENRICH_SPOTIFY_FOR_YT">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_MEDIA_COMMENT" class="settings-field-label">
+                            MEDIA_COMMENT
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.mediaComment"></div>
+                        <input
+                            id="f_MEDIA_COMMENT"
+                            type="text"
+                            placeholder="Gharmonize"
+                            data-i18n-ph="ph.mediaComment"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_FFMPEG_BIN" class="settings-field-label">
+                            FFMPEG_BIN
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ffmpegBin"></div>
+                        <input
+                            id="f_FFMPEG_BIN"
+                            type="text"
+                            placeholder=''
+                            data-i18n-ph="ph.ffmpegBin"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_403_WORKAROUNDS" class="settings-field-label">
+                            YT_403_WORKAROUNDS
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.workarounds"></div>
+                        <select id="f_YT_403_WORKAROUNDS">
+                            <option value="1">1</option>
+                            <option value="0">0</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YTDLP_UA" class="settings-field-label">
+                            YTDLP_UA
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytdlpUA"></div>
+                        <input
+                            id="f_YTDLP_UA"
+                            type="text"
+                            placeholder="User-Agent (opsiyonel)"
+                            data-i18n-ph="ph.ytdlpUA"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YTDLP_COOKIES" class="settings-field-label">
+                            YTDLP_COOKIES
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytdlpCookies"></div>
+                        <input
+                            id="f_YTDLP_COOKIES"
+                            type="text"
+                            placeholder="/path/to/cookies.txt (opsiyonel)"
+                            data-i18n-ph="ph.ytdlpCookies"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YTDLP_COOKIES_FROM_BROWSER" class="settings-field-label">
+                            YTDLP_COOKIES_FROM_BROWSER
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytdlpBrowser"></div>
+                        <select id="f_YTDLP_COOKIES_FROM_BROWSER">
+                            <option value="" data-i18n="common.off"></option>
+                            <option value="chrome">chrome</option>
+                            <option value="chromium">chromium</option>
+                            <option value="firefox">firefox</option>
+                            <option value="edge">edge</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YTDLP_EXTRA" class="settings-field-label">
+                            YTDLP_EXTRA
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytdlpExtra"></div>
+                        <input
+                            id="f_YTDLP_EXTRA"
+                            type="text"
+                            placeholder="Ek argümanlar, ör: --http-chunk-size 10M"
+                            data-i18n-ph="ph.ytdlpExtra"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_STRIP_COOKIES" class="settings-field-label">
+                            YT_STRIP_COOKIES
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytdlpSCookies"></div>
+                        <select id="f_YT_STRIP_COOKIES">
+                            <option value="0">0</option>
+                            <option value="1">1</option>
+                        </select>
+                    </div>
+                </form>
+
                 <div class="form-group">
-                <span
-                    class="settings-field-label"
-                    data-i18n="version.updateCheck"
-                >
-                   ${this.t('version.updateCheck')}
-                </span>
-                    <div style="display: flex; gap: 8px;">
-                    <button
-                        type="button"
-                        id="checkUpdatesBtn"
-                        class="btn-outline"
-                        style="flex: 1;"
-                        data-i18n="version.checkUpdates"
+                    <label for="f_PREVIEW_MAX_ENTRIES" class="settings-field-label">
+                        PREVIEW_MAX_ENTRIES
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.previewMaxEntries">Önizleme/otomix için maksimum parça sayısı</div>
+                    <input
+                        id="f_PREVIEW_MAX_ENTRIES"
+                        type="number"
+                        min="1"
+                        placeholder="50"
+                        data-i18n-ph="ph.previewMaxEntries"
                     >
-                        ${this.t('version.checkUpdates')}
-                    </button>
+                </div>
+
+                <div class="form-group">
+                    <label for="f_AUTOMIX_ALL_TIMEOUT_MS" class="settings-field-label">
+                        AUTOMIX_ALL_TIMEOUT_MS
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.automixAllTimeout">Otomatik karışım tüm isteği için timeout (ms)</div>
+                    <input
+                        id="f_AUTOMIX_ALL_TIMEOUT_MS"
+                        type="number"
+                        min="1000"
+                        placeholder="30000"
+                        data-i18n-ph="ph.automixAllTimeout"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="f_AUTOMIX_PAGE_TIMEOUT_MS" class="settings-field-label">
+                        AUTOMIX_PAGE_TIMEOUT_MS
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.automixPageTimeout">Otomatik karışım sayfası için timeout (ms)</div>
+                    <input
+                        id="f_AUTOMIX_PAGE_TIMEOUT_MS"
+                        type="number"
+                        min="1000"
+                        placeholder="15000"
+                        data-i18n-ph="ph.automixPageTimeout"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="f_PLAYLIST_ALL_TIMEOUT_MS" class="settings-field-label">
+                        PLAYLIST_ALL_TIMEOUT_MS
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.playlistAllTimeout">Playlist tüm isteği için timeout (ms)</div>
+                    <input
+                        id="f_PLAYLIST_ALL_TIMEOUT_MS"
+                        type="number"
+                        min="1000"
+                        placeholder="45000"
+                        data-i18n-ph="ph.playlistAllTimeout"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="f_PLAYLIST_PAGE_TIMEOUT_MS" class="settings-field-label">
+                        PLAYLIST_PAGE_TIMEOUT_MS
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.playlistPageTimeout">Playlist sayfası için timeout (ms)</div>
+                    <input
+                        id="f_PLAYLIST_PAGE_TIMEOUT_MS"
+                        type="number"
+                        min="1000"
+                        placeholder="15000"
+                        data-i18n-ph="ph.playlistPageTimeout"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="f_PLAYLIST_META_TIMEOUT_MS" class="settings-field-label">
+                        PLAYLIST_META_TIMEOUT_MS
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.playlistMetaTimeout">Playlist metadata için timeout (ms)</div>
+                    <input
+                        id="f_PLAYLIST_META_TIMEOUT_MS"
+                        type="number"
+                        min="1000"
+                        placeholder="10000"
+                        data-i18n-ph="ph.playlistMetaTimeout"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="f_PLAYLIST_META_FALLBACK_TIMEOUT_MS" class="settings-field-label">
+                        PLAYLIST_META_FALLBACK_TIMEOUT_MS
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.playlistMetaFallback">Playlist metadata fallback için timeout (ms)</div>
+                    <input
+                        id="f_PLAYLIST_META_FALLBACK_TIMEOUT_MS"
+                        type="number"
+                        min="1000"
+                        placeholder="5000"
+                        data-i18n-ph="ph.playlistMetaFallback"
+                    >
+                </div>
+
+                <form id="changePasswordForm" autocomplete="off">
+                    <div hidden>
+                        <label
+                            for="adminUserChange"
+                            class="settings-field-label"
+                        >Admin Kullanıcı Adı</label>
+                        <input id="adminUserChange" type="text" name="username" autocomplete="username" value="admin" />
+                    </div>
+                    <h4 class="settings-section-title" data-i18n="settings.adminPassword">Yönetici Şifresi</h4>
+                    <div class="form-group">
+                        <label for="f_ADMIN_OLD" class="settings-field-label" data-i18n="settings.currentPassword">Eski Şifre</label>
+                        <input
+                            id="f_ADMIN_OLD"
+                            type="password"
+                            placeholder="••••••••"
+                            data-i18n-ph="settings.currentPassword"
+                            autocomplete="current-password"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="f_ADMIN_NEW" class="settings-field-label" data-i18n="settings.newPassword">Yeni Şifre</label>
+                        <input
+                            id="f_ADMIN_NEW"
+                            type="password"
+                            placeholder="En az 6 karakter"
+                            data-i18n-ph="settings.newPassword"
+                            autocomplete="new-password"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="f_ADMIN_NEW2" class="settings-field-label" data-i18n="settings.newPassword2">Yeni Şifre (Tekrar)</label>
+                        <input
+                            id="f_ADMIN_NEW2"
+                            type="password"
+                            placeholder="Yeni Şifre (Tekrar)"
+                            data-i18n-ph="settings.newPassword2"
+                            autocomplete="new-password"
+                        />
+                    </div>
+                    <div class="settings-actions settings-actions--end">
+                        <button id="changePassBtn" type="button" class="btn-primary" data-i18n="btn.changePassword">Şifreyi Güncelle</button>
+                    </div>
+                </form>
+
+                <div class="settings-actions settings-actions--between">
+                    <button id="logoutBtn" type="button" class="btn-outline" data-i18n="btn.logout">Çıkış</button>
+                    <div class="settings-actions__right">
+                        <button id="reloadBtn" type="button" class="btn-outline" data-i18n="btn.reload">Yenile</button>
+                        <button id="saveBtn" type="button" class="btn-primary" data-i18n="btn.save">Kaydet</button>
+                    </div>
                 </div>
             </div>
-            <div class="form-group">
-                    <label for="f_UPLOAD_MAX_BYTES" data-i18n="settings.maxUpload">UPLOAD_MAX_BYTES</label>
-                    <input id="f_UPLOAD_MAX_BYTES" type="text" placeholder='' data-i18n-ph="ph.maxUpload">
-                </div>
-                <div class="form-group">
-                    <label for="f_SPOTIFY_CLIENT_ID" data-i18n="settings.spotifyClientId">SPOTIFY_CLIENT_ID</label>
-                    <input id="f_SPOTIFY_CLIENT_ID" type="text" >
-                </div>
-                <div class="form-group">
-                    <label for="f_SPOTIFY_CLIENT_SECRET" data-i18n="settings.spotifyClientSecret">SPOTIFY_CLIENT_SECRET</label>
-                    <input id="f_SPOTIFY_CLIENT_SECRET" type="password" placeholder="••••••••" data-i18n-ph="ph.spotifyClientSecret" autocomplete="off" >
-                </div>
-                <div class="form-group">
-                    <label for="f_SPOTIFY_MARKET" data-i18n="settings.spotifyMarket">SPOTIFY_MARKET</label>
-                    <input id="f_SPOTIFY_MARKET" type="text" placeholder="TR, US, GB vb." data-i18n-ph="ph.spotifyMarket" >
-                </div>
-                <div class="form-group">
-                    <label for="f_SPOTIFY_DEBUG_MARKET" data-i18n="settings.spotifyDebugMarket">SPOTIFY_DEBUG_MARKET</label>
-                    <select id="f_SPOTIFY_DEBUG_MARKET">
-                        <option value="1">1</option>
-                        <option value="0">0</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="f_SPOTIFY_FALLBACK_MARKETS" data-i18n="settings.spotifyFallbackMarkets">SPOTIFY_FALLBACK_MARKETS</label>
-                    <input id="f_SPOTIFY_FALLBACK_MARKETS" type="text" placeholder="US,GB,DE,FR" data-i18n-ph="ph.spotifyFallbackMarkets" >
-                </div>
-                <div class="form-group">
-                    <label for="f_YT_USE_MUSIC" data-i18n="settings.ytUseMusic">YT_USE_MUSIC</label>
-                    <select id="f_YT_USE_MUSIC">
-                        <option value="1">1</option>
-                        <option value="0">0</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="f_PREFER_SPOTIFY_TAGS" data-i18n="settings.preferSpotifyTags">PREFER_SPOTIFY_TAGS</label>
-                    <select id="f_PREFER_SPOTIFY_TAGS">
-                        <option value="1">1</option>
-                        <option value="0">0</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="f_TITLE_CLEAN_PIPE" data-i18n="settings.titleCleanPipe">TITLE_CLEAN_PIPE</label>
-                    <select id="f_TITLE_CLEAN_PIPE">
-                        <option value="1">1</option>
-                        <option value="0">0</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="f_CLEAN_SUFFIXES" data-i18n="settings.cSuffixes">CLEAN_SUFFIXES</label>
-                    <input id="f_CLEAN_SUFFIXES" type="text" placeholder="''" data-i18n-ph="ph.cSuffixes">
-                </div>
-                <div class="form-group">
-                    <label for="f_CLEAN_PHRASES" data-i18n="settings.cPhrases">CLEAN_PHRASES</label>
-                    <input id="f_CLEAN_PHRASES" type="text" placeholder="''" data-i18n-ph="ph.cPhrases">
-                </div>
-                <div class="form-group">
-                    <label for="f_CLEAN_PARENS" data-i18n="settings.cParens">CLEAN_PARENS</label>
-                    <input id="f_CLEAN_PARENS" type="text" placeholder="''" data-i18n-ph="ph.cParens">
-                </div>
-                <div class="form-group">
-                    <label for="f_YTDLP_BIN" data-i18n="settings.ytdlpBin">YTDLP_BIN</label>
-                    <input id="f_YTDLP_BIN" type="text" placeholder="'C:/tools/yt-dlp.exe'" data-i18n-ph="ph.ytdlpBin">
-                </div>
-                <div class="form-group">
-                    <label for="f_YT_DEFAULT_REGION" data-i18n="settings.ytDefaultRegion">YT_DEFAULT_REGION</label>
-                    <input id="f_YT_DEFAULT_REGION" type="text" placeholder="ör: TR, US (boş = kapalı)" data-i18n-ph="ph.ytDefaultRegion" >
-                </div>
-                <div class="form-group">
-                    <label for="f_YT_LANG" data-i18n="settings.ytLang">YT_LANG</label>
-                    <input id="f_YT_LANG" type="text" placeholder="en-US, tr-TR ..." data-i18n-ph="ph.ytLang" >
-                </div>
-                <div class="form-group">
-                    <label for="f_YT_ACCEPT_LANGUAGE" data-i18n="settings.ytAcceptLang">YT_ACCEPT_LANGUAGE</label>
-                    <input id="f_YT_ACCEPT_LANGUAGE" type="text" placeholder="en-US,en;q=0.8 (opsiyonel)" data-i18n-ph="ph.ytAcceptLang" >
-                </div>
-                <div class="form-group">
-                    <label for="f_YT_FORCE_IPV4" data-i18n="settings.ytForceIpv4">YT_FORCE_IPV4</label>
-                    <select id="f_YT_FORCE_IPV4">
-                        <option value="1">1</option>
-                        <option value="0">0</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="f_ENRICH_SPOTIFY_FOR_YT" data-i18n="settings.enrichSpforYy">ENRICH_SPOTIFY_FOR_YT</label>
-                    <select id="f_ENRICH_SPOTIFY_FOR_YT">
-                        <option value="1">1</option>
-                        <option value="0">0</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="f_MEDIA_COMMENT" data-i18n="settings.mediaComment">MEDIA_COMMENT</label>
-                    <input id="f_MEDIA_COMMENT" type="text" placeholder="Gharmonize" data-i18n-ph="ph.mediaComment">
-                </div>
-                <div class="form-group">
-                    <label for="f_FFMPEG_BIN" data-i18n="settings.ffmpegBin">FFMPEG_BIN</label>
-                    <input id="f_FFMPEG_BIN" type="text" placeholder='' data-i18n-ph="ph.ffmpegBin">
-                </div>
-                <div class="form-group">
-                    <label for="f_YT_403_WORKAROUNDS" data-i18n="settings.workarounds">YT_403_WORKAROUNDS</label>
-                    <select id="f_YT_403_WORKAROUNDS">
-                        <option value="1">1</option>
-                        <option value="0">0</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                   <label for="f_YTDLP_UA" data-i18n="settings.ytdlpUA">YTDLP_UA</label>
-                    <input id="f_YTDLP_UA" type="text" placeholder="User-Agent (opsiyonel)" data-i18n-ph="ph.ytdlpUA" >
-                </div>
-                <div class="form-group">
-                    <label for="f_YTDLP_COOKIES" data-i18n="settings.ytdlpCookies">YTDLP_COOKIES</label>
-                    <input id="f_YTDLP_COOKIES" type="text" placeholder="/path/to/cookies.txt (opsiyonel)" data-i18n-ph="ph.ytdlpCookies" >
-                </div>
-                <div class="form-group">
-                    <label for="f_YTDLP_COOKIES_FROM_BROWSER" data-i18n="settings.ytdlpBrowser">YTDLP_COOKIES_FROM_BROWSER</label>
-                    <select id="f_YTDLP_COOKIES_FROM_BROWSER">
-                        <option value="">(kapalı)</option>
-                        <option value="chrome">chrome</option>
-                        <option value="chromium">chromium</option>
-                        <option value="firefox">firefox</option>
-                        <option value="edge">edge</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="f_YTDLP_EXTRA" data-i18n="settings.ytdlpExtra">YTDLP_EXTRA</label>
-                    <input id="f_YTDLP_EXTRA" type="text" placeholder="Ek argümanlar, ör: --http-chunk-size 10M" data-i18n-ph="ph.ytdlpExtra" >
-                </div>
-                <div class="form-group">
-                    <label for="f_YT_STRIP_COOKIES" data-i18n="settings.ytdlpSCookies">YT_STRIP_COOKIES</label>
-                    <select id="f_YT_STRIP_COOKIES">
-                        <option value="0">0</option>
-                        <option value="1">1</option>
-                    </select>
-                </div>
-            </form>
-
-            <form id="changePasswordForm" autocomplete="off">
-            <div hidden>
-                    <label
-                        for="adminUserChange"
-                        class="settings-field-label"
-                    >Admin Kullanıcı Adı</label>
-                    <input id="adminUserChange" type="text" name="username" autocomplete="username" value="admin" />
-                </div>
-                <h4 class="settings-section-title" data-i18n="settings.adminPassword">Yönetici Şifresi</h4>
-                <div class="form-group">
-                    <label for="f_ADMIN_OLD" class="settings-field-label" data-i18n="settings.currentPassword">Eski Şifre</label>
-                    <input
-                        id="f_ADMIN_OLD"
-                        type="password"
-                        placeholder="••••••••"
-                        data-i18n-ph="settings.currentPassword"
-                        autocomplete="current-password"
-                    />
-                </div>
-                <div class="form-group">
-                    <label for="f_ADMIN_NEW" class="settings-field-label" data-i18n="settings.newPassword">Yeni Şifre</label>
-                    <input
-                        id="f_ADMIN_NEW"
-                        type="password"
-                        placeholder="En az 6 karakter"
-                        data-i18n-ph="settings.newPassword"
-                        autocomplete="new-password"
-                    />
-                </div>
-                <div class="form-group">
-                    <label for="f_ADMIN_NEW2" class="settings-field-label" data-i18n="settings.newPassword2">Yeni Şifre (Tekrar)</label>
-                    <input
-                        id="f_ADMIN_NEW2"
-                        type="password"
-                        placeholder="Yeni Şifre (Tekrar)"
-                        data-i18n-ph="settings.newPassword2"
-                        autocomplete="new-password"
-                    />
-                </div>
-                <div class="settings-actions settings-actions--end">
-                    <button id="changePassBtn" type="button" class="btn-primary" data-i18n="btn.changePassword">Şifreyi Güncelle</button>
-                </div>
-            </form>
-
-            <div class="settings-actions settings-actions--between">
-                <button id="logoutBtn" type="button" class="btn-outline" data-i18n="btn.logout">Çıkış</button>
-                <div class="settings-actions__right">
-                    <button id="reloadBtn" type="button" class="btn-outline" data-i18n="btn.reload">Yenile</button>
-                    <button id="saveBtn" type="button" class="btn-primary" data-i18n="btn.save">Kaydet</button>
-                </div>
-            </div>
-        </div>
         `;
     }
 
@@ -526,6 +814,14 @@ export class SettingsManager {
             document.getElementById('f_FFMPEG_BIN').value = s.FFMPEG_BIN || '';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
+            document.getElementById('f_PREVIEW_MAX_ENTRIES').value = s.PREVIEW_MAX_ENTRIES || '50';
+            document.getElementById('f_AUTOMIX_ALL_TIMEOUT_MS').value = s.AUTOMIX_ALL_TIMEOUT_MS || '30000';
+            document.getElementById('f_AUTOMIX_PAGE_TIMEOUT_MS').value = s.AUTOMIX_PAGE_TIMEOUT_MS || '15000';
+            document.getElementById('f_PLAYLIST_ALL_TIMEOUT_MS').value = s.PLAYLIST_ALL_TIMEOUT_MS || '45000';
+            document.getElementById('f_PLAYLIST_PAGE_TIMEOUT_MS').value = s.PLAYLIST_PAGE_TIMEOUT_MS || '15000';
+            document.getElementById('f_PLAYLIST_META_TIMEOUT_MS').value = s.PLAYLIST_META_TIMEOUT_MS || '10000';
+            document.getElementById('f_PLAYLIST_META_FALLBACK_TIMEOUT_MS').value = s.PLAYLIST_META_FALLBACK_TIMEOUT_MS || '5000';
+            document.getElementById('f_YT_UI_FORCE_COOKIES').value = s.YT_UI_FORCE_COOKIES || '1';
 
         } catch (e) {
             modalManager.showAlert({
@@ -565,7 +861,15 @@ export class SettingsManager {
                 MEDIA_COMMENT: document.getElementById('f_MEDIA_COMMENT').value.trim(),
                 YTDLP_BIN: document.getElementById('f_YTDLP_BIN').value.trim(),
                 FFMPEG_BIN: document.getElementById('f_FFMPEG_BIN').value.trim(),
-                UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim()
+                UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
+                PREVIEW_MAX_ENTRIES: document.getElementById('f_PREVIEW_MAX_ENTRIES').value.trim(),
+                AUTOMIX_ALL_TIMEOUT_MS: document.getElementById('f_AUTOMIX_ALL_TIMEOUT_MS').value.trim(),
+                AUTOMIX_PAGE_TIMEOUT_MS: document.getElementById('f_AUTOMIX_PAGE_TIMEOUT_MS').value.trim(),
+                PLAYLIST_ALL_TIMEOUT_MS: document.getElementById('f_PLAYLIST_ALL_TIMEOUT_MS').value.trim(),
+                PLAYLIST_PAGE_TIMEOUT_MS: document.getElementById('f_PLAYLIST_PAGE_TIMEOUT_MS').value.trim(),
+                PLAYLIST_META_TIMEOUT_MS: document.getElementById('f_PLAYLIST_META_TIMEOUT_MS').value.trim(),
+                PLAYLIST_META_FALLBACK_TIMEOUT_MS: document.getElementById('f_PLAYLIST_META_FALLBACK_TIMEOUT_MS').value.trim(),
+                YT_UI_FORCE_COOKIES: document.getElementById('f_YT_UI_FORCE_COOKIES').value
             }
         };
 

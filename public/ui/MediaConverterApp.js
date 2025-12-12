@@ -642,12 +642,12 @@ export class MediaConverterApp {
 
             const shortenVersion = (v) => {
                 if (!v) return '';
-                const nightly = v.match(/^N-(\d+)-g[0-9a-f]+-(\d{8})$/);
+                const nightly = v.match(/^N-(\d+)-(?:g[0-9a-f]+-)?(\d{8})$/);
                 if (nightly) {
-                    const build = nightly[1];
                     const date = nightly[2];
-                    return `N-${build}-${date}`;
+                    return date;
                 }
+
                 if (v.length > 20) {
                     return v.slice(0, 19) + '…';
                 }
@@ -670,6 +670,9 @@ export class MediaConverterApp {
         }
         if (data.ytdlp?.version) {
             parts.push(`yt-dlp: ${shortenVersion(data.ytdlp.version)}`);
+        }
+        if (data.deno?.version) {
+            parts.push(`deno: ${shortenVersion(data.deno.version)}`);
         }
 
             el.textContent = parts.join(' • ');

@@ -1,9 +1,11 @@
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
-import { runYtJson, resolveYtDlp, withYT403Workarounds } from "./yt.js";
+import { runYtJson, resolveYtDlp, withYT403Workarounds, YT_USE_MUSIC } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
+import { getUserAgent, getYouTubeHeaders, addGeoArgs, getExtraArgs, FLAGS } from "./config.js";
+import { addCookieArgs, getJsRuntimeArgs } from "./utils.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const TEMP_DIR = path.resolve(BASE_DIR, "temp");
@@ -27,7 +29,7 @@ export async function searchYtmBestId(artist, title) {
   return entries[0]?.id || null;
 }
 
-export function idsToMusicUrls(ids, useMusic = process.env.YT_USE_MUSIC !== "0") {
+export function idsToMusicUrls(ids, useMusic = YT_USE_MUSIC) {
   return ids.map((id) =>
     useMusic
       ? `https://music.youtube.com/watch?v=${id}`
@@ -36,30 +38,32 @@ export function idsToMusicUrls(ids, useMusic = process.env.YT_USE_MUSIC !== "0")
 }
 
 function getYtDlpCommonArgs() {
-  const ua =
-    process.env.YTDLP_UA ||
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
+  const ua = getUserAgent();
+  const headers = getYouTubeHeaders();
   const base = [
     "--no-progress",
     "--no-warnings",
-    "--force-ipv4",
-    "--retries",
-    "10",
-    "--fragment-retries",
-    "10",
-    "--retry-sleep",
-    "3",
-    "--user-agent",
-    ua,
-    "--add-header",
-    "Referer: https://www.youtube.com/",
-    "--add-header",
-    "Accept-Language: en-US,en;q=0.9",
-    "--geo-bypass",
+    "--retries", "10",
+    "--fragment-retries", "10",
+    "--retry-sleep", "3",
+    "--user-agent", ua,
+    "--add-header", `Referer: ${headers["Referer"]}`,
+    "--add-header", `Accept-Language: ${headers["Accept-Language"]}`,
   ];
-  if (process.env.YTDLP_EXTRA) {
-    base.push(...process.env.YTDLP_EXTRA.split(/\s+/).filter(Boolean));
+
+  if (FLAGS.FORCE_IPV4) {
+    base.push("--force-ipv4");
   }
+
+  const geoArgs = addGeoArgs([]);
+  if (geoArgs.length) base.push(...geoArgs);
+
+  const extra = getExtraArgs();
+  if (extra.length) base.push(...extra);
+
+  addCookieArgs(base);
+  base.push(...getJsRuntimeArgs());
+
   return base;
 }
 
@@ -71,6 +75,7 @@ export async function mapSpotifyToYtm(
   let i = 0,
     running = 0;
   const results = new Array(sp.items.length);
+  const useMusic = YT_USE_MUSIC;
   return new Promise((resolve) => {
     const kick = () => {
       if (shouldCancel && shouldCancel()) {
@@ -126,7 +131,7 @@ export async function mapSpotifyToYtm(
             duration: null,
             duration_string: null,
             webpage_url: vid
-              ? process.env.YT_USE_MUSIC !== "0"
+              ? useMusic
                 ? `https://music.youtube.com/watch?v=${vid}`
                 : `https://www.youtube.com/watch?v=${vid}`
               : "",
@@ -298,7 +303,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
   ];
 
   let args = [...getYtDlpCommonArgs(), "--no-abort-on-error", ...base, url];
-  const stripCookies = process.env.YT_STRIP_COOKIES === "1";
+  const stripCookies = FLAGS.STRIP_COOKIES;
   let finalArgs = withYT403Workarounds(args, { stripCookies });
 
   return new Promise((resolve, reject) => {

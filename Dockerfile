@@ -19,13 +19,11 @@ RUN set -eux; \
         unzip \
         gnupg; \
     \
-
     YTDLP_VERSION=2025.12.08; \
     curl -L "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" \
       -o /usr/local/bin/yt-dlp; \
     chmod a+rx /usr/local/bin/yt-dlp; \
     \
-
     FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"; \
     cd /tmp; \
     curl -L "$FFMPEG_URL" -o ffmpeg.tar.xz; \
@@ -36,7 +34,6 @@ RUN set -eux; \
     cd /; \
     rm -rf /tmp/ffmpeg*; \
     \
-
     mkdir -p /etc/apt/keyrings; \
     wget -O /etc/apt/keyrings/gpg-pub-moritzbunkus.gpg \
       https://mkvtoolnix.download/gpg-pub-moritzbunkus.gpg; \
@@ -46,13 +43,21 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends mkvtoolnix; \
     \
 
+    DENO_VERSION=2.6.0; \
+    cd /tmp; \
+    curl -L "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" \
+      -o deno.zip; \
+    unzip -o deno.zip -d /usr/local/bin; \
+    chmod a+rx /usr/local/bin/deno; \
+    rm -f deno.zip; \
+    \
     rm -rf /var/lib/apt/lists/*; \
     \
-
     echo "yt-dlp version:" && /usr/local/bin/yt-dlp --version; \
     echo "ffmpeg version:" && ffmpeg -version; \
     echo "ffprobe version:" && ffprobe -version; \
     echo "mkvmerge version:" && mkvmerge --version; \
+    echo "deno version:" && deno --version; \
     echo "FFmpeg NVENC/QSV encoders:" && ffmpeg -hide_banner -encoders | grep -E 'nvenc|_qsv' || true
 
 COPY package*.json ./
@@ -75,6 +80,7 @@ ENV NODE_ENV=production \
     FFMPEG_BIN=/usr/local/bin/ffmpeg \
     FFPROBE_BIN=/usr/local/bin/ffprobe \
     MKVMERGE_BIN=/usr/bin/mkvmerge \
+    DENO_BIN=/usr/local/bin/deno \
     DISABLE_QSV_IN_DOCKER=1 \
     DISABLE_VAAPI_IN_DOCKER=1
 

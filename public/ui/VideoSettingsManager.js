@@ -13,7 +13,8 @@ export class VideoSettingsManager {
             nvencSettings: { preset: 'fast', quality: '26' },
             qsvSettings: { preset: 'veryfast', quality: '26' },
             vaapiSettings: { device: '/dev/dri/renderD128', quality: '26' },
-            volumeGain: 1.0
+            volumeGain: 1.0,
+            videoCodec: 'auto',
         };
     }
 
@@ -36,6 +37,7 @@ export class VideoSettingsManager {
                 this.videoSettings.audioBitrate = this.videoSettings.audioBitrate || '192k';
                 this.videoSettings.audioChannels = this.videoSettings.audioChannels || 'original';
                 this.videoSettings.audioSampleRate = this.videoSettings.audioSampleRate || '48000';
+                this.videoSettings.videoCodec = this.videoSettings.videoCodec || 'auto';
             } catch (e) {
                 console.warn('Failed to load video settings:', e);
             }
@@ -87,6 +89,15 @@ export class VideoSettingsManager {
                         <option value="vaapi" data-i18n="option.vaapi"></option>
                     </select>
                 </div>
+
+                <div class="form-group">
+  <label for="videoCodecSelect" data-i18n="label.videoCodec"></label>
+  <select id="videoCodecSelect">
+    <option value="auto" data-i18n="option.videoCodecAuto"></option>
+    <option value="h264" data-i18n="option.videoCodecH264"></option>
+    <option value="h265" data-i18n="option.videoCodecH265"></option>
+  </select>
+</div>
 
                 <div class="form-group">
                     <label for="fpsSelect">FPS:</label>
@@ -258,8 +269,17 @@ export class VideoSettingsManager {
             });
         }
 
+        const videoCodecSelect = document.getElementById('videoCodecSelect');
+            if (videoCodecSelect) {
+            videoCodecSelect.value = this.videoSettings.videoCodec || 'auto';
+            videoCodecSelect.addEventListener('change', (e) => {
+                this.videoSettings.videoCodec = e.target.value || 'auto';
+                this.saveToStorage();
+            });
+        }
+
         const audioCodecSelect = document.getElementById('audioCodecSelect');
-        if (audioCodecSelect) {
+            if (audioCodecSelect) {
             audioCodecSelect.value = this.videoSettings.audioCodec;
             audioCodecSelect.addEventListener('change', (e) => {
                 this.videoSettings.audioCodec = e.target.value;
@@ -269,7 +289,7 @@ export class VideoSettingsManager {
         }
 
         const audioChannelsSelect = document.getElementById('audioChannelsSelect');
-        if (audioChannelsSelect) {
+            if (audioChannelsSelect) {
             audioChannelsSelect.value = this.videoSettings.audioChannels;
             audioChannelsSelect.addEventListener('change', (e) => {
                 this.videoSettings.audioChannels = e.target.value;
@@ -278,7 +298,7 @@ export class VideoSettingsManager {
         }
 
         const audioSampleRateSelect = document.getElementById('audioSampleRateSelect');
-        if (audioSampleRateSelect) {
+            if (audioSampleRateSelect) {
             audioSampleRateSelect.value = this.videoSettings.audioSampleRate;
             audioSampleRateSelect.addEventListener('change', (e) => {
                 this.videoSettings.audioSampleRate = e.target.value;

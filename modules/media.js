@@ -608,7 +608,11 @@ export async function convertMedia(
       targetHeight = SRC_H;
     }
 
-    const useHevc = (targetHeight || EFFECTIVE_H) >= 2160;
+    const codecPref = String(videoSettings.videoCodec || "auto").toLowerCase();
+    const useHevc =
+      codecPref === "h265" ? true :
+      codecPref === "h264" ? false :
+      (targetHeight || EFFECTIVE_H) >= 2160;
     const useNvenc = videoHwaccel === "nvenc";
     const useQsv   = videoHwaccel === "qsv";
     const useVaapi = videoHwaccel === "vaapi";

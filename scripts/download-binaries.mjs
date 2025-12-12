@@ -1,3 +1,5 @@
+//scripts/download-binaries.mjs
+
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -202,6 +204,11 @@ const DEFAULTS = {
       url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.12.08/yt-dlp',
       type: 'direct',
       out: 'yt-dlp'
+    },
+    deno: {
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.0/deno-x86_64-unknown-linux-gnu.zip',
+      type: 'zip',
+      find: 'deno'
     }
   },
 
@@ -225,11 +232,16 @@ const DEFAULTS = {
       url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.12.08/yt-dlp.exe',
       type: 'direct',
       out: 'yt-dlp.exe'
+    },
+    deno: {
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.0/deno-x86_64-pc-windows-msvc.zip',
+      type: 'zip',
+      find: 'deno.exe'
     }
   }
 };
 
-const TOOL_ORDER = ['ffmpeg', 'ffprobe', 'mkvmerge', 'ytdlp'];
+const TOOL_ORDER = ['ffmpeg', 'ffprobe', 'mkvmerge', 'ytdlp', 'deno'];
 const downloadCache = new Map();
 const extractCache = new Map();
 

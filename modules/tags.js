@@ -83,6 +83,11 @@ export function buildId3FromYouTube(ytLikeMeta) {
 }
 
 export async function resolveId3FromSpotifyFallback(ytLikeMeta) {
+  const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
+  if (!preferSpotify) {
+    return null;
+  }
+
   try {
     const { artist, title } = splitArtistTitle(
       ytLikeMeta?.title,
@@ -120,6 +125,8 @@ export async function resolveId3StrictForYouTube(
   ytLikeMeta,
   { market = "TR", isPlaylist = false } = {}
 ) {
+  const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
+
   try {
     const { artist, title } = splitArtistTitle(
       ytLikeMeta?.title,
@@ -129,34 +136,35 @@ export async function resolveId3StrictForYouTube(
 
     let fromSpotify = null;
 
-    if (isPlaylist) {
-      const durationSec = Number.isFinite(ytLikeMeta?.duration)
-        ? Number(ytLikeMeta.duration)
-        : null;
+    if (preferSpotify) {
+      if (isPlaylist) {
+        const durationSec = Number.isFinite(ytLikeMeta?.duration)
+          ? Number(ytLikeMeta.duration)
+          : null;
 
-      const options = {
-        targetDurationSec: durationSec,
-        titleRaw: ytLikeMeta?.title,
-        minScore: 7
-      };
+        const options = {
+          targetDurationSec: durationSec,
+          titleRaw: ytLikeMeta?.title,
+          minScore: 7
+        };
 
-      const preferredMarket = ytLikeMeta?.market || market;
+        const preferredMarket = ytLikeMeta?.market || market;
 
-      const found = await withMarketFallback(
-        (m) => searchSpotifyBestTrackStrict(artist, title, m, options),
-        preferredMarket
-      );
+        const found = await withMarketFallback(
+          (m) => searchSpotifyBestTrackStrict(artist, title, m, options),
+          preferredMarket
+        );
 
-      if (found) {
-        fromSpotify = trackToId3Meta(found);
+        if (found) {
+          fromSpotify = trackToId3Meta(found);
+        }
+      } else {
+        fromSpotify = await resolveId3FromSpotifyFallback({
+          ...ytLikeMeta,
+          market: ytLikeMeta?.market || market
+        });
       }
-    } else {
-      fromSpotify = await resolveId3FromSpotifyFallback({
-        ...ytLikeMeta,
-        market: ytLikeMeta?.market || market
-      });
     }
-
     if (fromSpotify) {
       return fromSpotify;
     }

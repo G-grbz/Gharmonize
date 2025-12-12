@@ -386,11 +386,25 @@ export class JobsPanelManager {
     }
 
     rawProg(j) {
+        const source = j.metadata?.source || 'file';
+        const isLocalSource = source === 'local' || source === 'file';
+        if (isLocalSource) {
+            const convertProgress = Number(j.convertProgress) || 0;
+            if (convertProgress > 0) return convertProgress;
+            if (this.norm(j.status) === 'completed') return 100;
+            return 0;
+        }
+
         const isMultiAudio =
             !j.metadata?.isPlaylist &&
             j.metadata?.selectedStreams &&
             Array.isArray(j.metadata.selectedStreams.audio) &&
             j.metadata.selectedStreams.audio.length > 1;
+
+        const isVideoTranscode = j.format?.toLowerCase() === 'mp4' ||
+                            j.format?.toLowerCase() === 'mkv' ||
+                            j.format?.toLowerCase() === 'webm' ||
+                            (j.videoSettings && j.videoSettings.transcodeEnabled);
 
         if (typeof j.progress === 'number' && Number.isFinite(j.progress)) {
             return j.progress;
@@ -409,10 +423,13 @@ export class JobsPanelManager {
 
         const phase = this.norm(j.currentPhase || j.phase);
 
-        const d = Number(j.downloadProgress || 0);
+        let d = Number(j.downloadProgress || 0);
         let c = 0;
 
-        if (phase === 'converting' || phase === 'completed') {
+        if (isVideoTranscode) {
+            d = Number(j.downloadProgress || 0);
+            c = Number(j.convertProgress || 0);
+        } else if (phase === 'converting' || phase === 'completed') {
             c = Number(j.convertProgress || 0);
         }
 
@@ -422,8 +439,36 @@ export class JobsPanelManager {
         return 0;
     }
 
-        prog(j) {
+    prog(j) {
         const id = j.id ?? j._id ?? null;
+        const source = j.metadata?.source || 'file';
+        const isLocalSource = source === 'local' || source === 'file';
+
+        if (isLocalSource) {
+            const baseRaw = this.rawProg(j);
+
+            if (!Number.isFinite(baseRaw)) return 0;
+
+            const status = this.norm(j.status);
+            const prev = (id && this.progressCache.has(id))
+                ? this.progressCache.get(id)
+                : 0;
+
+            let next = baseRaw;
+
+            if (status !== 'completed') {
+                if (next > 95) next = 95;
+            } else {
+                next = 100;
+            }
+            if (next < prev) next = prev;
+
+            if (id) {
+                this.progressCache.set(id, next);
+            }
+            return next;
+        }
+
         const baseRaw = this.rawProg(j);
 
         if (!Number.isFinite(baseRaw)) return 0;
@@ -434,6 +479,13 @@ export class JobsPanelManager {
             : 0;
 
         let next = baseRaw;
+
+        const isVideoTranscode = j.format?.toLowerCase() === 'mp4' ||
+                            (j.videoSettings && j.videoSettings.transcodeEnabled);
+
+        if (isVideoTranscode) {
+            next = Math.floor((Number(j.downloadProgress || 0) + Number(j.convertProgress || 0)) / 2);
+        }
 
         if (status !== 'completed') {
             if (next > 95) next = 95;
@@ -1232,6 +1284,7 @@ export class JobManager {
         this.jobToBatch = new Map();
         this.sessionSectionsInitialized = false;
         this.storageKey = 'gharmonize_job_session';
+        this.progressCache = new Map();
 
         if (typeof window !== 'undefined') {
             const doRestore = () => {
@@ -1430,6 +1483,127 @@ export class JobManager {
         const v = String(s || '').toLowerCase();
         return v === 'cancelled' ? 'canceled' : v;
     }
+
+    computeRawProg(job) {
+    const source = job.metadata?.source || 'file';
+    const isLocalSource = source === 'local' || source === 'file';
+
+    if (isLocalSource) {
+        let convertProgress = Number(job.convertProgress) || 0;
+
+        if (convertProgress === 0 && this.normalizeStatus(job.status) !== 'completed') {
+            convertProgress = Number(job.progress) || 0;
+        }
+
+        if (convertProgress === 0 && this.normalizeStatus(job.status) === 'completed') {
+            return 100;
+        }
+
+        return convertProgress;
+    }
+
+    const isMultiAudio =
+        !job.metadata?.isPlaylist &&
+        job.metadata?.selectedStreams &&
+        Array.isArray(job.metadata.selectedStreams.audio) &&
+        job.metadata.selectedStreams.audio.length > 1;
+
+    const isVideoTranscode = job.format?.toLowerCase() === 'mp4' ||
+                           job.format?.toLowerCase() === 'mkv' ||
+                           job.format?.toLowerCase() === 'webm' ||
+                           (job.videoSettings && job.videoSettings.transcodeEnabled);
+
+    if (typeof job.progress === 'number' && Number.isFinite(job.progress)) {
+        return job.progress;
+    }
+
+    if (isMultiAudio) {
+        const total = Number(job.counters?.cvTotal || job.counters?.dlTotal || 0);
+        const done  = Number(job.counters?.cvDone || job.counters?.dlDone || 0);
+
+        if (total > 0) {
+            const ratio = Math.max(0, Math.min(1, done / total));
+            const pct = Math.floor(ratio * 100);
+            console.log('🔊 Multi-audio progress:', { total, done, ratio, pct });
+            if (pct > 0) return pct;
+        }
+    }
+
+    const phase = this.normalizeStatus(job.currentPhase || job.phase);
+
+    let d = Number(job.downloadProgress || 0);
+    let c = Number(job.convertProgress || 0);
+
+    console.log('📥 Download/Convert progress:', { d, c, phase });
+
+    if (isVideoTranscode) {
+        const result = Math.floor((d + c) / 2);
+        console.log('🎬 Video transcode progress:', result);
+        return result;
+    } else if (phase === 'converting' || phase === 'completed') {
+        if (c > 0) {
+            console.log('⚡ Converting phase with convert progress:', c);
+            return c;
+        } else if (d > 0) {
+            console.log('⚡ Converting phase with download progress:', d);
+            return d;
+        }
+    }
+
+    if (d || c) {
+        const result = Math.floor((d + c) / 2);
+        console.log('📈 Normal source average progress:', result);
+        return result;
+    }
+
+    console.log('❌ No progress data found, returning 0');
+    return 0;
+}
+
+computeProg(job) {
+    const id = job.id;
+    const source = job.metadata?.source || 'file';
+    const isLocalSource = source === 'local' || source === 'file';
+
+    const baseRaw = this.computeRawProg(job);
+
+    if (!Number.isFinite(baseRaw)) {
+        return 0;
+    }
+
+    const status = this.normalizeStatus(job.status);
+    const prev = this.progressCache ? this.progressCache.get(id) || 0 : 0;
+
+    let next = baseRaw;
+
+    if (isLocalSource) {
+        if (status !== 'completed') {
+            if (next > 95) next = 95;
+        } else {
+            next = 100;
+        }
+
+        if (next < prev) next = prev;
+        } else {
+        const isVideoTranscode = job.format?.toLowerCase() === 'mp4' ||
+                               (job.videoSettings && job.videoSettings.transcodeEnabled);
+
+        if (isVideoTranscode) {
+            next = Math.floor((Number(job.downloadProgress || 0) + Number(job.convertProgress || 0)) / 2);
+        }
+        if (status !== 'completed') {
+            if (next > 95) next = 95;
+        } else {
+            next = 100;
+        }
+        if (next < prev) next = prev;
+    }
+    if (id && this.progressCache) {
+        this.progressCache.set(id, next);
+    }
+
+    return next;
+}
 
     computeSkipped(job) {
         const fromStats = Number(job?.metadata?.skipStats?.skippedCount);
@@ -1681,20 +1855,34 @@ updateJobUI(job, batchId = null) {
     }
 
     let phaseDetails = '';
-    if (job.currentPhase) {
-        const phaseTexts = {
-            preparing: this.app.t('phase.preparing'),
-            downloading: this.app.t('phase.downloading'),
-            converting: this.app.t('phase.converting'),
-            completed: this.app.t('phase.completed'),
-            canceled: this.app.t('status.canceled'),
-            cancelled: this.app.t('status.canceled'),
-            error: this.app.t('phase.error')
-        };
+if (job.currentPhase) {
+    const phaseTexts = {
+        preparing: this.app.t('phase.preparing'),
+        downloading: this.app.t('phase.downloading'),
+        converting: this.app.t('phase.converting'),
+        completed: this.app.t('phase.completed'),
+        canceled: this.app.t('status.canceled'),
+        cancelled: this.app.t('status.canceled'),
+        error: this.app.t('phase.error')
+    };
 
-        const currentPhaseText = phaseTexts[job.currentPhase] || job.currentPhase;
+    const currentPhaseText = phaseTexts[job.currentPhase] || job.currentPhase;
+    const source = job.metadata?.source || 'file';
+    const isLocalSource = source === 'local' || source === 'file';
 
-        if (job.playlist && job.playlist.total) {
+    if (isLocalSource) {
+        phaseDetails = `
+            <div class="phase-details">
+                <div class="phase-details__title">${currentPhaseText}</div>
+                <div class="phase-details__grid">
+                    <span class="phase-details__item">
+                        ⚡ ${this.app.t('ui.converting')}:
+                        <span class="phase-details__value">${Math.floor(Number(job.convertProgress) || 0)}%</span>
+                    </span>
+                </div>
+            </div>
+        `;
+    } else if (job.playlist && job.playlist.total) {
             if (job.metadata?.source === 'spotify') {
                 const total = Number(job.playlist.total || 0) || 0;
                 const done  = Number(job.playlist.done  || 0) || 0;
@@ -1754,17 +1942,30 @@ updateJobUI(job, batchId = null) {
                 if (!downloaded && total && job.downloadProgress) {
                     downloaded = Math.max(
                         0,
-                        Math.min(total, Math.floor((job.downloadProgress / 100) * total))
+                        Math.min(total, Math.floor((Number(job.downloadProgress) / 100) * total))
                     );
                 }
                 if (!converted && total && job.convertProgress) {
                     converted = Math.max(
                         0,
-                        Math.min(total, Math.floor((job.convertProgress / 100) * total))
+                        Math.min(total, Math.floor((Number(job.convertProgress) / 100) * total))
                     );
                 }
 
                 const phase = this.normalizeStatus(job.currentPhase || job.phase);
+
+                const isVideoTranscode = job.format?.toLowerCase() === 'mp4' ||
+                                       job.format?.toLowerCase() === 'mkv' ||
+                                       job.format?.toLowerCase() === 'webm' ||
+                                       (job.videoSettings && job.videoSettings.transcodeEnabled);
+
+                if (isVideoTranscode) {
+                    phaseDetails = `
+                        <div class="phase-details">
+                            <div class="phase-details__title">🎬 ${this.app.t('ui.videoTranscode') || 'Video Dönüşümü'}</div>
+                        </div>
+                    `;
+                }
 
                 let currentTrack;
                 if (Number.isFinite(job.playlist.current)) {
@@ -1830,26 +2031,51 @@ updateJobUI(job, batchId = null) {
             `;
         } else {
             const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
-            const dlPct = Math.floor(job.downloadProgress || 0);
-            const cvPct = (phaseNorm === 'converting' || phaseNorm === 'completed')
-                ? Math.floor(job.convertProgress || 0)
-                : 0;
+            const isVideoTranscode = job.format?.toLowerCase() === 'mp4' ||
+                                job.format?.toLowerCase() === 'mkv' ||
+                                job.format?.toLowerCase() === 'webm' ||
+                                (job.videoSettings && job.videoSettings.transcodeEnabled);
+
+            const dlPct = Math.floor(
+                Number.isFinite(Number(job.downloadProgress))
+                    ? Number(job.downloadProgress)
+                    : (Number(job.progress) || 0)
+            );
+
+            let cvBase = 0;
+
+            if (Number.isFinite(Number(job.convertProgress))) {
+            cvBase = Number(job.convertProgress);
+            } else if (phaseNorm === 'converting' || phaseNorm === 'completed') {
+            cvBase = Number(job.progress) || 0;
+            }
+
+            const cvPct = Math.floor(cvBase);
+            const totalPct = isVideoTranscode
+                ? Math.floor((dlPct + cvPct) / 2)
+                : Math.max(dlPct, cvPct);
+
+            const showDl = Number.isFinite(dlPct) && dlPct > 0;
+            const showCv = Number.isFinite(cvPct) && cvPct > 0;
 
             phaseDetails = `
-                <div class="phase-details" style="margin-top: 8px;">
-                    <div class="phase-details__title" style="margin-bottom: 6px;">${currentPhaseText}</div>
-                        <div class="phase-details__grid">
-                            <span class="phase-details__item">
-                                📥 ${this.app.t('ui.downloading')}:
-                                <span class="phase-details__value">${dlPct}%</span>
-                            </span>
-                            <span class="phase-details__item">
-                                ⚡ ${this.app.t('ui.converting')}:
-                                <span class="phase-details__value">${cvPct}%</span>
-                            </span>
-                        </div>
-                    </div>
+            <div class="phase-details" style="margin-top: 8px;">
+                <div class="phase-details__title" style="margin-bottom: 6px;">
+                ${isVideoTranscode ? '🎬 ' : ''}${currentPhaseText}
                 </div>
+                <div class="phase-details__grid">
+                ${showDl ? `
+                    <span class="phase-details__item">
+                    📥 ${this.app.t('ui.downloading')}:
+                    <span class="phase-details__value">${dlPct}%</span>
+                    </span>` : ''}
+                ${showCv ? `
+                    <span class="phase-details__item">
+                    ⚡ ${this.app.t('ui.converting')}:
+                    <span class="phase-details__value">${cvPct}%</span>
+                    </span>` : ''}
+                </div>
+            </div>
             `;
         }
     }
@@ -2121,33 +2347,23 @@ updateJobUI(job, batchId = null) {
         }
     }
 
-    let totalProgress = Number(job.progress || 0);
+    let totalProgress = this.computeProg(job);
     const isMultiAudio =
         !job.metadata?.isPlaylist &&
         job.metadata?.selectedStreams &&
         Array.isArray(job.metadata.selectedStreams.audio) &&
         job.metadata.selectedStreams.audio.length > 1;
 
+    const isVideoTranscode = job.format?.toLowerCase() === 'mp4' ||
+                        job.format?.toLowerCase() === 'mkv' ||
+                        job.format?.toLowerCase() === 'webm' ||
+                        (job.videoSettings && job.videoSettings.transcodeEnabled);
+
     if (!Number.isFinite(totalProgress) || totalProgress <= 0) {
-        const dl = Number(job.downloadProgress || 0);
-        const cv = Number(job.convertProgress || 0);
-
-        if (dl || cv) {
-            totalProgress = Math.max(dl, cv);
-        } else if (isMultiAudio) {
-            const total = Number(job.counters?.cvTotal || job.counters?.dlTotal || 0);
-            const done  = Number(job.counters?.cvDone || job.counters?.dlDone || 0);
-
-            if (total > 0) {
-                const ratio = Math.max(0, Math.min(1, done / total));
-                totalProgress = Math.floor(ratio * 100);
-            } else {
-                totalProgress = 0;
-            }
-        } else {
-            totalProgress = 0;
-        }
+        totalProgress = this.computeProg(job);
     }
+
+    totalProgress = Math.max(0, Math.min(100, totalProgress));
 
     let lyricsInfo = '';
 
@@ -2196,37 +2412,37 @@ updateJobUI(job, batchId = null) {
     }
 
     const jobContent = `
-        <div class="job-item-content">
-            <strong>${this.app.escapeHtml(jobTitle)}</strong>
-            <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
-                ${phaseInfo}
-                ${skippedBadge}
-            </div>
-            ${formatInfoHTML}
-            ${lyricsInfo}
-            ${lastLogInfo}
-            ${cancelInfo}
-            ${completedAtInfo}
-            ${phaseDetails}
-
-            ${(() => {
-                const nt = this.uiNowTitle(job);
-                return nt ? `<div class="muted" style="font-size:12px; margin: 8px 0 4px 0;">▶️ <strong>${this.app.escapeHtml(nt)}</strong></div>` : '';
-            })()}
-
-            <div class="progress-bar">
-                <div class="progress-fill" style="width: ${totalProgress}%"></div>
-            </div>
-            <div class="job-actions" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
-                <span class="status status-${job.status}">${statusText[job.status]}</span>
-                <div style="display:flex; gap:8px; align-items:center; flex-direction: column;">
-                    ${resultContent}
-                    <button class="btn-danger" data-stop="${job.id}" ${(['completed', 'error', 'canceled'].includes(statusNorm)) ? 'disabled' : ''} title="${this.app.t('btn.stop')}">${this.app.t('btn.stop')}</button>
-                </div>
-            </div>
-            ${job.error ? `<div style="color: var(--error); font-size: 13px; margin-top: 8px; padding: 8px; background: var(--bg-card); border-radius: 6px;">${this.app.escapeHtml(job.error)}</div>` : ''}
+    <div class="job-item-content">
+        <strong>${this.app.escapeHtml(jobTitle)}</strong>
+        <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
+            ${phaseInfo}
+            ${skippedBadge}
         </div>
-    `;
+        ${formatInfoHTML}
+        ${lyricsInfo}
+        ${lastLogInfo}
+        ${cancelInfo}
+        ${completedAtInfo}
+        ${phaseDetails}
+
+        ${(() => {
+            const nt = this.uiNowTitle(job);
+            return nt ? `<div class="muted" style="font-size:12px; margin: 8px 0 4px 0;">▶️ <strong>${this.app.escapeHtml(nt)}</strong></div>` : '';
+        })()}
+
+        <div class="progress-bar">
+            <div class="progress-fill" style="width: ${totalProgress}%"></div>
+        </div>
+        <div class="job-actions" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
+            <span class="status status-${job.status}">${statusText[job.status]}</span>
+            <div style="display:flex; gap:8px; align-items:center; flex-direction: column;">
+                ${resultContent}
+                <button class="btn-danger" data-stop="${job.id}" ${(['completed', 'error', 'canceled'].includes(statusNorm)) ? 'disabled' : ''} title="${this.app.t('btn.stop')}">${this.app.t('btn.stop')}</button>
+            </div>
+        </div>
+        ${job.error ? `<div style="color: var(--error); font-size: 13px; margin-top: 8px; padding: 8px; background: var(--bg-card); border-radius: 6px;">${this.app.escapeHtml(job.error)}</div>` : ''}
+    </div>
+`;
 
     if (!jobElement) {
         jobElement = document.createElement('div');

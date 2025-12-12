@@ -1,3 +1,4 @@
+import "dotenv/config";
 import os from "os";
 
 const bool = (v, def = false) => {

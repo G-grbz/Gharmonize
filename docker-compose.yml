@@ -20,7 +20,7 @@ services:
       - /opt/gharmonize/outputs:/usr/src/app/outputs
       - /opt/gharmonize/temp:/usr/src/app/temp
       - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
-      - /opt/gharmonize/cookies/cookies.txt:/usr/src/app/cookies/cookies.txt:ro
+      - /opt/gharmonize/cookies:/usr/src/app/cookies
       - /opt/gharmonize/.env:/usr/src/app/.env
       - /home:/home:ro
       - /run/media:/run/media:ro
