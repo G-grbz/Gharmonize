@@ -1,6 +1,6 @@
 {
   "name": "Gharmonize",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -40,6 +40,7 @@
       "buildResources": "build"
     },
     "files": [
+      "bootstrap.mjs",
       "electron/**",
       "app.js",
       "routes/**",
