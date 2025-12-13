@@ -157,7 +157,7 @@ async function startServerIfPackaged() {
   }
 
   console.log('📦 Packaged mode - starting embedded server')
-  const serverPath = path.join(process.resourcesPath, 'app.asar', 'app.js')
+  const serverPath = path.join(process.resourcesPath, 'app.asar', 'bootstrap.mjs')
   const defaultEnv = path.join(process.resourcesPath, 'app.asar', '.env.default')
   const userEnv = path.join(app.getPath('userData'), '.env')
   const dataDir = app.getPath('userData')
