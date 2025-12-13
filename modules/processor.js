@@ -494,9 +494,9 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
           }
 
           results[i] = r;
-          job.playlist.done = i + 1;
-          bump(job.counters, "cvDone", 1);
-          updateLyricsStatsLive(job.playlist.done);
+         bump(job.counters, "cvDone", 1);
+            if (job.playlist) job.playlist.done = job.counters.cvDone;
+            updateLyricsStatsLive(job.playlist.done);
 
           return r;
         });

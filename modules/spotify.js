@@ -3,6 +3,11 @@ import SpotifyWebApi from "spotify-web-api-node";
 import { resolveMarket, withMarketFallback } from "./market.js";
 import assert from "node:assert";
 
+let _spotifyApiSingleton = null;
+let _spotifyAccessToken = null;
+let _spotifyTokenExpiresAtMs = 0;
+const _SPOTIFY_TOKEN_SAFETY_WINDOW_MS = 60_000;
+
 export function isSpotifyUrl(url) {
   return /^(https?:\/\/open\.spotify\.com|spotify:)/i.test(String(url || ""));
 }
@@ -31,9 +36,35 @@ export async function makeSpotify() {
   if (!clientId || !clientSecret) {
     throw new Error("SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET is required");
   }
-  const api = new SpotifyWebApi({ clientId, clientSecret });
+  if (!_spotifyApiSingleton) {
+    _spotifyApiSingleton = new SpotifyWebApi({ clientId, clientSecret });
+  }
+
+  const api = _spotifyApiSingleton;
+
+  if (process.env.SPOTIFY_CLIENT_ID !== clientId || process.env.SPOTIFY_CLIENT_SECRET !== clientSecret) {
+    _spotifyApiSingleton = new SpotifyWebApi({ clientId, clientSecret });
+  }
+
+  const now = Date.now();
+  const tokenStillValid =
+    _spotifyAccessToken &&
+    (_spotifyTokenExpiresAtMs - _SPOTIFY_TOKEN_SAFETY_WINDOW_MS) > now;
+
+  if (tokenStillValid) {
+    api.setAccessToken(_spotifyAccessToken);
+    return api;
+  }
+
   const grant = await api.clientCredentialsGrant();
-  api.setAccessToken(grant.body.access_token);
+  const accessToken = grant?.body?.access_token;
+  const expiresInSec = Number(grant?.body?.expires_in || 0);
+  if (!accessToken || !expiresInSec) {
+    throw new Error("Spotify token grant failed (missing access_token/expires_in)");
+  }
+  _spotifyAccessToken = accessToken;
+  _spotifyTokenExpiresAtMs = now + (expiresInSec * 1000);
+  api.setAccessToken(_spotifyAccessToken);
   return api;
 }
 

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
-import { runYtJson, resolveYtDlp, withYT403Workarounds, YT_USE_MUSIC } from "./yt.js";
+import { resolveYtDlp, withYT403Workarounds, YT_USE_MUSIC } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
 import { getUserAgent, getYouTubeHeaders, addGeoArgs, getExtraArgs, FLAGS } from "./config.js";
@@ -10,23 +10,103 @@ import { addCookieArgs, getJsRuntimeArgs } from "./utils.js";
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const TEMP_DIR = path.resolve(BASE_DIR, "temp");
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const YT_SEARCH_RESULTS = Math.max(1, Math.min(10, Number(process.env.YT_SEARCH_RESULTS || 3)));
+const YT_SEARCH_TIMEOUT_MS = Math.max(3000, Number(process.env.YT_SEARCH_TIMEOUT_MS || 20000));
+const YT_SEARCH_STAGGER_MS = Math.max(0, Number(process.env.YT_SEARCH_STAGGER_MS || 140));
+const _searchCache = new Map();
+const _SEARCH_CACHE_MAX = 800;
+function _cacheGet(k) { return _searchCache.has(k) ? _searchCache.get(k) : undefined; }
+function _cacheSet(k, v) {
+  _searchCache.set(k, v);
+  if (_searchCache.size > _SEARCH_CACHE_MAX) {
+    const first = _searchCache.keys().next().value;
+    _searchCache.delete(first);
+  }
+}
+
 export function makeMapId() {
   return crypto.randomBytes(8).toString("hex");
 }
 
+function getYtDlpSearchArgsLite() {
+  const ua = getUserAgent();
+  const headers = getYouTubeHeaders();
+  const base = [
+    "--no-progress",
+    "--no-warnings",
+    "--skip-download",
+    "--flat-playlist",
+    "--dump-single-json",
+    "--retries", "2",
+    "--retry-sleep", "0",
+    "--user-agent", ua,
+    "--add-header", `Referer: ${headers["Referer"]}`,
+    "--add-header", `Accept-Language: ${headers["Accept-Language"]}`,
+    "--socket-timeout", "10",
+  ];
+
+  if (FLAGS.FORCE_IPV4) base.push("--force-ipv4");
+
+  const geoArgs = addGeoArgs([]);
+  if (geoArgs.length) base.push(...geoArgs);
+
+  const extra = getExtraArgs();
+  if (extra.length) base.push(...extra);
+
+  return base;
+}
+
+async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEARCH_TIMEOUT_MS) {
+  const YTDLP_BIN = resolveYtDlp();
+  if (!YTDLP_BIN) throw new Error("yt-dlp not found");
+
+  const args = withYT403Workarounds(
+    [...getYtDlpSearchArgsLite(), ...(Array.isArray(urls) ? urls : [String(urls)])],
+    { stripCookies: true }
+  );
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      YTDLP_BIN,
+      args,
+      { maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs },
+      (err, stdout, stderr) => {
+        if (err) {
+          const tail = String(stderr || "").split("\n").slice(-10).join("\n");
+          return reject(new Error(`[${label}] yt-dlp error: ${err.code}\n${tail}`));
+        }
+        try {
+          const s = String(stdout || "").trim();
+          return resolve(s ? JSON.parse(s) : null);
+        } catch (e) {
+          const tail = String(stderr || "").split("\n").slice(-10).join("\n");
+          return reject(new Error(`[${label}] JSON parse error: ${e.message}\n${tail}`));
+        }
+      }
+    );
+  });
+}
+
 export async function searchYtmBestId(artist, title) {
   const q = `${artist} ${title}`.trim();
-  const data = await runYtJson([`ytsearch5:${q}`], "ytm-search", 40000);
+  const qNorm = q.toLowerCase().replace(/\s+/g, " ").trim();
+  const cached = _cacheGet(qNorm);
+  if (cached !== undefined) return cached;
+
+  const data = await runYtJsonLite([`ytsearch${YT_SEARCH_RESULTS}:${q}`], "ytm-search-lite", YT_SEARCH_TIMEOUT_MS);
   const entries = Array.isArray(data?.entries) ? data.entries : [];
-  if (!entries.length) return null;
+  if (!entries.length) { _cacheSet(qNorm, null); return null; }
   const aLow = (artist || "").toLowerCase();
   for (const e of entries) {
     const vid = e?.id;
     const et = (e?.title || "").toLowerCase();
     const ch = (e?.uploader || e?.channel || "").toLowerCase();
-    if (vid && (et.includes(aLow) || ch.includes(aLow))) return vid;
+    if (vid && (et.includes(aLow) || ch.includes(aLow))) { _cacheSet(qNorm, vid); return vid; }
   }
-  return entries[0]?.id || null;
+  const fallback = entries[0]?.id || null;
+  _cacheSet(qNorm, fallback);
+  return fallback;
 }
 
 export function idsToMusicUrls(ids, useMusic = YT_USE_MUSIC) {
@@ -90,6 +170,13 @@ export async function mapSpotifyToYtm(
             results[idx] = null;
             return;
           }
+
+          if (YT_SEARCH_STAGGER_MS > 0) {
+            const slot = idx % Math.max(1, concurrency);
+            const jitter = Math.floor(Math.random() * 25);
+            await sleep((slot * YT_SEARCH_STAGGER_MS) + jitter);
+          }
+
           if (onLog)
             onLog({
               logKey: "log.searchingTrack",

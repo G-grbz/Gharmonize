@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import os from "os";
 import fetch from "node-fetch";
 import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
@@ -16,7 +17,7 @@ function resolveFfmpegBin() {
   if (fromEnvFile && isExecutable(fromEnvFile)) {
     return fromEnvFile;
   }
-  
+
   if (process.env.FFMPEG_DIR) {
     const candidate = path.join(process.env.FFMPEG_DIR, exe);
     if (isExecutable(candidate)) return candidate;
@@ -83,6 +84,17 @@ export function maybeCleanTitle(t) {
     if (parts.length > 1) return parts.at(-1);
   }
   return t;
+}
+
+function cleanTitleForTags(t) {
+  if (!t) return t;
+  let s = String(t).trim();
+
+  s = s.replace(/\s*_\s*/g, " ");
+  s = s.replace(/\s*(?:_+\s*)+$/, "");
+  s = s.replace(/\s*(?:[-–—•]\s*)+$/, "");
+  s = s.replace(/\s{2,}/g, " ").trim();
+  return s;
 }
 
 export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
@@ -161,6 +173,181 @@ const QSV_PRESET    = process.env.QSV_PRESET    || "veryfast";
 const QSV_Q         = process.env.QSV_Q         || "23";
 const VAAPI_DEVICE  = process.env.VAAPI_DEVICE  || "/dev/dri/renderD128";
 const VAAPI_QUALITY = process.env.VAAPI_QUALITY || "23";
+
+function commentKeyFor(fmt) {
+  const f = String(fmt || "").toLowerCase();
+  if (f === "flac" || f === "ogg") return "DESCRIPTION";
+  if (f === "mp4" || f === "m4a") return "comment";
+  if (f === "mp3") return "comment";
+  if (f === "eac3" || f === "ac3") return "comment";
+  if (f === "aac") return "comment";
+  return "comment";
+}
+
+function buildCommonMetaPairs(resolvedMeta, format) {
+  const baseNumbers = {
+    track_number: resolvedMeta.track_number ?? null,
+    track_total:  resolvedMeta.track_total  ?? null,
+    disc_number:  resolvedMeta.disc_number  ?? null,
+    disc_total:   resolvedMeta.disc_total   ?? null
+  };
+
+  const tn   = Number(baseNumbers.track_number) || null;
+  const ttot = Number(baseNumbers.track_total)  || null;
+  const dn   = Number(baseNumbers.disc_number)  || null;
+  const dtot = Number(baseNumbers.disc_total)   || null;
+  const trackTag = tn ? (ttot ? `${tn}/${ttot}` : String(tn)) : "";
+  const discTag  = dn ? (dtot ? `${dn}/${dtot}` : String(dn)) : "";
+  const dateTag =
+    resolvedMeta.release_date &&
+    /^\d{4}(-\d{2}(-\d{2})?)?$/.test(resolvedMeta.release_date)
+      ? resolvedMeta.release_date
+      : resolvedMeta.release_year || resolvedMeta.upload_date || "";
+
+  const metaPairs = {
+    title:  resolvedMeta.track || resolvedMeta.title || "",
+    artist: resolvedMeta.artist || "",
+    album:  resolvedMeta.album || resolvedMeta.playlist_title || "",
+    date:   dateTag || "",
+    track:  trackTag || "",
+    disc:   discTag || "",
+    genre:  resolvedMeta.genre || ""
+  };
+
+  if (resolvedMeta.album_artist) {
+    metaPairs.album_artist = resolvedMeta.album_artist;
+    metaPairs.ALBUMARTIST  = resolvedMeta.album_artist;
+  }
+
+  const labelLike = resolvedMeta.label || resolvedMeta.publisher;
+  if (labelLike) {
+    metaPairs.publisher = labelLike;
+    metaPairs.PUBLISHER = labelLike;
+  }
+
+  if (resolvedMeta.copyright) {
+    metaPairs.copyright = resolvedMeta.copyright;
+    metaPairs.COPYRIGHT = resolvedMeta.copyright;
+  }
+
+  if (resolvedMeta.webpage_url) {
+    metaPairs.URL = resolvedMeta.webpage_url;
+  }
+
+  return metaPairs;
+}
+
+function shouldSkipRetag(format) {
+  const f = String(format || "").toLowerCase();
+  return (f === "wav" || f === "aac" || f === "ac3" || f === "eac3");
+}
+
+export async function retagMediaFile(
+  absOutputPath,
+  format,
+  metadata = {},
+  coverPath = null,
+  opts = {}
+) {
+  try {
+    if (!absOutputPath || !fs.existsSync(absOutputPath)) return null;
+    const f = String(format || path.extname(absOutputPath).slice(1) || "").toLowerCase();
+
+    if (shouldSkipRetag(f)) {
+      console.log(`ℹ️ retag skipped for format=${f} (container metadata limits) → ${path.basename(absOutputPath)}`);
+      return null;
+    }
+
+    const ffmpegBin = opts?.ffmpegBin || resolveFfmpegBin();
+    const tempDir = opts?.tempDir || path.dirname(absOutputPath);
+    const jobId = opts?.jobId || "retag";
+    const resolvedMeta = {
+      ...metadata,
+      title: cleanTitleForTags(maybeCleanTitle(metadata?.title)),
+      track: cleanTitleForTags(metadata?.track),
+    };
+
+    let canEmbedCover = false;
+    let coverToUse = null;
+    const coverOkFormats = new Set(["mp3", "flac", "m4a", "mp4", "ogg"]);
+    const preserveExistingCover = !coverPath && coverOkFormats.has(f);
+    if (coverPath && coverOkFormats.has(f)) {
+      try {
+        coverToUse = await ensureJpegCover(coverPath, jobId, tempDir, ffmpegBin);
+      } catch {}
+      if (coverToUse && fs.existsSync(coverToUse)) canEmbedCover = true;
+    }
+
+    const COMMENT_KEY = commentKeyFor(f);
+    const metaPairs = buildCommonMetaPairs(resolvedMeta, f);
+    const ext = path.extname(absOutputPath) || `.${f}`;
+    const base = absOutputPath.slice(0, -ext.length);
+    const tmpOut = `${base}.retag.${crypto.randomBytes(4).toString("hex")}${ext}`;
+
+    await new Promise((resolve, reject) => {
+      const args = ["-hide_banner", "-nostdin", "-y", "-i", absOutputPath];
+      if (canEmbedCover) args.push("-i", coverToUse);
+      args.push("-map_metadata", "0");
+
+    for (const [k, v] of Object.entries(metaPairs)) {
+      if (v != null && String(v).length) args.push("-metadata", `${k}=${v}`);
+    }
+
+      const commentText = getCommentText();
+      if (commentText) args.push("-metadata", `${COMMENT_KEY}=${commentText}`);
+      if (resolvedMeta.isrc) args.push("-metadata", `ISRC=${resolvedMeta.isrc}`);
+      if (resolvedMeta.webpage_url) args.push("-metadata", `URL=${resolvedMeta.webpage_url}`);
+      args.push("-map", "0:a");
+      if (preserveExistingCover) {
+        args.push("-map", "0:v?");
+        args.push("-c:v", "copy");
+        args.push("-disposition:v:0", "attached_pic");
+      }
+
+      if (canEmbedCover) {
+        args.push(
+          "-map", "1:v?",
+          "-disposition:v", "attached_pic",
+          "-metadata:s:v", "title=Album cover"
+        );
+        if (f === "mp3") args.push("-c:v", "mjpeg", "-id3v2_version", "3");
+        else if (f === "flac") args.push("-c:v", "mjpeg");
+        else if (f === "m4a" || f === "mp4") args.push("-c:v", "mjpeg");
+        else if (f === "ogg") args.push("-c:v", "mjpeg");
+      }
+      args.push("-c:a", "copy");
+      if (f === "mp3") {
+        args.push("-id3v2_version", "3");
+        if (process.env.WRITE_ID3V1 === "1") args.push("-write_id3v1", "1");
+      }
+
+      args.push(tmpOut);
+
+      console.log("🏷️ FFmpeg retag args:", args.join(" "));
+      const p = spawn(ffmpegBin, args);
+      let err = "";
+      p.stderr.on("data", (d) => (err += d.toString()));
+      p.on("close", (code) => {
+        if (code === 0 && fs.existsSync(tmpOut)) return resolve();
+        const tail = String(err || "").split("\n").slice(-12).join("\n");
+        return reject(new Error(`retag ffmpeg error (code ${code}): ${tail}`));
+      });
+      p.on("error", (e) => reject(new Error(`retag spawn error: ${e.message}`)));
+    });
+
+    try { fs.renameSync(tmpOut, absOutputPath); }
+    catch {
+      fs.copyFileSync(tmpOut, absOutputPath);
+      try { fs.unlinkSync(tmpOut); } catch {}
+    }
+
+    console.log(`✅ retag ok: ${path.basename(absOutputPath)}`);
+    return absOutputPath;
+  } catch (e) {
+    console.warn("⚠️ retag warning:", e?.message || e);
+    return null;
+  }
+}
 
 export async function convertMedia(
   inputPath,
@@ -382,14 +569,23 @@ export async function convertMedia(
     ? process.env.FILENAME_TEMPLATE_VIDEO || "%(title)s"
     : process.env.FILENAME_TEMPLATE || "%(artist|album_artist)s - %(track|title)s";
 
-  const resolvedMeta = { ...metadata, title: maybeCleanTitle(metadata?.title) };
+  const resolvedMeta = {
+    ...metadata,
+    title: cleanTitleForTags(maybeCleanTitle(metadata?.title)),
+    track: cleanTitleForTags(metadata?.track),
+  };
   const VIDEO_MAX_H = Number(resolvedMeta.__maxHeight) || 1080;
   const SRC_H = Number(resolvedMeta.__srcHeight) || 0;
   const EFFECTIVE_H = SRC_H || VIDEO_MAX_H;
   const VIDEO_PRESET = process.env.VIDEO_PRESET || "veryfast";
 
-  let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
-  basename = sanitizeFilename(basename);
+    let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
+    basename = sanitizeFilename(basename);
+
+    basename = basename
+      .replace(/\s*(?:_+\s*)+$/, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
 
   try {
     fs.mkdirSync(outputDir, { recursive: true });
