@@ -295,6 +295,22 @@ PREFER_SPOTIFY_TAGS=
 # Example:
 #   PREFER_SPOTIFY_TAGS=1
 
+YT_SEARCH_RESULTS=
+# Number of yt-dlp search results to fetch per query (ytsearchN).
+# Lower = faster mapping, but slightly higher risk of a wrong match.
+# Recommended: 2 (fast) / 3 (safer).
+
+YT_SEARCH_TIMEOUT_MS=
+# Per-search timeout in milliseconds for the mapping/search step.
+# If a search hangs or YouTube is slow, it will abort after this time.
+# Lower = snappier UI, but may cause more "not found" on slow networks.
+
+YT_SEARCH_STAGGER_MS=
+# Stagger delay (ms) applied when starting parallel searches.
+# Helps avoid burst/throttle behavior by spacing out requests across concurrency slots.
+# Lower = faster burst; higher = smoother and often fewer throttles/timeouts.
+# Set to 0 to disable staggering.
+
 
 ########################################
 # Title Cleaning
