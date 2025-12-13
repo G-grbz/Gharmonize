@@ -293,11 +293,34 @@ export class SpotifyManager {
     streamIntegratedLogs(jobId) {
         const eventSource = new EventSource(`/api/stream/${jobId}`);
         const logsContainer = document.getElementById('spotifyLogs');
+        let finished = false;
 
         eventSource.onmessage = (event) => {
             const job = JSON.parse(event.data);
 
-            if (job.progress) {
+            if (job?.phase === 'completed' || job?.phase === 'error' || job?.phase === 'canceled') {
+                finished = true;
+                try { eventSource.close(); } catch (_) {}
+            }
+
+            try {
+                const titleEl = document.getElementById('spotifyTitle');
+                const totalEl = document.getElementById('spotifyTotal');
+
+                const spTitle = job?.metadata?.frozenTitle || job?.metadata?.spotifyTitle;
+                const spTotalRaw = job?.playlist?.total;
+                const spTotal = Number(spTotalRaw);
+
+                if (spTitle && titleEl && (titleEl.textContent === '-' || titleEl.textContent === this.app.t('status.starting') || !titleEl.textContent)) {
+                    titleEl.textContent = spTitle;
+                }
+
+                if (Number.isFinite(spTotal) && totalEl && (totalEl.textContent === '0' || !totalEl.textContent)) {
+                    totalEl.textContent = String(spTotal);
+                }
+            } catch (_) {}
+
+                    if (job.progress) {
                 document.getElementById('spotifyProgress').textContent = `${job.progress}%`;
             }
 
@@ -367,13 +390,18 @@ export class SpotifyManager {
         };
 
         eventSource.onerror = (error) => {
-            console.error('Integrated log SSE error:', error);
-            const logEntry = document.createElement('div');
-            logEntry.className = 'log-entry error';
-            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('errors.streamDisconnected')}`;
-            logsContainer.appendChild(logEntry);
-            logsContainer.scrollTop = logsContainer.scrollHeight;
-            eventSource.close();
+            if (finished) {
+            try { eventSource.close(); } catch (_) {}
+            return;
+        }
+
+        console.error('Integrated log SSE error:', error);
+        const logEntry = document.createElement('div');
+        logEntry.className = 'log-entry error';
+        logEntry.textContent = `[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('errors.streamDisconnected')}`;
+        logsContainer.appendChild(logEntry);
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+        try { eventSource.close(); } catch (_) {}
         };
     }
 

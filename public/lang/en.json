@@ -1,4 +1,11 @@
 {
+  "settings.ytSearchResults": "Number of yt-dlp search results fetched per query. Lower values = faster matching, but higher risk of incorrect matches",
+  "settings.ytSearchTimeout": "Timeout duration per search during matching (ms). Lower values = faster UI response, but more \"not found\" errors on slow networks",
+  "settings.ytSearchStagger": "Delay applied when starting parallel searches (ms). Helps avoid system and rate limits by staggering concurrent requests — lower values = faster requests; higher values = smoother operation and usually fewer restrictions",
+  "ph.ytSearchResults": "recommended 3",
+  "ph.ytSearchTimeout": "recommended 10000",
+  "ph.ytSearchStagger": "recommended 180",
+  "log.starting": "⏳ Fetching list from Spotify…",
   "label.videoCodec": "Video Codec",
   "option.videoCodecAuto": "Automatic (H.265 above 2160p, H.264 below)",
   "option.videoCodecH264": "H.264 (AVC)",

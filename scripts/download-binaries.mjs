@@ -1,5 +1,3 @@
-//scripts/download-binaries.mjs
-
 import https from 'https';
 import http from 'http';
 import fs from 'fs';

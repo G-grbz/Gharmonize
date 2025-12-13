@@ -1,4 +1,11 @@
 {
+  "settings.ytSearchResults": "Nombre de résultats de recherche yt-dlp récupérés par requête. Valeur plus basse = correspondance plus rapide, mais risque plus élevé de correspondances incorrectes",
+  "settings.ytSearchTimeout": "Durée du délai d’expiration par recherche lors de la correspondance (ms). Valeur plus basse = interface plus réactive, mais davantage d’erreurs « introuvable » sur les réseaux lents",
+  "settings.ytSearchStagger": "Délai appliqué lors du lancement de recherches parallèles (ms). Permet d’éviter les limites système et de débit en espaçant les requêtes — valeur plus basse = requêtes plus rapides ; valeur plus élevée = fonctionnement plus fluide et généralement moins de restrictions",
+  "ph.ytSearchResults": "recommandé 3",
+  "ph.ytSearchTimeout": "recommandé 10000",
+  "ph.ytSearchStagger": "recommandé 180",
+  "log.starting": "⏳ Récupération de la liste depuis Spotify…",
   "label.videoCodec": "Codec vidéo",
   "option.videoCodecAuto": "Automatique (H.265 au-dessus de 2160p, H.264 en dessous)",
   "option.videoCodecH264": "H.264 (AVC)",

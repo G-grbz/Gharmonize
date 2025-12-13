@@ -1,5 +1,5 @@
 import { VideoSettingsManager } from './VideoSettingsManager.js';
-import { JobManager } from './JobsPanelManager.js';
+import { JobManager } from './JobManager.js';
 import { PreviewManager } from './PreviewManager.js';
 import { SpotifyManager } from './SpotifyManager.js';
 import { UploadManager } from './UploadManager.js';
@@ -129,7 +129,7 @@ export class MediaConverterApp {
             this.spotifyManager.startIntegratedSpotifyProcess();
         });
 
-                const urlForm = document.getElementById('urlForm');
+        const urlForm = document.getElementById('urlForm');
         if (urlForm) {
             urlForm.addEventListener('submit', (e) => this.handleUrlSubmitWithSpinner(e));
         }

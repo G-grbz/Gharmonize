@@ -1,7 +1,7 @@
 version: "3.9"
 services:
   web:
-    image: ggrbz/gharmonize:latest
+    image: ggrbz/gharmonize:testing
     container_name: Gharmonize
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:

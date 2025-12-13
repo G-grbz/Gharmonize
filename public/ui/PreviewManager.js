@@ -12,15 +12,58 @@ export class PreviewManager {
     }
 
     cleanUploader(uploader = '') {
-    let s = String(uploader).trim().replace(/\s+/g, ' ');
+        let s = String(uploader).trim().replace(/\s+/g, ' ');
 
-    s = s.replace(/\s*-\s*(topic)\s*$/i, '');
-    s = s.replace(/\s*-\s*(official)(?:\s+(channel))?\s*$/i, '');
-    s = s.replace(/\s+(official|topic)\s*$/i, '');
-    s = s.replace(/\s*\((official)\)\s*$/i, '');
+        s = s.replace(/\s*-\s*(topic)\s*$/i, '');
+        s = s.replace(/\s*-\s*(official)(?:\s+(channel))?\s*$/i, '');
+        s = s.replace(/\s+(official|topic)\s*$/i, '');
+        s = s.replace(/\s*\((official)\)\s*$/i, '');
 
-    return s.trim();
-}
+        return s.trim();
+    }
+
+    getArtistDisplay(item) {
+        const title = (item?.title || '').toString().trim();
+        const m = title.match(/^(.+?)\s*[-–—]\s+.+$/);
+
+        if (m && m[1]) {
+            const left = m[1].trim();
+            if (left && !left.startsWith('-')) return left;
+        }
+
+        return this.cleanUploader(item?.uploader || '');
+    }
+
+    cleanTitleForUI(title = '') {
+        let s = String(title || '').trim();
+        s = s.replace(/\s*_\s*/g, ' • ');
+        s = s.replace(/\s*\|\s*/g, ' • ');
+        s = s.replace(/\s*•\s*•+\s*/g, ' • ');
+        s = s.replace(/\s{2,}/g, ' ').trim();
+        s = s.replace(/\s*(?:•\s*)+$/, '').trim();
+
+        const junk = [
+            'official', 'official video', 'official audio', 'audio', 'video',
+            'lyrics', 'lyric', 'lyrics video', 'şarkı sözü', 'şarki sözü', 'sarki sozu',
+            'hd', '4k', 'remastered', 'remaster', 'edit', 'extended'
+        ];
+
+        s = s.replace(/\[([^\]]+)\]/g, (m, inner) => {
+            const t = inner.toString().trim().toLowerCase();
+            if (junk.some(j => t === j || t.includes(j))) return '';
+            return m;
+        });
+
+        s = s.replace(/\(([^)]+)\)/g, (m, inner) => {
+            const t = inner.toString().trim().toLowerCase();
+            if (junk.some(j => t === j || t.includes(j))) return '';
+            return m;
+        });
+
+        s = s.replace(/\s{2,}/g, ' ').trim();
+        s = s.replace(/\s*(?:•\s*)+$/, '').trim();
+        return s;
+    }
 
     async handlePreviewClick() {
         const url = document.getElementById('urlInput').value.trim();
@@ -179,15 +222,15 @@ export class PreviewManager {
                 this.currentPreview.indexToTitle.set(item.index, item.title);
             }
 
-            const cleanUploader = this.cleanUploader(item.uploader || '');
+            const artistName = this.getArtistDisplay(item);
 
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
                 <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
                 <div>
-                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(item.title || '')}</div>
-                    <div class="muted">${this.app.escapeHtml(cleanUploader)}</div>
+                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(this.cleanTitleForUI(item.title || ''))}</div>
+                    <div class="muted">${this.app.escapeHtml(artistName)}</div>
                 </div>
                 <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
                 <div class="row-right"><input type="checkbox" data-index="${item.index}" /></div>
@@ -300,15 +343,15 @@ export class PreviewManager {
                 this.currentPreview.indexToTitle.set(item.index, item.title);
             }
 
-            const cleanUploader = this.cleanUploader(item.uploader || '');
+            const artistName = this.getArtistDisplay(item);
 
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
                 <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
                 <div>
-                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(item.title || '')}</div>
-                    <div class="muted">${this.app.escapeHtml(cleanUploader)}</div>
+                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(this.cleanTitleForUI(item.title || ''))}</div>
+                    <div class="muted">${this.app.escapeHtml(artistName)}</div>
                 </div>
                 <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
                 <div class="row-right"><input type="checkbox" data-index="${item.index}" /></div>

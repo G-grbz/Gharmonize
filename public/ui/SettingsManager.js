@@ -195,6 +195,48 @@ export class SettingsManager {
                         >
                     </div>
 
+                     <div class="form-group">
+                        <label for="f_YT_SEARCH_RESULTS" class="settings-field-label">
+                            YT_SEARCH_RESULTS
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytSearchResults"></div>
+                        <input
+                            id="f_YT_SEARCH_RESULTS"
+                            type="number"
+                            min="1"
+                            placeholder="10"
+                            data-i18n-ph="ph.ytSearchResults"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_SEARCH_TIMEOUT_MS" class="settings-field-label">
+                            YT_SEARCH_TIMEOUT_MS
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytSearchTimeout"></div>
+                        <input
+                            id="f_YT_SEARCH_TIMEOUT_MS"
+                            type="number"
+                            min="1000"
+                            placeholder="10000"
+                            data-i18n-ph="ph.ytSearchTimeout"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="f_YT_SEARCH_STAGGER_MS" class="settings-field-label">
+                            YT_SEARCH_STAGGER_MS
+                        </label>
+                        <div class="settings-field-hint muted" data-i18n="settings.ytSearchStagger"></div>
+                        <input
+                            id="f_YT_SEARCH_STAGGER_MS"
+                            type="number"
+                            min="0"
+                            placeholder="200"
+                            data-i18n-ph="ph.ytSearchStagger"
+                        >
+                    </div>
+
                     <div class="form-group">
                         <label for="f_YT_UI_FORCE_COOKIES" class="settings-field-label">
                             YT_UI_FORCE_COOKIES
@@ -822,6 +864,9 @@ export class SettingsManager {
             document.getElementById('f_PLAYLIST_META_TIMEOUT_MS').value = s.PLAYLIST_META_TIMEOUT_MS || '10000';
             document.getElementById('f_PLAYLIST_META_FALLBACK_TIMEOUT_MS').value = s.PLAYLIST_META_FALLBACK_TIMEOUT_MS || '5000';
             document.getElementById('f_YT_UI_FORCE_COOKIES').value = s.YT_UI_FORCE_COOKIES || '1';
+            document.getElementById('f_YT_SEARCH_RESULTS').value = s.YT_SEARCH_RESULTS || '3';
+            document.getElementById('f_YT_SEARCH_TIMEOUT_MS').value = s.YT_SEARCH_TIMEOUT_MS || '10000';
+            document.getElementById('f_YT_SEARCH_STAGGER_MS').value = s.YT_SEARCH_STAGGER_MS || '180';
 
         } catch (e) {
             modalManager.showAlert({
@@ -869,7 +914,10 @@ export class SettingsManager {
                 PLAYLIST_PAGE_TIMEOUT_MS: document.getElementById('f_PLAYLIST_PAGE_TIMEOUT_MS').value.trim(),
                 PLAYLIST_META_TIMEOUT_MS: document.getElementById('f_PLAYLIST_META_TIMEOUT_MS').value.trim(),
                 PLAYLIST_META_FALLBACK_TIMEOUT_MS: document.getElementById('f_PLAYLIST_META_FALLBACK_TIMEOUT_MS').value.trim(),
-                YT_UI_FORCE_COOKIES: document.getElementById('f_YT_UI_FORCE_COOKIES').value
+                YT_UI_FORCE_COOKIES: document.getElementById('f_YT_UI_FORCE_COOKIES').value,
+                YT_SEARCH_RESULTS: document.getElementById('f_YT_SEARCH_RESULTS').value.trim(),
+                YT_SEARCH_TIMEOUT_MS: document.getElementById('f_YT_SEARCH_TIMEOUT_MS').value.trim(),
+                YT_SEARCH_STAGGER_MS: document.getElementById('f_YT_SEARCH_STAGGER_MS').value.trim(),
             }
         };
 

@@ -1,12 +1,13 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { sendOk, sendError, uniqueId } from "../modules/utils.js";
 import { idsToMusicUrls, mapSpotifyToYtm, downloadMatchedSpotifyTracks, createDownloadQueue } from "../modules/sp.js";
-import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
+import { isSpotifyUrl, resolveSpotifyUrl, makeSpotify, parseSpotifyUrl, findSpotifyMetaByQuery } from "../modules/spotify.js";
 import { spotifyMapTasks, spotifyDownloadTasks, jobs, killJobProcesses, createJob, registerJobProcess } from "../modules/store.js";
 import { processJob } from "../modules/processor.js";
-import { convertMedia, downloadThumbnail } from "../modules/media.js";
+import { convertMedia, downloadThumbnail, retagMediaFile } from "../modules/media.js";
 import archiver from "archiver";
 import { resolveMarket } from "../modules/market.js";
 import { isVideoFormat, processYouTubeVideoJob } from "../modules/video.js";
@@ -25,6 +26,129 @@ console.log("[spotify] OUTPUT_DIR =", OUTPUT_DIR);
 console.log("[spotify] TEMP_DIR   =", TEMP_DIR);
 
 function makeMapId() { return uniqueId("map"); }
+
+function makeBgToken() {
+  try { return crypto.randomBytes(8).toString("hex"); }
+  catch { return String(Date.now()); }
+}
+
+function parseConcurrency(v, fallback = 4) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(16, Math.max(1, Math.round(n)));
+}
+
+function _liteTrackToItem(t) {
+  if (!t) return null;
+  const artist = (t.artists || []).map(a => a?.name).filter(Boolean).join(", ");
+  const title = t.name || "";
+  const album = t.album?.name || "";
+  const releaseDate = t.album?.release_date || "";
+  const year = releaseDate ? String(releaseDate).slice(0, 4) : "";
+  const coverUrl = (t.album?.images || []).slice().sort((a,b)=> (b.width||0)-(a.width||0))[0]?.url || "";
+  const spUrl = t.external_urls?.spotify || "";
+  const isrc = t.external_ids?.isrc || "";
+  return {
+    title,
+    artist,
+    album,
+    year,
+    date: releaseDate,
+    track_number: t.track_number || null,
+    disc_number: t.disc_number || null,
+    track_total: t.album?.total_tracks || null,
+    disc_total: null,
+    isrc,
+    coverUrl,
+    spUrl,
+    album_artist: (t.album?.artists?.[0]?.name || artist || ""),
+    label: "",
+    copyright: "",
+    genre: ""
+  };
+}
+
+async function resolveSpotifyUrlLite(url, { market } = {}) {
+  const { type, id } = parseSpotifyUrl(url);
+  if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
+  const api = await makeSpotify();
+  const mkt = resolveMarket(market);
+
+  if (type === "track") {
+    const r = await api.getTrack(id, { ...(mkt ? { market: mkt } : {}) });
+    const item = _liteTrackToItem(r?.body);
+    if (!item) throw new Error("Track could not be fetched");
+    return { kind: "track", title: `${item.artist} - ${item.title}`, items: [item] };
+  }
+
+  if (type === "playlist") {
+    let plTitle = "Spotify Playlist";
+    try {
+      const pl = (await api.getPlaylist(id, { fields: "name" }))?.body;
+      plTitle = pl?.name || plTitle;
+    } catch {}
+
+    const items = [];
+    let page = await api.getPlaylistTracks(id, {
+      limit: 100,
+      ...(mkt ? { market: mkt } : {})
+    });
+    while (page) {
+      for (const it of (page.body?.items || [])) {
+        const t = it?.track;
+        const item = _liteTrackToItem(t);
+        if (item?.title && item?.artist) items.push(item);
+      }
+      const next = page.body?.next;
+      if (!next) break;
+      const u = new URL(next);
+      const offset = Number(u.searchParams.get("offset") || 0);
+      page = await api.getPlaylistTracks(id, {
+        limit: 100,
+        offset,
+        ...(mkt ? { market: mkt } : {})
+      });
+    }
+    return { kind: "playlist", title: plTitle, items };
+  }
+
+  if (type === "album") {
+    const alb = (await api.getAlbum(id, { ...(mkt ? { market: mkt } : {}) }))?.body || null;
+    const albumTitle = alb?.name || "Spotify Album";
+    const albumArtist = alb?.artists?.[0]?.name || "";
+    const coverUrl = (alb?.images || []).slice().sort((a,b)=> (b.width||0)-(a.width||0))[0]?.url || "";
+    const releaseDate = alb?.release_date || "";
+    const year = releaseDate ? String(releaseDate).slice(0,4) : "";
+    const totalTracks = alb?.total_tracks || null;
+
+    const items = [];
+    let page = await api.getAlbumTracks(id, { limit: 50, ...(mkt ? { market: mkt } : {}) });
+    while (page) {
+      for (const t of (page.body?.items || [])) {
+        const item = _liteTrackToItem({
+          ...t,
+          album: {
+            name: albumTitle,
+            artists: [{ name: albumArtist }],
+            images: coverUrl ? [{ url: coverUrl, width: 9999, height: 9999 }] : [],
+            release_date: releaseDate,
+            total_tracks: totalTracks
+          }
+        });
+        if (item?.title && item?.artist) items.push(item);
+      }
+      const next = page.body?.next;
+      if (!next) break;
+      const u = new URL(next);
+      const offset = Number(u.searchParams.get("offset") || 0);
+      page = await api.getAlbumTracks(id, { limit: 50, offset, ...(mkt ? { market: mkt } : {}) });
+    }
+    const title = albumArtist ? `${albumArtist} - ${albumTitle}` : albumTitle;
+    return { kind: "playlist", title, items };
+  }
+
+  throw new Error("This type of Spotify URL is not supported yet");
+}
 
 router.post("/api/spotify/process/start", async (req, res) => {
   try {
@@ -47,34 +171,18 @@ router.post("/api/spotify/process/start", async (req, res) => {
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
     if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL is required", 400);
 
-    const userConc = Number(spotifyConcurrency);
-    const effectiveSpotifyConcurrency = Number.isFinite(userConc) && userConc > 0
-      ? Math.min(Math.max(userConc, 1), 16)
-      : 4;
+    const effectiveSpotifyConcurrency = parseConcurrency(
+      spotifyConcurrency,
+      parseConcurrency(process.env.SPOTIFY_CONCURRENCY || 4, 4)
+    );
 
     console.log('[Spotify] effectiveSpotifyConcurrency =', {
-      userConc,
       effectiveSpotifyConcurrency
     });
 
-    let sp;
-    try {
-      sp = await resolveSpotifyUrl(url, { market: resolveMarket(marketIn) });
-    } catch (e) {
-      const msg = String(e?.message || "");
-      if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
-        return sendError(
-          res,
-          'SPOTIFY_MIX_UNSUPPORTED',
-          "This link is a personalized Spotify Mix. The Spotify Web API cannot provide this content (404). Please copy the tracks from the Mix into a new playlist in the Spotify app and send that playlist URL instead.",
-          400
-        );
-      }
-      throw e;
-    }
-
+    const bgToken = makeBgToken();
     const job = createJob({
-    status: "running",
+    status: "queued",
     progress: 0,
     format,
     bitrate,
@@ -86,37 +194,83 @@ router.post("/api/spotify/process/start", async (req, res) => {
     metadata: {
       source: "spotify",
       spotifyUrl: url,
-      spotifyKind: sp.kind,
-      spotifyTitle: sp.title,
-      isPlaylist: sp.kind === "playlist",
-      isAlbum: sp.kind === "album",
+      spotifyKind: null,
+      spotifyTitle: null,
+      isPlaylist: true,
+      isAlbum: false,
       isAutomix: false,
       includeLyrics: (includeLyrics === true || includeLyrics === "true"),
       volumeGain: volumeGainNum,
       compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
       bitDepth: bitDepth || null,
-      spotifyConcurrency: effectiveSpotifyConcurrency
+      spotifyConcurrency: effectiveSpotifyConcurrency,
+      bgToken
     },
         resultPath: null,
         error: null,
-        playlist: { total: sp.items?.length || 1, done: 0 },
+        playlist: { total: 0, done: 0 },
         phase: "mapping",
         currentPhase: "mapping",
-        lastLog: "",
-        lastLogKey: null,
-        lastLogVars: null
+        lastLogKey: "log.starting",
+        lastLogVars: {},
+        lastLog: "⏳ Starting Spotify job..."
       });
       const jobId = job.id;
 
       sendOk(res, {
         jobId,
         id: jobId,
-        title: sp.title,
-        total: sp.items?.length || 1,
+        title: "-",
+        total: 0,
         message: "Spotify processing started"
       });
 
-      processSpotifyIntegrated(jobId, sp, format, bitrate);
+      setImmediate(async () => {
+        const j = jobs.get(jobId);
+        if (!j) return;
+        if (j.metadata?.bgToken !== bgToken) return;
+
+        try {
+          let sp;
+          try {
+            sp = await resolveSpotifyUrlLite(url, { market: resolveMarket(marketIn) });
+          } catch (e) {
+            const msg = String(e?.message || "");
+            if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
+              j.status = "error";
+              j.error = "SPOTIFY_MIX_UNSUPPORTED";
+              j.phase = "error"; j.currentPhase = "error";
+              j.lastLogKey = "SPOTIFY_MIX_UNSUPPORTED";
+              j.lastLogVars = {};
+              j.lastLog = "❌ Spotify Mix unsupported (404). Copy tracks to a normal playlist and retry.";
+              return;
+            }
+            throw e;
+          }
+
+          j.status = "running";
+          j.metadata.spotifyKind  = sp.kind;
+          j.metadata.spotifyTitle = sp.title;
+          j.metadata.isPlaylist   = sp.kind === "playlist";
+          j.metadata.isAlbum      = sp.kind === "album";
+          j.playlist.total = sp.items?.length || 0;
+          j.lastLogKey = "status.mappingStarted";
+          j.lastLogVars = { title: sp.title, total: j.playlist.total };
+          j.lastLog = `🔍 Mapping started: ${sp.title} (${j.playlist.total} track)`;
+
+          await processSpotifyIntegrated(jobId, sp, format, bitrate, { market: marketIn });
+        } catch (err) {
+          const jj = jobs.get(jobId);
+          if (!jj) return;
+          jj.status = "error";
+          jj.error = err?.message || String(err);
+          jj.phase = "error"; jj.currentPhase = "error";
+          jj.lastLogKey = "log.error";
+          jj.lastLogVars = { err: jj.error };
+          jj.lastLog = `❌ Error: ${jj.error}`;
+          console.error("[spotify/process/start bg] error:", err);
+        }
+      });
 
     } catch (e) {
       return sendError(res, 'PROCESS_FAILED', e.message || "Spotify processing error", 400);
@@ -152,7 +306,7 @@ function createLimiter(max) {
   return run;
 }
 
-async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
+async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } = {}) {
   const job = jobs.get(jobId);
   if (!job) return;
 
@@ -205,6 +359,74 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
     const allFiles = [];
     const convertPromises = [];
     const runLimitedConvert = createLimiter(parallel);
+    const richMetaByIndex = new Map();
+    const outputAbsByIndex = new Map();
+    const runMetaLimited = createLimiter(Math.max(1, Math.min(8, Math.floor(parallel * 2))));
+    const mktResolved = resolveMarket(market);
+
+    (async () => {
+      try {
+        for (let i = 0; i < totalItems; i++) {
+          if (shouldCancel()) break;
+          const itemLite = sp.items[i];
+          const logicalIndex = i;
+          runMetaLimited(async () => {
+            if (shouldCancel()) return;
+            let rich = null;
+            try {
+              rich = await findSpotifyMetaByQuery(itemLite.artist, itemLite.title, mktResolved);
+            } catch {}
+            if (!rich) return;
+
+            richMetaByIndex.set(logicalIndex, rich);
+
+            const baseMeta = {
+              title: itemLite.title,
+              track: itemLite.title,
+              artist: itemLite.artist,
+              uploader: itemLite.artist,
+              album: itemLite.album || "",
+              album_artist: itemLite.album_artist || itemLite.artist,
+              track_number: itemLite.track_number ?? null,
+              disc_number: itemLite.disc_number ?? null,
+              track_total: itemLite.track_total ?? null,
+              disc_total: itemLite.disc_total ?? null,
+              isrc: itemLite.isrc || "",
+              release_year: itemLite.year || "",
+              release_date: itemLite.date || "",
+              webpage_url: itemLite.spUrl || "",
+              genre: itemLite.genre || "",
+              label: itemLite.label || "",
+              publisher: itemLite.label || "",
+              copyright: itemLite.copyright || ""
+            };
+
+            const merged = { ...baseMeta };
+            for (const [k, v] of Object.entries(rich || {})) {
+              if (v == null) continue;
+              if (typeof v === "string" && !v.trim()) continue;
+              merged[k] = v;
+            }
+
+            const abs = outputAbsByIndex.get(logicalIndex);
+            if (abs && fs.existsSync(abs)) {
+              retagMediaFile(
+                abs,
+                format,
+               {
+                  ...merged,
+                  playlist_title: job.metadata.spotifyTitle,
+                  webpage_url: merged.webpage_url || rich.webpage_url || itemLite.spUrl || ""
+                },
+                null,
+                { jobId, tempDir: TEMP_DIR }
+              ).catch(() => {});
+            }
+          }).catch(()=>{});
+        }
+      } catch {}
+    })();
+
     const convertDownloadedItem = async (dlResult, idxZeroBased) => {
       if (shouldCancel()) {
         console.log(`[Spotify ${jobId}] convertDownloadedItem → canceled before start, skipping`);
@@ -224,26 +446,27 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
       }
 
       const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
-      const fileMeta = (preferSpotify && spInfo) ? {
-        title: spInfo.title,
-        track: spInfo.title,
-        artist: spInfo.artist,
-        uploader: spInfo.artist,
-        album: spInfo.album || "",
+      const richNow = richMetaByIndex.get(logicalIndex) || null;
+      const fileMeta = (preferSpotify && (richNow || spInfo)) ? {
+        title: (richNow?.title || spInfo?.title || entry.title),
+        track: (richNow?.title || spInfo?.title || entry.title),
+        artist: (richNow?.artist || spInfo?.artist || entry.uploader),
+        uploader: (richNow?.artist || spInfo?.artist || entry.uploader),
+        album: (richNow?.album || spInfo?.album || ""),
         playlist_title: job.metadata.spotifyTitle,
-        webpage_url: spInfo.spUrl || entry.webpage_url,
-        release_year: spInfo.year || "",
-        release_date: spInfo.date || "",
-        track_number: spInfo.track_number,
-        disc_number:  spInfo.disc_number,
-        track_total:  spInfo.track_total,
-        disc_total:   spInfo.disc_total,
-        isrc:         spInfo.isrc,
-        album_artist: spInfo.album_artist || "",
-        genre:        spInfo.genre || "",
-        label:        spInfo.label || "",
-        publisher:    spInfo.label || "",
-        copyright:    spInfo.copyright || ""
+        webpage_url: (richNow?.webpage_url || richNow?.spUrl || spInfo?.spUrl || entry.webpage_url),
+        release_year: (richNow?.release_year || spInfo?.year || ""),
+        release_date: (richNow?.release_date || spInfo?.date || ""),
+        track_number: (richNow?.track_number ?? spInfo?.track_number),
+        disc_number:  (richNow?.disc_number ?? spInfo?.disc_number),
+        track_total:  (richNow?.track_total ?? spInfo?.track_total),
+        disc_total:   (richNow?.disc_total ?? spInfo?.disc_total),
+        isrc:         (richNow?.isrc || spInfo?.isrc || ""),
+        album_artist: (richNow?.album_artist || spInfo?.album_artist || ""),
+        genre:        (richNow?.genre || spInfo?.genre || ""),
+        label:        (richNow?.label || spInfo?.label || ""),
+        publisher:    (richNow?.publisher || richNow?.label || spInfo?.label || ""),
+        copyright:    (richNow?.copyright || spInfo?.copyright || "")
       } : {
         title: entry.title,
         track: entry.title,
@@ -331,6 +554,31 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
         }
 
         results[logicalIndex] = result;
+
+        try {
+          if (result?.outputPath) {
+            const abs = path.join(
+              OUTPUT_DIR,
+              decodeURIComponent(result.outputPath.replace("/download/", ""))
+            );
+            outputAbsByIndex.set(logicalIndex, abs);
+          }
+        } catch {}
+
+        try {
+          const abs = outputAbsByIndex.get(logicalIndex);
+          const rich = richMetaByIndex.get(logicalIndex);
+          if (abs && rich && fs.existsSync(abs)) {
+            retagMediaFile(
+              abs,
+              format,
+              { ...rich, playlist_title: job.metadata.spotifyTitle },
+              null,
+              { jobId, tempDir: TEMP_DIR }
+            ).catch(()=>{});
+          }
+        } catch {}
+
         job.lastLogKey = 'log.converting.ok';
         job.lastLogVars = { title: entry.title };
         job.lastLog = `✅ Converted: ${entry.title}`;
@@ -433,7 +681,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate) {
         }
       },
       {
-        concurrency: 3,
+        concurrency: parallel,
         shouldCancel,
         onLog: (payload) => {
           const { logKey, logVars, fallback } =

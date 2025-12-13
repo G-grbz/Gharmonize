@@ -1,4 +1,11 @@
 {
+  "settings.ytSearchResults": "Anzahl der yt-dlp-Suchergebnisse pro Abfrage. Niedrigere Werte = schnellere Zuordnung, aber höheres Risiko falscher Treffer",
+  "settings.ytSearchTimeout": "Zeitüberschreitung pro Suche während der Zuordnung (ms). Niedrigere Werte = schnellere Benutzeroberfläche, aber mehr „nicht gefunden“-Fehler bei langsamen Netzwerken",
+  "settings.ytSearchStagger": "Verzögerung beim Start paralleler Suchanfragen (ms). Hilft, System- und Ratenbegrenzungen zu vermeiden, indem gleichzeitige Anfragen gestaffelt werden — niedrigere Werte = schnellere Anfragen; höhere Werte = stabilerer Betrieb und meist weniger Einschränkungen",
+  "ph.ytSearchResults": "empfohlen 3",
+  "ph.ytSearchTimeout": "empfohlen 10000",
+  "ph.ytSearchStagger": "empfohlen 180",
+  "log.starting": "⏳ Liste wird von Spotify abgerufen…",
   "label.videoCodec": "Video-Codec",
   "option.videoCodecAuto": "Automatisch (H.265 über 2160p, H.264 darunter)",
   "option.videoCodecH264": "H.264 (AVC)",
