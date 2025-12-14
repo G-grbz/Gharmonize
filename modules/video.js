@@ -7,7 +7,7 @@ import {
   isYouTubeAutomix,
   idsToMusicUrls
 } from "./yt.js";
-import { sanitizeFilename, normalizeTitle } from "./utils.js"
+import { sanitizeFilename, normalizeTitle, parseIdFromPath } from "./utils.js"
 import { convertMedia } from "./media.js";
 import "dotenv/config";
 import { spawn as spawnChild } from "child_process";
@@ -275,19 +275,21 @@ export async function processYouTubeVideoJob(job, {
       for (let i = 0; i < mediaFiles.length; i++) {
         const filePath = mediaFiles[i];
         const idxFromName = parsePlaylistIndexFromPath(filePath);
+        const fileId = parseIdFromPath(filePath);
         let src = null;
 
         if (Number.isFinite(idxFromName) && byIndex.has(idxFromName)) {
           src = byIndex.get(idxFromName);
         } else if (Array.isArray(selectedIds) && selectedIds[i]) {
-          src = metaEntries.find(e => e?.id === selectedIds[i]) || null;
+          src = (fileId ? metaEntries.find(e => e?.id === fileId) : null) || null;
+          if (!src) src = metaEntries.find(e => e?.id === selectedIds[i]) || null;
         }
 
         const title = (src?.title || src?.alt_title ||
           path.basename(filePath, path.extname(filePath)).replace(/^\d+\s*-\s*/, "") || ""
         ).toString();
         const uploader = (src?.uploader || src?.channel || flat.uploader || "").toString();
-        const id = (src?.id || (Array.isArray(selectedIds) ? selectedIds[i] : null) || "").toString();
+        const id = (src?.id || fileId || (Array.isArray(selectedIds) ? selectedIds[i] : null) || "").toString();
         const webpage_url = (src?.webpage_url || src?.url || flat.webpage_url || "").toString();
         const index = Number.isFinite(idxFromName) ? idxFromName : (i + 1);
 
@@ -300,6 +302,22 @@ export async function processYouTubeVideoJob(job, {
     flat.title ||
     flat.playlist_title ||
     (isAutomix ? "YouTube Automix" : "");
+    }
+    const frozenEntries = Array.isArray(job.metadata.frozenEntries) ? job.metadata.frozenEntries : [];
+    const frozenById = new Map();
+    const frozenByIndex = new Map();
+    for (const e of frozenEntries) {
+      if (!e) continue;
+      if (e.id) frozenById.set(e.id, e);
+      const idx = Number(e.index);
+      if (Number.isFinite(idx)) frozenByIndex.set(idx, e);
+    }
+
+    const selectedIdToPos = new Map();
+    if (Array.isArray(selectedIds) && selectedIds.length) {
+      selectedIds.forEach((id, i) => {
+        if (id) selectedIdToPos.set(id, i);
+      });
     }
     job.counters.dlTotal = mediaFiles.length;
     job.counters.dlDone  = mediaFiles.length;
@@ -328,9 +346,27 @@ export async function processYouTubeVideoJob(job, {
       const rawBase = path.basename(filePath);
       const cleaned = stripLeadingPrefix(rawBase, job.id).replace(ext, "").trim();
 
-      const feEntry = Array.isArray(job.metadata.frozenEntries)
-        ? job.metadata.frozenEntries[i]
-        : null;
+      const fromParser = parsePlaylistIndexFromPath(rawBase);
+      const regexMatch = rawBase.match(/^(\d+)\s*-\s*/);
+      const playlistIndex = Number.isFinite(fromParser)
+        ? fromParser
+        : (regexMatch ? Number(regexMatch[1]) : null);
+
+      const fileId = parseIdFromPath(filePath);
+
+      let feEntry = null;
+
+      if (fileId && frozenById.has(fileId)) {
+        feEntry = frozenById.get(fileId);
+      } else if (fileId && selectedIdToPos.has(fileId)) {
+        const pos = selectedIdToPos.get(fileId);
+        const pinnedId = selectedIds?.[pos];
+        if (pinnedId && frozenById.has(pinnedId)) feEntry = frozenById.get(pinnedId);
+      }
+
+      if (!feEntry && Number.isFinite(playlistIndex)) {
+        feEntry = frozenByIndex.get(playlistIndex) || null;
+      }
 
       const artistRaw =
         feEntry?.uploader ||
@@ -689,9 +725,18 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
       });
     }
 
-    job.metadata.frozenEntries = fe;
-    job.metadata.frozenTitle = job.metadata.spotifyTitle || "Spotify Playlist";
-  }
+  job.metadata.frozenEntries = fe;
+  job.metadata.frozenTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+}
+
+  const frozenEntries = Array.isArray(job.metadata.frozenEntries)
+    ? job.metadata.frozenEntries
+    : [];
+  const frozenById = new Map();
+  frozenEntries.forEach(e => { if (e?.id) frozenById.set(e.id, e); });
+
+  const selectedIdToPos = new Map();
+  selectedIds.forEach((id, i) => id && selectedIdToPos.set(id, i));
 
   job.counters.dlTotal = mediaFiles.length;
   job.counters.dlDone  = mediaFiles.length;
@@ -716,9 +761,23 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
 
     job.playlist.current = i;
 
-    const feEntry = Array.isArray(job.metadata.frozenEntries)
-      ? job.metadata.frozenEntries[i]
-      : null;
+    const fileId = parseIdFromPath(filePath);
+    let feEntry = null;
+
+    if (fileId && frozenById.has(fileId)) {
+      feEntry = frozenById.get(fileId);
+    }
+
+    if (!feEntry && fileId && selectedIdToPos.has(fileId)) {
+      const pos = selectedIdToPos.get(fileId);
+      const pinnedId = selectedIds[pos];
+      if (pinnedId && frozenById.has(pinnedId)) {
+        feEntry = frozenById.get(pinnedId);
+      }
+    }
+    if (!feEntry) {
+      feEntry = frozenEntries[i] || null;
+    }
 
     const ext = path.extname(filePath);
     const rawBase = path.basename(filePath);

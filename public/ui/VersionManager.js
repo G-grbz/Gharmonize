@@ -8,7 +8,7 @@ export class VersionManager {
             }
         })();
 
-        this.currentVersion = cached || '1.0.4';
+        this.currentVersion = cached || '1.0.7';
         this.githubRepo = 'G-grbz/Gharmonize';
         this.checkInterval = 24 * 60 * 60 * 1000;
         this.lastCheckKey = 'gharmonize_last_version_check';
@@ -25,7 +25,7 @@ export class VersionManager {
         const response = await fetch('/api/version');
         if (response.ok) {
             const data = await response.json();
-            this.currentVersion = data.version || '1.0.4';
+            this.currentVersion = data.version || '1.0.7';
             try {
                 localStorage.setItem('gharmonize_current_version', this.currentVersion);
             } catch (e) {

@@ -647,6 +647,11 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     const body = req.body || {};
     console.log("📦 RAW req.body.youtubeConcurrency:", body.youtubeConcurrency, "typeof:", typeof body.youtubeConcurrency);
     const metadata = {};
+    const autoCreateZip =
+   body.autoCreateZip === undefined
+     ? true
+     : (body.autoCreateZip === true || body.autoCreateZip === 'true');
+    metadata.autoCreateZip = autoCreateZip;
 
     const finalUploadPath = body.finalUploadPath;
     const localPath = body.localPath;
@@ -678,46 +683,47 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
   }
 
     const {
-  url,
-  format = "mp3",
-  bitrate = "192k",
-  sampleRate = "48000",
-  bitDepth,
-  sampleRateHz,
-  compressionLevel,
-  isPlaylist = false,
-  selectedIndices,
-  clientBatch,
-  spotifyMapId,
-  includeLyrics = false,
-  volumeGain,
-  stereoConvert = "auto",
-  atempoAdjust = "none",
-  videoSettings: rawVideoSettings,
-  selectedStreams,
-  youtubeConcurrency,
-  frozenEntries: rawFrozenEntries
-} = body;
+      url,
+      format = "mp3",
+      bitrate = "192k",
+      sampleRate = "48000",
+      bitDepth,
+      sampleRateHz,
+      compressionLevel,
+      isPlaylist = false,
+      selectedIndices,
+      clientBatch,
+      spotifyMapId,
+      includeLyrics = false,
+      volumeGain,
+      spotifyConcurrency,
+      stereoConvert = "auto",
+      atempoAdjust = "none",
+      videoSettings: rawVideoSettings,
+      selectedStreams,
+      youtubeConcurrency,
+      frozenEntries: rawFrozenEntries
+    } = body;
 
-let frozenEntriesParsed = null;
-if (rawFrozenEntries) {
-  if (typeof rawFrozenEntries === "string") {
-    try {
-      const parsed = JSON.parse(rawFrozenEntries);
-      if (Array.isArray(parsed)) {
-        frozenEntriesParsed = parsed;
+    let frozenEntriesParsed = null;
+    if (rawFrozenEntries) {
+      if (typeof rawFrozenEntries === "string") {
+        try {
+          const parsed = JSON.parse(rawFrozenEntries);
+          if (Array.isArray(parsed)) {
+            frozenEntriesParsed = parsed;
+          } else {
+            console.warn("frozenEntries (string) JSON parsed but not an array");
+          }
+        } catch (e) {
+          console.warn("Failed to parse frozenEntries JSON:", e.message);
+        }
+      } else if (Array.isArray(rawFrozenEntries)) {
+        frozenEntriesParsed = rawFrozenEntries;
       } else {
-        console.warn("frozenEntries (string) JSON parsed but not an array");
+        console.warn("Unsupported frozenEntries type:", typeof rawFrozenEntries);
       }
-    } catch (e) {
-      console.warn("Failed to parse frozenEntries JSON:", e.message);
     }
-  } else if (Array.isArray(rawFrozenEntries)) {
-    frozenEntriesParsed = rawFrozenEntries;
-  } else {
-    console.warn("Unsupported frozenEntries type:", typeof rawFrozenEntries);
-  }
-}
 
     const parsedYoutubeConc = Number(youtubeConcurrency);
     const youtubeConcurrencyNormalized =
@@ -961,6 +967,9 @@ if (rawFrozenEntries) {
       metadata: {
         ...metadata,
         includeLyrics: includeLyrics === true || includeLyrics === "true",
+        spotifyConcurrency: (Number.isFinite(Number(spotifyConcurrency)) && Number(spotifyConcurrency) > 0)
+        ? Math.min(16, Math.max(1, Math.round(Number(spotifyConcurrency))))
+        : undefined,
         stereoConvert: stereoConvert,
         atempoAdjust: atempoAdjust,
         compressionLevel: normalizedCompressionLevel,

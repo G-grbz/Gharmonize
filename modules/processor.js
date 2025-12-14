@@ -4,7 +4,7 @@ import archiver from "archiver";
 import { resolveId3StrictForYouTube } from "./tags.js";
 import { resolveMarket } from "./market.js";
 import { jobs, registerJobProcess, killJobProcesses } from "./store.js";
-import { sanitizeFilename, toNFC, normalizeTitle } from "./utils.js";
+import { sanitizeFilename, toNFC, normalizeTitle, parseIdFromPath } from "./utils.js";
 import { processYouTubeVideoJob, qualityToHeight } from "./video.js";
 import {
   isYouTubeAutomix,
@@ -155,14 +155,14 @@ export async function processJob(jobId, inputPath, format, bitrate) {
   } catch {}
 
   const job = jobs.get(jobId);
-if (!job) return;
+  if (!job) return;
 
-console.log("🧊 job.metadata.frozenEntries snapshot:",
-  Array.isArray(job.metadata?.frozenEntries)
-    ? { len: job.metadata.frozenEntries.length,
-        sample: job.metadata.frozenEntries.slice(0, 3) }
-    : job.metadata?.frozenEntries
-);
+  console.log("🧊 job.metadata.frozenEntries snapshot:",
+    Array.isArray(job.metadata?.frozenEntries)
+      ? { len: job.metadata.frozenEntries.length,
+          sample: job.metadata.frozenEntries.slice(0, 3) }
+      : job.metadata?.frozenEntries
+  );
 
   const selectedStreams = job.metadata?.selectedStreams || {};
 
@@ -512,7 +512,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
         job.resultPath = finalResults[0]?.outputPath || null;
       } else {
         job.resultPath = finalResults;
-        if (!job.clientBatch) {
+        if (!job.clientBatch && job.metadata?.autoCreateZip !== false) {
           try {
             const zipTitle =
               job.metadata.spotifyTitle || "Spotify Playlist";
@@ -659,6 +659,12 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
         const trackLyricsMap = new Map();
         const frozenByIndex = new Map();
         const frozenById = new Map();
+        const selectedIdToPos = new Map();
+          if (Array.isArray(selectedIds) && selectedIds.length) {
+            selectedIds.forEach((id, i) => {
+              if (id) selectedIdToPos.set(id, i);
+            });
+          }
 
         if (Array.isArray(job.metadata?.frozenEntries)) {
           for (const e of job.metadata.frozenEntries) {
@@ -680,38 +686,45 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
         const youtubeLimiter = createLimiter(youtubeConcurrency);
         const results = [];
         const convertPromisesYouTube = [];
-        let autoCounter = 0;
 
         async function convertPlaylistItem(
-          autoIndex,
+          stableIndex,
           filePath,
-          explicitPlaylistIndex = null
+          explicitPlaylistIndex = null,
+          fileIdHint = null
         ) {
           const baseName = path.basename(filePath);
+          const fromParser = parsePlaylistIndexFromPath(baseName);
+          const regexMatch = baseName.match(/^(\d+)\s*-\s*/);
+          const indexFromName = Number.isFinite(fromParser)
+            ? fromParser
+            : (regexMatch ? Number(regexMatch[1]) : NaN);
 
-        const fromParser = parsePlaylistIndexFromPath(baseName);
-        const regexMatch = baseName.match(/^(\d+)\s*-\s*/);
-        const indexFromName = Number.isFinite(fromParser)
-          ? fromParser
-          : (regexMatch ? Number(regexMatch[1]) : NaN);
-
-        const playlistIndex =
-          Number.isFinite(indexFromName)
-            ? indexFromName
-            : (Number.isFinite(explicitPlaylistIndex) && explicitPlaylistIndex != null
-                ? explicitPlaylistIndex
-                : autoIndex + 1);
+          const fileId = fileIdHint || parseIdFromPath(filePath);
 
           let frozen = null;
-          if (Number.isFinite(playlistIndex)) {
-            frozen = frozenByIndex.get(playlistIndex) || null;
+
+          if (fileId) {
+            if (frozenById.has(fileId)) {
+              frozen = frozenById.get(fileId);
+            } else if (selectedIdToPos.has(fileId)) {
+              const pos = selectedIdToPos.get(fileId);
+              const pinnedId = selectedIds?.[pos];
+              if (pinnedId && frozenById.has(pinnedId)) frozen = frozenById.get(pinnedId);
+            }
           }
 
-          if (!frozen && Array.isArray(selectedIds) && selectedIds.length) {
-            const pinnedId = selectedIds[playlistIndex - 1] || null;
-            if (pinnedId && frozenById.has(pinnedId)) {
-              frozen = frozenById.get(pinnedId);
-            }
+          let playlistIndex = null;
+
+          if (Number.isFinite(explicitPlaylistIndex)) playlistIndex = explicitPlaylistIndex;
+          else if (Number.isFinite(indexFromName)) playlistIndex = indexFromName;
+
+          if (!playlistIndex && !Array.isArray(selectedIds)) {
+            playlistIndex = stableIndex + 1;
+          }
+
+          if (!frozen && Number.isFinite(playlistIndex)) {
+            frozen = frozenByIndex.get(playlistIndex) || null;
           }
 
           let entry = {};
@@ -889,7 +902,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
 
           const totalTracks = job.playlist?.total || totalGuess || 1;
           const existingOut = findExistingOutput(
-            `${jobId}_${autoIndex}`,
+            `${jobId}_${stableIndex}`,
             format,
             OUTPUT_DIR
           );
@@ -900,7 +913,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
                 path.basename(existingOut)
               )}`
             };
-            const fileProgress = (autoIndex / totalTracks) * 100;
+            const fileProgress = (stableIndex / totalTracks) * 100;
             job.convertProgress = Math.floor(
               fileProgress + 100 / totalTracks
             );
@@ -914,16 +927,16 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
                 filePath,
                 format,
                 bitrate,
-                `${jobId}_${autoIndex}`,
+                `${jobId}_${stableIndex}`,
                 (progress) => {
-                  const baseProgress = (autoIndex / totalTracks) * 100;
+                  const baseProgress = (stableIndex / totalTracks) * 100
                   const currentFileProgress =
                     (progress / 100) * (100 / totalTracks);
                   job.convertProgress = Math.floor(
                     baseProgress + currentFileProgress
                   );
                   if (job.playlist) {
-                    job.playlist.current = autoIndex;
+                    job.playlist.current = stableIndex;
                   }
                   job.progress = Math.floor(
                     (job.downloadProgress + job.convertProgress) / 2
@@ -972,7 +985,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
             trackLyricsMap.set(playlistIndex, true);
           }
 
-          results[autoIndex] = r;
+          results[stableIndex] = r;
           bump(job.counters, "cvDone", 1);
           if (job.playlist) {
             job.playlist.done = (job.playlist.done || 0) + 1;
@@ -1053,9 +1066,17 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
               : undefined,
             youtubeConcurrency,
             onFileDone: ({ filePath, playlistIndex }) => {
-              const myIndex = autoCounter++;
+              const fileId = parseIdFromPath(filePath);
+              let myIndex = null;
+              if (fileId && selectedIdToPos.has(fileId)) {
+                myIndex = selectedIdToPos.get(fileId);
+              } else if (Number.isFinite(playlistIndex) && playlistIndex != null) {
+                myIndex = Math.max(0, Number(playlistIndex) - 1);
+              } else {
+                myIndex = 0;
+              }
               const p = youtubeLimiter(() =>
-                convertPlaylistItem(myIndex, filePath, playlistIndex)
+                convertPlaylistItem(myIndex, filePath, playlistIndex, fileId)
               );
               convertPromisesYouTube.push(p);
             }
@@ -1165,7 +1186,7 @@ console.log("🧊 job.metadata.frozenEntries snapshot:",
           job.resultPath = finalResults[0]?.outputPath || null;
         } else {
           job.resultPath = finalResults;
-          if (!job.clientBatch) {
+          if (!job.clientBatch && job.metadata?.autoCreateZip !== false) {
             try {
               const zipTitle =
                 ytMeta?.title ||

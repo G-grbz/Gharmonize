@@ -212,12 +212,12 @@ const DEFAULTS = {
 
   win32: {
     ffmpeg: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip',
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
       type: 'zip',
       find: 'ffmpeg.exe'
     },
     ffprobe: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip',
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
       type: 'zip',
       find: 'ffprobe.exe'
     },

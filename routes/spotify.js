@@ -153,18 +153,24 @@ async function resolveSpotifyUrlLite(url, { market } = {}) {
 router.post("/api/spotify/process/start", async (req, res) => {
   try {
     const {
-  url,
-  format = "mp3",
-  bitrate = "192k",
-  sampleRate = "48000",
-  market: marketIn,
-  includeLyrics,
-  volumeGain,
-  compressionLevel,
-  bitDepth,
-  videoSettings = {},
-  spotifyConcurrency
-} = req.body || {};
+      url,
+      format = "mp3",
+      bitrate = "192k",
+      sampleRate = "48000",
+      market: marketIn,
+      includeLyrics,
+      volumeGain,
+      compressionLevel,
+      bitDepth,
+      videoSettings = {},
+      spotifyConcurrency,
+      autoCreateZip
+    } = req.body || {};
+
+   const autoCreateZipFlag =
+     autoCreateZip === undefined
+       ? true
+       : (autoCreateZip === true || autoCreateZip === "true");
 
     console.log('[Spotify] UI sent spotifyConcurrency =', spotifyConcurrency);
 
@@ -203,6 +209,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
       volumeGain: volumeGainNum,
       compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
       bitDepth: bitDepth || null,
+      autoCreateZip: autoCreateZipFlag,
       spotifyConcurrency: effectiveSpotifyConcurrency,
       bgToken
     },
@@ -761,20 +768,23 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 
     job.resultPath = successfulResults;
 
-    try {
-      const zipTitle = job.metadata.spotifyTitle || "Spotify Playlist";
-      job.lastLogKey = 'log.zip.creating';
-      job.lastLogVars = {};
-      job.lastLog = `📦 Creating ZIP file...`;
-      job.zipPath = await makeZipFromOutputs(jobId, successfulResults, zipTitle, !!job.metadata.includeLyrics);
-      job.lastLogKey = 'log.zip.ready';
-      job.lastLogVars = { title: zipTitle };
-      job.lastLog = `✅ ZIP file is ready: ${zipTitle}`;
-    } catch (e) {
-      console.warn("ZIP creation error:", e);
-      job.lastLogKey = 'log.zip.error';
-      job.lastLogVars = { err: e.message };
-      job.lastLog = `❌ ZIP creation error: ${e.message}`;
+    if (job.metadata?.autoCreateZip) {
+      try {
+        const zipTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+        job.lastLogKey = 'log.zip.creating';
+        job.lastLogVars = {};
+        job.lastLog = `📦 Creating ZIP file...`;
+        job.zipPath = await makeZipFromOutputs(jobId, successfulResults, zipTitle, !!job.metadata.includeLyrics);
+        job.lastLogKey = 'log.zip.ready';
+        job.lastLogVars = { title: zipTitle };
+        job.lastLog = `✅ ZIP file is ready: ${zipTitle}`;
+      } catch (e) {
+        console.warn("ZIP creation error:", e);
+        job.lastLogKey = 'log.zip.error';
+        job.lastLogVars = { err: e.message };
+        job.lastLog = `❌ ZIP creation error: ${e.message}`;
+      }
+    } else {
     }
 
     job.status = "completed";

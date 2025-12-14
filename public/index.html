@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -32,7 +32,7 @@
 <body>
 <div id="loading-screen">
     <div class="loading-spinner"></div>
-    <div class="loading-text" data-i18n="loading">Yükleniyor...</div>
+    <div class="loading-text" data-i18n="loading">Loading...</div>
   </div>
   <div class="container">
     <div class="header">
@@ -42,7 +42,7 @@
         <img src="./src/logo.png" alt="Gharmonize" class="app-logo-large">
       </a>
     </h1>
-    <p class="subtitle" data-i18n="app.subtitle">Linkten sese, tek tık: Gharmonize.</p>
+    <p class="subtitle" data-i18n="app.subtitle">From link to audio, one click: Gharmonize.</p>
   </div>
 
   <div class="theme-toggle" id="themeToggle">
@@ -62,7 +62,7 @@
   </button>
 
     <div class="language-switcher">
-      <span class="language-label" data-i18n="lang.label">Dil</span>
+      <span class="language-label" data-i18n="lang.label">Language</span>
       <select id="langSelect" class="language-select" aria-label="Language">
         <option value="en">English</option>
         <option value="tr">Türkçe</option>
@@ -75,11 +75,11 @@
       class="btn-outline settings-btn"
       type="button"
       data-i18n-title="btn.envSettings"
-      title="Ayarlar"
+      title="Settings"
     >
       <span class="settings-btn__icon" aria-hidden="true">⚙️</span>
       <span class="settings-btn__label sr-only" data-i18n="btn.envSettings">
-        Ayarlar
+        Settings
       </span>
     </button>
     <button
@@ -88,8 +88,8 @@
     type="button"
     hidden
     data-i18n-title="jobsPanel.bellTitle"
-    title="Aktif işler"
-    aria-label="Aktif işler"
+    title="Active jobs"
+    aria-label="Active jobs"
   >
     <span class="jobs-bell__ring">
       <span class="jobs-bell__icon" aria-hidden="true">🔔</span>
@@ -100,18 +100,18 @@
   </div>
     <div class="card-grid">
       <div class="card">
-      <h2 data-i18n="section.file">📁 Dosya Yükle</h2>
+      <h2 data-i18n="section.file">📁 Upload File</h2>
       <form id="fileForm" enctype="multipart/form-data">
         <div class="form-group">
-          <span class="form-label" data-i18n="section.source">Kaynak</span>
+          <span class="form-label" data-i18n="section.source">Source</span>
           <div class="source-toggle">
             <label>
               <input type="radio" name="fileSourceType" value="upload" checked>
-              <span data-i18n="section.file">Dosya Yükle</span>
+              <span data-i18n="section.file">Upload File</span>
             </label>
             <label>
               <input type="radio" name="fileSourceType" value="local">
-              <span data-i18n="section.serverfile">Sunucu Dosyası</span>
+              <span data-i18n="section.serverfile">Server File</span>
             </label>
           </div>
         </div>
@@ -124,41 +124,46 @@
             multiple
           />
           <small class="muted" data-i18n="ui.multiUploadHint">
-            Birden fazla dosya seçmek için Ctrl / Shift tuşunu kullanabilirsiniz.
+            Use Ctrl / Shift to select multiple files.
           </small>
         </div>
 
         <div id="localSourceGroup" class="form-group" style="display:none;">
           <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-            <span data-i18n="section.serverfile">Sunucu Dosyaları</span>
-            <button type="button" id="refreshLocalFilesBtn" class="btn-secondary" title="Yenile">↻</button>
+            <span data-i18n="section.serverfile">Server Files</span>
+            <button type="button" id="refreshLocalFilesBtn" class="btn-secondary" title="Refresh">↻</button>
           </div>
 
           <div id="localFileCheckboxList" class="local-files-list">
             <div class="local-files-empty" data-i18n="ui.noAuthLocalFiles">
-              Giriş yapılmadı
+              Not logged in
             </div>
           </div>
         </div>
 
-        <button type="submit" class="btn-primary" data-i18n="btn.upload">Dönüştür</button>
+        <button type="submit" class="btn-primary" data-i18n="btn.upload">Convert</button>
       </form>
     </div>
     <div class="card">
-        <h2 data-i18n="section.url">🔗 URL'den Dönüştür</h2>
+        <h2 data-i18n="section.url">🔗 Convert from URL</h2>
         <form id="urlForm">
           <div class="form-group">
-            <input type="url" id="urlInput" data-i18n-ph="ph.url" placeholder="YouTube URL veya doğrudan medya linki" required />
+            <input type="url" id="urlInput" data-i18n-ph="ph.url" placeholder="YouTube URL or direct media link" required />
           </div>
 
           <div class="checkbox-group" id="playlistCheckboxContainer">
             <input type="checkbox" id="playlistCheckbox" />
-            <label for="playlistCheckbox" data-i18n="label.playlist">Bu bir YouTube playlist'i</label>
+            <label for="playlistCheckbox" data-i18n="label.playlist">This is a YouTube playlist</label>
+          </div>
+
+          <div class="checkbox-group" id="autoZipCheckboxContainer" style="display:none;">
+            <input type="checkbox" id="autoZipCheckbox" />
+            <label for="autoZipCheckbox" data-i18n="ui.autoCreateZip">Automatically create a ZIP when the job finishes</label>
           </div>
 
           <div class="form-group" id="spotifyConcurrencyContainer" style="display:none;">
             <label for="spotifyConcurrencyInput" data-i18n="label.spotifyConcurrency">
-              Maks. Eşzamanlı indirme/dönüştürme
+              Max concurrent download/convert
             </label>
             <input
               type="number"
@@ -170,13 +175,13 @@
               style="max-width: 120px;"
             />
             <small class="muted" data-i18n="ui.spotifyConcurrencyHelp">
-              Eşleşmeler yeterli sayıda ise eş zamanlı maks. indirme ve dönüştürme sayısı. Yüksek değerler CPU / disk kullanımını artırabilir.
+              If enough matches are found, the maximum number of concurrent downloads and conversions. Higher values may increase CPU / disk usage.
             </small>
           </div>
 
           <div class="form-group" id="youtubeConcurrencyContainer" style="display:none;">
             <label for="youtubeConcurrencyInput" data-i18n="label.spotifyConcurrency">
-              Maks. Eşzamanlı indirme/dönüştürme
+              Max concurrent download/convert
             </label>
             <input
               type="number"
@@ -188,56 +193,56 @@
               style="max-width: 120px;"
             />
             <small class="muted" data-i18n="ui.youtubeConcurrencyHelp">
-              Playlist dönüşümlerinde eş zamanlı maks. indirme ve dönüştürme sayısı.
+              Maximum concurrent downloads/conversions for playlist conversions.
             </small>
           </div>
 
           <div class="checkbox-group" id="lyricsCheckboxContainer">
             <input type="checkbox" id="lyricsCheckbox" />
-            <label for="lyricsCheckbox" data-i18n="label.includeLyrics">Şarkı sözlerini dahil et</label>
+            <label for="lyricsCheckbox" data-i18n="label.includeLyrics">Include lyrics</label>
           </div>
 
           <div class="spotify-actions" id="urlSpotifyActions" style="display: none;">
-            <button id="startIntegratedBtn" class="btn-primary" data-i18n="btn.spotifyIntegrated">Eşleştir ve İndir</button>
+            <button id="startIntegratedBtn" class="btn-primary" data-i18n="btn.spotifyIntegrated">Match & Download</button>
           </div>
 
           <div class="btn-row" id="normalUrlActions">
             <button type="submit" id="startConvertBtn" data-i18n="btn.start">
               <span class="btn-spinner" style="display: none;"></span>
-              <span class="btn-text">Dönüştürmeyi Başlat</span>
+              <span class="btn-text">Start conversion</span>
             </button>
-            <button type="button" class="btn-outline" id="previewBtn" data-i18n="btn.preview" data-i18n-title="btn.preview" title="Playlist'i Önizle">Playlist'i Önizle</button>
+            <button type="button" class="btn-outline" id="previewBtn" data-i18n="btn.preview" data-i18n-title="btn.preview" title="Preview playlist">Preview playlist</button>
           </div>
         </form>
       </div>
 
       <div class="card">
-        <h2 data-i18n="section.output">⚙️ Çıktı Ayarları</h2>
+        <h2 data-i18n="section.output">⚙️ Output Settings</h2>
         <div class="form-group">
           <label for="formatSelect" data-i18n="label.format">Format:</label>
           <select id="formatSelect"></select>
         </div>
         <div class="form-group">
-          <label for="bitrateSelect" data-i18n="label.quality">Kalite:</label>
+          <label for="bitrateSelect" data-i18n="label.quality">Quality:</label>
           <select id="bitrateSelect"></select>
         </div>
         <div class="form-group">
-          <label for="sampleRateSelect" data-i18n="label.sampleRate">Örnekleme Hızı:</label>
+          <label for="sampleRateSelect" data-i18n="label.sampleRate">Sample Rate:</label>
           <select id="sampleRateSelect">
-            <option value="44100" data-i18n="quality.44100">44.1 kHz (CD Kalitesi)</option>
-            <option value="48000" selected data-i18n="quality.48000">48 kHz (Standart)</option>
-            <option value="96000" data-i18n="quality.96000">96 kHz (Yüksek Kalite)</option>
-            <option value="192000" data-i18n="quality.192000">192 kHz (Stüdyo Kalitesi)</option>
+            <option value="44100" data-i18n="quality.44100">44.1 kHz (CD Quality)</option>
+            <option value="48000" selected data-i18n="quality.48000">48 kHz (Standard)</option>
+            <option value="96000" data-i18n="quality.96000">96 kHz (High Quality)</option>
+            <option value="192000" data-i18n="quality.192000">192 kHz (Studio Quality)</option>
           </select>
         </div>
         <div class="form-group" id="volumeGainGroup">
-            <label for="volumeGainRange" data-i18n="ui.volumeGainLabel">Ses Şiddeti</label>
+            <label for="volumeGainRange" data-i18n="ui.volumeGainLabel">Volume Gain</label>
             <div style="display:flex; align-items:center; gap:10px;">
               <input type="range" id="volumeGainRange" min="1.0" max="5" step="0.1" value="1.0">
               <span id="volumeGainValue">1.0x</span>
             </div>
             <small class="muted" data-i18n="ui.volumeGainHelp">
-              Ses seviyesini 1 ila 5x arası yükseltir. Yüksek değerlerde distortion olabilir.
+              Boosts volume from 1x to 5x. Higher values may cause distortion.
             </small>
           </div>
         </div>
@@ -245,29 +250,29 @@
 
     <div class="card collapsible-section" id="spotifyPreviewCard" style="display: none;">
       <div class="collapsible-header" id="spotifyPreviewHeader">
-        <h2 data-i18n="section.spotifyPreview">🎵 Spotify Eşleştirme</h2>
+        <h2 data-i18n="section.spotifyPreview">🎵 Spotify Matching</h2>
         <span class="toggle-arrow">▼</span>
       </div>
       <div class="collapsible-content" id="spotifyPreviewContent">
         <div class="collapsible-inner">
           <div class="preview-meta">
-            <span class="chip"><span data-i18n="chip.title">Başlık:</span> <strong id="spotifyTitle">-</strong></span>
-            <span class="chip"><span data-i18n="chip.total">Toplam:</span> <strong id="spotifyTotal">0</strong></span>
-            <span class="chip"><span data-i18n="chip.matched">Eşleşen:</span> <strong id="spotifyMatched">0</strong></span>
-            <span class="chip"><span data-i18n="chip.progress">İlerleme:</span> <strong id="spotifyProgress">0%</strong></span>
+            <span class="chip"><span data-i18n="chip.title">Title:</span> <strong id="spotifyTitle">-</strong></span>
+            <span class="chip"><span data-i18n="chip.total">Total:</span> <strong id="spotifyTotal">0</strong></span>
+            <span class="chip"><span data-i18n="chip.matched">Matched:</span> <strong id="spotifyMatched">0</strong></span>
+            <span class="chip"><span data-i18n="chip.progress">Progress:</span> <strong id="spotifyProgress">0%</strong></span>
           </div>
           <div class="spotify-actions" id="spotifyActions">
-            <button id="convertMatchedBtn" class="btn-primary" style="display: none;" data-i18n="btn.convertMatched">Eşleşenleri Dönüştür</button>
+            <button id="convertMatchedBtn" class="btn-primary" style="display: none;" data-i18n="btn.convertMatched">Convert matched</button>
           </div>
           <div id="spotifyStatus" class="spotify-job-status" style="display: none; margin-top: 10px;">
-            <span id="spotifyStatusText" data-i18n="status.ready">Hazır</span>
+            <span id="spotifyStatusText" data-i18n="status.ready">Ready</span>
           </div>
           <div class="logs-container">
-            <h3 data-i18n="section.logs">📝 Gerçek Zamanlı Loglar</h3>
+            <h3 data-i18n="section.logs">📝 Real-time Logs</h3>
             <div id="spotifyLogs" class="logs-content"></div>
           </div>
           <div class="preview-list-container">
-            <h3 data-i18n="section.matchedTracks">🎶 Eşleşen Parçalar</h3>
+            <h3 data-i18n="section.matchedTracks">🎶 Matched Tracks</h3>
             <div class="preview-list" id="spotifyPreviewList"></div>
           </div>
         </div>
@@ -276,30 +281,30 @@
 
     <div class="card collapsible-section" id="playlistPreviewCard" style="display: none;">
       <div class="collapsible-header" id="playlistPreviewHeader">
-        <h2 data-i18n="section.preview">🧾 Playlist Önizleme ve Seçim</h2>
+        <h2 data-i18n="section.preview">🧾 Playlist Preview & Selection</h2>
         <span class="toggle-arrow">▼</span>
       </div>
       <div class="collapsible-content" id="playlistPreviewContent">
         <div class="collapsible-inner">
           <div class="preview-meta">
-            <span class="chip"><span data-i18n="chip.title">Başlık:</span> <strong id="plTitle">-</strong></span>
-            <span class="chip"><span data-i18n="chip.total">Toplam:</span> <strong id="plCount">0</strong></span>
-            <span class="chip"><span data-i18n="chip.selected">Seçili:</span> <strong id="plSelected">0</strong></span>
+            <span class="chip"><span data-i18n="chip.title">Title:</span> <strong id="plTitle">-</strong></span>
+            <span class="chip"><span data-i18n="chip.total">Total:</span> <strong id="plCount">0</strong></span>
+            <span class="chip"><span data-i18n="chip.selected">Selected:</span> <strong id="plSelected">0</strong></span>
           </div>
           <div class="preview-actions">
-            <label class="select-all"><input type="checkbox" id="selectAllChk" /> <span data-i18n="label.selectAll">Hepsini seç</span></label>
+            <label class="select-all"><input type="checkbox" id="selectAllChk" /> <span data-i18n="label.selectAll">Select all</span></label>
             <label class="switch">
               <input type="checkbox" id="sequentialChk" />
-              <span class="muted" data-i18n="label.sequential">Tek tek indir</span>
+              <span class="muted" data-i18n="label.sequential">Download one by one</span>
             </label>
-            <button id="convertSelectedBtn" data-i18n="btn.convertSelected">Seçilenleri Dönüştür</button>
-            <button class="btn-outline" id="convertAllBtn" data-i18n="btn.convertAll">Tümünü Dönüştür</button>
+            <button id="convertSelectedBtn" data-i18n="btn.convertSelected">Convert selected</button>
+            <button class="btn-outline" id="convertAllBtn" data-i18n="btn.convertAll">Convert all</button>
           </div>
           <div id="plStreamLog" class="muted" style="margin:6px 0 0 0; font-size:12px; display:none;"></div>
           <div class="pager">
-            <button id="prevPageBtn" class="btn-outline" data-i18n="pager.prev">← Önceki</button>
-            <button id="nextPageBtn" class="btn-outline" data-i18n="pager.next">Sonraki →</button>
-            <span class="muted"><span data-i18n="pager.page">Sayfa:</span> <strong id="pageNo">1</strong> • <span data-i18n="pager.size">Sayfa boyutu:</span> </span>
+            <button id="prevPageBtn" class="btn-outline" data-i18n="pager.prev">← Previous</button>
+            <button id="nextPageBtn" class="btn-outline" data-i18n="pager.next">Next →</button>
+            <span class="muted"><span data-i18n="pager.page">Page:</span> <strong id="pageNo">1</strong> • <span data-i18n="pager.size">Page size:</span> </span>
             <select id="pageSizeSel" class="inline">
               <option>10</option>
               <option>25</option>
@@ -314,7 +319,7 @@
 
     <div class="card collapsible-section">
       <div class="collapsible-header" id="jobsHeader">
-        <h2 data-i18n="section.jobs">📊 Aktif İşler</h2>
+        <h2 data-i18n="section.jobs">📊 Active Jobs</h2>
         <span class="toggle-arrow">▼</span>
       </div>
       <div class="collapsible-content" id="jobsContent">
@@ -326,8 +331,8 @@
                 <h3 class="jobs-empty-title" data-i18n="jobsPanel.emptyActive"></h3>
                 <p class="jobs-empty-subtitle" data-i18n="jobs.emptySubtitle"></p>
                 <div class="jobs-empty-actions">
-                  <button class="jobs-empty-action" onclick="focusUrlInput()" data-i18n="jobs.startWithUrl">URL ile Başla</button>
-                  <button class="jobs-empty-action jobs-empty-action--outline" onclick="focusFileInput()" data-i18n="section.file">Dosya Yükle</button>
+                  <button class="jobs-empty-action" onclick="focusUrlInput()" data-i18n="jobs.startWithUrl">Start with URL</button>
+                  <button class="jobs-empty-action jobs-empty-action--outline" onclick="focusFileInput()" data-i18n="section.file">Upload File</button>
                 </div>
               </div>
             </div>
@@ -335,33 +340,34 @@
         </div>
       </div>
     </div>
-    <footer id="binaryFooter" class="binary-footer collapsed">
-  <button
-    id="binaryFooterToggle"
-    class="binary-footer-toggle"
-    type="button"
-  >
-    <span class="binary-footer-toggle-label" data-i18n="ui.binaryVersionsLabel">
-      Kullanılan araçlar
-    </span>
-    <span class="binary-footer-toggle-arrow">▲</span>
-  </button>
 
-  <div class="binary-footer-body" id="binaryFooterBody">
-    <span id="binaryVersionsText">
-      ffmpeg: - • ffprobe: - • mkvmerge: - • yt-dlp: - • deno: -
-    </span>
-  </div>
-</footer>
+    <footer id="binaryFooter" class="binary-footer collapsed">
+      <button
+        id="binaryFooterToggle"
+        class="binary-footer-toggle"
+        type="button"
+      >
+        <span class="binary-footer-toggle-label" data-i18n="ui.binaryVersionsLabel">
+          Used tools
+        </span>
+        <span class="binary-footer-toggle-arrow">▲</span>
+      </button>
+
+      <div class="binary-footer-body" id="binaryFooterBody">
+        <span id="binaryVersionsText">
+          ffmpeg: - • ffprobe: - • mkvmerge: - • yt-dlp: - • deno: -
+        </span>
+      </div>
+    </footer>
   </div>
 
   <aside id="jobsPanel" class="jobs-panel" aria-hidden="true">
     <header class="jobs-panel__header">
-      <div class="title" data-i18n="jobsPanel.title">Aktif İşler</div>
+      <div class="title" data-i18n="jobsPanel.title">Active jobs</div>
       <div class="controls">
-        <button id="jobsFilterActive" class="chip chip--active" data-filter="active" data-i18n="jobsPanel.filterActive">Aktif</button>
-        <button id="jobsFilterAll" class="chip" data-filter="all" data-i18n="jobsPanel.filterAll">Tümü</button>
-        <button id="jobsClose" class="icon-btn" aria-label="Kapat" data-i18n="btn.close">✕</button>
+        <button id="jobsFilterActive" class="chip chip--active" data-filter="active" data-i18n="jobsPanel.filterActive">Active</button>
+        <button id="jobsFilterAll" class="chip" data-filter="all" data-i18n="jobsPanel.filterAll">All</button>
+        <button id="jobsClose" class="icon-btn" aria-label="Close" data-i18n="btn.close">✕</button>
       </div>
     </header>
     <div id="jobsList" class="jobs-list">
@@ -402,109 +408,116 @@
       document.dispatchEvent(new Event('DOMContentLoaded'));
 
     }).catch(error => {
-      console.error('i18n yüklenemedi:', error);
+      console.error('i18n failed to load:', error);
       domReady = true;
       document.getElementById('loading-screen').style.display = 'none';
       document.querySelector('.main-content').style.display = 'block';
       document.dispatchEvent(new Event('DOMContentLoaded'));
     });
   </script>
-  <script type="module" src="./ui/main.js" defer></script>
-    <div id="discRipperAdvancedPanel" style="display:none;">
-      <div class="collapsible-inner">
-        <div id="discSourceSection">
-          <div class="form-group">
-            <label for="discSourcePath" data-i18n="disc.source.label">Disk Kaynağı</label>
-            <input
-              type="text"
-              id="discSourcePath"
-              class="input-field"
-              data-i18n-ph="disc.source.placeholder"
-              placeholder="/home/kullanici/DVD"
-            />
-          </div>
 
-          <div class="btn-row">
-            <button type="button" class="btn-primary" id="discScanBtn">
-              🔍 <span data-i18n="disc.btn.scan">Diski Tara</span>
-            </button>
-            <button type="button" class="btn-outline" id="discCancelScanBtn" style="display:none;">
-              🛑 <span data-i18n="disc.btn.cancelScan">Taramayı İptal Et</span>
-            </button>
-          </div>
-        </div>
-        <div class="form-group" id="discProgressSection">
-            <span
-              id="discProgressLabel"
-              class="form-label"
-              data-i18n="disc.progress.label"
-            >
-              İlerleme
-            </span>
-            <div
-              class="progress-container"
-              role="group"
-              aria-labelledby="discProgressLabel"
-            >
-              <div class="progress-bar">
-                <div class="progress-fill" id="discProgressFill" style="width:0%"></div>
-                <div class="progress-overlay" id="discProgressOverlay">0%</div>
-              </div>
-              <div
-                class="progress-text"
-                id="discProgressText"
-                data-i18n="disc.progress.ready"
-              >
-                Hazır
-              </div>
-            </div>
-        </div>
-        <div id="discTitlesSection" class="collapsible-section" style="display:none;">
-          <div class="collapsible-header">
-            <div class="section-title">
-              <span data-i18n="disc.titles.label">Title'lar</span>
-              <span class="section-badge" id="discTitlesCount">0</span>
-            </div>
-            <span class="toggle-arrow">▼</span>
-          </div>
-          <div class="collapsible-content">
-            <div id="discTitlesList" class="titles-container"></div>
-          </div>
-        </div>
-        <div class="form-group" id="discOutputSection" style="display:none;">
-          <label for="discOutputPath" data-i18n="disc.output.label">Çıktı Klasörü</label>
+  <script type="module" src="./ui/main.js" defer></script>
+
+  <div id="discRipperAdvancedPanel" style="display:none;">
+    <div class="collapsible-inner">
+      <div id="discSourceSection">
+        <div class="form-group">
+          <label for="discSourcePath" data-i18n="disc.source.label">Disc source</label>
           <input
             type="text"
-            id="discOutputPath"
+            id="discSourcePath"
             class="input-field"
-            data-i18n-ph="disc.output.placeholder"
-            placeholder="/home/kullanici/outputs"
+            data-i18n-ph="disc.source.placeholder"
+            placeholder="/home/user/DVD"
           />
         </div>
-        <div class="btn-row" id="discActionsSection" style="display:none;">
-          <button type="button" class="btn-primary" id="discRipBtn" disabled>
-            💾 <span data-i18n="disc.btn.ripSelected">Seçilenleri MKV'ye Dönüştür</span>
+
+        <div class="btn-row">
+          <button type="button" class="btn-primary" id="discScanBtn">
+            🔍 <span data-i18n="disc.btn.scan">Scan disc</span>
           </button>
-          <button type="button" class="btn-outline" id="discCancelRipBtn" style="display:none;">
-            🛑 <span data-i18n="disc.btn.cancelRip">Dönüştürmeyi İptal Et</span>
+          <button type="button" class="btn-outline" id="discCancelScanBtn" style="display:none;">
+            🛑 <span data-i18n="disc.btn.cancelScan">Cancel scan</span>
           </button>
-        </div>
-        <div class="form-group" id="discLogSection">
-          <span
-            id="discLogLabel"
-            class="form-label"
-            data-i18n="disc.log.label"
-          >
-            Log
-          </span>
-          <div
-            class="log-container"
-            id="discLog"
-            role="log"
-            aria-labelledby="discLogLabel"
-          ></div>
         </div>
       </div>
+
+      <div class="form-group" id="discProgressSection">
+        <span
+          id="discProgressLabel"
+          class="form-label"
+          data-i18n="disc.progress.label"
+        >
+          Progress
+        </span>
+        <div
+          class="progress-container"
+          role="group"
+          aria-labelledby="discProgressLabel"
+        >
+          <div class="progress-bar">
+            <div class="progress-fill" id="discProgressFill" style="width:0%"></div>
+            <div class="progress-overlay" id="discProgressOverlay">0%</div>
+          </div>
+          <div
+            class="progress-text"
+            id="discProgressText"
+            data-i18n="disc.progress.ready"
+          >
+            Ready
+          </div>
+        </div>
+      </div>
+
+      <div id="discTitlesSection" class="collapsible-section" style="display:none;">
+        <div class="collapsible-header">
+          <div class="section-title">
+            <span data-i18n="disc.titles.label">Titles</span>
+            <span class="section-badge" id="discTitlesCount">0</span>
+          </div>
+          <span class="toggle-arrow">▼</span>
+        </div>
+        <div class="collapsible-content">
+          <div id="discTitlesList" class="titles-container"></div>
+        </div>
+      </div>
+
+      <div class="form-group" id="discOutputSection" style="display:none;">
+        <label for="discOutputPath" data-i18n="disc.output.label">Output folder</label>
+        <input
+          type="text"
+          id="discOutputPath"
+          class="input-field"
+          data-i18n-ph="disc.output.placeholder"
+          placeholder="/home/user/outputs"
+        />
+      </div>
+
+      <div class="btn-row" id="discActionsSection" style="display:none;">
+        <button type="button" class="btn-primary" id="discRipBtn" disabled>
+          💾 <span data-i18n="disc.btn.ripSelected">Convert selected to MKV</span>
+        </button>
+        <button type="button" class="btn-outline" id="discCancelRipBtn" style="display:none;">
+          🛑 <span data-i18n="disc.btn.cancelRip">Cancel conversion</span>
+        </button>
+      </div>
+
+      <div class="form-group" id="discLogSection">
+        <span
+          id="discLogLabel"
+          class="form-label"
+          data-i18n="disc.log.label"
+        >
+          Log
+        </span>
+        <div
+          class="log-container"
+          id="discLog"
+          role="log"
+          aria-labelledby="discLogLabel"
+        ></div>
+      </div>
     </div>
-  </body>
+  </div>
+</body>
 </html>

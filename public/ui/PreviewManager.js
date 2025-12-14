@@ -480,6 +480,7 @@ export class PreviewManager {
                         sampleRate,
                         clientBatch: batchId,
                         includeLyrics,
+                        autoCreateZip: this.app.autoCreateZip,
                         volumeGain,
                         youtubeConcurrency,
                         frozenEntries: frozenForIdx
@@ -495,6 +496,7 @@ export class PreviewManager {
                     bitrate,
                     sampleRate,
                     includeLyrics,
+                    autoCreateZip: this.app.autoCreateZip,
                     volumeGain,
                     youtubeConcurrency,
                     frozenEntries
@@ -554,6 +556,7 @@ export class PreviewManager {
                 bitrate,
                 sampleRate,
                 includeLyrics,
+                autoCreateZip: this.app.autoCreateZip,
                 volumeGain,
                 youtubeConcurrency,
                 frozenEntries

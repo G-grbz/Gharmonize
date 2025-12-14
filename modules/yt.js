@@ -3,7 +3,7 @@ import fs from "fs";
 import { spawn, execFile } from "child_process";
 import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
-import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs } from "./utils.js";
+import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs, parseIdFromPath } from "./utils.js";
 import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
 import { YTDLP_BIN as BINARY_YTDLP_BIN, DENO_BIN } from "./binaries.js";
 
@@ -668,6 +668,7 @@ async function downloadSelectedIds(
   opts = {},
   ctrl = {}
 ) {
+  const idToIndex = new Map((opts?.frozenEntries || []).filter(e => e?.id && Number.isFinite(e.index)).map(e => [e.id, e.index]));
   const seenSkip = new Set();
   const listFile = path.join(tempDir, `${jobId}.urls.txt`);
   const urls = idsToWatchUrls(selectedIds);
@@ -734,7 +735,7 @@ if (opts.video) {
       "--progress", "--newline",
       "-N", String(fragmentConc),
       "-f", `bestvideo[height<=${h}]+bestaudio[vcodec=none]/best[height<=${h}]`,
-      "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
+      "-o", path.join(playlistDir, "%(id)s.%(ext)s"),
       "-a", listFile
     ];
   } else {
@@ -748,9 +749,8 @@ if (opts.video) {
       "--ignore-errors", "--no-abort-on-error",
       "--write-thumbnail", "--convert-thumbnails", "jpg",
       "--continue", "--no-overwrites",
-      "--autonumber-size", "3",
       "--progress", "--newline",
-      "-o", path.join(playlistDir, "%(autonumber)s - %(title)s.%(ext)s"),
+      "-o", path.join(playlistDir, "%(id)s.%(ext)s"),
       "-a", listFile,
       "-f", "bestaudio[abr>=128]/bestaudio/best"
     ];
@@ -804,11 +804,13 @@ if (opts.video) {
           absPath = path.join(playlistDir, dest);
         }
 
-        const playlistIndex = parsePlaylistIndexFromPath(absPath);
+        const fileId = parseIdFromPath(absPath);
+        const playlistIndex = (fileId && idToIndex.has(fileId)) ? idToIndex.get(fileId) : parsePlaylistIndexFromPath(absPath);
         try {
           opts.onFileDone({
             filePath: absPath,
-            playlistIndex: playlistIndex
+            playlistIndex,
+            id: fileId || null
           });
         } catch {}
       }
@@ -892,6 +894,7 @@ async function downloadSelectedIdsParallel(
   opts = {},
   ctrl = {}
 ) {
+  const idToIndex = new Map((opts?.frozenEntries || []).filter(e => e?.id && Number.isFinite(e.index)).map(e => [e.id, e.index]));
   const urls = idsToWatchUrls(selectedIds);
   const playlistDir = path.join(tempDir, jobId);
   fs.mkdirSync(playlistDir, { recursive: true });
@@ -955,10 +958,7 @@ async function downloadSelectedIdsParallel(
       throw new Error("CANCELED");
     }
 
-    const outputTemplate = path.join(
-      playlistDir,
-      `${index + 1} - %(title)s.%(ext)s`
-    );
+    const outputTemplate = path.join(playlistDir, `%(id)s.%(ext)s`);
 
     let args;
 
@@ -1050,11 +1050,13 @@ async function downloadSelectedIdsParallel(
               absPath = path.join(playlistDir, dest);
             }
 
-            const playlistIndex = parsePlaylistIndexFromPath(absPath);
+            const fileId = parseIdFromPath(absPath);
+            const playlistIndex = (fileId && idToIndex.has(fileId)) ? idToIndex.get(fileId) : parsePlaylistIndexFromPath(absPath);
             try {
               opts.onFileDone({
                 filePath: absPath,
-                playlistIndex
+                playlistIndex,
+                id: fileId || null
               });
             } catch {}
           }
@@ -1141,8 +1143,8 @@ async function downloadStandard(
   const outputTemplate = path.join(
     tempDir,
     isPlaylist || isAutomix
-      ? `${jobId}/%(playlist_index)s - %(title)s.%(ext)s`
-      : `${jobId} - %(title)s.%(ext)s`
+      ? `${jobId}/%(playlist_index)s.%(ext)s`
+      : `${jobId}.%(ext)s`
   );
 
   if (isPlaylist || isAutomix) {
@@ -1478,22 +1480,21 @@ function getDownloadedFiles(directory, isPlaylist = false, jobId = null) {
 
   if (isPlaylist) {
     files = files.sort((a, b) => {
-      const aNum = parseInt(path.basename(a).split(' - ')[0]) || 0;
-      const bNum = parseInt(path.basename(b).split(' - ')[0]) || 0;
+      const aNum = parsePlaylistIndexFromPath(a) || 0;
+      const bNum = parsePlaylistIndexFromPath(b) || 0;
       return aNum - bNum;
     });
-  } else if (jobId) {
-    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`^${escapeRe(jobId)}(?:\\.|\\s-\\s)`);
-    files = files.filter(file => re.test(path.basename(file)));
-  }
-
-  return files;
+    } else if (jobId) {
+      const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`^${escapeRe(jobId)}(?:\\.|\\s-\\s)`);
+      files = files.filter(file => re.test(path.basename(file)));
+    }
+    return files;
 }
 
 export function parsePlaylistIndexFromPath(filePath) {
   const basename = path.basename(filePath);
-  const match = basename.match(/^(\d+)\s*-\s*/);
+  const match = basename.match(/^(\d+)(?=[^\d]|$)/);
   return match ? Number(match[1]) : null;
 }
 

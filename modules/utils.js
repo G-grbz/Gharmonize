@@ -17,6 +17,12 @@ export const ERR = {
   INTERNAL: 'INTERNAL'
 };
 
+export function parseIdFromPath(filePath) {
+  const base = path.basename(String(filePath || ""));
+  const m = base.match(/(?:^\d+\s*-\s*)?([A-Za-z0-9_-]{6,})\.[A-Za-z0-9]+$/);
+  return m ? m[1] : null;
+}
+
 export function escapeRegExp(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

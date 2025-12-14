@@ -250,6 +250,7 @@ export class SpotifyManager {
             sampleRate,
             includeLyrics,
             volumeGain: this.app.currentVolumeGain || 1.0,
+            autoCreateZip: this.app.autoCreateZip,
             ...(compressionLevel != null ? { compressionLevel } : {}),
             ...(bitDepth != null ? { bitDepth } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
@@ -474,8 +475,10 @@ export class SpotifyManager {
             sampleRate: sampleRate,
             isPlaylist: true,
             volumeGain: this.app.currentVolumeGain || 1.0,
+            autoCreateZip: this.app.autoCreateZip,
             ...(compressionLevel !== undefined ? { compressionLevel } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
+            ...(spotifyConcurrency != null ? { spotifyConcurrency } : {}),
             selectedIndices: validItems.map(item => item.index),
             spotifyMapId: this.currentSpotifyTask.id,
             metadata: {

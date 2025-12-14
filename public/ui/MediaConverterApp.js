@@ -23,6 +23,7 @@ export class MediaConverterApp {
         this.previewManager = new PreviewManager(this);
         this.spotifyManager = new SpotifyManager(this);
         this.uploadManager = new UploadManager(this);
+        this.autoCreateZip = true;
         this.formatManager = new FormatManager(this);
         this.notificationManager = notificationManager;
         this.modalManager = modalManager;
@@ -31,6 +32,10 @@ export class MediaConverterApp {
 
     async initialize() {
         this.initializeTheme();
+        const savedAutoZip = localStorage.getItem('autoCreateZip');
+        if (savedAutoZip !== null) {
+            this.autoCreateZip = savedAutoZip === 'true';
+        }
 
         if (this.videoManager?.initialize) {
             await this.videoManager.initialize();
@@ -47,12 +52,67 @@ export class MediaConverterApp {
         });
     }
 
+    parseSpotifyType(u) {
+        if (!u) return null;
+        const s = String(u).trim();
+        const m1 = s.match(/^spotify:(track|album|playlist|artist|show|episode):/i);
+        if (m1) return m1[1].toLowerCase();
+
+        try {
+            const url = new URL(s, window.location.origin);
+            const host = url.hostname.toLowerCase();
+            const isSpotifyHost =
+            host.includes('spotify.com') ||
+            host.includes('spotify.link') ||
+            host.includes('spotify.app.link');
+
+            if (!isSpotifyHost) return null;
+
+            const parts = url.pathname.split('/').filter(Boolean);
+            const t = (parts[0] || '').toLowerCase();
+            if (['track','album','playlist','artist','show','episode'].includes(t)) return t;
+
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    setAutoZipVisibility(show) {
+        const c = document.getElementById('autoZipCheckboxContainer');
+        if (!c) return;
+        c.style.display = show ? 'flex' : 'none';
+    }
+
     ensureWarnStyles() {
         if (document.getElementById('skipped-badge-style')) return;
         const st = document.createElement('style');
         st.id = 'skipped-badge-style';
         document.head.appendChild(st);
     }
+
+    shouldShowAutoZipForCurrentUI({ url, total = null } = {}) {
+        const format = document.getElementById('formatSelect')?.value || 'mp3';
+        const isVideo = (format === 'mp4' || format === 'mkv');
+        if (isVideo) return false;
+
+        const u = (url ?? document.getElementById('urlInput')?.value ?? '').trim();
+        if (!u) return false;
+
+        if (this.isSpotifyUrl(u)) {
+        if (total !== null && total !== undefined && total !== '') {
+            const n = Number(total);
+            if (Number.isFinite(n)) return n > 1;
+        }
+
+        if (/^https?:\/\/(spotify\.link|spotify\.app\.link)\//i.test(u)) return true;
+
+        const t = this.parseSpotifyType(u);
+        return (t === 'playlist' || t === 'album');
+        }
+
+        return this.isYoutubePlaylistUrl(u);
+        }
 
     initializeTheme() {
         const savedTheme = localStorage.getItem('theme') || 'light';
@@ -91,6 +151,7 @@ export class MediaConverterApp {
             this.formatManager.toggleFormatSpecificOptions(format);
             const formats = await this.formatManager.getFormats();
             this.formatManager.updateBitrateOptions(format, formats);
+            this.setAutoZipVisibility(this.shouldShowAutoZipForCurrentUI());
         });
 
         document.addEventListener('i18n:langChanged', (ev) => {
@@ -191,6 +252,24 @@ export class MediaConverterApp {
                 } catch (err) {
                     console.error('Failed to change language:', err);
                 }
+            });
+        }
+
+        const autoZipCheckbox = document.getElementById('autoZipCheckbox');
+        if (autoZipCheckbox) {
+            autoZipCheckbox.checked = this.autoCreateZip;
+            autoZipCheckbox.addEventListener('change', (e) => {
+                this.autoCreateZip = e.target.checked;
+                localStorage.setItem('autoCreateZip', this.autoCreateZip.toString());
+                this.showNotification(
+                this.t('notif.autoZipSettingChanged', {
+                    state: e.target.checked
+                    ? this.t('ui.on') ?? 'On'
+                    : this.t('ui.off') ?? 'Off'
+                }),
+                'info',
+                'default'
+                );
             });
         }
 
@@ -482,15 +561,17 @@ export class MediaConverterApp {
 
     onPlaylistToggle(isChecked) {
             if (isChecked) {
+                this.setAutoZipVisibility(this.shouldShowAutoZipForCurrentUI());
                 const url = document.getElementById('urlInput').value.trim();
                 if (!url) { this.previewManager.hidePreview(); return; }
                 this.previewManager.previewPlaylist();
             } else {
+                this.setAutoZipVisibility(false);
                 this.previewManager.hidePreview();
             }
         }
 
-        onUrlInputChange(url) {
+    onUrlInputChange(url) {
         const isSpotify = this.isSpotifyUrl(url);
         const isYoutubePl = !isSpotify && this.isYoutubePlaylistUrl(url);
         const spotifyConcContainer = document.getElementById('spotifyConcurrencyContainer');
@@ -505,6 +586,7 @@ export class MediaConverterApp {
             if (spotifyConcContainer) spotifyConcContainer.style.display = 'flex';
             if (youtubeConcContainer) youtubeConcContainer.style.display = 'none';
 
+            this.setAutoZipVisibility(this.shouldShowAutoZipForCurrentUI({ url }));
             this.lastPreviewedPlaylistUrl = null;
             return;
         }
@@ -520,6 +602,7 @@ export class MediaConverterApp {
 
         if (!isYoutubePl || !trimmed) {
             this.lastPreviewedPlaylistUrl = null;
+            this.setAutoZipVisibility(false);
             return;
         }
 
@@ -527,6 +610,7 @@ export class MediaConverterApp {
             return;
         }
         this.lastPreviewedPlaylistUrl = trimmed;
+        this.setAutoZipVisibility(true);
 
         if (playlistCheckboxEl) {
             playlistCheckboxEl.checked = true;
@@ -534,8 +618,9 @@ export class MediaConverterApp {
         this.onPlaylistToggle(true);
     }
 
-        isSpotifyUrl(u) {
-        return /^(https?:\/\/open\.spotify\.com|spotify:)/i.test(String(u || ""));
+    isSpotifyUrl(u) {
+        const s = String(u || "").trim();
+        return /^(spotify:|https?:\/\/(open\.spotify\.com|spotify\.link|spotify\.app\.link))/i.test(s);
     }
 
     isYoutubePlaylistUrl(u) {
@@ -577,6 +662,7 @@ export class MediaConverterApp {
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
     const volumeGain = this.currentVolumeGain || 1.0;
     const youtubeConcurrency = document.getElementById('youtubeConcurrencyInput')?.value || '4';
+    const autoCreateZip = this.autoCreateZip;
 
     let compressionLevel = null;
     let bitDepth = null;
@@ -624,7 +710,8 @@ export class MediaConverterApp {
             isPlaylist: false,
             sampleRate: Number(sampleRate),
             includeLyrics,
-            volumeGain
+            volumeGain,
+            autoCreateZip
         };
         await this.jobManager.submitJob(payload);
 
@@ -632,6 +719,7 @@ export class MediaConverterApp {
         document.getElementById('playlistCheckbox').checked = false;
         document.getElementById('lyricsCheckbox').checked = false;
         this.previewManager.hidePreview();
+        this.setAutoZipVisibility(false);
     }
 
         async loadBinaryVersions() {
