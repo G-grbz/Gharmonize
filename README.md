@@ -512,6 +512,18 @@ This section explains the differences between Docker and non-Docker setups.
 
 ---
 
+### 🍪 Cookie Usage Notes
+
+Cookie support improves YouTube–Gharmonize matching accuracy and allows downloading age-restricted or similar content.
+
+* **Docker users**: Only `cookies.txt` is supported.
+* **Windows users**:
+
+  * Chrome cannot provide cookies while the browser is running due to platform limitations.
+  * Sign in to YouTube using **Firefox or another supported browser**, then configure cookie access accordingly.
+  * Set the `YTDLP_COOKIES_FROM_BROWSER` environment variable via the environment configuration or the settings panel.
+* Outside of Docker (and when correctly configured on Windows as described above), a `cookies.txt` file is **not required**.
+
 ## 🍪 Cookie & Browser Behavior
 
 ### **Outside Docker**
