@@ -1,12 +1,106 @@
-import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification } from 'electron'
+import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification, Tray } from 'electron'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
 import fs from 'node:fs'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { FFMPEG_BIN, FFPROBE_BIN, MKVMERGE_BIN, YTDLP_BIN, DENO_BIN } from '../modules/binaries.js';
 
+const execFileAsync = promisify(execFile);
 const HOST = '127.0.0.1'
 const PORT = process.env.PORT || '5174'
+
+let tray = null;
+let trayMenu = null;
+let mainWindowRef = null;
+let keepAliveInTray = false;
+let isQuitting = false;
+let isHidingToTray = false;
+let creatingWindowPromise = null;
+let showOnWindowReady = false;
+
+async function cleanupWindowsRunEntries() {
+  if (process.platform !== 'win32') return;
+  const suspectNames = [
+    'com.gharmonize.app',
+    'Gharmonize',
+    'Gharmonize Desktop',
+    'Gharmonize.exe'
+  ];
+
+  const keepName = 'electron.app.Gharmonize';
+
+  for (const name of suspectNames) {
+    if (name === keepName) continue;
+    try {
+      await execFileAsync('reg', [
+        'delete',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+        '/v',
+        name,
+        '/f'
+      ], { windowsHide: true });
+      console.log('[autostart] deleted Run entry:', name);
+    } catch {
+    }
+  }
+}
+
+function createWindowOnce() {
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) return mainWindowRef;
+  if (creatingWindowPromise) return creatingWindowPromise;
+  creatingWindowPromise = Promise.resolve().then(() => {
+    const win = createWindow();
+    mainWindowRef = win;
+    return win;
+  }).finally(() => {
+    creatingWindowPromise = null;
+  });
+  return creatingWindowPromise;
+}
+
+function resolveTrayIcon() {
+  const base = app.isPackaged ? app.getAppPath() : process.cwd();
+  if (process.platform === 'win32') return path.join(base, 'build', 'icon.ico');
+  return path.join(base, 'build', 'icon.png');
+}
+
+function showMainWindow(win) {
+  if (!win || win.isDestroyed()) return;
+
+  try { win.restore?.(); } catch {}
+  try { win.show(); } catch {}
+  try { win.focus(); } catch {}
+  try { win.setAlwaysOnTop(true); } catch {}
+  setTimeout(() => {
+    try { win.setAlwaysOnTop(false); } catch {}
+    try { win.focus(); } catch {}
+  }, 120);
+}
+
+function getPrefsPath() {
+  return path.join(app.getPath('userData'), 'preferences.json');
+}
+
+async function loadPrefs() {
+  try {
+    const p = getPrefsPath();
+    if (!fs.existsSync(p)) return {};
+    return JSON.parse(await fs.promises.readFile(p, 'utf8'));
+  } catch (e) {
+    console.warn('Could not load prefs:', e.message);
+    return {};
+  }
+}
+
+async function savePrefs(prefs) {
+  try {
+    await fs.promises.writeFile(getPrefsPath(), JSON.stringify(prefs, null, 2));
+  } catch (e) {
+    console.warn('Could not save prefs:', e.message);
+  }
+}
 
 async function loadLanguageDict(lang) {
   try {
@@ -17,13 +111,8 @@ async function loadLanguageDict(lang) {
       filePath = path.join(process.cwd(), 'public', 'lang', `${lang}.json`);
     }
 
-    console.log(`Loading language file: ${filePath}`);
-
     if (!fs.existsSync(filePath)) {
-      console.warn(`Language file not found: ${filePath}`);
-      if (lang !== 'en') {
-        return await loadLanguageDict('en');
-      }
+      if (lang !== 'en') return await loadLanguageDict('en');
       throw new Error('English fallback also failed');
     }
 
@@ -31,15 +120,9 @@ async function loadLanguageDict(lang) {
     return JSON.parse(data);
   } catch (error) {
     console.warn(`Could not load language file for ${lang}:`, error.message);
-
     if (lang !== 'en') {
-      try {
-        return await loadLanguageDict('en');
-      } catch (fallbackError) {
-        console.error('English fallback also failed:', fallbackError);
-      }
+      try { return await loadLanguageDict('en'); } catch {}
     }
-
     return {};
   }
 }
@@ -49,56 +132,225 @@ let currentDict = {};
 
 async function initializeLanguage() {
   try {
-    const userDataPath = app.getPath('userData');
-    const prefsFile = path.join(userDataPath, 'preferences.json');
-
-    if (fs.existsSync(prefsFile)) {
-      const prefsData = await fs.promises.readFile(prefsFile, 'utf8');
-      const prefs = JSON.parse(prefsData);
-      currentLanguage = prefs.language || 'en';
-      console.log(`Loaded language preference: ${currentLanguage}`);
+    const prefs = await loadPrefs();
+    if (prefs.language) {
+      currentLanguage = prefs.language;
     } else {
       const systemLanguage = app.getLocale() || 'en';
       const supportedLangs = ['en', 'tr', 'de', 'fr'];
       currentLanguage = supportedLangs.includes(systemLanguage) ? systemLanguage : 'en';
-      console.log(`Using system language: ${currentLanguage}`);
     }
-
     currentDict = await loadLanguageDict(currentLanguage);
-    console.log(`Language dictionary loaded for: ${currentLanguage}`);
-  } catch (error) {
-    console.warn('Could not load language preferences:', error.message);
+  } catch (e) {
+    console.warn('Language init failed:', e.message);
     currentDict = await loadLanguageDict('en');
   }
 }
 
 function t(key, fallback = key) {
   const value = currentDict[key];
-  if (value === undefined) {
-    console.warn(`Translation key not found: ${key}`);
-    return fallback;
-  }
+  if (value === undefined) return fallback;
   return value;
+}
+
+function getLinuxAutostartDesktopPath() {
+  return path.join(app.getPath('home'), '.config', 'autostart', 'Gharmonize.desktop');
+}
+
+function buildLinuxDesktopFile() {
+  const appImage = process.env.APPIMAGE;
+  const execPath = appImage || process.execPath;
+  const execQuoted = execPath.includes(' ') ? `"${execPath}"` : execPath;
+
+  return [
+    '[Desktop Entry]',
+    'Type=Application',
+    'Version=1.0.7',
+    'Name=Gharmonize',
+    'Comment=Gharmonize',
+    `Exec=env GHARMONIZE_AUTOSTART=1 ${execQuoted}`,
+    'Terminal=false',
+    'X-GNOME-Autostart-enabled=true'
+  ].join('\n');
+}
+
+async function applyLinuxAutostart(enabled) {
+  const desktopPath = getLinuxAutostartDesktopPath();
+  const dir = path.dirname(desktopPath);
+  await fs.promises.mkdir(dir, { recursive: true });
+
+  if (enabled) {
+    await fs.promises.writeFile(desktopPath, buildLinuxDesktopFile(), 'utf8');
+  } else {
+    if (fs.existsSync(desktopPath)) await fs.promises.unlink(desktopPath);
+  }
+}
+
+async function applyAutoStartFromPrefs() {
+  const prefs = await loadPrefs();
+  if (prefs.autoStart === undefined) return;
+
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    const open = !!prefs.autoStart;
+    const args = [];
+    if (open) args.push('--autostart');
+    if (open && prefs.startMinimized) args.push('--hidden');
+
+    app.setLoginItemSettings({
+      openAtLogin: open,
+      path: process.execPath,
+      args
+    });
+  } else {
+    try {
+      await applyLinuxAutostart(!!prefs.autoStart);
+    } catch (e) {
+      console.warn('Linux autostart apply failed:', e.message);
+    }
+  }
+}
+
+async function syncKeepAliveFlagFromPrefs() {
+  const prefs = await loadPrefs();
+  keepAliveInTray = !!prefs.alwaysMinimizeToTray;
+}
+
+async function setAutoStartEnabled(enabled) {
+  const prefs = await loadPrefs();
+  prefs.autoStart = !!enabled;
+
+  if (!prefs.autoStart) prefs.startMinimized = false;
+
+  prefs.updated = new Date().toISOString();
+  await savePrefs(prefs);
+
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    const open = !!enabled;
+    const args = [];
+    if (open) args.push('--autostart');
+    if (open && prefs.startMinimized) args.push('--hidden');
+
+    app.setLoginItemSettings({
+      openAtLogin: open,
+      path: process.execPath,
+      args
+    });
+  } else {
+    try {
+      await applyLinuxAutostart(!!enabled);
+    } catch (e) {
+      console.warn('Linux autostart setup failed:', e.message);
+    }
+  }
+}
+
+function isLaunchedByAutoStart() {
+  if (process.platform === 'win32') {
+    if (process.argv.includes('--autostart') || process.argv.includes('--hidden')) return true;
+    try { return !!app.getLoginItemSettings().wasOpenedAtLogin; } catch { return false; }
+  }
+  return process.env.GHARMONIZE_AUTOSTART === '1';
+}
+
+async function refreshTrayMenu() {
+  if (!tray || !mainWindowRef) return;
+
+  const prefs = await loadPrefs();
+
+  trayMenu = Menu.buildFromTemplate([
+    {
+      label: t('tray.show', 'Show'),
+      click: () => showMainWindow(mainWindowRef)
+    },
+    {
+      label: t('tray.autostart', 'Start on login'),
+      type: 'checkbox',
+      checked: !!prefs.autoStart,
+      click: async (menuItem) => {
+        await setAutoStartEnabled(menuItem.checked);
+        await refreshTrayMenu();
+      }
+    },
+    {
+      label: t('tray.startMinimized', 'Start minimized (tray)'),
+      type: 'checkbox',
+      enabled: !!prefs.autoStart,
+      checked: !!prefs.startMinimized,
+      click: async (menuItem) => {
+        const p = await loadPrefs();
+        p.startMinimized = !!menuItem.checked;
+        p.updated = new Date().toISOString();
+        await savePrefs(p);
+        await refreshTrayMenu();
+      }
+    },
+    {
+      label: t('tray.alwaysToTray', 'Always minimize to tray'),
+      type: 'checkbox',
+      checked: !!prefs.alwaysMinimizeToTray,
+      click: async (menuItem) => {
+        const p = await loadPrefs();
+        p.alwaysMinimizeToTray = !!menuItem.checked;
+        p.updated = new Date().toISOString();
+        await savePrefs(p);
+
+        keepAliveInTray = !!p.alwaysMinimizeToTray;
+
+        await refreshTrayMenu();
+      }
+    },
+    { type: 'separator' },
+    {
+      label: t('tray.quit', 'Quit'),
+      click: async () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setContextMenu(null);
+  tray.setContextMenu(trayMenu);
+  tray.setToolTip(t('tray.tooltip', 'Gharmonize'));
+}
+
+async function ensureTray(win) {
+  if (tray) return tray;
+
+  mainWindowRef = win;
+
+  tray = new Tray(resolveTrayIcon());
+  tray.setToolTip('Gharmonize');
+
+  await refreshTrayMenu();
+
+  tray.on('click', () => {
+    if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
+    if (mainWindowRef.isVisible()) mainWindowRef.hide();
+    else showMainWindow(mainWindowRef);
+  });
+
+  tray.on('double-click', () => showMainWindow(mainWindowRef));
+  tray.on('right-click', () => tray.popUpContextMenu());
+  tray.on('mouse-up', (event) => {
+    if (event.button === 2) tray.popUpContextMenu();
+  });
+
+  return tray;
 }
 
 function resolveIcon() {
   if (process.platform === 'win32') {
-    const iconPath = app.isPackaged
+    return app.isPackaged
       ? path.join(process.resourcesPath, 'build', 'icon.ico')
-      : path.join(process.cwd(), 'build', 'icon.ico')
-    console.log('Windows icon path:', iconPath)
-    console.log('Icon exists:', fs.existsSync(iconPath))
-    return iconPath
+      : path.join(process.cwd(), 'build', 'icon.ico');
   }
   if (process.platform === 'linux') {
-    const iconPath = app.isPackaged
+    return app.isPackaged
       ? path.join(process.resourcesPath, 'build', 'icon.png')
-      : path.join(process.cwd(), 'build', 'icon.png')
-    console.log('Linux icon path:', iconPath)
-    console.log('Icon exists:', fs.existsSync(iconPath))
-    return iconPath
+      : path.join(process.cwd(), 'build', 'icon.png');
   }
-  return undefined
+  return undefined;
 }
 
 function isPortReady(port, host = HOST, timeout = 400) {
@@ -115,10 +367,7 @@ function isPortReady(port, host = HOST, timeout = 400) {
 
 async function waitForServer(port, retries = 75, delayMs = 200) {
   for (let i = 0; i < retries; i++) {
-    if (await isPortReady(port)) {
-      console.log(`✅ Server is ready on ${HOST}:${port}`)
-      return
-    }
+    if (await isPortReady(port)) return;
     await new Promise(r => setTimeout(r, delayMs))
   }
   throw new Error(`Server not reachable on ${HOST}:${port}`)
@@ -126,7 +375,6 @@ async function waitForServer(port, retries = 75, delayMs = 200) {
 
 function checkDesktopBinaries() {
   const missing = [];
-
   const tools = [
     { name: 'ffmpeg', bin: FFMPEG_BIN },
     { name: 'ffprobe', bin: FFPROBE_BIN },
@@ -135,13 +383,9 @@ function checkDesktopBinaries() {
     { name: 'deno', bin: DENO_BIN }
   ];
 
-  console.log('🔍 Checking bundled binaries:');
   for (const tool of tools) {
     const exists = fs.existsSync(tool.bin);
-    console.log(`   ${tool.name}: ${tool.bin} -> ${exists ? '✅' : '❌'}`);
-    if (!exists) {
-      missing.push(tool);
-    }
+    if (!exists) missing.push(tool);
   }
 
   if (missing.length > 0) {
@@ -151,12 +395,8 @@ function checkDesktopBinaries() {
 }
 
 async function startServerIfPackaged() {
-  if (!app.isPackaged) {
-    console.log('🛠️  Development mode - using external server')
-    return
-  }
+  if (!app.isPackaged) return;
 
-  console.log('📦 Packaged mode - starting embedded server')
   const serverPath = path.join(process.resourcesPath, 'app.asar', 'bootstrap.mjs')
   const defaultEnv = path.join(process.resourcesPath, 'app.asar', '.env.default')
   const userEnv = path.join(app.getPath('userData'), '.env')
@@ -170,106 +410,21 @@ async function startServerIfPackaged() {
     if (!fs.existsSync(userEnv) && fs.existsSync(defaultEnv)) {
       fs.mkdirSync(path.dirname(userEnv), { recursive: true })
       fs.copyFileSync(defaultEnv, userEnv)
-      console.log('ℹ️  Created user .env at', userEnv)
     }
-  } catch (err) {
-    console.warn('⚠️  Could not create user .env:', err.message)
-  }
+  } catch {}
 
-  try {
-    const serverUrl = pathToFileURL(serverPath).href
-    await import(serverUrl)
-    console.log('✅ Embedded server started')
-    await waitForServer(PORT)
-  } catch (error) {
-    console.error('❌ Failed to start embedded server:', error)
-    throw error
-  }
+  const serverUrl = pathToFileURL(serverPath).href
+  await import(serverUrl)
+  await waitForServer(PORT)
 }
 
 function attachDownloads(win) {
   const ses = win.webContents.session || session.defaultSession;
-
   ses.removeAllListeners('will-download');
 
   ses.on('will-download', (event, item) => {
-    const filename = item.getFilename() || 'download';
-    console.log('📥 Download started:', filename, '→', item.getURL());
-
-    item.once('done', (ev, state) => {
-      const savePath = typeof item.getSavePath === 'function'
-        ? item.getSavePath()
-        : null;
-
-      if (state === 'completed') {
-  console.log('✅ Download completed:', filename, savePath ? `→ ${savePath}` : '');
-
-  if (Notification.isSupported()) {
-        const lines = [];
-        lines.push(filename);
-        const locationLabel = t('download.locationLabel', 'Saved to:');
-
-        const dirPath = savePath
-          ? path.dirname(savePath)
-          : app.getPath('downloads');
-
-        const dirName = path.basename(dirPath) || dirPath;
-        lines.push(`${locationLabel} ${dirName}`);
-
-        const notifOptions = {
-          title: t('download.completedTitle', 'Download completed'),
-          body: lines.join('\n'),
-        };
-
-        if (savePath) {
-          notifOptions.actions = [
-            {
-              type: 'button',
-              text: t('download.openFile', 'Open file'),
-            },
-            {
-              type: 'button',
-              text: t('download.openFolder', 'Open folder'),
-            },
-          ];
-          notifOptions.closeButtonText = t('download.dismiss', 'Close');
-        }
-
-        const notif = new Notification(notifOptions);
-
-        if (savePath) {
-          notif.on('click', () => {
-            shell.showItemInFolder(savePath);
-          });
-
-          notif.on('action', (_event, index) => {
-            if (index === 0) {
-              shell.openPath(savePath);
-            } else if (index === 1) {
-              shell.showItemInFolder(savePath);
-            }
-          });
-        }
-
-        notif.show();
-      }
-    } else {
-        console.log(`❌ Download failed: ${state} (${filename})`);
-
-        if (Notification.isSupported()) {
-          const notif = new Notification({
-            title: t('download.failedTitle', 'Download failed'),
-            body: `${filename}\n${t('download.failedBody', 'The download could not be completed.')} (${state})`,
-          });
-          notif.on('click', () => {
-            if (win && !win.isDestroyed()) {
-              win.show();
-              win.focus();
-            }
-          });
-          notif.show();
-        }
-      }
+    item.once('done', async (_ev, state) => {
+      if (state !== 'completed') return;
     });
   });
 }
@@ -277,43 +432,27 @@ function attachDownloads(win) {
 function getNavState(webContents) {
   const nav = webContents.navigationHistory;
   if (nav && typeof nav.canGoBack === 'function' && typeof nav.canGoForward === 'function') {
-    return {
-      canGoBack: nav.canGoBack(),
-      canGoForward: nav.canGoForward()
-    };
+    return { canGoBack: nav.canGoBack(), canGoForward: nav.canGoForward() };
   }
-
-  return {
-    canGoBack: webContents.canGoBack(),
-    canGoForward: webContents.canGoForward()
-  };
+  return { canGoBack: webContents.canGoBack(), canGoForward: webContents.canGoForward() };
 }
 
 function buildAndShowContextMenu(win, params) {
   const wc = win.webContents;
   const { canGoBack, canGoForward } = getNavState(wc);
+
   const isEditable = params.isEditable;
   const hasSelection = params.selectionText && params.selectionText.trim().length > 0;
   const hasLink = params.linkURL && params.linkURL.length > 0;
   const isImage = params.mediaType === 'image' && params.srcURL;
+
   const template = [];
 
   template.push(
-    {
-      label: t('contextMenu.back', 'Back'),
-      role: 'back',
-      enabled: canGoBack
-    },
-    {
-      label: t('contextMenu.forward', 'Forward'),
-      role: 'forward',
-      enabled: canGoForward
-    },
+    { label: t('contextMenu.back', 'Back'), role: 'back', enabled: canGoBack },
+    { label: t('contextMenu.forward', 'Forward'), role: 'forward', enabled: canGoForward },
     { type: 'separator' },
-    {
-      label: t('contextMenu.reload', 'Reload'),
-      role: 'reload'
-    },
+    { label: t('contextMenu.reload', 'Reload'), role: 'reload' },
     { type: 'separator' }
   );
 
@@ -330,47 +469,28 @@ function buildAndShowContextMenu(win, params) {
       { type: 'separator' }
     );
   } else if (hasSelection) {
-    template.push(
-      { label: t('contextMenu.copy', 'Copy'), role: 'copy' },
-      { type: 'separator' }
-    );
+    template.push({ label: t('contextMenu.copy', 'Copy'), role: 'copy' }, { type: 'separator' });
   }
 
   if (hasLink) {
-    template.push(
-      {
-        label: t('contextMenu.openLinkInBrowser', 'Open link in browser'),
-        click: () => shell.openExternal(params.linkURL)
-      }
-    );
+    template.push({
+      label: t('contextMenu.openLinkInBrowser', 'Open link in browser'),
+      click: () => shell.openExternal(params.linkURL)
+    });
     template.push({ type: 'separator' });
   }
 
   if (isImage) {
     template.push(
-      {
-        label: t('contextMenu.saveImageAs', 'Save image as...'),
-        click: () => wc.downloadURL(params.srcURL)
-      },
-      {
-        label: t('contextMenu.copyImage', 'Copy image'),
-        click: () => wc.copyImageAt(params.x, params.y)
-      },
-      {
-        label: t('contextMenu.copyImageAddress', 'Copy image address'),
-        click: () => clipboard.writeText(params.srcURL)
-      }
+      { label: t('contextMenu.saveImageAs', 'Save image as...'), click: () => wc.downloadURL(params.srcURL) },
+      { label: t('contextMenu.copyImage', 'Copy image'), click: () => wc.copyImageAt(params.x, params.y) },
+      { label: t('contextMenu.copyImageAddress', 'Copy image address'), click: () => clipboard.writeText(params.srcURL) }
     );
     template.push({ type: 'separator' });
   }
 
   if (!app.isPackaged || process.env.NODE_ENV === 'development') {
-    template.push(
-      {
-        label: t('contextMenu.inspect', 'Inspect'),
-        click: () => wc.inspectElement(params.x, params.y)
-      }
-    );
+    template.push({ label: t('contextMenu.inspect', 'Inspect'), click: () => wc.inspectElement(params.x, params.y) });
   }
 
   const menu = Menu.buildFromTemplate(template);
@@ -379,16 +499,6 @@ function buildAndShowContextMenu(win, params) {
 
 function createAppMenu(win) {
   const template = [];
-  if (process.platform === 'darwin') {
-    template.push({
-      label: app.name,
-      submenu: [
-        { role: 'about', label: 'About Gharmonize' },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
-    });
-  }
 
   template.push({
     label: 'Help',
@@ -405,14 +515,8 @@ function createAppMenu(win) {
               '',
               'This application bundles the following third-party command-line tools:',
               '- FFmpeg / FFprobe',
-              '- MKVToolNix tools (mkvmerge, mkvextract, mkvinfo, mkvpropedit)',
+              '- MKVToolNix tools',
               '- yt-dlp',
-              '',
-              'These tools are licensed under their respective open-source licenses',
-              '(GPL/LGPL or The Unlicense). For detailed license information, please',
-              'refer to the LICENSES.md file and the license texts shipped with the',
-              'application under the build/licenses/ directory (or equivalent path',
-              'in the installed build).',
               '',
               'More details and source code:',
               'https://github.com/G-grbz/Gharmonize'
@@ -421,17 +525,20 @@ function createAppMenu(win) {
         }
       },
       { type: 'separator' },
-      {
-        label: 'Open GitHub (Project Page)',
-        click: () => {
-          shell.openExternal('https://github.com/G-grbz/Gharmonize');
-        }
-      }
+      { label: 'Open GitHub (Project Page)', click: () => shell.openExternal('https://github.com/G-grbz/Gharmonize') }
     ]
   });
 
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+async function shouldStartHidden() {
+  const prefs = await loadPrefs();
+  if (process.argv.includes('--hidden')) return true;
+  const auto = isLaunchedByAutoStart();
+  if (auto && prefs.startMinimized) return true;
+
+  return false;
 }
 
 function createWindow() {
@@ -453,16 +560,46 @@ function createWindow() {
     show: false
   });
 
-  win.once('ready-to-show', () => {
-    win.show();
-    win.focus();
-
-  win.setMenuBarVisibility(true);
-  });
-
   win.webContents.on('context-menu', (event, params) => {
     event.preventDefault();
     buildAndShowContextMenu(win, params);
+  });
+
+  win.on('close', async (e) => {
+    if (isQuitting || isHidingToTray) return;
+
+    e.preventDefault();
+
+    try {
+      const prefs = await loadPrefs();
+
+      if (prefs.alwaysMinimizeToTray) {
+        isHidingToTray = true;
+        await ensureTray(win);
+        win.hide();
+        isHidingToTray = false;
+        return;
+      }
+      isQuitting = true;
+      app.quit();
+    } catch (err) {
+      console.error('Close handler crashed:', err);
+      isQuitting = true;
+      app.quit();
+    }
+  });
+
+  win.once('ready-to-show', async () => {
+    await ensureTray(win);
+
+    const startHidden = await shouldStartHidden();
+    if (startHidden) {
+      win.hide();
+    } else {
+      win.show();
+      win.focus();
+      win.setMenuBarVisibility(true);
+    }
   });
 
   attachDownloads(win);
@@ -474,8 +611,6 @@ function createWindow() {
   });
 
   win.webContents.on('did-finish-load', () => {
-    console.log('Window loaded, setting up language listeners...');
-
     win.webContents.executeJavaScript(`
       const originalSetLang = window.i18n?.setLang;
       if (originalSetLang) {
@@ -490,26 +625,18 @@ function createWindow() {
 
       setTimeout(() => {
         const currentLang = localStorage.getItem('lang') || 'en';
-        console.log('Current language from localStorage:', currentLang);
         if (window.electronAPI) {
           window.electronAPI.updateLanguage(currentLang);
         }
-      }, 1000);
+      }, 500);
 
       document.addEventListener('i18n:applied', (event) => {
         const lang = event.detail?.lang;
-        console.log('i18n:applied event received with lang:', lang);
         if (lang && window.electronAPI) {
           window.electronAPI.updateLanguage(lang);
         }
       });
-
-      console.log('Language listeners setup completed');
     `).catch(console.error);
-  });
-
-  win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.error('Failed to load:', errorDescription);
   });
 
   win.loadURL(`http://${HOST}:${PORT}`).catch(console.error);
@@ -517,30 +644,26 @@ function createWindow() {
   return win;
 }
 
-ipcMain.handle('update-language', async (event, lang) => {
+ipcMain.handle('update-language', async (_event, lang) => {
   try {
-    console.log(`Updating language to: ${lang}`);
-
     if (!['en', 'tr', 'de', 'fr'].includes(lang)) {
       throw new Error(`Unsupported language: ${lang}`);
     }
 
+    const prefs = await loadPrefs();
+    prefs.language = lang;
+    prefs.updated = new Date().toISOString();
+    await savePrefs(prefs);
+
     currentLanguage = lang;
     currentDict = await loadLanguageDict(lang);
-    const userDataPath = app.getPath('userData');
-    const prefsFile = path.join(userDataPath, 'preferences.json');
-    const prefs = {
-      language: lang,
-      updated: new Date().toISOString()
-    };
 
-    await fs.promises.writeFile(prefsFile, JSON.stringify(prefs, null, 2));
-    console.log(`Language preferences saved: ${prefsFile}`);
+    await refreshTrayMenu();
 
     return { success: true, language: lang };
-  } catch (error) {
-    console.error('Language update failed:', error);
-    return { success: false, error: error.message };
+  } catch (e) {
+    console.error('Language update failed:', e);
+    return { success: false, error: e.message };
   }
 });
 
@@ -548,24 +671,40 @@ ipcMain.handle('get-current-language', async () => {
   return { language: currentLanguage };
 });
 
-app.whenReady().then(async () => {
-  console.log('🚀 Gharmonize starting...');
+const gotLock = app.requestSingleInstanceLock();
+console.log('[boot] argv:', process.argv);
 
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', async (_event, _commandLine, _workingDirectory) => {
+    try {
+      if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+        showMainWindow(mainWindowRef);
+      } else {
+        showOnWindowReady = true;
+      }
+    } catch (e) {
+      console.error('second-instance handler failed:', e);
+    }
+  });
+}
+
+app.whenReady().then(async () => {
+  await cleanupWindowsRunEntries();
   await initializeLanguage();
+  await applyAutoStartFromPrefs();
+  await syncKeepAliveFlagFromPrefs();
 
   app.setAppUserModelId('com.gharmonize.app');
 
   try {
-    if (app.isPackaged) {
-      checkDesktopBinaries();
-    }
-
+    if (app.isPackaged) checkDesktopBinaries();
     await startServerIfPackaged();
-    const mainWindow = createWindow();
-    console.log('✅ Gharmonize started successfully');
-
-    if (!app.isPackaged) {
-      mainWindow.webContents.openDevTools();
+    const win = await createWindowOnce();
+    if (showOnWindowReady) {
+      showOnWindowReady = false;
+      showMainWindow(win);
     }
   } catch (error) {
     console.error('❌ Failed to start Gharmonize:', error);
@@ -578,19 +717,17 @@ app.whenReady().then(async () => {
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  if (keepAliveInTray && tray && !isQuitting) return;
+
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
-  console.log('👋 Gharmonize shutting down...');
+  isQuitting = true;
 });
 
 process.on('uncaughtException', (error) => {
