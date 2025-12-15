@@ -1,15 +1,14 @@
-<!--
-README REORDER / REWRITE NOTE
-- Content is NOT removed; it is reorganized for GitHub “first screen” clarity.
-- Only light wording tweaks added (esp. safety clarifications + headings).
-- Your original technical sections are preserved, mostly verbatim, but moved lower.
--->
-
 <div align="center">
 
 # <img width="128" height="128" alt="Gharmonize Logo" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" />
 
 # Gharmonize
+
+
+
+https://github.com/user-attachments/assets/94f23b28-afae-4d42-ada4-783ecfb321dc
+
+
 
 ### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/EXE)
 
