@@ -6,7 +6,10 @@ export class PreviewManager {
             title: '', count: 0, page: 1, pageSize: 25,
             isSpotify: false, streaming: false,
             indexToId: new Map(),
-            indexToTitle: new Map()
+            indexToTitle: new Map(),
+            indexToUploader: new Map(),
+            indexToDuration: new Map(),
+            indexToWebpageUrl: new Map()
         };
         this.previewAbort = null;
     }
@@ -215,11 +218,22 @@ export class PreviewManager {
         const listEl = document.getElementById('previewList');
         for (const item of items) {
             this.currentPreview.items.push(item);
-            if (item && Number.isFinite(item.index) && item.id) {
-                this.currentPreview.indexToId.set(item.index, item.id);
-            }
-            if (item && Number.isFinite(item.index) && item.title) {
-                this.currentPreview.indexToTitle.set(item.index, item.title);
+            if (item && Number.isFinite(item.index)) {
+                if (item.id) {
+                    this.currentPreview.indexToId.set(item.index, item.id);
+                }
+                if (item.title) {
+                    this.currentPreview.indexToTitle.set(item.index, item.title);
+                }
+                if (item.uploader) {
+                    this.currentPreview.indexToUploader.set(item.index, item.uploader);
+                }
+                if (Number.isFinite(item.duration)) {
+                    this.currentPreview.indexToDuration.set(item.index, item.duration);
+                }
+                if (item.webpage_url) {
+                    this.currentPreview.indexToWebpageUrl.set(item.index, item.webpage_url);
+                }
             }
 
             const artistName = this.getArtistDisplay(item);
@@ -336,12 +350,23 @@ export class PreviewManager {
         selectedEl.textContent = this.currentPreview.selected.size;
 
         this.currentPreview.items.forEach((item) => {
-            if (item && Number.isFinite(item.index) && item.id) {
+            if (item && Number.isFinite(item.index)) {
+            if (item.id) {
                 this.currentPreview.indexToId.set(item.index, item.id);
             }
-            if (item && Number.isFinite(item.index) && item.title) {
+            if (item.title) {
                 this.currentPreview.indexToTitle.set(item.index, item.title);
             }
+            if (item.uploader) {
+                this.currentPreview.indexToUploader.set(item.index, item.uploader);
+            }
+            if (Number.isFinite(item.duration)) {
+                this.currentPreview.indexToDuration.set(item.index, item.duration);
+            }
+            if (item.webpage_url) {
+                this.currentPreview.indexToWebpageUrl.set(item.index, item.webpage_url);
+            }
+        }
 
             const artistName = this.getArtistDisplay(item);
 
@@ -450,16 +475,16 @@ export class PreviewManager {
             .map(i => this.currentPreview.indexToId.get(i))
             .filter(Boolean);
 
-            const frozenEntries = this.currentPreview.items
-                .filter(item => selected.includes(item.index))
-                .map(item => ({
-                    index: item.index,
-                    id: item.id || null,
-                    title: item.title || '',
-                    uploader: item.uploader || '',
-                    duration: item.duration || null,
-                    webpage_url: item.webpage_url || ''
-                }));
+            const frozenEntries = selected.map(idx => ({
+                index: idx,
+                id: this.currentPreview.indexToId.get(idx) || null,
+                title: this.currentPreview.indexToTitle.get(idx) || '',
+                uploader: this.currentPreview.indexToUploader.get(idx) || '',
+                duration: this.currentPreview.indexToDuration.has(idx)
+                    ? this.currentPreview.indexToDuration.get(idx)
+                    : null,
+                webpage_url: this.currentPreview.indexToWebpageUrl.get(idx) || ''
+            }));
 
             if (sequential && selected.length > 1) {
                 const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -605,7 +630,10 @@ export class PreviewManager {
             title: '', count: 0, page: 1, pageSize: 50,
             isSpotify: false, streaming: false,
             indexToId: new Map(),
-            indexToTitle: new Map()
+            indexToTitle: new Map(),
+            indexToUploader: new Map(),
+            indexToDuration: new Map(),
+            indexToWebpageUrl: new Map()
         };
         this.app.spotifyManager.currentSpotifyTask = {
             id: null,
