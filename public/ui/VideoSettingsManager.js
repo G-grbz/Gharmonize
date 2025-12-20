@@ -136,6 +136,17 @@ export class VideoSettingsManager {
       { value: '6.2', labelKey: 'option.level.6.2', fallback: 'Level 6.2 (8K, 7680x4320)' },
       { value: 'auto', labelKey: 'option.level.auto', fallback: 'Auto (FFmpeg default)' }
     ];
+    if (typeof window !== 'undefined' && window.i18n?.on) {
+      try {
+        window.i18n.on('languageChanged', () => {
+          if (typeof this.handleLanguageChanged === 'function') {
+            this.handleLanguageChanged();
+          }
+        });
+      } catch (e) {
+        console.warn('[VideoSettingsManager] Failed to bind languageChanged listener:', e);
+      }
+    }
   }
 
   setDisabled(el, disabled) {
@@ -1020,7 +1031,7 @@ export class VideoSettingsManager {
                 <div class="vs-inline">
                   <select id="widthModeSelect" class="vs-compact">
                     <option value="auto" data-i18n="option.videoWidthAuto">${this.t('option.videoWidthAuto', 'Keep aspect ratio')}</option>
-                    <option value="custom" data-i18n="option.videoWidthManuel">${this.t('option.videoWHManuel', 'Enter manually')}</option>
+                    <option value="custom" data-i18n="option.videoWHManuel">${this.t('option.videoWHManuel', 'Enter manually')}</option>
                   </select>
                   <input id="customWidthInput" type="number" min="2" step="2" data-i18n-ph="ph.videoWidth" placeholder="${this.t('ph.videoWidth', 'e.g. 1920')}" class="vs-compact" />
                 </div>
@@ -1035,7 +1046,7 @@ export class VideoSettingsManager {
                   <select id="heightModeSelect" class="vs-compact">
                     <option value="auto" data-i18n="option.videoHeightAuto">${this.t('option.videoHeightAuto', 'Auto')}</option>
                     <option value="source" data-i18n="option.videoHeightSource">${this.t('option.videoHeightSource', 'Keep original')}</option>
-                    <option value="custom" data-i18n="option.videoHeightManual">${this.t('option.videoWHeight', 'Enter manually')}</option>
+                    <option value="custom" data-i18n="option.videoWHManuel">${this.t('option.videoWHManuel', 'Enter manually')}</option>
                   </select>
 
                   <input id="customHeightInput" type="number" min="2" step="2" data-i18n-ph="ph.videoHeight" placeholder="${this.t('ph.videoHeight', 'e.g. 1080')}" class="vs-compact" />
@@ -1962,6 +1973,34 @@ export class VideoSettingsManager {
     this.updateAudioBitrateOptions(this.videoSettings.audioCodec);
     this.normalizeAudioSampleRateUI();
     this.normalizeTuneForContext(this.videoSettings.videoCodec || 'auto', this.videoSettings.hwaccel || 'off');
+  }
+
+    handleLanguageChanged() {
+    try {
+      const container = document.getElementById('videoSettingsContainer');
+      if (container && window.i18n?.apply) {
+        window.i18n.apply(container);
+      }
+
+      if (!this.modalEl) return;
+      if (window.i18n?.apply) {
+        window.i18n.apply(this.modalEl);
+      }
+
+      const hw = this.videoSettings.hwaccel || 'off';
+      const codec = this.videoSettings.videoCodec || 'auto';
+
+      this.updateVideoCodecOptions();
+      this.updateProresVisibility(codec, hw);
+      this.updateProresUIState(codec, hw);
+
+      const currentAudioCodec = this.videoSettings.audioCodec || 'aac';
+      this.updateAudioBitrateOptions(currentAudioCodec);
+      this.normalizeAudioSampleRateUI();
+
+    } catch (e) {
+      console.warn('[VideoSettingsManager] handleLanguageChanged failed:', e);
+    }
   }
 
   getSettings() {
