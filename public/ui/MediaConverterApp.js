@@ -28,6 +28,7 @@ export class MediaConverterApp {
         this.notificationManager = notificationManager;
         this.modalManager = modalManager;
         this.lastPreviewedPlaylistUrl = null;
+        this.qualityLabelElement = null;
     }
 
     async initialize() {
@@ -41,6 +42,7 @@ export class MediaConverterApp {
             await this.videoManager.initialize();
         }
 
+        this.loadFfmpegCaps();
         this.initializeEventListeners();
         this.jobManager.restoreSessionState();
 
@@ -148,6 +150,7 @@ export class MediaConverterApp {
     initializeEventListeners() {
         document.getElementById('formatSelect').addEventListener('change', async (e) => {
             const format = e.target.value;
+            this.updateQualityLabel(format);
             this.formatManager.toggleFormatSpecificOptions(format);
             const formats = await this.formatManager.getFormats();
             this.formatManager.updateBitrateOptions(format, formats);
@@ -174,6 +177,9 @@ export class MediaConverterApp {
         if (fileForm) {
             fileForm.addEventListener('submit', (e) => this.uploadManager.handleFileSubmit(e));
         }
+
+        const initialFormat = document.getElementById('formatSelect')?.value || 'mp3';
+         this.updateQualityLabel(initialFormat);
 
         document.getElementById('previewBtn').addEventListener('click', () => this.previewManager.handlePreviewClick());
         document.getElementById('convertSelectedBtn').addEventListener('click', () => this.previewManager.convertSelected());
@@ -366,6 +372,18 @@ export class MediaConverterApp {
         });
         this.checkInitialAuthState();
     }
+
+    updateQualityLabel(format) {
+         const qualityLabel = document.querySelector('label[for="bitrateSelect"]');
+         if (!qualityLabel) return;
+
+         const isVideo = (format === 'mp4' || format === 'mkv');
+         const i18nKey = isVideo ? 'label.quality' : 'label.audioBitrate';
+         qualityLabel.setAttribute('data-i18n', i18nKey);
+         const videoText = this.t('label.quality') || 'Video Bitrate:';
+         const audioText = this.t('label.audioBitrate') || 'Audio Bitrate:';
+         qualityLabel.textContent = isVideo ? videoText : audioText;
+     }
 
     handleAuthStateChange(isLoggedIn) {
         console.log('Auth state changed:', isLoggedIn);
@@ -722,7 +740,7 @@ export class MediaConverterApp {
         this.setAutoZipVisibility(false);
     }
 
-        async loadBinaryVersions() {
+    async loadBinaryVersions() {
         try {
             const res = await fetch('/api/binaries');
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -772,6 +790,25 @@ export class MediaConverterApp {
             }
         }
     }
+
+    async loadFfmpegCaps() {
+    try {
+        const res = await fetch('/api/ffmpeg/caps', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+        if (data?.ok && data?.caps) {
+            console.log('[ffmpegCaps] loaded:', data.caps);
+            this.videoManager?.setFfmpegCaps(data.caps);
+        } else {
+            console.warn('[ffmpegCaps] api returned not-ok:', data);
+            this.videoManager?.setFfmpegCaps(null);
+        }
+    } catch (err) {
+        console.warn('[ffmpegCaps] load failed:', err);
+        this.videoManager?.setFfmpegCaps(null);
+    }
+}
 
     async handleUrlSubmitWithSpinner(e) {
         e.preventDefault();

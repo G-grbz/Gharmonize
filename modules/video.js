@@ -775,6 +775,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         feEntry = frozenById.get(pinnedId);
       }
     }
+
     if (!feEntry) {
       feEntry = frozenEntries[i] || null;
     }

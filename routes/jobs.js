@@ -13,6 +13,8 @@ import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js";
 import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modules/probe.js";
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
+import { getFfmpegCaps } from "../modules/ffmpegCaps.js";
+import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "../modules/binaries.js";
 import "dotenv/config";
 import {
   isYouTubeUrl,
@@ -193,6 +195,25 @@ router.get("/api/local-files", requireAuth, (req, res) => {
     console.error("[local-files] error:", e);
     res.status(500).json({
       error: { code: "LOCAL_LIST_FAILED", message: e.message || "list failed" }
+    });
+  }
+});
+
+router.get("/api/ffmpeg/caps", async (req, res) => {
+  try {
+    const ffmpegBin = BINARY_FFMPEG_BIN;
+    const caps = await getFfmpegCaps(ffmpegBin);
+
+    res.json({
+      ok: true,
+      ffmpegBin,
+      caps,
+      ts: Date.now()
+    });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: String(e?.message || e)
     });
   }
 });

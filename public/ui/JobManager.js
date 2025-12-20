@@ -32,45 +32,45 @@ export class JobManager {
         const maxRetries = 3;
 
         const startJobSSE = (retryCount = 0) => {
-            const eventSource = new EventSource(`/api/stream/${jobId}`);
-            this.currentJobs.set(jobId, eventSource);
+        const eventSource = new EventSource(`/api/stream/${jobId}`);
+        this.currentJobs.set(jobId, eventSource);
 
-            let firstUpdate = (retryCount === 0);
+        let firstUpdate = (retryCount === 0);
 
-            eventSource.onmessage = (event) => {
-            const incoming = JSON.parse(event.data);
-            const prevJob = this.jobStates.get(jobId) || {};
-            const job = this.mergeJobState(prevJob, incoming);
+        eventSource.onmessage = (event) => {
+        const incoming = JSON.parse(event.data);
+        const prevJob = this.jobStates.get(jobId) || {};
+        const job = this.mergeJobState(prevJob, incoming);
 
-            job.status = this.normalizeStatus(job.status);
+        job.status = this.normalizeStatus(job.status);
 
-            const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
-            job.currentPhase = phaseNorm;
-            job.phase = phaseNorm;
+        const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
+        job.currentPhase = phaseNorm;
+        job.phase = phaseNorm;
 
-            this.jobStates.set(jobId, job);
-            const isTerminal = ['completed', 'error', 'canceled'].includes(job.status);
+        this.jobStates.set(jobId, job);
+        const isTerminal = ['completed', 'error', 'canceled'].includes(job.status);
 
-            if (firstUpdate || isTerminal) {
-                try {
-                    this.saveSessionState();
-                   } catch (e) {
-                    console.warn('[JobManager] autosave after SSE update failed:', e);
-                }
+        if (firstUpdate || isTerminal) {
+            try {
+                this.saveSessionState();
+                } catch (e) {
+                console.warn('[JobManager] autosave after SSE update failed:', e);
             }
+        }
 
-            if (firstUpdate) {
-                firstUpdate = false;
-                document.dispatchEvent(new CustomEvent('job:first-update', { detail: { jobId, job } }));
-            }
+        if (firstUpdate) {
+            firstUpdate = false;
+            document.dispatchEvent(new CustomEvent('job:first-update', { detail: { jobId, job } }));
+        }
 
-            this.updateJobUI(job, batchId);
+        this.updateJobUI(job, batchId);
 
-            if (isTerminal) {
-                eventSource.close();
-                this.currentJobs.delete(jobId);
-            }
-        };
+        if (isTerminal) {
+            eventSource.close();
+            this.currentJobs.delete(jobId);
+        }
+    };
 
         eventSource.onerror = (error) => {
         console.error('SSE error:', error, 'retry:', retryCount);
@@ -865,16 +865,24 @@ if (job.currentPhase) {
     const channelsEmoji = '🎚️';
     const basicCards = [];
     const formatFeatures = [];
+    const featureCards = [];
+
     formatFeatures.push(`
         <span class="info-feature">
             ${formatInnerEmoji} ${(job.format || '').toUpperCase() || '—'}
         </span>
     `);
 
-    if (job.bitrate) {
+    const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
+    const source = job.metadata?.source || 'file';
+    const isLocalSource = (source === 'local' || source === 'file');
+    const dlPct = Number(job.downloadProgress || 0) || 0;
+    const showSourceQuality = !isLocalSource && job.bitrate && (phaseNorm === 'downloading' || dlPct > 0);
+
+    if (showSourceQuality) {
         formatFeatures.push(`
             <span class="info-feature">
-                ${bitrateEmoji} ${job.bitrate}
+                📺 ${this.app.escapeHtml(String(job.bitrate))}
             </span>
         `);
     }
@@ -900,8 +908,76 @@ if (job.currentPhase) {
             videoFeatures.push(`<span class="info-feature">${this.getHwaccelIcon(job.videoSettings.hwaccel)} ${hwaccelText}</span>`);
         }
 
+        if (job.videoSettings.videoCodec && job.videoSettings.videoCodec !== 'auto') {
+            const codecMap = {
+                h264: 'H.264',
+                h265: 'H.265'
+            };
+            const codecText = codecMap[job.videoSettings.videoCodec] || job.videoSettings.videoCodec.toUpperCase();
+            videoFeatures.push(`<span class="info-feature">📹 ${codecText}</span>`);
+        }
+
+        let presetText = '';
+        if (job.videoSettings.hwaccel === 'nvenc' && job.videoSettings.nvencSettings?.preset) {
+            presetText = job.videoSettings.nvencSettings.preset.toUpperCase();
+        } else if (job.videoSettings.hwaccel === 'qsv' && job.videoSettings.qsvSettings?.preset) {
+            presetText = job.videoSettings.qsvSettings.preset.toUpperCase();
+        } else if (job.videoSettings.hwaccel === 'vaapi') {
+            presetText = 'VAAPI';
+        } else if (job.videoSettings.hwaccel === 'off') {
+            presetText = 'CPU';
+        }
+
+        if (presetText) {
+            videoFeatures.push(`<span class="info-feature">⚙️ ${presetText}</span>`);
+        }
+
+        let displayText = '';
+        let qualityText = '';
+        if (job.videoSettings.hwaccel === 'nvenc' && job.videoSettings.nvencSettings?.quality) {
+            qualityText = `CRF ${job.videoSettings.nvencSettings.quality}`;
+        } else if (job.videoSettings.hwaccel === 'qsv' && job.videoSettings.qsvSettings?.quality) {
+            qualityText = `CRF ${job.videoSettings.qsvSettings.quality}`;
+        } else if (job.videoSettings.hwaccel === 'vaapi' && job.videoSettings.vaapiSettings?.quality) {
+            qualityText = `CRF ${job.videoSettings.vaapiSettings.quality}`;
+        }
+
+        const wMode = String(job.videoSettings.scaleMode || 'auto');
+        const hMode = String(job.videoSettings.heightMode || 'auto');
+        const wVal  = (wMode === 'custom' && job.videoSettings.targetWidth) ? String(job.videoSettings.targetWidth) : '';
+        const hVal  = (hMode === 'custom' && job.videoSettings.targetHeight) ? String(job.videoSettings.targetHeight) : '';
+
+        let sizeText = null;
+        if (wVal || hVal) {
+          const wTxt = wVal ? wVal : 'auto';
+          const hTxt =
+            hMode === 'source' ? 'src'
+            : hVal ? hVal
+            : (wVal ? 'auto' : 'auto');
+          sizeText = `${wTxt}×${hTxt}`;
+
+          if (hMode === 'custom' && job.videoSettings.allowUpscale) {
+            sizeText += ' ↑';
+          }
+        } else if (hMode === 'source') {
+          sizeText = 'src';
+        }
+
+        const components = [];
+        if (qualityText) components.push(qualityText);
+        if (sizeText) components.push(sizeText);
+
+        if (components.length > 0) {
+            displayText = components.join(' • ');
+            videoFeatures.push(`<span class="info-feature">⭐ ${displayText}</span>`);
+        } else if (qualityText) {
+            videoFeatures.push(`<span class="info-feature">⭐ ${qualityText}</span>`);
+        } else if (sizeText) {
+            videoFeatures.push(`<span class="info-feature">📏 ${sizeText}</span>`);
+        }
+
         if (job.videoSettings.fps && job.videoSettings.fps !== 'source') {
-            videoFeatures.push(`<span class="info-feature">${fpsEmoji} ${job.videoSettings.fps} FPS</span>`);
+            videoFeatures.push(`<span class="info-feature">🎯 ${job.videoSettings.fps} FPS</span>`);
         }
     }
 
@@ -971,7 +1047,6 @@ if (job.currentPhase) {
         extraFeatures.push(`<span class="info-feature">📜 ${this.app.t('ui.playlist')}</span>`);
     }
 
-    const featureCards = [];
     if (videoFeatures.length > 0) {
         featureCards.push(`
             <div class="info-card info-card--features">
@@ -1315,7 +1390,7 @@ if (job.currentPhase) {
     if (activeBadge) activeBadge.textContent = String(activeCount);
     if (completedBadge) completedBadge.textContent = String(completedCount);
     const stopBtn = jobElement.querySelector(`[data-stop="${job.id}"]`);
-if (stopBtn) {
+    if (stopBtn) {
     const newStopBtn = stopBtn.cloneNode(true);
     stopBtn.parentNode.replaceChild(newStopBtn, stopBtn);
 

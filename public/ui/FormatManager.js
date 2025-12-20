@@ -18,6 +18,7 @@ export class FormatManager {
         const formatSelect = document.getElementById('formatSelect');
         formatSelect.addEventListener('change', async (e) => {
             const format = e.target.value;
+            this.app.updateQualityLabel(format);
             this.toggleFormatSpecificOptions(format);
 
             const formats = await this.getFormats();
@@ -29,6 +30,7 @@ export class FormatManager {
         });
 
         const currentFormat = formatSelect.value;
+        this.app.updateQualityLabel(currentFormat);
         this.toggleFormatSpecificOptions(currentFormat);
 
         if (currentFormat === 'eac3' || currentFormat === 'ac3' || currentFormat === 'aac') {
@@ -65,10 +67,14 @@ export class FormatManager {
 
         const videoSettingsContainer = document.getElementById('videoSettingsContainer');
         if (videoSettingsContainer) {
-            videoSettingsContainer.style.display = isMp4 ? 'block' : 'none';
+            videoSettingsContainer.style.display = isMp4 ? 'flex' : 'none';
             if (isMp4) {
-                this.app.videoManager.toggleEncoderSettings(this.app.videoManager.videoSettings.transcodeEnabled);
+            const vsm = this.app.videoSettingsManager || this.app.videoManager;
+            if (vsm?.modalOpen && typeof vsm.showEncoderSpecificSettings === 'function') {
+                vsm.showEncoderSpecificSettings(vsm.videoSettings?.hwaccel || 'off');
+                if (typeof vsm.updateVideoCodecOptions === 'function') vsm.updateVideoCodecOptions();
             }
+          }
         }
 
         if (sampleRateGroup) {
@@ -220,6 +226,7 @@ export class FormatManager {
             option.textContent = bitrate === 'lossless' ? this.app.t('quality.lossless') : bitrate;
             bitrateSelect.appendChild(option);
         });
+        this.app.updateQualityLabel(format);
         const bitDepthSelect = document.getElementById('bitDepthSelect');
         if (bitDepthSelect) {
             bitDepthSelect.innerHTML = '';

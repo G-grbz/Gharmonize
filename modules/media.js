@@ -9,6 +9,116 @@ import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
 import "dotenv/config";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
+import { getFfmpegCaps } from "./ffmpegCaps.js";
+
+function getOptimalEncoderParams(codec, hardware, quality = 'medium') {
+    const params = {
+        'h264': {
+            'software': { preset: 'medium', tune: 'film', crf: '23' },
+            'nvenc': { preset: 'p7', tune: 'hq', cq: '23' },
+            'qsv': { preset: 'medium', quality: '23' },
+            'vaapi': { quality: '23' }
+        },
+        'h265': {
+            'software': { preset: 'medium', crf: '28' },
+            'nvenc': { preset: 'p7', cq: '28' },
+            'qsv': { preset: 'medium', quality: '28' },
+            'vaapi': { quality: '28' }
+        },
+        'av1': {
+            'software': { cpuUsed: '4', rowMt: '1', crf: '30' },
+            'nvenc': { preset: 'p7', cq: '30' },
+            'qsv': { preset: 'medium', quality: '30' },
+            'vaapi': { quality: '30' }
+        },
+        'vp9': {
+            'software': { cpuUsed: '2', rowMt: '1', crf: '31' },
+            'vaapi': { quality: '31' }
+        }
+    };
+    return params[codec]?.[hardware] || params['h264'][hardware] || params['h264']['software'];
+}
+
+function normalizeNvencPresetAndTune(rawPreset) {
+  const v = String(rawPreset || "").trim().toLowerCase();
+
+  if (/^p[1-7]$/.test(v)) return { preset: v, tune: null };
+
+  if (["hq", "ll", "ull", "lossless"].includes(v)) {
+    return { preset: "p4", tune: v };
+  }
+
+  const legacyMap = {
+    slow: "p7",
+    medium: "p5",
+    fast: "p3",
+    hp: "p3",
+    hq: "p5",
+    bd: "p5",
+    ll: "p4",
+    llhq: "p5",
+    llhp: "p3",
+    lossless: "p4",
+    losslesshp: "p3"
+  };
+
+  if (legacyMap[v]) return { preset: legacyMap[v], tune: null };
+  return { preset: "p4", tune: null };
+}
+
+const PRESET_ORDER = [
+  "ultrafast",
+  "superfast",
+  "veryfast",
+  "faster",
+  "fast",
+  "medium",
+  "slow",
+  "slower",
+  "veryslow"
+];
+
+function normalizeSwPreset(p) {
+  const v = String(p || "").trim().toLowerCase();
+  return PRESET_ORDER.includes(v) ? v : "veryfast";
+}
+
+function presetRank(p) {
+  const v = normalizeSwPreset(p);
+  const idx = PRESET_ORDER.indexOf(v);
+  return idx >= 0 ? idx : 2;
+}
+
+function presetToAomCpuUsed(p) {
+  const r = presetRank(p);
+  return Math.max(0, Math.min(8, 8 - r));
+}
+
+function presetToSvtPreset(p) {
+  const map = {
+    ultrafast: 12,
+    superfast: 11,
+    veryfast:  10,
+    faster:    9,
+    fast:      8,
+    medium:    7,
+    slow:      6,
+    slower:    5,
+    veryslow:  4
+  };
+  return map[normalizeSwPreset(p)] ?? 10;
+}
+
+function presetToVp9CpuUsed(p) {
+  return presetToAomCpuUsed(p);
+}
+
+function presetToVp9Deadline(p) {
+  const r = presetRank(p);
+  if (r <= 2) return "realtime";
+  if (r <= 5) return "good";
+  return "best";
+}
 
 function resolveFfmpegBin() {
   const isWin = process.platform === "win32";
@@ -310,7 +420,7 @@ export async function retagMediaFile(
           "-disposition:v", "attached_pic",
           "-metadata:s:v", "title=Album cover"
         );
-        if (f === "mp3") args.push("-c:v", "mjpeg", "-id3v2_version", "3");
+        if (f === "mp3") args.push("-c:v", "mjpeg");
         else if (f === "flac") args.push("-c:v", "mjpeg");
         else if (f === "m4a" || f === "mp4") args.push("-c:v", "mjpeg");
         else if (f === "ogg") args.push("-c:v", "mjpeg");
@@ -364,7 +474,7 @@ export async function convertMedia(
 ) {
   const ffmpegFromOpts = opts?.ffmpegBin || null;
   const isCanceled =
-    typeof opts.isCanceled === "function" ? () => !!opts.isCanceled() : () => false;
+  typeof opts.isCanceled === "function" ? () => !!opts.isCanceled() : () => false;
 
   const stereoConvert = opts?.stereoConvert || "auto";
   const atempoAdjust = opts?.atempoAdjust || "none";
@@ -380,6 +490,62 @@ export async function convertMedia(
   } else if (metadata?.volumeGain != null) {
     volumeGainRaw = metadata.volumeGain;
   }
+
+  const clampInt = (v, min, max) => {
+   const n = Math.round(Number(v));
+   if (!Number.isFinite(n)) return null;
+   return Math.min(max, Math.max(min, n));
+ };
+
+  const proresProfile =
+    clampInt(videoSettings?.proresProfile, 0, 5) ??
+    clampInt(videoSettings?.swSettings?.proresProfile, 0, 5) ??
+    2;
+
+  const swCrf = clampInt(videoSettings?.swSettings?.quality, 16, 30);
+
+  const toEven = (n) => {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return null;
+  const xi = Math.round(x);
+  return (xi % 2 === 0) ? xi : (xi - 1);
+};
+
+function computeTargetHeight({ heightMode, targetHeight, srcH, fallbackH, allowUpscale }) {
+  const mode = String(heightMode || 'auto').toLowerCase();
+
+  if (mode === 'source') {
+    return { targetH: 0, reason: 'source->no-height' };
+  }
+
+  if (mode === 'custom') {
+    const h0 = toEven(targetHeight);
+    if (!h0) return { targetH: fallbackH, reason: 'custom-invalid->fallback' };
+
+    if (!allowUpscale && srcH > 0 && h0 > srcH) {
+      return { targetH: srcH, reason: 'custom-upscale-blocked->src' };
+    }
+
+    return { targetH: h0, reason: 'custom' };
+  }
+
+  return { targetH: 0, reason: 'auto->no-height' };
+}
+
+function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
+  const mode = String(scaleMode || "auto").toLowerCase();
+  if (mode !== "custom" && mode !== "auto") return { widthW: null, reason: `mode=${mode}` };
+
+  const w0 = toEven(targetWidth);
+  if (!w0) return { widthW: null, reason: "no/invalid-width" };
+
+  const MIN_W = 320;
+  const MAX_W = (srcW && srcW > 0) ? srcW : 8192;
+  if (w0 < MIN_W) return { widthW: null, reason: `too-small(<${MIN_W})` };
+  if (w0 > MAX_W) return { widthW: null, reason: `too-large(>${MAX_W})` };
+
+  return { widthW: w0, reason: "ok" };
+}
 
   const volumeGain =
     volumeGainRaw != null ? Number(volumeGainRaw) : null;
@@ -399,13 +565,14 @@ export async function convertMedia(
       hasVideo: selectedStreams?.hasVideo
     });
   } catch {}
+
   const hasVideoFlag =
     typeof selectedStreams?.hasVideo === "boolean"
       ? selectedStreams.hasVideo
       : isVideo;
 
-      const audioLanguageMap = selectedStreams?.audioLanguages || null;
-      const subtitleLanguageMap = selectedStreams?.subtitleLanguages || null;
+  const audioLanguageMap = selectedStreams?.audioLanguages || null;
+  const subtitleLanguageMap = selectedStreams?.subtitleLanguages || null;
 
   let videoHwaccel = videoSettings.hwaccel || VIDEO_HWACCEL;
 
@@ -431,8 +598,8 @@ export async function convertMedia(
   const audioSampleRate = videoSettings.audioTranscodeEnabled ?
                              videoSettings.audioSampleRate : '48000';
 
-       console.log(`🎬 Video Setting:`, { isVideo, format, videoSettings, videoHwaccel });
-       console.log(`🎵 Audio Setting: Codec=${audioCodec}, Bitrate=${audioBitrate}, Transcode=${videoSettings.audioTranscodeEnabled}`);
+  console.log(`🎬 Video Setting:`, { isVideo, format, videoSettings, videoHwaccel });
+  console.log(`🎵 Audio Setting: Codec=${audioCodec}, Bitrate=${audioBitrate}, Transcode=${videoSettings.audioTranscodeEnabled}`);
 
   const parseFps = (v) => {
      if (v == null) return null;
@@ -497,15 +664,6 @@ export async function convertMedia(
       allowed[0]
     );
 
-  function commentKeyFor(fmt) {
-    const f = String(fmt || "").toLowerCase();
-    if (f === "flac" || f === "ogg") return "DESCRIPTION";
-    if (f === "mp4" || f === "m4a") return "comment";
-    if (f === "mp3") return "comment";
-    if (f === "eac3" || f === "ac3") return "comment";
-    if (f === "aac" || f === "ac3") return "comment";
-    return "comment";
-  }
   const COMMENT_KEY = commentKeyFor(format);
 
   function normalizeSR(fmt, sr) {
@@ -536,6 +694,17 @@ export async function convertMedia(
   }
 
   const { sr: SR_NORM, note: SR_NOTE } = normalizeSR(format, baseSR);
+
+  const buildUniqueOut = (baseName, fmt) => {
+    let fileName = `${baseName}.${fmt}`;
+    let outPath = path.join(outputDir, fileName);
+    let n = 1;
+    while (fs.existsSync(outPath)) {
+      fileName = `${baseName} (${n++}).${fmt}`;
+      outPath = path.join(outputDir, fileName);
+    }
+    return { fileName, outPath };
+  };
 
   let FINAL_SAMPLE_RATE = SR_NORM;
   if (videoSettings.audioTranscodeEnabled && audioSampleRate !== 'original') {
@@ -574,30 +743,21 @@ export async function convertMedia(
     title: cleanTitleForTags(maybeCleanTitle(metadata?.title)),
     track: cleanTitleForTags(metadata?.track),
   };
-  const VIDEO_MAX_H = Number(resolvedMeta.__maxHeight) || 1080;
-  const SRC_H = Number(resolvedMeta.__srcHeight) || 0;
-  const EFFECTIVE_H = SRC_H || VIDEO_MAX_H;
+  const SRC_H = 0;
+  const EFFECTIVE_H = 0;
   const VIDEO_PRESET = process.env.VIDEO_PRESET || "veryfast";
 
     let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
     basename = sanitizeFilename(basename);
 
-    basename = basename
-      .replace(/\s*(?:_+\s*)+$/, '')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
+    basename = basename.replace(/\s*(?:_+\s*)+$/, '').replace(/\s{2,}/g, ' ').trim();
 
   try {
     fs.mkdirSync(outputDir, { recursive: true });
   } catch {}
 
-  let outputFileName = `${basename}.${format}`;
-  let outputPath = path.join(outputDir, outputFileName);
-  let idx = 1;
-  while (fs.existsSync(outputPath)) {
-    outputFileName = `${basename} (${idx++}).${format}`;
-    outputPath = path.join(outputDir, outputFileName);
-  }
+  let outputFileName = null;
+  let outputPath = null;
 
   let canEmbedCover = false;
   let coverToUse = null;
@@ -614,7 +774,7 @@ export async function convertMedia(
   const ffmpegBin = ffmpegFromOpts || resolveFfmpegBin();
   console.log(`🧭 Using FFmpeg: ${ffmpegBin}`);
 
-  const result = await new Promise((resolve, reject) => {
+  const result = await new Promise(async (resolve, reject) => {
   const args = ["-hide_banner", "-nostdin", "-y", "-i", inputPath];
 
     if (isCanceled()) return reject(new Error("CANCELED"));
@@ -789,172 +949,829 @@ export async function convertMedia(
     }
   }
 
-  if (format === "mp4" || format === "mkv") {
+  if (format === "mp4" || format === "mkv" || format === "mov" || format === "webm") {
     console.log(`🎬 Video transcode: ${videoSettings.transcodeEnabled ? 'ON' : 'OFF'}`);
     const br = (bitrate || "").toString().trim();
     const isVidMb = /^[0-9]+(\.[0-9]+)?m$/i.test(br);
     const isVidKb = /^[0-9]+k$/i.test(br);
-    let targetHeight = 0;
-    if (VIDEO_MAX_H && VIDEO_MAX_H > 0) targetHeight = VIDEO_MAX_H;
-    if (!targetHeight && br) {
-      const m = br.match(/(\d{3,4})p/i);
-      if (m) targetHeight = parseInt(m[1], 10) || 0;
-    }
-    if (SRC_H && SRC_H > 0 && targetHeight > 0 && SRC_H < targetHeight) {
-      targetHeight = SRC_H;
+
+    let srcInfo = null;
+    try {
+      const { probeVideoStreamInfo } = await import("./ffmpegCaps.js");
+      srcInfo = await probeVideoStreamInfo(ffmpegBin, inputPath);
+    } catch (e) {
+      console.warn("⚠️ probeVideoStreamInfo failed:", e?.message || e);
+      srcInfo = null;
     }
 
+    const SRC_W = Number(srcInfo?.width) || Number(resolvedMeta.__srcWidth) || 0;
+    const SRC_H = Number(srcInfo?.height) || Number(resolvedMeta.__srcHeight) || 0;
+
+    resolvedMeta.__srcWidth = SRC_W;
+    resolvedMeta.__srcHeight = SRC_H;
+
+    let autoHeight = 0;
+    if (!autoHeight && br) {
+        const m = br.match(/(\d{3,4})p/i);
+        if (m) autoHeight = parseInt(m[1], 10) || 0;
+    }
+    if (!autoHeight) autoHeight = 1080;
+
+    const allowUpscale = videoSettings.allowUpscale === true;
+    const { targetH: targetHeight, reason: heightReason } = computeTargetHeight({
+        heightMode: videoSettings.heightMode,
+        targetHeight: videoSettings.targetHeight,
+        srcH: SRC_H,
+        fallbackH: autoHeight,
+        allowUpscale
+    });
+
+    const keepOriginal = String(videoSettings.heightMode || "auto").toLowerCase() === "source";
+    const { widthW, reason: widthReason } = keepOriginal
+      ? { widthW: null, reason: "keep-original" }
+      : computeWidthForScaling({
+          scaleMode: videoSettings.scaleMode,
+          targetWidth: videoSettings.targetWidth,
+          srcW: SRC_W
+        });
+
+    console.log("📐 scale decision:", {
+      scaleMode: videoSettings.scaleMode,
+      targetWidth: videoSettings.targetWidth,
+      widthW,
+      widthReason,
+      targetHeight,
+      heightReason,
+      srcW: SRC_W,
+      srcH: SRC_H
+    });
+
     const codecPref = String(videoSettings.videoCodec || "auto").toLowerCase();
-    const useHevc =
-      codecPref === "h265" ? true :
-      codecPref === "h264" ? false :
-      (targetHeight || EFFECTIVE_H) >= 2160;
-    const useNvenc = videoHwaccel === "nvenc";
-    const useQsv   = videoHwaccel === "qsv";
-    const useVaapi = videoHwaccel === "vaapi";
+
+    let hwMode = String(videoHwaccel || "off").toLowerCase();
+
+    const colorRange = String(videoSettings.colorRange || "auto").toLowerCase();
+    const colorPrim  = String(videoSettings.colorPrimaries || "auto").toLowerCase();
+
+    let colorMetaPushed = false;
+
+    const mapColorRange = (v) => {
+
+      if (v === "tv" || v === "limited") return "tv";
+      if (v === "pc" || v === "full") return "pc";
+      return null;
+    };
+
+    const normalizePrim = (p) => String(p || "").trim().toLowerCase();
+
+    const decideSdrColorMeta = (prim) => {
+      if (prim === "bt2020") {
+        return { primaries: "bt2020", trc: "bt2020-10", colorspace: "bt2020nc" };
+      }
+      if (prim === "bt709") {
+        return { primaries: "bt709", trc: "bt709", colorspace: "bt709" };
+      }
+      return { primaries: prim, trc: null, colorspace: null };
+    };
+
+    const pushColorMetadata = () => {
+      if (colorMetaPushed) return;
+      colorMetaPushed = true;
+
+      const cr = mapColorRange(colorRange);
+      if (cr) args.push("-color_range", cr);
+
+      const prim = normalizePrim(colorPrim);
+      if (!prim || prim === "auto") return;
+
+      const m = decideSdrColorMeta(prim);
+      if (m.primaries)  args.push("-color_primaries", m.primaries);
+      if (m.trc)        args.push("-color_trc", m.trc);
+      if (m.colorspace) args.push("-colorspace", m.colorspace);
+    };
+
+    const buildSetParams = () => {
+      const prim = normalizePrim(colorPrim);
+      if (!prim || prim === "auto") return null;
+
+      const m = decideSdrColorMeta(prim);
+      const parts = [];
+      const cr = mapColorRange(colorRange);
+      if (cr) parts.push(`range=${cr}`);
+
+      if (m.primaries)  parts.push(`color_primaries=${m.primaries}`);
+      if (m.trc)        parts.push(`color_trc=${m.trc}`);
+      if (m.colorspace) parts.push(`colorspace=${m.colorspace}`);
+
+      return parts.length ? `setparams=${parts.join(":")}` : null;
+    };
+
+      const codecConfig = {
+        'auto': {
+            name: 'H.264',
+            bitDepth: 8,
+            encoder: 'h264',
+            format: 'mp4'
+        },
+        'h264': {
+            name: 'H.264 8-bit',
+            bitDepth: 8,
+            encoder: 'h264',
+            format: 'mp4'
+        },
+        'h264_10bit': {
+            name: 'H.264 10-bit',
+            bitDepth: 10,
+            encoder: 'h264_10bit',
+            format: 'mp4'
+        },
+        'h265': {
+            name: 'H.265/HEVC 8-bit',
+            bitDepth: 8,
+            encoder: 'hevc',
+            format: 'mp4'
+        },
+        'h265_10bit': {
+            name: 'H.265/HEVC 10-bit',
+            bitDepth: 10,
+            encoder: 'hevc_10bit',
+            format: 'mp4'
+        },
+        'av1': {
+            name: 'AV1 8-bit',
+            bitDepth: 8,
+            encoder: 'av1',
+            format: 'mp4'
+        },
+        'av1_10bit': {
+            name: 'AV1 10-bit',
+            bitDepth: 10,
+            encoder: 'av1_10bit',
+            format: 'mp4'
+        },
+        'vp9': {
+            name: 'VP9 8-bit',
+            bitDepth: 8,
+            encoder: 'vp9',
+            format: 'webm'
+        },
+        'vp9_10bit': {
+            name: 'VP9 10-bit',
+            bitDepth: 10,
+            encoder: 'vp9_10bit',
+            format: 'webm'
+        },
+        'x264': {
+            name: 'x264 (CPU)',
+            bitDepth: 8,
+            encoder: 'libx264',
+            format: 'mp4'
+        },
+        'prores': {
+            name: 'Apple ProRes 422',
+            bitDepth: 10,
+            encoder: 'prores',
+            format: 'mov'
+        },
+        'copy': {
+            name: 'Orijinal Codec',
+            bitDepth: null,
+            encoder: 'copy',
+            format: null
+        }
+    };
+
+    let selectedCodec = codecConfig[codecPref] || codecConfig["auto"];
+    console.log(`🎬 Selected codec: ${selectedCodec.name} (${selectedCodec.encoder})`);
+    if (selectedCodec.format && selectedCodec.format !== format) {
+      const oldFmt = format;
+      format = selectedCodec.format;
+      console.log(`📦 Container changed: ${oldFmt} -> ${format}`);
+    }
+
+    if (!outputPath || !outputFileName) {
+      const built = buildUniqueOut(basename, format);
+      outputFileName = built.fileName;
+      outputPath = built.outPath;
+    } else {
+      if (!outputPath.endsWith(`.${format}`)) {
+        const built = buildUniqueOut(basename, format);
+        outputFileName = built.fileName;
+        outputPath = built.outPath;
+      }
+    }
+
+    let caps = null;
+    try {
+      caps = await getFfmpegCaps(ffmpegBin);
+    } catch (e) {
+      console.warn("⚠️ getFfmpegCaps failed:", e?.message || e);
+      caps = null;
+    }
+
+    const capOk = (k) => !!(caps && caps[k] && caps[k].ok);
+    const wantsAv1 = selectedCodec.encoder === "av1" || selectedCodec.encoder === "av1_10bit";
+    const wants10  = selectedCodec.encoder.endsWith("_10bit");
+
+    if (hwMode === "nvenc" && wantsAv1) {
+      const needKey = wants10 ? "av1_nvenc_10bit" : "av1_nvenc";
+      if (!capOk(needKey)) {
+        if (capOk("libsvtav1")) {
+          console.log(`⚠️ ${needKey} unsupported → fallback: software libsvtav1 (keep AV1).`);
+          hwMode = "off";
+        } else {
+          console.log(`⚠️ ${needKey} unsupported and no libsvtav1 → fallback: HEVC NVENC.`);
+          selectedCodec = wants10 ? codecConfig["h265_10bit"] : codecConfig["h265"];
+        }
+      }
+    }
+
+    if (hwMode === "nvenc" && selectedCodec.encoder === "h264_10bit" && !capOk("h264_nvenc_10bit")) {
+      console.log("⚠️ h264_nvenc 10-bit unsupported → fallback: h264 8-bit.");
+      selectedCodec = codecConfig["h264"];
+    }
+
+    if (hwMode === "nvenc" && selectedCodec.encoder === "hevc_10bit" && !capOk("hevc_nvenc_10bit")) {
+      console.log("⚠️ hevc_nvenc 10-bit unsupported → fallback: hevc 8-bit.");
+      selectedCodec = codecConfig["h265"];
+    }
+
+    const useNvenc = hwMode === "nvenc";
+    const useQsv   = hwMode === "qsv";
+    const useVaapi = hwMode === "vaapi";
+
+    const qsvPixFmtFor = (enc, bitDepth) => {
+      if (bitDepth === 10 || String(enc || "").includes("10bit") || String(enc || "").endsWith("_10bit")) return "p010le";
+      return "nv12";
+    };
+
+    const normalizeQsvProfile = (enc, rawProfile) => {
+      const p = String(rawProfile || "").trim().toLowerCase();
+      if (enc === "hevc" || enc === "hevc_10bit") {
+        if (enc === "hevc_10bit") return "main10";
+        return (p === "main10") ? "main10" : "main";
+      }
+      if (["baseline", "main", "high"].includes(p)) return p;
+      return "high";
+    };
 
     let explicitBv = null;
     if (isVidMb || isVidKb) {
-      explicitBv = isVidMb ? br.replace(/m$/i, "M") : br;
+        explicitBv = isVidMb ? br.replace(/m$/i, "M") : br;
     }
 
-        if (useNvenc) {
-          const nvencPreset = videoSettings.nvencSettings?.preset || NVENC_PRESET;
-          const nvencQuality = videoSettings.nvencSettings?.quality || NVENC_Q;
-          if (useHevc) {
-            args.push(
-              "-c:v", "hevc_nvenc",
-              "-preset", nvencPreset,
-              "-rc:v", "vbr"
-            );
+    let pixFmtAlreadySet = false;
+    const pushPixFmt = (fmt) => {
+      if (!fmt) return;
+      if (pixFmtAlreadySet) return;
+      args.push("-pix_fmt", fmt);
+      pixFmtAlreadySet = true;
+    };
+
+    if (useNvenc) {
+    const nvencPreset = videoSettings.nvencSettings?.preset || NVENC_PRESET;
+    const nvencQuality = videoSettings.nvencSettings?.quality || NVENC_Q;
+    const nvencTune = videoSettings.nvencSettings?.tune || null;
+    const nvencProfile = videoSettings.nvencSettings?.profile || 'high';
+    const nvencLevel = videoSettings.nvencSettings?.level || null;
+    const validNvencTunes = ['hq', 'll', 'ull', 'lossless'];
+
+    let finalNvencTune = null;
+    if (nvencTune) {
+      if (validNvencTunes.includes(nvencTune)) {
+        finalNvencTune = nvencTune;
+      } else {
+        const tuneMap = {
+          'film': 'hq',
+          'animation': 'hq',
+          'grain': 'hq',
+          'fastdecode': 'll',
+          'zerolatency': 'll',
+          'psnr': 'hq',
+          'ssim': 'hq'
+        };
+        finalNvencTune = tuneMap[nvencTune] || 'hq';
+        console.log(`🔄 NVENC tune conversion: ${nvencTune} -> ${finalNvencTune}`);
+      }
+    }
+
+  switch (selectedCodec.encoder) {
+    case "h264":
+          args.push("-c:v", "h264_nvenc");
+          pushPixFmt("yuv420p");
+          args.push("-profile:v", nvencProfile);
+          if (nvencLevel && nvencLevel !== 'auto') args.push("-level:v", nvencLevel);
+          break;
+
+    case 'x264':
+    case 'libx264':
+      args.push("-c:v", "h264_nvenc");
+      pushPixFmt("yuv420p");
+      args.push("-profile:v", nvencProfile);
+      if (nvencLevel && nvencLevel !== 'auto') {
+        args.push("-level:v", nvencLevel);
+      }
+      break;
+
+    case "h264_10bit":
+      args.push("-c:v", "h264_nvenc"); pushPixFmt("p010le");
+      if (nvencProfile && nvencProfile !== 'high') {
+        args.push("-profile:v", nvencProfile);
+      }
+      if (nvencLevel && nvencLevel !== 'auto') {
+        args.push("-level:v", nvencLevel);
+      }
+      break;
+
+    case "hevc":
+      args.push("-c:v", "hevc_nvenc");
+      if (nvencProfile && nvencProfile !== 'main') {
+        args.push("-profile:v", nvencProfile);
+      }
+      if (nvencLevel && nvencLevel !== 'auto') {
+        args.push("-level:v", nvencLevel);
+      }
+      break;
+
+    case "hevc_10bit":
+      args.push("-c:v", "hevc_nvenc"); pushPixFmt("p010le");
+      if (nvencProfile && nvencProfile !== 'main10') {
+        args.push("-profile:v", nvencProfile);
+      }
+      if (nvencLevel && nvencLevel !== 'auto') {
+        args.push("-level:v", nvencLevel);
+      }
+      break;
+
+    case "av1":
+      args.push("-c:v", "av1_nvenc");
+      if (nvencProfile && nvencProfile !== 'main') {
+        args.push("-profile:v", nvencProfile);
+      }
+      if (nvencLevel && nvencLevel !== 'auto') {
+        args.push("-level:v", nvencLevel);
+      }
+      break;
+
+    case "av1_10bit":
+      args.push("-c:v", "av1_nvenc"); pushPixFmt("p010le");
+      if (nvencProfile && nvencProfile !== 'main') {
+        args.push("-profile:v", nvencProfile);
+      }
+      if (nvencLevel && nvencLevel !== 'auto') {
+        args.push("-level:v", nvencLevel);
+      }
+      break;
+
+    default:
+      args.push("-c:v", "h264_nvenc");
+      pushPixFmt("yuv420p");
+      args.push("-profile:v", nvencProfile);
+      if (nvencLevel && nvencLevel !== 'auto') {
+        args.push("-level:v", nvencLevel);
+      }
+      break;
+  }
+
+    const rawNvencPreset = videoSettings.nvencSettings?.preset || NVENC_PRESET;
+    const rawNvencQuality = videoSettings.nvencSettings?.quality || NVENC_Q;
+    const { preset: nvPreset, tune: legacyTune } = normalizeNvencPresetAndTune(rawNvencPreset);
+    const effectiveTune = finalNvencTune || legacyTune;
+
+    args.push("-preset", nvPreset);
+    if (effectiveTune) {
+      if (validNvencTunes.includes(effectiveTune)) {
+        args.push("-tune", effectiveTune);
+      } else {
+        console.log(`⚠️ Skipping invalid NVENC tune: ${effectiveTune}`);
+      }
+    }
+
+    args.push("-rc:v", "vbr");
+    if (selectedCodec.encoder === "h264") {
+      const prim = normalizePrim(colorPrim);
+      if (prim === "bt2020") {
+        const full = (mapColorRange(colorRange) === "pc") ? 1 : 0;
+        args.push(
+          "-bsf:v",
+          `h264_metadata=colour_primaries=9:transfer_characteristics=14:matrix_coefficients=9:video_full_range_flag=${full}`
+        );
+      }
+    }
+
+    if (explicitBv) {
+      args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
+    } else {
+      args.push("-cq:v", nvencQuality);
+    }
+  }
+      else if (useQsv) {
+      const qsvPreset = videoSettings.qsvSettings?.preset || QSV_PRESET;
+      const qsvQuality = videoSettings.qsvSettings?.quality || QSV_Q;
+      const qsvTune = videoSettings.qsvSettings?.tune || null;
+      const qsvProfileRaw = videoSettings.qsvSettings?.profile || 'high';
+      const qsvLevel = videoSettings.qsvSettings?.level || null;
+      const qsvEnc = selectedCodec.encoder;
+      const qsvProfile = normalizeQsvProfile(qsvEnc, qsvProfileRaw);
+      const qsvPixFmt = qsvPixFmtFor(qsvEnc, selectedCodec.bitDepth || 8);
+      const qsvPresetNorm = normalizeSwPreset(qsvPreset);
+      let canUseQsvPresetFlag = false;
+
+      switch(selectedCodec.encoder) {
+        case 'h264':
+          args.push("-c:v", "h264_qsv");
+          args.push("-pix_fmt", qsvPixFmt);
+          args.push("-profile:v", qsvProfile);
+          canUseQsvPresetFlag = true;
+          if (qsvLevel && qsvLevel !== 'auto') {
+            args.push("-level:v", qsvLevel);
+          }
+          break;
+        case 'h264_10bit':
+          args.push("-c:v", "h264_qsv", "-pix_fmt", qsvPixFmt);
+          args.push("-profile:v", qsvProfile);
+          canUseQsvPresetFlag = true;
+          if (qsvLevel && qsvLevel !== 'auto') {
+            args.push("-level:v", qsvLevel);
+          }
+          break;
+        case 'hevc':
+          args.push("-c:v", "hevc_qsv");
+          args.push("-pix_fmt", qsvPixFmt);
+          args.push("-profile:v", qsvProfile);
+          canUseQsvPresetFlag = true;
+          if (qsvLevel && qsvLevel !== 'auto') {
+            args.push("-level:v", qsvLevel);
+          }
+          break;
+        case 'hevc_10bit':
+          args.push("-c:v", "hevc_qsv", "-pix_fmt", qsvPixFmt);
+          args.push("-profile:v", qsvProfile);
+          canUseQsvPresetFlag = true;
+          if (qsvLevel && qsvLevel !== 'auto') {
+            args.push("-level:v", qsvLevel);
+          }
+          break;
+        case "av1":
+          if (capOk("libsvtav1")) {
+            const svtP = presetToSvtPreset(qsvPresetNorm);
+            args.push("-c:v", "libsvtav1", "-preset", String(svtP));
           } else {
-            args.push(
-              "-c:v", "h264_nvenc",
-              "-preset", nvencPreset,
-              "-rc:v", "vbr"
-            );
+            const cpuUsed = presetToAomCpuUsed(qsvPresetNorm);
+            args.push("-c:v", "libaom-av1", "-cpu-used", String(cpuUsed), "-row-mt", "1");
           }
-
-          if (explicitBv) {
-            args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
+          break;
+        case "av1_10bit":
+          if (capOk("libsvtav1")) {
+            const svtP = presetToSvtPreset(qsvPresetNorm);
+            args.push("-c:v", "libsvtav1", "-preset", String(svtP), "-pix_fmt", "yuv420p10le");
           } else {
-            args.push("-cq:v", nvencQuality);
+            const cpuUsed = presetToAomCpuUsed(qsvPresetNorm);
+            args.push("-c:v", "libaom-av1", "-cpu-used", String(cpuUsed), "-row-mt", "1", "-pix_fmt", "yuv420p10le");
           }
-        } else if (useQsv) {
-          const qsvPreset = videoSettings.qsvSettings?.preset || QSV_PRESET;
-          const qsvQuality = videoSettings.qsvSettings?.quality || QSV_Q;
-          if (useHevc) {
-            args.push("-c:v", "hevc_qsv", "-preset", qsvPreset);
+          break;
+        default:
+          args.push("-c:v", "h264_qsv");
+          args.push("-pix_fmt", qsvPixFmt);
+          args.push("-profile:v", qsvProfile);
+          canUseQsvPresetFlag = true;
+          if (qsvLevel && qsvLevel !== 'auto') {
+            args.push("-level:v", qsvLevel);
+          }
+      }
+
+      if (canUseQsvPresetFlag) {
+        args.push("-preset", qsvPresetNorm);
+      }
+
+      if (qsvTune) {
+        console.log(`⚠️ QSV: ignoring tune=${qsvTune} (not supported reliably)`);
+      }
+
+      if (explicitBv) {
+        args.push("-b:v", explicitBv);
+      } else {
+        args.push("-global_quality", qsvQuality, "-rc_mode", "vbr");
+      }
+    }
+    else if (useVaapi) {
+      const vaapiDevice = videoSettings.vaapiSettings?.device || VAAPI_DEVICE;
+      const vaapiQuality = videoSettings.vaapiSettings?.quality || VAAPI_QUALITY;
+      const vaapiTune = videoSettings.vaapiSettings?.tune || null;
+      const vaapiProfile = videoSettings.vaapiSettings?.profile || 'high';
+      const vaapiLevel = videoSettings.vaapiSettings?.level || null;
+
+      const sp = buildSetParams();
+      let vaapiFilter = sp ? `${sp},format=nv12,hwupload` : "format=nv12,hwupload";
+
+      const keepOriginal = String(videoSettings.heightMode || "auto").toLowerCase() === "source";
+      if (!keepOriginal) {
+        const needScale = (widthW != null) || (targetHeight > 0);
+        if (needScale) {
+          const wExpr = (widthW != null) ? widthW : -2;
+          const hExpr = (targetHeight > 0) ? targetHeight : -2;
+          vaapiFilter += `,scale_vaapi=w=${wExpr}:h=${hExpr}`;
+        }
+      }
+      if (targetFps) vaapiFilter += `,fps=${targetFps}`;
+
+      args.push("-vaapi_device", vaapiDevice, "-vf", vaapiFilter);
+
+      switch(selectedCodec.encoder) {
+        case 'h264':
+          args.push("-c:v", "h264_vaapi");
+          args.push("-profile:v", vaapiProfile);
+          if (vaapiLevel && vaapiLevel !== 'auto') {
+            args.push("-level:v", vaapiLevel);
+          }
+          break;
+        case 'h264_10bit':
+          args.push("-c:v", "h264_vaapi", "-pix_fmt", "p010le");
+          args.push("-profile:v", vaapiProfile);
+          if (vaapiLevel && vaapiLevel !== 'auto') {
+            args.push("-level:v", vaapiLevel);
+          }
+          break;
+        case 'hevc':
+          args.push("-c:v", "hevc_vaapi");
+          args.push("-profile:v", vaapiProfile);
+          if (vaapiLevel && vaapiLevel !== 'auto') {
+            args.push("-level:v", vaapiLevel);
+          }
+          break;
+        case 'hevc_10bit':
+          args.push("-c:v", "hevc_vaapi", "-pix_fmt", "p010le");
+          args.push("-profile:v", vaapiProfile);
+          if (vaapiLevel && vaapiLevel !== 'auto') {
+            args.push("-level:v", vaapiLevel);
+          }
+          break;
+        case 'av1':
+          args.push("-c:v", "av1_vaapi");
+          args.push("-profile:v", vaapiProfile);
+          if (vaapiLevel && vaapiLevel !== 'auto') {
+            args.push("-level:v", vaapiLevel);
+          }
+          break;
+        case 'av1_10bit':
+          args.push("-c:v", "av1_vaapi", "-pix_fmt", "p010le");
+          args.push("-profile:v", vaapiProfile);
+          if (vaapiLevel && vaapiLevel !== 'auto') {
+            args.push("-level:v", vaapiLevel);
+          }
+          break;
+        default:
+          args.push("-c:v", "h264_vaapi");
+          args.push("-profile:v", vaapiProfile);
+          if (vaapiLevel && vaapiLevel !== 'auto') {
+            args.push("-level:v", vaapiLevel);
+          }
+      }
+
+      if (vaapiTune) args.push("-tune", vaapiTune);
+
+      if (explicitBv) {
+        args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
+      } else {
+        args.push("-global_quality", vaapiQuality);
+      }
+    }
+    else {
+      const swQuality = videoSettings.swSettings?.quality || '23';
+      const swPreset  = normalizeSwPreset(videoSettings.swSettings?.preset || VIDEO_PRESET || "veryfast");
+      const swTune = String(videoSettings.swSettings?.tune ?? '').trim();
+      const swProfile = videoSettings.swSettings?.profile || 'high';
+      const swLevel = videoSettings.swSettings?.level || null;
+
+      let swProfileEff = swProfile;
+      if (selectedCodec.encoder === "h264_10bit") swProfileEff = "high10";
+      if (selectedCodec.encoder === "hevc") swProfileEff = "main";
+      if (selectedCodec.encoder === "hevc_10bit") swProfileEff = "main10";
+
+      const VP9_LEVELS = new Set([
+        "1","1.1","2","2.1","3","3.1","4","4.1",
+        "5","5.1","5.2","6","6.1","6.2"
+      ]);
+
+      switch (selectedCodec.encoder) {
+        case 'h264':
+        case 'x264':
+          args.push("-c:v", "libx264", "-preset", swPreset);
+          if (swProfileEff) args.push("-profile:v", swProfileEff);
+          if (swLevel && swLevel !== 'auto') args.push("-level:v", swLevel);
+          break;
+        case 'h264_10bit':
+          args.push("-c:v", "libx264", "-preset", swPreset);
+          pushPixFmt("yuv420p10le");
+          args.push("-profile:v", "high10");
+          if (swLevel && swLevel !== 'auto') args.push("-level:v", swLevel);
+          break;
+        case 'hevc':
+          args.push("-c:v", "libx265", "-preset", swPreset);
+          pushPixFmt("yuv420p");
+          if (swTune && swTune !== 'auto') args.push("-tune", swTune);
+          args.push("-profile:v", "main");
+          if (swLevel && swLevel !== 'auto') args.push("-level:v", swLevel);
+          break;
+        case 'hevc_10bit':
+          args.push("-c:v", "libx265", "-preset", swPreset);
+          pushPixFmt("yuv420p10le");
+          if (swTune && swTune !== 'auto') args.push("-tune", swTune);
+          args.push("-profile:v", "main10");
+          if (swLevel && swLevel !== 'auto') args.push("-level:v", swLevel);
+          break;
+        case 'av1':
+          if (capOk("libsvtav1")) {
+            const svtP = presetToSvtPreset(swPreset);
+            args.push("-c:v", "libsvtav1", "-preset", String(svtP));
           } else {
-            args.push("-c:v", "h264_qsv", "-preset", qsvPreset);
+            const cpuUsed = presetToAomCpuUsed(swPreset);
+            args.push("-c:v", "libaom-av1", "-cpu-used", String(cpuUsed), "-row-mt", "1");
           }
-
-          if (explicitBv) {
-            args.push("-b:v", explicitBv);
+          break;
+        case 'av1_10bit':
+          if (capOk("libsvtav1")) {
+            const svtP = presetToSvtPreset(swPreset);
+            args.push("-c:v", "libsvtav1", "-preset", String(svtP), "-pix_fmt", "yuv420p10le");
           } else {
-            args.push(
-              "-global_quality", qsvQuality,
-              "-rc_mode", "vbr"
-            );
+            const cpuUsed = presetToAomCpuUsed(swPreset);
+            args.push("-c:v", "libaom-av1", "-cpu-used", String(cpuUsed), "-row-mt", "1", "-pix_fmt", "yuv420p10le");
           }
-        } else if (useVaapi) {
-          const vaapiDevice  = videoSettings.vaapiSettings?.device  || VAAPI_DEVICE;
-          const vaapiQuality = videoSettings.vaapiSettings?.quality || VAAPI_QUALITY;
-          let vaapiFilter = "format=nv12,hwupload";
-
-          if (targetHeight > 0) {
-            vaapiFilter += `,scale_vaapi=w=-2:h=${targetHeight}`;
-          }
-
-          if (targetFps) {
-            vaapiFilter += `,fps=${targetFps}`;
-          }
-
-          args.push(
-            "-vaapi_device", vaapiDevice,
-            "-vf", vaapiFilter,
-            "-c:v", useHevc ? "hevc_vaapi" : "h264_vaapi"
-          );
-
-          if (explicitBv) {
-            args.push(
-              "-b:v",     explicitBv,
-              "-maxrate", explicitBv,
-              "-bufsize", `${explicitBv}*2`
-            );
-          } else {
-            args.push("-global_quality", vaapiQuality);
+          break;
+        case 'vp9': {
+          const cpuUsed = presetToVp9CpuUsed(swPreset);
+          const deadline = presetToVp9Deadline(swPreset);
+          args.push("-c:v", "libvpx-vp9", "-cpu-used", String(cpuUsed), "-deadline", deadline, "-row-mt", "1", "-b:v", "0");
+          const crf = swCrf != null ? String(swCrf) : String(swQuality || "30");
+          args.push("-crf", crf);
+          if (swTune && swTune !== 'auto') args.push("-tune", swTune);
+          if (swProfile && swProfile !== '0') args.push("-profile:v", swProfile);
+          if (swLevel && swLevel !== 'auto') {
+            const lvlStr = String(swLevel);
+            if (VP9_LEVELS.has(lvlStr)) {
+              args.push("-level:v", lvlStr);
+            } else {
+              console.log(`⚠️ VP9 level "${lvlStr}" geçersiz → -level:v atlanıyor`);
             }
-          } else {
-          if (useHevc) {
-            args.push("-c:v", "libx265", "-preset", VIDEO_PRESET);
-          } else {
-            args.push("-c:v", "libx264", "-preset", VIDEO_PRESET, "-tune", "film");
           }
+         break;
+        }
+        case 'vp9_10bit': {
+          const cpuUsed = presetToVp9CpuUsed(swPreset);
+          const deadline = presetToVp9Deadline(swPreset);
+          args.push(
+            "-c:v",
+            "libvpx-vp9",
+            "-cpu-used",
+            String(cpuUsed),
+            "-deadline",
+            deadline,
+            "-row-mt",
+            "1",
+            "-b:v",
+            "0",
+            "-pix_fmt",
+            "yuv420p10le"
+          );
+          const crf = swCrf != null ? String(swCrf) : String(swQuality || "30");
+          args.push("-crf", crf);
+          if (swTune && swTune !== 'auto') args.push("-tune", swTune);
+          if (swProfile && swProfile !== '2') args.push("-profile:v", swProfile);
+          if (swLevel && swLevel !== 'auto') {
+            const lvlStr = String(swLevel);
+            if (VP9_LEVELS.has(lvlStr)) {
+              args.push("-level:v", lvlStr);
+            } else {
+              console.log(`⚠️ VP9 10-bit level "${lvlStr}" geçersiz → -level:v atlanıyor`);
+            }
+          }
+          break;
+        }
+       case 'prores': {
+          const p = proresProfile;
+          args.push("-c:v", "prores_ks", "-profile:v", String(p));
+          if (p >= 4) pushPixFmt("yuv444p10le");
+          else pushPixFmt("yuv422p10le");
 
-          if (explicitBv) {
-            args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
-          } else {
-            const crf = br === "auto" || br === "0" ? "23" : "21";
+          break;
+        }
+        case 'copy':
+          args.push("-c:v", "copy");
+          break;
+        default:
+          args.push("-c:v", "libx264", "-preset", VIDEO_PRESET);
+          if (swTune && swTune !== 'auto') args.push("-tune", swTune);
+          args.push("-profile:v", swProfile);
+          if (swLevel && swLevel !== 'auto') args.push("-level:v", swLevel);
+      }
+
+      if (explicitBv && selectedCodec.encoder !== 'copy') {
+        args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
+      } else if (!explicitBv && selectedCodec.encoder !== 'copy') {
+        if (swCrf != null) {
+          if (!['vp9', 'vp9_10bit', 'prores'].includes(selectedCodec.encoder)) {
+            args.push("-crf", String(swCrf));
+          }
+        } else {
+          const crf = br === "auto" || br === "0" ? "23" : "21";
+          if (!['vp9', 'vp9_10bit', 'prores'].includes(selectedCodec.encoder)) {
             args.push("-crf", crf);
           }
         }
-
-        if (!useVaapi && targetHeight > 0) {
-          args.push("-vf", `scale=-2:${targetHeight}`);
-        }
-
-        if (!useVaapi && targetFps) {
-          args.push("-r", String(targetFps));
-        }
-
-        if (!useVaapi) {
-          args.push(
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-g",
-            "60",
-            "-keyint_min",
-            "60",
-            "-sc_threshold",
-            "0"
-          );
-        } else {
-          args.push(
-            "-movflags", "+faststart",
-            "-g", "60",
-            "-keyint_min", "60",
-            "-sc_threshold", "0"
-          );
-        }
-
-        if (audioCodec === 'copy') {
-                args.push("-c:a", "copy");
-            } else {
-                args.push("-c:a", audioCodec);
-                if (audioCodec === 'flac') {
-                    args.push("-compression_level", "5");
-                } else if (audioBitrate !== 'original' && audioBitrate !== 'lossless') {
-                    args.push("-b:a", audioBitrate);
-                }
-
-                if (audioCodec !== 'copy' && audioCodec !== 'flac') {
-                    if (audioChannels === 'stereo') {
-                        args.push("-ac", "2");
-                    } else if (audioChannels === 'mono') {
-                        args.push("-ac", "1");
-                    }
-                } else if (audioCodec === 'flac' && audioChannels !== 'original') {
-                    args.push("-ac", audioChannels === 'stereo' ? "2" : "1");
-                }
-
-                if (FINAL_SAMPLE_RATE !== null) {
-                    args.push("-ar", String(FINAL_SAMPLE_RATE));
-                }
-            }
       }
+    }
+
+    const SRC_H2 = Number(resolvedMeta.__srcHeight) || 0;
+    const tgtH = targetHeight > 0 ? targetHeight : 0;
+
+    if (!useVaapi && selectedCodec.encoder !== 'copy') {
+      const keepOriginal = String(videoSettings.heightMode || "auto").toLowerCase() === "source";
+      if (!keepOriginal) {
+        const needScale = (widthW != null) || (targetHeight > 0);
+        if (needScale) {
+          const wExpr = (widthW != null) ? widthW : -2;
+          const hExpr = (targetHeight > 0) ? targetHeight : -2;
+          args.push("-vf", `scale=${wExpr}:${hExpr}`);
+        }
+      }
+    }
+
+    if (!useVaapi && selectedCodec.encoder !== "copy") {
+      const sp = buildSetParams();
+      if (sp) {
+        const vfIdx = args.lastIndexOf("-vf");
+        if (vfIdx !== -1 && typeof args[vfIdx + 1] === "string") {
+          args[vfIdx + 1] = `${args[vfIdx + 1]},${sp}`;
+        } else {
+          args.push("-vf", sp);
+        }
+      }
+    }
+
+    if (useQsv && !useVaapi && selectedCodec.encoder !== 'copy') {
+      const qsvPixFmt = (selectedCodec.bitDepth === 10) ? "p010le" : "nv12";
+      const vfIdx = args.lastIndexOf("-vf");
+      if (vfIdx !== -1 && typeof args[vfIdx + 1] === "string") {
+        args[vfIdx + 1] = `${args[vfIdx + 1]},format=${qsvPixFmt}`;
+      } else {
+        args.push("-vf", `format=${qsvPixFmt}`);
+      }
+    }
+
+    if (!useVaapi && targetFps && selectedCodec.encoder !== 'copy') {
+        args.push("-r", String(targetFps));
+    }
+
+    if (!useVaapi && selectedCodec.encoder !== 'copy') {
+
+    if (!useNvenc && !useQsv && selectedCodec.encoder !== 'prores') {
+      if (!pixFmtAlreadySet) {
+        if (!selectedCodec.bitDepth || selectedCodec.bitDepth === 8) pushPixFmt("yuv420p");
+        else if (selectedCodec.bitDepth === 10) pushPixFmt("yuv420p10le");
+      }
+    }
+
+      if (format === "mp4") {
+        args.push("-movflags", "+faststart+write_colr");
+      }
+
+      if (selectedCodec.encoder.includes('264') || selectedCodec.encoder.includes('265')) {
+        args.push("-g", "60", "-keyint_min", "60", "-sc_threshold", "0");
+      }
+    } else if (useVaapi) {
+        args.push(
+          "-movflags", "+faststart",
+          "-g", "60",
+          "-keyint_min", "60",
+          "-sc_threshold", "0"
+        );
+    }
+
+    if (audioCodec === 'copy') {
+        args.push("-c:a", "copy");
+    } else {
+        args.push("-c:a", audioCodec);
+        if (audioCodec === 'flac') {
+            args.push("-compression_level", "5");
+        } else if (audioBitrate !== 'original' && audioBitrate !== 'lossless') {
+            args.push("-b:a", audioBitrate);
+        }
+
+        if (audioCodec !== 'copy' && audioCodec !== 'flac') {
+            if (audioChannels === 'stereo') {
+                args.push("-ac", "2");
+            } else if (audioChannels === 'mono') {
+                args.push("-ac", "1");
+            }
+        } else if (audioCodec === 'flac' && audioChannels !== 'original') {
+            args.push("-ac", audioChannels === 'stereo' ? "2" : "1");
+        }
+
+        if (FINAL_SAMPLE_RATE !== null) {
+            args.push("-ar", String(FINAL_SAMPLE_RATE));
+        }
+    }
+}
     } else {
       switch (format) {
         case "mp3":
@@ -1050,14 +1867,6 @@ export async function convertMedia(
       }
     }
 
-    if (stereoConvert === "force") {
-          args.push("-ac", "2");
-        } else if (audioChannels === 'stereo') {
-          args.push("-ac", "2");
-        } else if (audioChannels === 'mono') {
-          args.push("-ac", "1");
-        }
-
     const afilters = [];
 
     if (!isVideo && atempoAdjust !== "none") {
@@ -1107,6 +1916,12 @@ export async function convertMedia(
     if (afilters.length > 0) {
       const filterStr = afilters.join(",");
       args.push("-af", filterStr);
+    }
+
+    if (!outputPath || !outputFileName) {
+      const built = buildUniqueOut(basename, format);
+      outputFileName = built.fileName;
+      outputPath = built.outPath;
     }
 
     args.push(outputPath);
