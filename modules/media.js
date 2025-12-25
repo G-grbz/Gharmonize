@@ -497,6 +497,65 @@ export async function convertMedia(
    return Math.min(max, Math.max(min, n));
  };
 
+  const clampNonNegInt = (v, fallback = 0) => {
+    const n = Math.floor(Number(v));
+    if (!Number.isFinite(n) || n < 0) return fallback;
+    return n;
+  };
+
+  const normalizeHexColor = (c) => {
+    const s = String(c || '').trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s;
+    if (/^[0-9a-fA-F]{6}$/.test(s)) return `#${s}`;
+    return '#000000';
+  };
+
+  const ensureVfAppend = (args, frag) => {
+    if (!frag) return;
+    const i = args.lastIndexOf("-vf");
+    if (i !== -1 && typeof args[i + 1] === "string") {
+      args[i + 1] = `${args[i + 1]},${frag}`;
+    } else {
+      args.push("-vf", frag);
+    }
+  };
+
+  const buildOrientationFilter = (mode) => {
+    const m = String(mode || 'auto').toLowerCase();
+    if (m === '90cw') return "transpose=1";
+    if (m === '90ccw') return "transpose=2";
+    if (m === '180') return "transpose=2,transpose=2";
+    if (m === 'hflip') return "hflip";
+    if (m === 'vflip') return "vflip";
+    return null;
+  };
+
+  const buildCropEdgesFilter = (settings) => {
+    if (!settings?.cropEnabled) return null;
+    const L = clampNonNegInt(settings.cropLeft, 0);
+    const R = clampNonNegInt(settings.cropRight, 0);
+    const T = clampNonNegInt(settings.cropTop, 0);
+    const B = clampNonNegInt(settings.cropBottom, 0);
+    if ((L + R + T + B) <= 0) return null;
+    return `crop=in_w-${L + R}:in_h-${T + B}:${L}:${T}`;
+  };
+
+  const buildBorderFilter = (settings, targetWidth, targetHeight) => {
+    if (!settings?.borderEnabled) return null;
+    const bs = clampNonNegInt(settings.borderSize, 0);
+    if (!bs) return null;
+    const col = normalizeHexColor(settings.borderColor);
+
+    const tw = Number.isFinite(Number(targetWidth)) ? Number(targetWidth) : null;
+    const th = Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : null;
+
+    if (tw && th) {
+      return `pad=w=${tw}+${bs * 2}:h=${th}+${bs * 2}:x=${bs}:y=${bs}:color=${col}`;
+    }
+
+    return `pad=iw+${bs * 2}:ih+${bs * 2}:${bs}:${bs}:color=${col}`;
+  };
+
   const proresProfile =
     clampInt(videoSettings?.proresProfile, 0, 5) ??
     clampInt(videoSettings?.swSettings?.proresProfile, 0, 5) ??
@@ -775,7 +834,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   console.log(`🧭 Using FFmpeg: ${ffmpegBin}`);
 
   const result = await new Promise(async (resolve, reject) => {
-  const args = ["-hide_banner", "-nostdin", "-y", "-i", inputPath];
+  const args = ["-hide_banner", "-nostdin", "-y"];
+
+  const orientationMode = String(videoSettings?.orientation || 'auto').toLowerCase();
+    if (isVideo && orientationMode !== 'auto') {
+      args.push("-noautorotate");
+    }
+    args.push("-i", inputPath);
 
     if (isCanceled()) return reject(new Error("CANCELED"));
 
@@ -1010,21 +1075,28 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     let hwMode = String(videoHwaccel || "off").toLowerCase();
 
+    const resizeMode = String(videoSettings?.resizeMode || "scale").toLowerCase();
+    const cropEdgesFilter = buildCropEdgesFilter(videoSettings);
+    const orientFilter = buildOrientationFilter(videoSettings?.orientation);
+
+    const evenizeFilter = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+
     const colorRange = String(videoSettings.colorRange || "auto").toLowerCase();
     const colorPrim  = String(videoSettings.colorPrimaries || "auto").toLowerCase();
 
     let colorMetaPushed = false;
 
-    const mapColorRange = (v) => {
-
+    function mapColorRange(v) {
       if (v === "tv" || v === "limited") return "tv";
       if (v === "pc" || v === "full") return "pc";
       return null;
-    };
+    }
 
-    const normalizePrim = (p) => String(p || "").trim().toLowerCase();
+    function normalizePrim(p) {
+      return String(p || "").trim().toLowerCase();
+    }
 
-    const decideSdrColorMeta = (prim) => {
+    function decideSdrColorMeta(prim) {
       if (prim === "bt2020") {
         return { primaries: "bt2020", trc: "bt2020-10", colorspace: "bt2020nc" };
       }
@@ -1032,7 +1104,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         return { primaries: "bt709", trc: "bt709", colorspace: "bt709" };
       }
       return { primaries: prim, trc: null, colorspace: null };
-    };
+    }
 
     const pushColorMetadata = () => {
       if (colorMetaPushed) return;
@@ -1050,7 +1122,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       if (m.colorspace) args.push("-colorspace", m.colorspace);
     };
 
-    const buildSetParams = () => {
+    function buildSetParams() {
       const prim = normalizePrim(colorPrim);
       if (!prim || prim === "auto") return null;
 
@@ -1064,7 +1136,59 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       if (m.colorspace) parts.push(`colorspace=${m.colorspace}`);
 
       return parts.length ? `setparams=${parts.join(":")}` : null;
-    };
+    }
+
+    function buildResizeFilter({ widthW, targetHeight, resizeMode, borderColor }) {
+      const w = Number.isFinite(Number(widthW)) ? Number(widthW) : null;
+      const h = Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : 0;
+      const col = normalizeHexColor(borderColor);
+
+      if ((resizeMode === "crop" || resizeMode === "pad") && w && h > 0) {
+        if (resizeMode === "crop") {
+          return `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`;
+        }
+        return `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=${col}`;
+      }
+
+      const needScale = (widthW != null) || (targetHeight > 0);
+      if (!needScale) return null;
+      const wExpr = (widthW != null) ? widthW : -2;
+      const hExpr = (targetHeight > 0) ? targetHeight : -2;
+      return `scale=${wExpr}:${hExpr}`;
+    }
+
+    function buildBaseVf() {
+      const chain = [];
+
+      const sp = buildSetParams();
+      if (sp) chain.push(sp);
+
+      if (orientFilter) chain.push(orientFilter);
+      if (cropEdgesFilter) chain.push(cropEdgesFilter);
+
+      const colForPad = normalizeHexColor(videoSettings?.borderColor);
+      const resizeFrag = buildResizeFilter({
+        widthW,
+        targetHeight,
+        resizeMode,
+        borderColor: colForPad
+      });
+      if (resizeFrag) chain.push(resizeFrag);
+
+      const borderFilterNew = buildBorderFilter(
+        videoSettings,
+        widthW || null,
+        (targetHeight > 0) ? targetHeight : null
+      );
+      if (borderFilterNew) chain.push(borderFilterNew);
+
+      if (targetFps) chain.push(`fps=${targetFps}`);
+      chain.push(evenizeFilter);
+
+      return chain.length ? chain.join(",") : null;
+    }
+
+    const baseVf = buildBaseVf();
 
       const codecConfig = {
         'auto': {
@@ -1228,6 +1352,14 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       pixFmtAlreadySet = true;
     };
 
+    let vf = (!useVaapi && baseVf) ? baseVf : null;
+
+    if (vf && useQsv && selectedCodec.encoder !== "copy") {
+      const qsvPixFmt = (selectedCodec.bitDepth === 10) ? "p010le" : "nv12";
+      vf = `${vf},format=${qsvPixFmt}`;
+    }
+
+    if (vf) args.push("-vf", vf);
     if (useNvenc) {
     const nvencPreset = videoSettings.nvencSettings?.preset || NVENC_PRESET;
     const nvencQuality = videoSettings.nvencSettings?.quality || NVENC_Q;
@@ -1460,22 +1592,55 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       const vaapiTune = videoSettings.vaapiSettings?.tune || null;
       const vaapiProfile = videoSettings.vaapiSettings?.profile || 'high';
       const vaapiLevel = videoSettings.vaapiSettings?.level || null;
-
+      const pre = [];
       const sp = buildSetParams();
-      let vaapiFilter = sp ? `${sp},format=nv12,hwupload` : "format=nv12,hwupload";
+      if (sp) pre.push(sp);
+      if (orientFilter) pre.push(orientFilter);
+      if (cropEdgesFilter) pre.push(cropEdgesFilter);
 
+      const col = normalizeHexColor(videoSettings?.borderColor);
+      const wantBorder = !!videoSettings?.borderEnabled;
       const keepOriginal = String(videoSettings.heightMode || "auto").toLowerCase() === "source";
-      if (!keepOriginal) {
-        const needScale = (widthW != null) || (targetHeight > 0);
+      const needScale = !keepOriginal && ((widthW != null) || (targetHeight > 0));
+      const needCpuResize =
+        (resizeMode === "crop" || resizeMode === "pad") ||
+        (resizeMode === "scale" && wantBorder);
+
+      if (needCpuResize) {
+        const cpuResize = buildResizeFilter({
+          widthW,
+          targetHeight,
+          resizeMode: (resizeMode === "scale") ? "scale" : resizeMode,
+          borderColor: col
+        });
+        if (cpuResize) pre.push(cpuResize);
+
+        const borderFrag = buildBorderFilter(
+          videoSettings,
+          widthW || null,
+          (targetHeight > 0) ? targetHeight : null
+        );
+        if (borderFrag) pre.push(borderFrag);
+
+        pre.push(evenizeFilter);
+        pre.push("format=nv12", "hwupload");
+
+        let vaapiFilter = pre.join(",");
+        if (targetFps) vaapiFilter += `,fps=${targetFps}`;
+        args.push("-vaapi_device", vaapiDevice, "-vf", vaapiFilter);
+      } else {
+        pre.push(evenizeFilter);
+        pre.push("format=nv12", "hwupload");
+        let vaapiFilter = pre.join(",");
+
         if (needScale) {
           const wExpr = (widthW != null) ? widthW : -2;
           const hExpr = (targetHeight > 0) ? targetHeight : -2;
           vaapiFilter += `,scale_vaapi=w=${wExpr}:h=${hExpr}`;
         }
+        if (targetFps) vaapiFilter += `,fps=${targetFps}`;
+        args.push("-vaapi_device", vaapiDevice, "-vf", vaapiFilter);
       }
-      if (targetFps) vaapiFilter += `,fps=${targetFps}`;
-
-      args.push("-vaapi_device", vaapiDevice, "-vf", vaapiFilter);
 
       switch(selectedCodec.encoder) {
         case 'h264':
@@ -1683,44 +1848,6 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     const SRC_H2 = Number(resolvedMeta.__srcHeight) || 0;
     const tgtH = targetHeight > 0 ? targetHeight : 0;
-
-    if (!useVaapi && selectedCodec.encoder !== 'copy') {
-      const keepOriginal = String(videoSettings.heightMode || "auto").toLowerCase() === "source";
-      if (!keepOriginal) {
-        const needScale = (widthW != null) || (targetHeight > 0);
-        if (needScale) {
-          const wExpr = (widthW != null) ? widthW : -2;
-          const hExpr = (targetHeight > 0) ? targetHeight : -2;
-          args.push("-vf", `scale=${wExpr}:${hExpr}`);
-        }
-      }
-    }
-
-    if (!useVaapi && selectedCodec.encoder !== "copy") {
-      const sp = buildSetParams();
-      if (sp) {
-        const vfIdx = args.lastIndexOf("-vf");
-        if (vfIdx !== -1 && typeof args[vfIdx + 1] === "string") {
-          args[vfIdx + 1] = `${args[vfIdx + 1]},${sp}`;
-        } else {
-          args.push("-vf", sp);
-        }
-      }
-    }
-
-    if (useQsv && !useVaapi && selectedCodec.encoder !== 'copy') {
-      const qsvPixFmt = (selectedCodec.bitDepth === 10) ? "p010le" : "nv12";
-      const vfIdx = args.lastIndexOf("-vf");
-      if (vfIdx !== -1 && typeof args[vfIdx + 1] === "string") {
-        args[vfIdx + 1] = `${args[vfIdx + 1]},format=${qsvPixFmt}`;
-      } else {
-        args.push("-vf", `format=${qsvPixFmt}`);
-      }
-    }
-
-    if (!useVaapi && targetFps && selectedCodec.encoder !== 'copy') {
-        args.push("-r", String(targetFps));
-    }
 
     if (!useVaapi && selectedCodec.encoder !== 'copy') {
 
