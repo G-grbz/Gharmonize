@@ -11,7 +11,16 @@ export class VideoSettingsManager {
       heightMode: 'auto',
       targetHeight: '',
       allowUpscale: false,
-
+      orientation: 'auto',
+      resizeMode: 'scale',
+      cropEnabled: false,
+      cropLeft: '0',
+      cropRight: '0',
+      cropTop: '0',
+      cropBottom: '0',
+      borderEnabled: false,
+      borderSize: '0',
+      borderColor: '#000000',
       swSettings: {
         preset: 'veryfast',
         quality: '23',
@@ -22,7 +31,6 @@ export class VideoSettingsManager {
 
       colorRange: 'auto',
       colorPrimaries: 'auto',
-
       hwaccel: 'off',
       fps: 'source',
       videoCodec: 'auto',
@@ -204,6 +212,18 @@ export class VideoSettingsManager {
       this.videoSettings.heightMode = this.videoSettings.heightMode || 'auto';
       this.videoSettings.targetHeight = this.videoSettings.targetHeight ?? '';
       this.videoSettings.allowUpscale = !!this.videoSettings.allowUpscale;
+
+      this.videoSettings.orientation = this.videoSettings.orientation || 'auto';
+      this.videoSettings.resizeMode = this.videoSettings.resizeMode || 'scale';
+      this.videoSettings.cropEnabled = !!this.videoSettings.cropEnabled;
+      this.videoSettings.cropLeft = String(this.videoSettings.cropLeft ?? '0');
+      this.videoSettings.cropRight = String(this.videoSettings.cropRight ?? '0');
+      this.videoSettings.cropTop = String(this.videoSettings.cropTop ?? '0');
+      this.videoSettings.cropBottom = String(this.videoSettings.cropBottom ?? '0');
+      this.videoSettings.borderEnabled = !!this.videoSettings.borderEnabled;
+      this.videoSettings.borderSize = String(this.videoSettings.borderSize ?? '0');
+      this.videoSettings.borderColor = String(this.videoSettings.borderColor ?? '#000000');
+
       this.videoSettings.videoCodec = this.videoSettings.videoCodec || 'auto';
       this.videoSettings.proresProfile = String(this.videoSettings.proresProfile ?? '2');
       this.videoSettings.audioCodec = this.videoSettings.audioCodec || 'aac';
@@ -487,6 +507,16 @@ export class VideoSettingsManager {
     this.videoSettings.heightMode = v('#heightModeSelect') || 'auto';
     this.videoSettings.targetHeight = (this.videoSettings.heightMode === 'custom') ? v('#customHeightInput') : '';
     this.videoSettings.allowUpscale = (this.videoSettings.heightMode === 'custom') ? b('#allowUpscaleCheckbox') : false;
+    this.videoSettings.orientation = v('#orientationSelect') || 'auto';
+    this.videoSettings.resizeMode = v('#resizeModeSelect') || 'scale';
+    this.videoSettings.cropEnabled = b('#cropEnabledCheckbox');
+    this.videoSettings.cropLeft = v('#cropLeftInput') || '0';
+    this.videoSettings.cropRight = v('#cropRightInput') || '0';
+    this.videoSettings.cropTop = v('#cropTopInput') || '0';
+    this.videoSettings.cropBottom = v('#cropBottomInput') || '0';
+    this.videoSettings.borderEnabled = b('#borderEnabledCheckbox');
+    this.videoSettings.borderSize = v('#borderSizeInput') || '0';
+    this.videoSettings.borderColor = v('#borderColorInput') || '#000000';
     this.videoSettings.audioTranscodeEnabled = b('#audioTranscodeCheckbox');
     this.videoSettings.audioCodec = v('#audioCodecSelect') || 'aac';
     this.videoSettings.audioChannels = v('#audioChannelsSelect') || 'original';
@@ -809,6 +839,34 @@ export class VideoSettingsManager {
                   <span data-i18n="option.note">${this.t('option.note', 'Keep source FPS or choose a fixed FPS.')}</span>
                 </div>
               </div>
+
+              <div class="form-group">
+                <label for="orientationSelect" data-i18n="label.orientation">${this.t('label.orientation', 'Orientation')}</label>
+                <select id="orientationSelect">
+                  <option value="auto">${this.t('option.auto', 'Auto')}</option>
+                  <option value="none">${this.t('option.orientation.none', 'Disable autorotate')}</option>
+                  <option value="90cw">${this.t('option.orientation.90cw', 'Rotate 90° CW')}</option>
+                  <option value="90ccw">${this.t('option.orientation.90ccw', 'Rotate 90° CCW')}</option>
+                  <option value="180">${this.t('option.orientation.180', 'Rotate 180°')}</option>
+                  <option value="hflip">${this.t('option.orientation.hflip', 'Flip Horizontal')}</option>
+                  <option value="vflip">${this.t('option.orientation.vflip', 'Flip Vertical')}</option>
+                </select>
+                <div class="muted vs-help">
+                  <span data-i18n="option.orientation.note">${this.t('option.orientation.note', 'Auto uses source metadata. "Disable autorotate" ignores rotation tags.')}</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="resizeModeSelect" data-i18n="label.resizeMode">${this.t('label.resizeMode', 'Resize Mode')}</label>
+                <select id="resizeModeSelect">
+                  <option value="scale">${this.t('option.resize.scale', 'Scale (default)')}</option>
+                  <option value="crop">${this.t('option.resize.crop', 'Crop to Fill')}</option>
+                  <option value="pad">${this.t('option.resize.pad', 'Pad / Letterbox')}</option>
+                </select>
+                <div class="muted vs-help">
+                  <span data-i18n="option.resize.note">${this.t('option.resize.note', 'Crop/Pad works best when both Width and Height are set.')}</span>
+                </div>
+              </div>
             </div>
 
             <div class="vs-encoder-box">
@@ -1018,6 +1076,55 @@ export class VideoSettingsManager {
                     <div class="muted vs-help">
                       <span data-i18n="option.level.vaapi.note">${this.t('option.level.vaapi.note', 'VAAPI encoder automatically selects appropriate level.')}</span>
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="vs-divider"></div>
+            <div class="vs-grid">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cropEnabledCheckbox" />
+                  <span data-i18n="label.cropEnabled">${this.t('label.cropEnabled', 'Enable Cropping')}</span>
+                </label>
+                <div id="cropSettingsBox" style="display:none; margin-top:8px;">
+                  <div class="vs-grid">
+                    <div class="form-group">
+                      <label for="cropLeftInput">${this.t('label.cropLeft', 'Crop Left (px)')}</label>
+                      <input id="cropLeftInput" type="number" min="0" step="1" placeholder="0" class="vs-compact" />
+                    </div>
+                    <div class="form-group">
+                      <label for="cropRightInput">${this.t('label.cropRight', 'Crop Right (px)')}</label>
+                      <input id="cropRightInput" type="number" min="0" step="1" placeholder="0" class="vs-compact" />
+                    </div>
+                    <div class="form-group">
+                      <label for="cropTopInput">${this.t('label.cropTop', 'Crop Top (px)')}</label>
+                      <input id="cropTopInput" type="number" min="0" step="1" placeholder="0" class="vs-compact" />
+                    </div>
+                    <div class="form-group">
+                      <label for="cropBottomInput">${this.t('label.cropBottom', 'Crop Bottom (px)')}</label>
+                      <input id="cropBottomInput" type="number" min="0" step="1" placeholder="0" class="vs-compact" />
+                    </div>
+                  </div>
+                  <div class="muted vs-help">
+                    <span data-i18n="option.crop.note">${this.t('option.crop.note', 'Cropping happens before scaling/padding.')}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="borderEnabledCheckbox" />
+                  <span data-i18n="label.borderEnabled">${this.t('label.borderEnabled', 'Add Borders')}</span>
+                </label>
+                <div id="borderSettingsBox" style="display:none; margin-top:8px;">
+                  <div class="vs-inline">
+                    <input id="borderSizeInput" type="number" min="0" step="1" placeholder="0" class="vs-compact" />
+                    <input id="borderColorInput" type="text" placeholder="#000000" class="vs-compact" />
+                  </div>
+                  <div class="muted vs-help">
+                    <span data-i18n="option.border.note">${this.t('option.border.note', 'Border size in pixels. Color as hex (#RRGGBB).')}</span>
                   </div>
                 </div>
               </div>
@@ -1386,7 +1493,6 @@ export class VideoSettingsManager {
     this.setDisabled(swLevel,   isProres);
 
     const proresSel = this.modalEl.querySelector('#proresProfileSelect');
-    this.setDisabled(proresSel, !isProres ? false : false);
 
     const swHints = this.modalEl.querySelector('#swQualityValue')?.closest?.('.vs-range-row');
     if (swHints) swHints.style.opacity = isProres ? '0.55' : '';
@@ -1597,6 +1703,62 @@ export class VideoSettingsManager {
     const fpsSelect = this.modalEl.querySelector('#fpsSelect');
     fpsSelect?.addEventListener('change', (e) => {
       this.videoSettings.fps = e.target.value || 'source';
+      this.saveToStorage();
+    });
+
+    const orientationSelect = this.modalEl.querySelector('#orientationSelect');
+    orientationSelect?.addEventListener('change', (e) => {
+      this.videoSettings.orientation = e.target.value || 'auto';
+      this.saveToStorage();
+    });
+
+    const resizeModeSelect = this.modalEl.querySelector('#resizeModeSelect');
+    resizeModeSelect?.addEventListener('change', (e) => {
+      this.videoSettings.resizeMode = e.target.value || 'scale';
+      this.saveToStorage();
+    });
+
+    const cropEnabledCheckbox = this.modalEl.querySelector('#cropEnabledCheckbox');
+    const cropBox = this.modalEl.querySelector('#cropSettingsBox');
+    const toggleCropBox = (show) => { if (cropBox) cropBox.style.display = show ? 'block' : 'none'; };
+
+    cropEnabledCheckbox?.addEventListener('change', (e) => {
+      this.videoSettings.cropEnabled = !!e.target.checked;
+      toggleCropBox(this.videoSettings.cropEnabled);
+      this.saveToStorage();
+    });
+
+    const wireCrop = (id, key) => {
+      const el = this.modalEl.querySelector(id);
+      el?.addEventListener('input', (ev) => {
+        this.videoSettings[key] = String(ev.target.value ?? '0');
+        this.saveToStorage();
+      });
+    };
+    wireCrop('#cropLeftInput', 'cropLeft');
+    wireCrop('#cropRightInput', 'cropRight');
+    wireCrop('#cropTopInput', 'cropTop');
+    wireCrop('#cropBottomInput', 'cropBottom');
+
+    const borderEnabledCheckbox = this.modalEl.querySelector('#borderEnabledCheckbox');
+    const borderBox = this.modalEl.querySelector('#borderSettingsBox');
+    const toggleBorderBox = (show) => { if (borderBox) borderBox.style.display = show ? 'block' : 'none'; };
+
+    borderEnabledCheckbox?.addEventListener('change', (e) => {
+      this.videoSettings.borderEnabled = !!e.target.checked;
+      toggleBorderBox(this.videoSettings.borderEnabled);
+      this.saveToStorage();
+    });
+
+    const borderSizeInput = this.modalEl.querySelector('#borderSizeInput');
+    borderSizeInput?.addEventListener('input', (e) => {
+      this.videoSettings.borderSize = String(e.target.value ?? '0');
+      this.saveToStorage();
+    });
+
+    const borderColorInput = this.modalEl.querySelector('#borderColorInput');
+    borderColorInput?.addEventListener('input', (e) => {
+      this.videoSettings.borderColor = String(e.target.value ?? '#000000');
       this.saveToStorage();
     });
 
@@ -1852,6 +2014,35 @@ export class VideoSettingsManager {
     const fpsSelect = this.modalEl.querySelector('#fpsSelect');
     if (fpsSelect) fpsSelect.value = String(this.videoSettings.fps || 'source');
 
+    const orientationSelect = this.modalEl.querySelector('#orientationSelect');
+    if (orientationSelect) orientationSelect.value = this.videoSettings.orientation || 'auto';
+
+    const resizeModeSelect = this.modalEl.querySelector('#resizeModeSelect');
+    if (resizeModeSelect) resizeModeSelect.value = this.videoSettings.resizeMode || 'scale';
+
+    const cropEnabledCheckbox = this.modalEl.querySelector('#cropEnabledCheckbox');
+    const cropBox = this.modalEl.querySelector('#cropSettingsBox');
+    if (cropEnabledCheckbox) cropEnabledCheckbox.checked = !!this.videoSettings.cropEnabled;
+    if (cropBox) cropBox.style.display = this.videoSettings.cropEnabled ? 'block' : 'none';
+
+    const cropLeftInput = this.modalEl.querySelector('#cropLeftInput');
+    const cropRightInput = this.modalEl.querySelector('#cropRightInput');
+    const cropTopInput = this.modalEl.querySelector('#cropTopInput');
+    const cropBottomInput = this.modalEl.querySelector('#cropBottomInput');
+    if (cropLeftInput) cropLeftInput.value = String(this.videoSettings.cropLeft ?? '0');
+    if (cropRightInput) cropRightInput.value = String(this.videoSettings.cropRight ?? '0');
+    if (cropTopInput) cropTopInput.value = String(this.videoSettings.cropTop ?? '0');
+    if (cropBottomInput) cropBottomInput.value = String(this.videoSettings.cropBottom ?? '0');
+
+    const borderEnabledCheckbox = this.modalEl.querySelector('#borderEnabledCheckbox');
+    const borderBox = this.modalEl.querySelector('#borderSettingsBox');
+    const borderSizeInput = this.modalEl.querySelector('#borderSizeInput');
+    const borderColorInput = this.modalEl.querySelector('#borderColorInput');
+    if (borderEnabledCheckbox) borderEnabledCheckbox.checked = !!this.videoSettings.borderEnabled;
+    if (borderBox) borderBox.style.display = this.videoSettings.borderEnabled ? 'block' : 'none';
+    if (borderSizeInput) borderSizeInput.value = String(this.videoSettings.borderSize ?? '0');
+    if (borderColorInput) borderColorInput.value = String(this.videoSettings.borderColor ?? '#000000');
+
     this.showEncoderSpecificSettings(this.videoSettings.hwaccel || 'off');
     this.updateVideoCodecOptions();
 
@@ -1976,32 +2167,36 @@ export class VideoSettingsManager {
   }
 
     handleLanguageChanged() {
-    try {
-      const container = document.getElementById('videoSettingsContainer');
-      if (container && window.i18n?.apply) {
-        window.i18n.apply(container);
+      try {
+        const container = document.getElementById('videoSettingsContainer');
+        if (container && window.i18n?.apply) window.i18n.apply(container);
+
+        if (!this.modalEl) return;
+        if (window.i18n?.apply) window.i18n.apply(this.modalEl);
+
+        const hw = this.videoSettings.hwaccel || 'off';
+        const codec = this.videoSettings.videoCodec || 'auto';
+
+        this.updateVideoCodecOptions();
+        this.updateEncoderSpecificOptions(codec, hw);
+        this.updateTuneOptions(
+          (this.tuneOptions[codec.replace(/_10bit$/, '')] || this.tuneOptions.default),
+          hw,
+          codec.replace(/_10bit$/, '')
+        );
+        this.updateLevelOptions(hw, codec);
+
+        this.updateProresVisibility(codec, hw);
+        this.updateProresUIState(codec, hw);
+
+        const currentAudioCodec = this.videoSettings.audioCodec || 'aac';
+        this.updateAudioBitrateOptions(currentAudioCodec);
+        this.normalizeAudioSampleRateUI();
+
+      } catch (e) {
+        console.warn('[VideoSettingsManager] handleLanguageChanged failed:', e);
       }
-
-      if (!this.modalEl) return;
-      if (window.i18n?.apply) {
-        window.i18n.apply(this.modalEl);
-      }
-
-      const hw = this.videoSettings.hwaccel || 'off';
-      const codec = this.videoSettings.videoCodec || 'auto';
-
-      this.updateVideoCodecOptions();
-      this.updateProresVisibility(codec, hw);
-      this.updateProresUIState(codec, hw);
-
-      const currentAudioCodec = this.videoSettings.audioCodec || 'aac';
-      this.updateAudioBitrateOptions(currentAudioCodec);
-      this.normalizeAudioSampleRateUI();
-
-    } catch (e) {
-      console.warn('[VideoSettingsManager] handleLanguageChanged failed:', e);
     }
-  }
 
   getSettings() {
     return { ...this.videoSettings };
