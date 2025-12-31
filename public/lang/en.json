@@ -1,4 +1,10 @@
 {
+  "streamSelection.previewTitle": "Preview (Test Encode)",
+  "streamSelection.previewEnable": "Encode preview only within the selected time range",
+  "streamSelection.previewStart": "Start",
+  "streamSelection.previewEnd": "End",
+  "streamSelection.previewHint": "Format: HH:MM:SS (e.g. 00:15:00)",
+  "streamSelection.previewBadTimecode": "Invalid preview time format. Example: 00:15:00",
   "label.orientation": "Orientation",
   "label.resizeMode": "Resize Mode",
   "label.cropEnabled": "Enable Cropping",

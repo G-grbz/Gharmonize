@@ -1,4 +1,10 @@
 {
+  "streamSelection.previewTitle": "Aperçu (Encodage de test)",
+  "streamSelection.previewEnable": "Encoder l’aperçu uniquement dans la plage de temps sélectionnée",
+  "streamSelection.previewStart": "Début",
+  "streamSelection.previewEnd": "Fin",
+  "streamSelection.previewHint": "Format : HH:MM:SS (ex. 00:15:00)",
+  "streamSelection.previewBadTimecode": "Format de durée d’aperçu invalide. Exemple : 00:15:00",
   "label.orientation": "Orientation",
   "label.resizeMode": "Mode de redimensionnement",
   "label.cropEnabled": "Activer le recadrage",

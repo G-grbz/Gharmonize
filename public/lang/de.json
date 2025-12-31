@@ -1,4 +1,10 @@
 {
+  "streamSelection.previewTitle": "Vorschau (Testkodierung)",
+  "streamSelection.previewEnable": "Vorschau nur innerhalb des ausgewählten Zeitbereichs kodieren",
+  "streamSelection.previewStart": "Start",
+  "streamSelection.previewEnd": "Ende",
+  "streamSelection.previewHint": "Format: HH:MM:SS (z. B. 00:15:00)",
+  "streamSelection.previewBadTimecode": "Ungültiges Vorschau-Zeitformat. Beispiel: 00:15:00",
   "label.orientation": "Ausrichtung",
   "label.resizeMode": "Größenänderungsmodus",
   "label.cropEnabled": "Zuschneiden aktivieren",

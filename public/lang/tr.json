@@ -1,4 +1,10 @@
 {
+  "streamSelection.previewTitle": "Önizleme (Test Kodlama)",
+  "streamSelection.previewEnable": "Sadece seçtiğim süre aralığında önizleme kodla",
+  "streamSelection.previewStart": "Başlangıç",
+  "streamSelection.previewEnd": "Bitiş",
+  "streamSelection.previewHint": "Format: SS:DD:SS (örn 00:15:00)",
+  "streamSelection.previewBadTimecode": "Önizleme süre formatı hatalı. Örn: 00:15:00",
   "label.orientation": "Yönlendirme",
   "label.resizeMode": "Yeniden Boyutlandırma Modu",
   "label.cropEnabled": "Kırpmayı Etkinleştir",
