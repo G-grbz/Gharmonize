@@ -1267,7 +1267,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     let selectedCodec = codecConfig[codecPref] || codecConfig["auto"];
     console.log(`🎬 Selected codec: ${selectedCodec.name} (${selectedCodec.encoder})`);
-    if (selectedCodec.format && selectedCodec.format !== format) {
+    const userExplicitContainer = !!format && format !== "auto";
+    if (!userExplicitContainer && selectedCodec.format && selectedCodec.format !== format) {
       const oldFmt = format;
       format = selectedCodec.format;
       console.log(`📦 Container changed: ${oldFmt} -> ${format}`);
