@@ -185,6 +185,32 @@ export class UploadManager {
                 </div>
               </div>
               ` : ''}
+
+              <div class="stream-selection-section">
+                <h4>${this.app.t('streamSelection.previewTitle') || 'Önizleme (Test Encode)'}</h4>
+                <label class="stream-item" style="display:flex; gap:10px; align-items:center;">
+                  <input type="checkbox" id="previewClipEnabled">
+                  <span class="stream-info">
+                    ${this.app.t('streamSelection.previewEnable') || 'Sadece seçtiğim aralıktan 1 dakikalık önizleme kodla'}
+                  </span>
+                </label>
+                <div id="previewClipFields" style="margin-top:10px; display:none;">
+                  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                    <label style="display:flex; gap:6px; align-items:center;">
+                      <span>${this.app.t('streamSelection.previewStart') || 'Başlangıç'}</span>
+                      <input type="text" id="previewClipStart" value="00:15:00" placeholder="00:15:00" style="width:110px;">
+                    </label>
+                    <label style="display:flex; gap:6px; align-items:center;">
+                      <span>${this.app.t('streamSelection.previewEnd') || 'Bitiş'}</span>
+                      <input type="text" id="previewClipEnd" value="00:16:00" placeholder="00:16:00" style="width:110px;">
+                    </label>
+                    <small style="opacity:.8;">
+                      ${this.app.t('streamSelection.previewHint') || 'Format: HH:MM:SS (örn 00:15:00)'}
+                    </small>
+                  </div>
+                </div>
+              </div>
+
               <div class="stream-selection-modal">
                 <div class="stream-selection-section">
                   <h4>${this.app.t('streamSelection.audioStreams') || 'Ses Kanalları'}</h4>
@@ -287,6 +313,22 @@ export class UploadManager {
         const containerEl = modal.querySelector('input[name="outputContainer"]:checked');
         const outputContainer = containerEl ? containerEl.value : null;
         const finalContainer = outputContainer || currentFormat;
+        const previewEnabled = !!modal.querySelector('#previewClipEnabled')?.checked;
+        const previewStart = (modal.querySelector('#previewClipStart')?.value || '').trim();
+        const previewEnd   = (modal.querySelector('#previewClipEnd')?.value || '').trim();
+        const isTimecode = (s) => /^\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(String(s || '').trim());
+        let previewClip = null;
+        if (previewEnabled) {
+          if (!isTimecode(previewStart) || !isTimecode(previewEnd)) {
+            this.app.showNotification(
+              this.app.t('streamSelection.previewBadTimecode') || 'Önizleme süre formatı hatalı. Örn: 00:15:00',
+              'error',
+              'error'
+            );
+            return;
+          }
+          previewClip = { enabled: true, start: previewStart, end: previewEnd };
+        }
 
         const audioLanguages = {};
         audioStreams.forEach(s => {
@@ -386,7 +428,8 @@ export class UploadManager {
           hasVideo: videoStreams.length > 0,
           outputContainer,
           audioLanguages,
-          subtitleLanguages
+          subtitleLanguages,
+          previewClip
         });
       };
 
@@ -409,6 +452,15 @@ export class UploadManager {
 
       modal.querySelector('.modal-btn-confirm').addEventListener('click', confirmHandler);
       modal.querySelector('.modal-btn-cancel').addEventListener('click', cancelHandler);
+
+      const previewToggle = modal.querySelector('#previewClipEnabled');
+      const previewFields = modal.querySelector('#previewClipFields');
+      if (previewToggle && previewFields) {
+        previewToggle.addEventListener('change', () => {
+          previewFields.style.display = previewToggle.checked ? 'block' : 'none';
+        });
+      }
+
       document.addEventListener('keydown', escHandler);
       backdrop.addEventListener('click', backdropHandler);
 
@@ -498,11 +550,11 @@ export class UploadManager {
                   hasVideo: streamSelection.hasVideo,
                   volumeGain: this.app.currentVolumeGain,
                   audioLanguages: streamSelection.audioLanguages,
-                  subtitleLanguages: streamSelection.subtitleLanguages
+                  subtitleLanguages: streamSelection.subtitleLanguages,
+                  previewClip: streamSelection.previewClip || null
                 };
           }
-
-                console.log('📦 Payload to be sent:', payload);
+              console.log('📦 Payload to be sent:', payload);
 
                 if (localNames.length === 1) {
                     console.log('📤 Submitting single-file job');
@@ -614,7 +666,8 @@ export class UploadManager {
                 subtitles: streamSelection.subtitles,
                 hasVideo: streamSelection.hasVideo,
                 audioLanguages: streamSelection.audioLanguages,
-                subtitleLanguages: streamSelection.subtitleLanguages
+                subtitleLanguages: streamSelection.subtitleLanguages,
+                previewClip: streamSelection.previewClip || null
               }
             };
 
@@ -667,7 +720,8 @@ export class UploadManager {
                 subtitles: streamSelection.subtitles,
                 hasVideo: streamSelection.hasVideo,
                 audioLanguages: streamSelection.audioLanguages,
-                subtitleLanguages: streamSelection.subtitleLanguages
+                subtitleLanguages: streamSelection.subtitleLanguages,
+                previewClip: streamSelection.previewClip || null
               }
             };
 
