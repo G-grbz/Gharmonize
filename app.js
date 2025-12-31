@@ -221,7 +221,7 @@ app.use('/api', settingsRoute)
 
 app.get('/api/version', (req, res) => {
   try {
-    const packagePath = path.resolve(process.cwd(), 'package.json');
+    const packagePath = path.resolve(__dirname, 'package.json');
     const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
 
     res.json({
