@@ -157,20 +157,35 @@ function getLinuxAutostartDesktopPath() {
   return path.join(app.getPath('home'), '.config', 'autostart', 'Gharmonize.desktop');
 }
 
-function buildLinuxDesktopFile() {
+function buildLinuxDesktopFile(prefs = {}) {
   const appImage = process.env.APPIMAGE;
   const execPath = appImage || process.execPath;
   const execQuoted = execPath.includes(' ') ? `"${execPath}"` : execPath;
+  const args = [];
+  if (prefs.autoStart) args.push('--autostart');
+  if (prefs.autoStart && prefs.startMinimized) args.push('--hidden');
+
+  const tryExecLine = appImage
+    ? `TryExec=${execPath}`
+    : `TryExec=${process.execPath}`;
 
   return [
     '[Desktop Entry]',
     'Type=Application',
-    'Version=1.0.7',
+    'Version=1.0.8',
     'Name=Gharmonize',
+    'GenericName=Media Toolkit',
     'Comment=Gharmonize',
-    `Exec=env GHARMONIZE_AUTOSTART=1 ${execQuoted}`,
+    'Icon=gharmonize',
+    tryExecLine,
+    `Exec=env GHARMONIZE_AUTOSTART=1 ${execQuoted}${args.length ? ' ' + args.join(' ') : ''}`,
     'Terminal=false',
-    'X-GNOME-Autostart-enabled=true'
+    'Categories=AudioVideo;Utility;',
+    'StartupNotify=true',
+    'StartupWMClass=Gharmonize',
+    'X-GNOME-Autostart-enabled=true',
+    'X-GNOME-Autostart-Delay=3',
+    'X-KDE-autostart-after=panel'
   ].join('\n');
 }
 
@@ -180,7 +195,8 @@ async function applyLinuxAutostart(enabled) {
   await fs.promises.mkdir(dir, { recursive: true });
 
   if (enabled) {
-    await fs.promises.writeFile(desktopPath, buildLinuxDesktopFile(), 'utf8');
+    const prefs = await loadPrefs();
+    await fs.promises.writeFile(desktopPath, buildLinuxDesktopFile(prefs), 'utf8');
   } else {
     if (fs.existsSync(desktopPath)) await fs.promises.unlink(desktopPath);
   }
