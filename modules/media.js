@@ -834,13 +834,42 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   console.log(`🧭 Using FFmpeg: ${ffmpegBin}`);
 
   const result = await new Promise(async (resolve, reject) => {
+
+  const previewClip = selectedStreams?.previewClip || null;
+  const timecodeToSeconds = (tc) => {
+    if (!tc) return NaN;
+    const m = String(tc).trim().match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/);
+    if (!m) return NaN;
+    const h = Number(m[1]), mi = Number(m[2]), s = Number(m[3]);
+    const frac = m[4] ? Number(`0.${m[4]}`) : 0;
+    return (h * 3600) + (mi * 60) + s + (Number.isFinite(frac) ? frac : 0);
+  };
+  const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+
   const args = ["-hide_banner", "-nostdin", "-y"];
 
   const orientationMode = String(videoSettings?.orientation || 'auto').toLowerCase();
     if (isVideo && orientationMode !== 'auto') {
       args.push("-noautorotate");
+  }
+
+  let clipDuration = null;
+  if (isVideo && previewClip?.enabled) {
+    const startSec = timecodeToSeconds(previewClip.start);
+    const endSec   = timecodeToSeconds(previewClip.end);
+    if (Number.isFinite(startSec) && Number.isFinite(endSec) && endSec > startSec) {
+      clipDuration = clamp(endSec - startSec, 1, 600);
+      args.push("-ss", previewClip.start);
+    } else {
+      console.warn("⚠️ previewClip ignored (invalid range):", previewClip);
     }
-    args.push("-i", inputPath);
+  }
+
+  args.push("-i", inputPath);
+
+  if (clipDuration != null) {
+    args.push("-t", String(clipDuration));
+  }
 
     if (isCanceled()) return reject(new Error("CANCELED"));
 
