@@ -204,7 +204,7 @@ const DEFAULTS = {
       out: 'yt-dlp'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.6.0/deno-x86_64-unknown-linux-gnu.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.3/deno-x86_64-unknown-linux-gnu.zip',
       type: 'zip',
       find: 'deno'
     }
@@ -232,7 +232,7 @@ const DEFAULTS = {
       out: 'yt-dlp.exe'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.6.0/deno-x86_64-pc-windows-msvc.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.3/deno-x86_64-pc-windows-msvc.zip',
       type: 'zip',
       find: 'deno.exe'
     }
