@@ -31,6 +31,9 @@ export class VideoSettingsManager {
 
       colorRange: 'auto',
       colorPrimaries: 'auto',
+      hdrMode: 'auto',
+      hdrToneMapping: 'hable',
+      hdrPeakBrightness: '1000',
       hwaccel: 'off',
       fps: 'source',
       videoCodec: 'auto',
@@ -195,6 +198,14 @@ export class VideoSettingsManager {
 
     this.createUI();
     this.attachEvents();
+    this.allowedToneMappings = new Set(['hable', 'mobius', 'reinhard']);
+  }
+
+  normalizeHdrToneMapping() {
+    const cur = String(this.videoSettings.hdrToneMapping || '').toLowerCase();
+    if (!this.allowedToneMappings.has(cur)) {
+      this.videoSettings.hdrToneMapping = 'hable';
+    }
   }
 
   loadFromStorage() {
@@ -212,6 +223,10 @@ export class VideoSettingsManager {
       this.videoSettings.heightMode = this.videoSettings.heightMode || 'auto';
       this.videoSettings.targetHeight = this.videoSettings.targetHeight ?? '';
       this.videoSettings.allowUpscale = !!this.videoSettings.allowUpscale;
+      this.videoSettings.hdrMode = this.videoSettings.hdrMode || 'auto';
+      this.videoSettings.hdrToneMapping = this.videoSettings.hdrToneMapping || 'hable';
+      this.videoSettings.hdrPeakBrightness = String(this.videoSettings.hdrPeakBrightness || '1000');
+      this.normalizeHdrToneMapping();
 
       this.videoSettings.orientation = this.videoSettings.orientation || 'auto';
       this.videoSettings.resizeMode = this.videoSettings.resizeMode || 'scale';
@@ -273,6 +288,7 @@ export class VideoSettingsManager {
   }
 
   saveToStorage() {
+    this.normalizeHdrToneMapping();
     const hw = String(this.videoSettings.hwaccel || 'off').toLowerCase();
     const codec = String(this.videoSettings.videoCodec || 'auto');
     const base = codec.replace(/_10bit$/, '');
@@ -461,6 +477,10 @@ export class VideoSettingsManager {
       const el = this.modalEl.querySelector(sel);
       return !!(el && el.checked);
     };
+
+    this.videoSettings.hdrMode = v('#hdrModeSelect') || 'auto';
+    this.videoSettings.hdrToneMapping = v('#hdrToneMappingSelect') || 'hable';
+    this.videoSettings.hdrPeakBrightness = String(v('#hdrPeakBrightness') || '1000');
 
     this.videoSettings.hwaccel = v('#hwaccelSelect') || 'off';
     this.videoSettings.videoCodec = v('#videoCodecSelect') || 'auto';
@@ -814,6 +834,40 @@ export class VideoSettingsManager {
                   <option value="smpte240m">SMPTE 240M</option>
                 </select>
               </div>
+
+              <div class="form-group">
+             <label for="hdrModeSelect" data-i18n="label.hdrMode">${this.t('label.hdrMode', 'HDR Mode')}</label>
+             <select id="hdrModeSelect">
+               <option value="auto" data-i18n="option.hdrMode.auto">${this.t('option.hdrMode.auto', 'Auto (Detect & Process)')}</option>
+               <option value="tonemap_to_sdr" data-i18n="option.hdrMode.tonemap">${this.t('option.hdrMode.tonemap', 'Tonemap HDR to SDR')}</option>
+               <option value="keep_hdr" data-i18n="option.hdrMode.keep">${this.t('option.hdrMode.keep', 'Keep HDR (Passthrough)')}</option>
+             </select>
+             <div class="muted vs-help">
+               <span data-i18n="option.hdrMode.note">${this.t('option.hdrMode.note', 'Auto: HDR varsa tonemap, yoksa normal. Keep HDR: 10-bit codec gerekir.')}</span>
+             </div>
+           </div>
+
+           <div class="form-group" id="hdrToneMappingGroup" style="display:none;">
+             <label for="hdrToneMappingSelect" data-i18n="label.hdrToneMapping">${this.t('label.hdrToneMapping', 'Tone Mapping')}</label>
+             <select id="hdrToneMappingSelect">
+               <option value="hable" data-i18n="option.toneMapping.hable">${this.t('option.toneMapping.hable', 'Hable (Filmic, Default)')}</option>
+               <option value="mobius" data-i18n="option.toneMapping.mobius">${this.t('option.toneMapping.mobius', 'Mobius (Soft)')}</option>
+               <option value="reinhard" data-i18n="option.toneMapping.reinhard">${this.t('option.toneMapping.reinhard', 'Reinhard (Natural)')}</option>
+             </select>
+           </div>
+
+           <div class="form-group" id="hdrPeakBrightnessGroup" style="display:none;">
+             <label for="hdrPeakBrightness" data-i18n="label.hdrPeakBrightness">${this.t('label.hdrPeakBrightness', 'Peak Brightness (nits)')}</label>
+             <input type="range" id="hdrPeakBrightness" min="100" max="4000" step="100" />
+             <div class="vs-range-row">
+               <span id="hdrPeakBrightnessValue" class="range-value">1000</span>
+               <div class="range-hints">
+                 <span>100 (<span data-i18n="ui.dark">${this.t('ui.dark', 'Dark')}</span>)</span>
+                 <span>1000 (<span data-i18n="ui.default">${this.t('ui.default', 'Default')}</span>)</span>
+                 <span>4000 (<span data-i18n="ui.bright">${this.t('ui.bright', 'Bright')}</span>)</span>
+               </div>
+             </div>
+           </div>
 
               <div class="form-group">
                 <label for="videoCodecSelect" data-i18n="label.videoCodec">${this.t('label.videoCodec', 'Video Codec')}</label>
@@ -1700,6 +1754,27 @@ export class VideoSettingsManager {
       this.saveToStorage();
     });
 
+    const hdrModeSelect = this.modalEl.querySelector('#hdrModeSelect');
+    hdrModeSelect?.addEventListener('change', (e) => {
+      this.videoSettings.hdrMode = e.target.value;
+      this.updateHDRUI(e.target.value);
+      this.saveToStorage();
+    });
+
+    const hdrToneMappingSelect = this.modalEl.querySelector('#hdrToneMappingSelect');
+    hdrToneMappingSelect?.addEventListener('change', (e) => {
+      this.videoSettings.hdrToneMapping = e.target.value;
+      this.saveToStorage();
+    });
+
+    const hdrPeakBrightness = this.modalEl.querySelector('#hdrPeakBrightness');
+    const hdrPeakBrightnessValue = this.modalEl.querySelector('#hdrPeakBrightnessValue');
+    hdrPeakBrightness?.addEventListener('input', (e) => {
+      this.videoSettings.hdrPeakBrightness = e.target.value;
+      if (hdrPeakBrightnessValue) hdrPeakBrightnessValue.textContent = e.target.value;
+      this.saveToStorage();
+    });
+
     const fpsSelect = this.modalEl.querySelector('#fpsSelect');
     fpsSelect?.addEventListener('change', (e) => {
       this.videoSettings.fps = e.target.value || 'source';
@@ -1996,6 +2071,19 @@ export class VideoSettingsManager {
     });
   }
 
+  updateHDRUI(hdrMode) {
+  const toneMappingGroup = this.modalEl.querySelector('#hdrToneMappingGroup');
+  const peakBrightnessGroup = this.modalEl.querySelector('#hdrPeakBrightnessGroup');
+
+  if (hdrMode === 'tonemap_to_sdr') {
+    if (toneMappingGroup) toneMappingGroup.style.display = 'block';
+    if (peakBrightnessGroup) peakBrightnessGroup.style.display = 'block';
+  } else {
+    if (toneMappingGroup) toneMappingGroup.style.display = 'none';
+    if (peakBrightnessGroup) peakBrightnessGroup.style.display = 'none';
+  }
+}
+
   syncModalUIFromState() {
     if (!this.modalEl) return;
 
@@ -2164,6 +2252,19 @@ export class VideoSettingsManager {
     this.updateAudioBitrateOptions(this.videoSettings.audioCodec);
     this.normalizeAudioSampleRateUI();
     this.normalizeTuneForContext(this.videoSettings.videoCodec || 'auto', this.videoSettings.hwaccel || 'off');
+
+    const hdrModeSelect = this.modalEl.querySelector('#hdrModeSelect');
+    if (hdrModeSelect) hdrModeSelect.value = this.videoSettings.hdrMode || 'auto';
+
+    const hdrToneMappingSelect = this.modalEl.querySelector('#hdrToneMappingSelect');
+    if (hdrToneMappingSelect) hdrToneMappingSelect.value = this.videoSettings.hdrToneMapping || 'hable';
+
+    const hdrPeakBrightness = this.modalEl.querySelector('#hdrPeakBrightness');
+    const hdrPeakBrightnessValue = this.modalEl.querySelector('#hdrPeakBrightnessValue');
+    if (hdrPeakBrightness) hdrPeakBrightness.value = this.videoSettings.hdrPeakBrightness || '1000';
+    if (hdrPeakBrightnessValue) hdrPeakBrightnessValue.textContent = String(this.videoSettings.hdrPeakBrightness || '1000');
+
+    this.updateHDRUI(this.videoSettings.hdrMode || 'auto');
   }
 
     handleLanguageChanged() {
