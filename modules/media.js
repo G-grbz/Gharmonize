@@ -66,6 +66,44 @@ function normalizeNvencPresetAndTune(rawPreset) {
   return { preset: "p4", tune: null };
 }
 
+function normalizeNvencProfileForEncoder(enc, rawProfile) {
+  const e = String(enc || "").toLowerCase();
+  const p = String(rawProfile || "").trim().toLowerCase();
+
+  if (e === "h264" || e === "h264_10bit" || e === "libx264" || e === "x264") {
+    if (["baseline", "main", "high"].includes(p)) return p;
+    return "high";
+  }
+
+  if (e === "hevc" || e === "hevc_10bit") {
+    if (e === "hevc_10bit") return "main10";
+    return (p === "main10") ? "main10" : "main";
+  }
+
+  if (e === "av1" || e === "av1_10bit") {
+    return "main";
+  }
+
+  return p || "high";
+}
+
+function force8bitCodecIfTonemapping(selectedCodec, codecConfig) {
+  if (!selectedCodec || selectedCodec.bitDepth !== 10) return selectedCodec;
+
+  switch (selectedCodec.encoder) {
+    case "h264_10bit":
+      return codecConfig["h264"];
+    case "hevc_10bit":
+      return codecConfig["h265"];
+    case "av1_10bit":
+      return codecConfig["av1"];
+    case "vp9_10bit":
+      return codecConfig["vp9"];
+    default:
+      return selectedCodec;
+  }
+}
+
 const PRESET_ORDER = [
   "ultrafast",
   "superfast",
@@ -481,6 +519,14 @@ export async function convertMedia(
   const bitDepth = opts?.bitDepth || null;
   const videoSettings = opts.videoSettings || {};
   const selectedStreams = opts.selectedStreams || null;
+  const hdrMode = videoSettings?.hdrMode || 'auto';
+  const hdrToneMapping = videoSettings?.hdrToneMapping || 'hable';
+  const hdrPeakBrightness = Number(videoSettings?.hdrPeakBrightness || '1000');
+  const HDR_TO_SDR_FILTERS = {
+  hable:    `zscale=t=linear,format=gbrpf32le,tonemap=hable:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`,
+  mobius:   `zscale=t=linear,format=gbrpf32le,tonemap=mobius:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`,
+  reinhard: `zscale=t=linear,format=gbrpf32le,tonemap=reinhard:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`
+};
 
   let volumeGainRaw = null;
   if (opts?.volumeGain != null) {
@@ -1060,6 +1106,45 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     const SRC_W = Number(srcInfo?.width) || Number(resolvedMeta.__srcWidth) || 0;
     const SRC_H = Number(srcInfo?.height) || Number(resolvedMeta.__srcHeight) || 0;
+    const ct = String(
+    srcInfo?.color_transfer ||
+    srcInfo?.color_trc ||
+    srcInfo?.transfer_characteristics ||
+    ""
+  ).toLowerCase();
+  const prim = String(srcInfo?.color_primaries || "").toLowerCase();
+  const csp  = String(srcInfo?.color_space || srcInfo?.colorspace || "").toLowerCase();
+
+  const srcIsHdr = !!srcInfo && (
+    ct.includes("2084") ||
+    ct.includes("b67")  ||
+    prim.includes("2020") ||
+    csp.includes("2020") ||
+    !!srcInfo?.mastering_display ||
+    !!srcInfo?.content_light_level
+  );
+
+  const forceTonemap = hdrMode === "tonemap_to_sdr";
+  const forceKeepHdr = hdrMode === "keep_hdr";
+
+  const targetIsSdrFn = () => {
+    if (forceTonemap) return true;
+    if (forceKeepHdr) return false;
+      if (!srcIsHdr) return true;
+
+  const wants10bit = String(videoSettings.videoCodec || "auto")
+    .toLowerCase()
+    .includes("10bit");
+  return !wants10bit;
+  };
+
+  const targetIsSdr = targetIsSdrFn();
+  const shouldTonemap = targetIsSdr && (srcIsHdr || forceTonemap);
+  const shouldKeepHdr = !targetIsSdr && (srcIsHdr || forceKeepHdr);
+
+  if (forceTonemap && !srcIsHdr) {
+    console.log("⚠️ hdrMode=tonemap_to_sdr selected but HDR not detected → forcing tonemap filters.");
+  }
 
     resolvedMeta.__srcWidth = SRC_W;
     resolvedMeta.__srcHeight = SRC_H;
@@ -1149,6 +1234,21 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       if (m.primaries)  args.push("-color_primaries", m.primaries);
       if (m.trc)        args.push("-color_trc", m.trc);
       if (m.colorspace) args.push("-colorspace", m.colorspace);
+      if (srcIsHdr && targetIsSdrFn()) {
+        args.push("-color_primaries", "bt709");
+        args.push("-color_trc", "bt709");
+        args.push("-colorspace", "bt709");
+        } else if (srcIsHdr && hdrMode === 'keep_hdr') {
+          if (srcInfo?.color_primaries) args.push("-color_primaries", srcInfo.color_primaries);
+          if (srcInfo?.color_transfer) args.push("-color_trc", srcInfo.color_transfer);
+          if (srcInfo?.color_space) args.push("-colorspace", srcInfo.color_space);
+          if (srcInfo?.mastering_display) {
+            args.push("-mastering_display", srcInfo.mastering_display);
+          }
+          if (srcInfo?.content_light_level) {
+            args.push("-content_light_level", srcInfo.content_light_level);
+        }
+      }
     };
 
     function buildSetParams() {
@@ -1186,11 +1286,21 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       return `scale=${wExpr}:${hExpr}`;
     }
 
-    function buildBaseVf() {
+  function buildBaseVf(selectedCodecLocal) {
       const chain = [];
 
       const sp = buildSetParams();
       if (sp) chain.push(sp);
+      if (shouldTonemap) {
+        const tm = String(hdrToneMapping || "hable").toLowerCase();
+        const filter = HDR_TO_SDR_FILTERS[tm] || HDR_TO_SDR_FILTERS.hable;
+        chain.push(filter);
+      } else if (shouldKeepHdr) {
+        const bitDepth = selectedCodecLocal?.bitDepth || 8;
+        if (bitDepth === 10) {
+          chain.push("format=p010le");
+        }
+      }
 
       if (orientFilter) chain.push(orientFilter);
       if (cropEdgesFilter) chain.push(cropEdgesFilter);
@@ -1216,8 +1326,6 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       return chain.length ? chain.join(",") : null;
     }
-
-    const baseVf = buildBaseVf();
 
       const codecConfig = {
         'auto': {
@@ -1297,10 +1405,16 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     let selectedCodec = codecConfig[codecPref] || codecConfig["auto"];
     console.log(`🎬 Selected codec: ${selectedCodec.name} (${selectedCodec.encoder})`);
     const userExplicitContainer = !!format && format !== "auto";
+
     if (!userExplicitContainer && selectedCodec.format && selectedCodec.format !== format) {
       const oldFmt = format;
       format = selectedCodec.format;
       console.log(`📦 Container changed: ${oldFmt} -> ${format}`);
+    }
+
+    if (shouldTonemap && selectedCodec.bitDepth === 10) {
+      console.log("⚠️ HDR→SDR tonemap active: forcing 8-bit output codec to avoid 10-bit pix_fmt mismatches.");
+      selectedCodec = force8bitCodecIfTonemapping(selectedCodec, codecConfig);
     }
 
     if (!outputPath || !outputFileName) {
@@ -1353,6 +1467,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     const useNvenc = hwMode === "nvenc";
     const useQsv   = hwMode === "qsv";
     const useVaapi = hwMode === "vaapi";
+    const baseVf = buildBaseVf(selectedCodec);
 
     const qsvPixFmtFor = (enc, bitDepth) => {
       if (bitDepth === 10 || String(enc || "").includes("10bit") || String(enc || "").endsWith("_10bit")) return "p010le";
@@ -1390,13 +1505,31 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     if (vf) args.push("-vf", vf);
+
+    if (shouldTonemap) {
+      args.push("-color_primaries", "bt709");
+      args.push("-color_trc", "bt709");
+      args.push("-colorspace", "bt709");
+      const cr = mapColorRange(colorRange);
+      if (cr) args.push("-color_range", cr);
+    } else if (shouldKeepHdr) {
+      if (srcInfo?.color_primaries) args.push("-color_primaries", srcInfo.color_primaries);
+      if (srcInfo?.color_transfer)  args.push("-color_trc", srcInfo.color_transfer);
+      if (srcInfo?.color_space)     args.push("-colorspace", srcInfo.color_space);
+      const cr = mapColorRange(colorRange);
+      if (cr) args.push("-color_range", cr);
+      if (srcInfo?.mastering_display)    args.push("-mastering_display", srcInfo.mastering_display);
+      if (srcInfo?.content_light_level)  args.push("-content_light_level", srcInfo.content_light_level);
+    }
+
     if (useNvenc) {
     const nvencPreset = videoSettings.nvencSettings?.preset || NVENC_PRESET;
     const nvencQuality = videoSettings.nvencSettings?.quality || NVENC_Q;
     const nvencTune = videoSettings.nvencSettings?.tune || null;
-    const nvencProfile = videoSettings.nvencSettings?.profile || 'high';
+    const nvencProfileRaw = videoSettings.nvencSettings?.profile || 'high';
     const nvencLevel = videoSettings.nvencSettings?.level || null;
     const validNvencTunes = ['hq', 'll', 'ull', 'lossless'];
+    const nvencProfile = normalizeNvencProfileForEncoder(selectedCodec.encoder, nvencProfileRaw);
 
     let finalNvencTune = null;
     if (nvencTune) {
@@ -1447,9 +1580,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     case "hevc":
       args.push("-c:v", "hevc_nvenc");
-      if (nvencProfile && nvencProfile !== 'main') {
-        args.push("-profile:v", nvencProfile);
-      }
+      if (nvencProfile) args.push("-profile:v", nvencProfile);
       if (nvencLevel && nvencLevel !== 'auto') {
         args.push("-level:v", nvencLevel);
       }
@@ -1457,9 +1588,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     case "hevc_10bit":
       args.push("-c:v", "hevc_nvenc"); pushPixFmt("p010le");
-      if (nvencProfile && nvencProfile !== 'main10') {
-        args.push("-profile:v", nvencProfile);
-      }
+      if (nvencProfile) args.push("-profile:v", nvencProfile);
       if (nvencLevel && nvencLevel !== 'auto') {
         args.push("-level:v", nvencLevel);
       }
@@ -1510,23 +1639,23 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     args.push("-rc:v", "vbr");
-    if (selectedCodec.encoder === "h264") {
-      const prim = normalizePrim(colorPrim);
-      if (prim === "bt2020") {
-        const full = (mapColorRange(colorRange) === "pc") ? 1 : 0;
-        args.push(
-          "-bsf:v",
-          `h264_metadata=colour_primaries=9:transfer_characteristics=14:matrix_coefficients=9:video_full_range_flag=${full}`
-        );
+      if (selectedCodec.encoder === "h264") {
+        const prim = normalizePrim(colorPrim);
+        if (prim === "bt2020" && !shouldTonemap) {
+          const full = (mapColorRange(colorRange) === "pc") ? 1 : 0;
+          args.push(
+            "-bsf:v",
+            `h264_metadata=colour_primaries=9:transfer_characteristics=14:matrix_coefficients=9:video_full_range_flag=${full}`
+          );
+        }
+      }
+
+      if (explicitBv) {
+        args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
+      } else {
+        args.push("-cq:v", nvencQuality);
       }
     }
-
-    if (explicitBv) {
-      args.push("-b:v", explicitBv, "-maxrate", explicitBv, "-bufsize", `${explicitBv}*2`);
-    } else {
-      args.push("-cq:v", nvencQuality);
-    }
-  }
       else if (useQsv) {
       const qsvPreset = videoSettings.qsvSettings?.preset || QSV_PRESET;
       const qsvQuality = videoSettings.qsvSettings?.quality || QSV_Q;
@@ -1625,6 +1754,15 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       const pre = [];
       const sp = buildSetParams();
       if (sp) pre.push(sp);
+      if (shouldTonemap) {
+        const tm = String(hdrToneMapping || "hable").toLowerCase();
+        const filter = HDR_TO_SDR_FILTERS[tm] || HDR_TO_SDR_FILTERS.hable;
+        pre.push(filter);
+      } else if (shouldKeepHdr) {
+        if ((selectedCodec.bitDepth || 8) === 10) {
+          pre.push("format=p010le");
+        }
+      }
       if (orientFilter) pre.push(orientFilter);
       if (cropEdgesFilter) pre.push(cropEdgesFilter);
 
@@ -1653,14 +1791,16 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         if (borderFrag) pre.push(borderFrag);
 
         pre.push(evenizeFilter);
-        pre.push("format=nv12", "hwupload");
+        const uploadFmt = (shouldKeepHdr && (selectedCodec.bitDepth === 10)) ? "p010le" : "nv12";
+        pre.push(`format=${uploadFmt}`, "hwupload");
 
         let vaapiFilter = pre.join(",");
         if (targetFps) vaapiFilter += `,fps=${targetFps}`;
         args.push("-vaapi_device", vaapiDevice, "-vf", vaapiFilter);
       } else {
         pre.push(evenizeFilter);
-        pre.push("format=nv12", "hwupload");
+        const uploadFmt = (shouldKeepHdr && (selectedCodec.bitDepth === 10)) ? "p010le" : "nv12";
+        pre.push(`format=${uploadFmt}`, "hwupload");
         let vaapiFilter = pre.join(",");
 
         if (needScale) {
