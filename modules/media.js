@@ -497,6 +497,27 @@ export async function retagMediaFile(
   }
 }
 
+function force10bitCodecForHdrOutput(selectedCodec, codecConfig) {
+  if (!selectedCodec) return selectedCodec;
+  if (selectedCodec.bitDepth === 10) return selectedCodec;
+
+  switch (selectedCodec.encoder) {
+    case "h264":
+    case "x264":
+    case "libx264":
+      return codecConfig["h264_10bit"] || selectedCodec;
+    case "hevc":
+    case "h265":
+      return codecConfig["h265_10bit"] || selectedCodec;
+    case "av1":
+      return codecConfig["av1_10bit"] || selectedCodec;
+    case "vp9":
+      return codecConfig["vp9_10bit"] || selectedCodec;
+    default:
+      return selectedCodec;
+  }
+}
+
 export async function convertMedia(
   inputPath,
   format,
@@ -523,10 +544,17 @@ export async function convertMedia(
   const hdrToneMapping = videoSettings?.hdrToneMapping || 'hable';
   const hdrPeakBrightness = Number(videoSettings?.hdrPeakBrightness || '1000');
   const HDR_TO_SDR_FILTERS = {
-  hable:    `zscale=t=linear,format=gbrpf32le,tonemap=hable:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`,
-  mobius:   `zscale=t=linear,format=gbrpf32le,tonemap=mobius:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`,
-  reinhard: `zscale=t=linear,format=gbrpf32le,tonemap=reinhard:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`
-};
+    hable:    `zscale=t=linear,format=gbrpf32le,tonemap=hable:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`,
+    mobius:   `zscale=t=linear,format=gbrpf32le,tonemap=mobius:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`,
+    reinhard: `zscale=t=linear,format=gbrpf32le,tonemap=reinhard:peak=${hdrPeakBrightness}:desat=0,zscale=primaries=bt709:matrix=bt709:transfer=bt709,format=yuv420p`
+  };
+
+  const SDR_TO_HDR_FILTER =
+    `setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,` +
+    `zscale=t=linear:npl=100,` +
+    `format=gbrpf32le,` +
+    `zscale=primaries=bt2020:transfer=smpte2084:matrix=bt2020nc:range=tv,` +
+    `format=p010le`;
 
   let volumeGainRaw = null;
   if (opts?.volumeGain != null) {
@@ -1098,7 +1126,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     let srcInfo = null;
     try {
       const { probeVideoStreamInfo } = await import("./ffmpegCaps.js");
-      srcInfo = await probeVideoStreamInfo(ffmpegBin, inputPath);
+      srcInfo = await probeVideoStreamInfo(ffmpegBin, inputPath, 15000);
     } catch (e) {
       console.warn("⚠️ probeVideoStreamInfo failed:", e?.message || e);
       srcInfo = null;
@@ -1126,11 +1154,15 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
   const forceTonemap = hdrMode === "tonemap_to_sdr";
   const forceKeepHdr = hdrMode === "keep_hdr";
+  const forceNoneHdr = hdrMode === "none";
+  const forceSdrToHdr = hdrMode === "sdr_to_hdr";
 
   const targetIsSdrFn = () => {
     if (forceTonemap) return true;
     if (forceKeepHdr) return false;
-      if (!srcIsHdr) return true;
+    if (forceSdrToHdr) return false;
+    if (forceNoneHdr)  return true;
+    if (!srcIsHdr) return true;
 
   const wants10bit = String(videoSettings.videoCodec || "auto")
     .toLowerCase()
@@ -1139,11 +1171,16 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   };
 
   const targetIsSdr = targetIsSdrFn();
-  const shouldTonemap = targetIsSdr && (srcIsHdr || forceTonemap);
-  const shouldKeepHdr = !targetIsSdr && (srcIsHdr || forceKeepHdr);
+  const shouldTonemap  = !forceNoneHdr && targetIsSdr && (srcIsHdr || forceTonemap);
+  const shouldKeepHdr  = !forceNoneHdr && !forceSdrToHdr && !targetIsSdr && (srcIsHdr || forceKeepHdr);
+  const shouldSdrToHdr = !forceNoneHdr && forceSdrToHdr;
 
   if (forceTonemap && !srcIsHdr) {
     console.log("⚠️ hdrMode=tonemap_to_sdr selected but HDR not detected → forcing tonemap filters.");
+  }
+
+  if (forceSdrToHdr && srcIsHdr) {
+    console.log("ℹ️ hdrMode=sdr_to_hdr selected but source looks HDR already → will still re-tag/convert to PQ/BT2020.");
   }
 
     resolvedMeta.__srcWidth = SRC_W;
@@ -1291,6 +1328,11 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       const sp = buildSetParams();
       if (sp) chain.push(sp);
+
+      if (shouldSdrToHdr) {
+        chain.push(SDR_TO_HDR_FILTER);
+      }
+
       if (shouldTonemap) {
         const tm = String(hdrToneMapping || "hable").toLowerCase();
         const filter = HDR_TO_SDR_FILTERS[tm] || HDR_TO_SDR_FILTERS.hable;
@@ -1406,6 +1448,18 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     console.log(`🎬 Selected codec: ${selectedCodec.name} (${selectedCodec.encoder})`);
     const userExplicitContainer = !!format && format !== "auto";
 
+    if (shouldSdrToHdr) {
+      const before = selectedCodec;
+      if (selectedCodec.encoder === "copy") {
+        selectedCodec = codecConfig["h265_10bit"] || codecConfig["h264_10bit"] || selectedCodec;
+      } else {
+        selectedCodec = force10bitCodecForHdrOutput(selectedCodec, codecConfig);
+      }
+      if (before !== selectedCodec) {
+        console.log(`🔁 SDR→HDR: forcing 10-bit codec: ${before.name} -> ${selectedCodec.name}`);
+      }
+    }
+
     if (!userExplicitContainer && selectedCodec.format && selectedCodec.format !== format) {
       const oldFmt = format;
       format = selectedCodec.format;
@@ -1512,6 +1566,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       args.push("-colorspace", "bt709");
       const cr = mapColorRange(colorRange);
       if (cr) args.push("-color_range", cr);
+      } else if (shouldSdrToHdr) {
+      args.push("-color_primaries", "bt2020");
+      args.push("-color_trc", "smpte2084");
+      args.push("-colorspace", "bt2020nc");
+      const cr = mapColorRange(colorRange);
+      if (cr) args.push("-color_range", cr);
+
     } else if (shouldKeepHdr) {
       if (srcInfo?.color_primaries) args.push("-color_primaries", srcInfo.color_primaries);
       if (srcInfo?.color_transfer)  args.push("-color_trc", srcInfo.color_transfer);
@@ -2023,8 +2084,12 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     if (!useNvenc && !useQsv && selectedCodec.encoder !== 'prores') {
       if (!pixFmtAlreadySet) {
-        if (!selectedCodec.bitDepth || selectedCodec.bitDepth === 8) pushPixFmt("yuv420p");
-        else if (selectedCodec.bitDepth === 10) pushPixFmt("yuv420p10le");
+      if (shouldSdrToHdr) {
+          pushPixFmt("yuv420p10le");
+        } else {
+          if (!selectedCodec.bitDepth || selectedCodec.bitDepth === 8) pushPixFmt("yuv420p");
+          else if (selectedCodec.bitDepth === 10) pushPixFmt("yuv420p10le");
+        }
       }
     }
 
