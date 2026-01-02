@@ -2,6 +2,7 @@ export class VideoSettingsManager {
   constructor(app) {
     this.app = app;
     this.ffmpegCaps = null;
+    this.allowedToneMappings = new Set(['hable', 'mobius', 'reinhard']);
 
     this.videoSettings = {
       transcodeEnabled: false,
@@ -31,7 +32,7 @@ export class VideoSettingsManager {
 
       colorRange: 'auto',
       colorPrimaries: 'auto',
-      hdrMode: 'auto',
+      hdrMode: 'none',
       hdrToneMapping: 'hable',
       hdrPeakBrightness: '1000',
       hwaccel: 'off',
@@ -198,7 +199,6 @@ export class VideoSettingsManager {
 
     this.createUI();
     this.attachEvents();
-    this.allowedToneMappings = new Set(['hable', 'mobius', 'reinhard']);
   }
 
   normalizeHdrToneMapping() {
@@ -223,10 +223,15 @@ export class VideoSettingsManager {
       this.videoSettings.heightMode = this.videoSettings.heightMode || 'auto';
       this.videoSettings.targetHeight = this.videoSettings.targetHeight ?? '';
       this.videoSettings.allowUpscale = !!this.videoSettings.allowUpscale;
-      this.videoSettings.hdrMode = this.videoSettings.hdrMode || 'auto';
+      this.videoSettings.hdrMode = this.videoSettings.hdrMode || 'none';
       this.videoSettings.hdrToneMapping = this.videoSettings.hdrToneMapping || 'hable';
       this.videoSettings.hdrPeakBrightness = String(this.videoSettings.hdrPeakBrightness || '1000');
       this.normalizeHdrToneMapping();
+
+      const allowedHdrModes = new Set(['auto', 'none', 'tonemap_to_sdr', 'keep_hdr', 'sdr_to_hdr']);
+      if (!allowedHdrModes.has(String(this.videoSettings.hdrMode || '').toLowerCase())) {
+        this.videoSettings.hdrMode = 'auto';
+      }
 
       this.videoSettings.orientation = this.videoSettings.orientation || 'auto';
       this.videoSettings.resizeMode = this.videoSettings.resizeMode || 'scale';
@@ -838,12 +843,19 @@ export class VideoSettingsManager {
               <div class="form-group">
              <label for="hdrModeSelect" data-i18n="label.hdrMode">${this.t('label.hdrMode', 'HDR Mode')}</label>
              <select id="hdrModeSelect">
+             <option value="none" data-i18n="option.hdrMode.none">${this.t('option.hdrMode.none', 'None (No HDR processing)')}</option>
                <option value="auto" data-i18n="option.hdrMode.auto">${this.t('option.hdrMode.auto', 'Auto (Detect & Process)')}</option>
                <option value="tonemap_to_sdr" data-i18n="option.hdrMode.tonemap">${this.t('option.hdrMode.tonemap', 'Tonemap HDR to SDR')}</option>
+               <option value="sdr_to_hdr" data-i18n="option.hdrMode.sdrToHdr">${this.t('option.hdrMode.sdrToHdr', 'Convert SDR to HDR (PQ)')}</option>
                <option value="keep_hdr" data-i18n="option.hdrMode.keep">${this.t('option.hdrMode.keep', 'Keep HDR (Passthrough)')}</option>
              </select>
              <div class="muted vs-help">
-               <span data-i18n="option.hdrMode.note">${this.t('option.hdrMode.note', 'Auto: HDR varsa tonemap, yoksa normal. Keep HDR: 10-bit codec gerekir.')}</span>
+               <span data-i18n="option.hdrMode.note">${
+                 this.t(
+                   'option.hdrMode.note',
+                   'Auto: If HDR, tonemap; else normal. None: no HDR filters. Keep HDR: needs 10-bit codec. SDR→HDR: converts SDR to HDR-like PQ output.'
+                 )
+               }</span>
              </div>
            </div>
 
@@ -1415,8 +1427,10 @@ export class VideoSettingsManager {
     }
 
     const entry = this.ffmpegCaps?.[encKey];
-      if (entry == null) return true;
-      return entry.ok === true;
+    if (entry == null) return true;
+    if (entry.ok === true) return true;
+    if (entry.listed === true) return true;
+    return true;
     }
 
   getSupportedCodecs(hardware) {
@@ -2072,17 +2086,17 @@ export class VideoSettingsManager {
   }
 
   updateHDRUI(hdrMode) {
-  const toneMappingGroup = this.modalEl.querySelector('#hdrToneMappingGroup');
-  const peakBrightnessGroup = this.modalEl.querySelector('#hdrPeakBrightnessGroup');
+    if (!this.modalEl) return;
 
-  if (hdrMode === 'tonemap_to_sdr') {
-    if (toneMappingGroup) toneMappingGroup.style.display = 'block';
-    if (peakBrightnessGroup) peakBrightnessGroup.style.display = 'block';
-  } else {
-    if (toneMappingGroup) toneMappingGroup.style.display = 'none';
-    if (peakBrightnessGroup) peakBrightnessGroup.style.display = 'none';
+    const mode = String(hdrMode || '').toLowerCase();
+    const toneMappingGroup = this.modalEl.querySelector('#hdrToneMappingGroup');
+    const peakBrightnessGroup = this.modalEl.querySelector('#hdrPeakBrightnessGroup');
+    const showTonemap = (mode === 'tonemap_to_sdr' || mode === 'auto');
+    const showPeak = (mode === 'tonemap_to_sdr' || mode === 'auto' || mode === 'sdr_to_hdr');
+
+    if (toneMappingGroup) toneMappingGroup.style.display = showTonemap ? 'block' : 'none';
+    if (peakBrightnessGroup) peakBrightnessGroup.style.display = showPeak ? 'block' : 'none';
   }
-}
 
   syncModalUIFromState() {
     if (!this.modalEl) return;
