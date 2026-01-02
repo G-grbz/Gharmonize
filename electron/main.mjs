@@ -61,9 +61,15 @@ function createWindowOnce() {
 }
 
 function resolveTrayIcon() {
-  const base = app.isPackaged ? app.getAppPath() : process.cwd();
-  if (process.platform === 'win32') return path.join(base, 'build', 'icon.ico');
-  return path.join(base, 'build', 'icon.png');
+  if (!app.isPackaged) {
+    return process.platform === 'win32'
+      ? path.join(process.cwd(), 'build', 'icon.ico')
+      : path.join(process.cwd(), 'build', 'icon.png');
+  }
+
+  return process.platform === 'win32'
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(process.resourcesPath, 'icon.png');
 }
 
 function showMainWindow(win) {
@@ -172,7 +178,7 @@ function buildLinuxDesktopFile(prefs = {}) {
   return [
     '[Desktop Entry]',
     'Type=Application',
-    'Version=1.0.8',
+    'Version=1.0.9',
     'Name=Gharmonize',
     'GenericName=Media Toolkit',
     'Comment=Gharmonize',
