@@ -1,4 +1,6 @@
 {
+  "option.hdrMode.none": "Yok (HDR işlemi yok)",
+  "option.hdrMode.sdrToHdr": "SDR → HDR (PQ) dönüştür",
   "label.hdrMode": "HDR Modu",
   "option.hdrMode.auto": "Otomatik (Algıla ve İşle)",
   "option.hdrMode.tonemap": "HDR → SDR Tonemap",

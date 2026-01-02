@@ -1,4 +1,6 @@
 {
+  "option.hdrMode.none": "None (No HDR processing)",
+  "option.hdrMode.sdrToHdr": "Convert SDR to HDR (PQ)",
   "label.hdrMode": "HDR Mode",
   "option.hdrMode.auto": "Auto (Detect & Process)",
   "option.hdrMode.tonemap": "Tonemap HDR to SDR",

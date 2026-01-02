@@ -1,4 +1,6 @@
 {
+  "option.hdrMode.none": "Keine (keine HDR-Verarbeitung)",
+  "option.hdrMode.sdrToHdr": "SDR in HDR (PQ) umwandeln",
   "label.hdrMode": "HDR-Modus",
   "option.hdrMode.auto": "Automatisch (Erkennen & Verarbeiten)",
   "option.hdrMode.tonemap": "HDR nach SDR umwandeln",
