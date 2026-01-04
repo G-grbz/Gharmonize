@@ -218,7 +218,7 @@ export class SettingsManager {
                             id="f_YT_SEARCH_TIMEOUT_MS"
                             type="number"
                             min="1000"
-                            placeholder="10000"
+                            placeholder="25000"
                             data-i18n-ph="ph.ytSearchTimeout"
                         >
                     </div>
@@ -865,7 +865,7 @@ export class SettingsManager {
             document.getElementById('f_PLAYLIST_META_FALLBACK_TIMEOUT_MS').value = s.PLAYLIST_META_FALLBACK_TIMEOUT_MS || '15000';
             document.getElementById('f_YT_UI_FORCE_COOKIES').value = s.YT_UI_FORCE_COOKIES || '1';
             document.getElementById('f_YT_SEARCH_RESULTS').value = s.YT_SEARCH_RESULTS || '3';
-            document.getElementById('f_YT_SEARCH_TIMEOUT_MS').value = s.YT_SEARCH_TIMEOUT_MS || '10000';
+            document.getElementById('f_YT_SEARCH_TIMEOUT_MS').value = s.YT_SEARCH_TIMEOUT_MS || '25000';
             document.getElementById('f_YT_SEARCH_STAGGER_MS').value = s.YT_SEARCH_STAGGER_MS || '180';
 
         } catch (e) {
