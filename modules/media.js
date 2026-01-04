@@ -264,6 +264,24 @@ export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
   }
 }
 
+async function resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir) {
+  const url =
+    metadata?.coverUrl ||
+    metadata?.thumbnailUrl ||
+    metadata?.imageUrl ||
+    null;
+
+  if (!url) return null;
+
+  const dir = (tempDir && path.isAbsolute(tempDir)) ? tempDir : (outputDir || process.cwd());
+  try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+
+  const base = path.join(dir, `.cover_${jobId}_${Date.now()}`);
+  const p = await downloadThumbnail(url, base);
+  if (p && fs.existsSync(p)) return p;
+  return null;
+}
+
 export async function ensureJpegCover(
   coverPath,
   jobId,
@@ -891,9 +909,14 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
   let outputFileName = null;
   let outputPath = null;
-
   let canEmbedCover = false;
   let coverToUse = null;
+
+  if (!coverPath && !isVideo) {
+    try {
+      coverPath = await resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir);
+    } catch {}
+  }
 
   if (!isVideo && coverPath && ["mp3", "flac"].includes(format)) {
     try {
