@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import crypto from "crypto";
 import { sendOk, sendError, uniqueId } from "../modules/utils.js";
 import { idsToMusicUrls, mapSpotifyToYtm, downloadMatchedSpotifyTracks, createDownloadQueue } from "../modules/sp.js";
@@ -26,6 +27,33 @@ console.log("[spotify] OUTPUT_DIR =", OUTPUT_DIR);
 console.log("[spotify] TEMP_DIR   =", TEMP_DIR);
 
 function makeMapId() { return uniqueId("map"); }
+
+async function resolveCoverForRetag({
+  absOutputPath,
+  preferUrl,
+  jobId,
+  logicalIndex
+}) {
+  try {
+    const baseNoExt = absOutputPath.replace(/\.[^.]+$/, "");
+    for (const ext of [".jpg", ".jpeg", ".png", ".webp"]) {
+      const cand = `${baseNoExt}${ext}`;
+      if (fs.existsSync(cand)) return cand;
+    }
+
+    if (preferUrl) {
+      const jobTempDir = path.join(TEMP_DIR, jobId);
+      try { fs.mkdirSync(jobTempDir, { recursive: true }); } catch {}
+      const outBase = path.join(
+        jobTempDir,
+        `.retag_cover_${logicalIndex}_${Date.now()}`
+      );
+      const dl = await downloadThumbnail(preferUrl, outBase);
+      if (dl && fs.existsSync(dl)) return dl;
+    }
+  } catch {}
+  return null;
+}
 
 function makeBgToken() {
   try { return crypto.randomBytes(8).toString("hex"); }
@@ -368,6 +396,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     const runLimitedConvert = createLimiter(parallel);
     const richMetaByIndex = new Map();
     const outputAbsByIndex = new Map();
+    const coverUrlByIndex = new Map();
     const runMetaLimited = createLimiter(Math.max(1, Math.min(8, Math.floor(parallel * 2))));
     const mktResolved = resolveMarket(market);
 
@@ -415,8 +444,16 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
               merged[k] = v;
             }
 
+            if (merged.coverUrl) coverUrlByIndex.set(logicalIndex, merged.coverUrl);
+
             const abs = outputAbsByIndex.get(logicalIndex);
             if (abs && fs.existsSync(abs)) {
+              const coverPath = await resolveCoverForRetag({
+                absOutputPath: abs,
+                preferUrl: coverUrlByIndex.get(logicalIndex) || null,
+                jobId,
+                logicalIndex
+              });
               retagMediaFile(
                 abs,
                 format,
@@ -425,7 +462,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
                   playlist_title: job.metadata.spotifyTitle,
                   webpage_url: merged.webpage_url || rich.webpage_url || itemLite.spUrl || ""
                 },
-                null,
+                coverPath,
                 { jobId, tempDir: TEMP_DIR }
               ).catch(() => {});
             }
@@ -484,18 +521,31 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         webpage_url: entry.webpage_url
       };
 
+      if (preferSpotify) {
+        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
+        if (spCoverUrl) fileMeta.coverUrl = spCoverUrl;
+        fileMeta.thumbnailUrl = undefined;
+        fileMeta.imageUrl = undefined;
+      }
+
       let itemCover = null;
       const baseNoExt = filePath.replace(/\.[^.]+$/, "");
-      const coverExts = [".jpg", ".jpeg", ".png", ".webp"];
-      for (const ext of coverExts) {
-        const cand = `${baseNoExt}${ext}`;
-        if (fs.existsSync(cand)) { itemCover = cand; break; }
+
+      if (preferSpotify) {
+        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
+        if (spCoverUrl) {
+          try {
+            const dl = await downloadThumbnail(spCoverUrl, `${baseNoExt}.spotify_cover`);
+            if (dl && fs.existsSync(dl)) itemCover = dl;
+          } catch {}
+        }
       }
-      if (!itemCover && preferSpotify && spInfo?.coverUrl) {
-        try {
-          const dl = await downloadThumbnail(spInfo.coverUrl, `${baseNoExt}.spotify_cover`);
-          if (dl) itemCover = dl;
-        } catch {}
+
+      if (!itemCover) {
+        for (const ext of [".jpg", ".jpeg", ".png", ".webp"]) {
+          const cand = `${baseNoExt}${ext}`;
+          if (fs.existsSync(cand)) { itemCover = cand; break; }
+        }
       }
 
       try {
@@ -576,11 +626,17 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           const abs = outputAbsByIndex.get(logicalIndex);
           const rich = richMetaByIndex.get(logicalIndex);
           if (abs && rich && fs.existsSync(abs)) {
+            const coverPath = await resolveCoverForRetag({
+              absOutputPath: abs,
+              preferUrl: rich.coverUrl || coverUrlByIndex.get(logicalIndex) || null,
+              jobId,
+              logicalIndex
+            });
             retagMediaFile(
               abs,
               format,
               { ...rich, playlist_title: job.metadata.spotifyTitle },
-              null,
+              coverPath,
               { jobId, tempDir: TEMP_DIR }
             ).catch(()=>{});
           }
@@ -955,19 +1011,32 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       webpage_url: matchedItem.webpage_url
     };
 
-    let itemCover = null;
-    const baseNoExt = filePath.replace(/\.[^.]+$/, "");
-    const coverExts = [".jpg", ".jpeg", ".png", ".webp"];
-    for (const ext of coverExts) {
-      const cand = `${baseNoExt}${ext}`;
-      if (fs.existsSync(cand)) { itemCover = cand; break; }
-    }
-    if (!itemCover && preferSpotify && spInfo?.coverUrl) {
-      try {
-        const dl = await downloadThumbnail(spInfo.coverUrl, `${baseNoExt}.spotify_cover`);
-        if (dl) itemCover = dl;
-      } catch {}
-    }
+      if (preferSpotify) {
+        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
+        if (spCoverUrl) fileMeta.coverUrl = spCoverUrl;
+        fileMeta.thumbnailUrl = undefined;
+        fileMeta.imageUrl = undefined;
+      }
+
+      let itemCover = null;
+      const baseNoExt = filePath.replace(/\.[^.]+$/, "");
+
+      if (preferSpotify) {
+        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
+        if (spCoverUrl) {
+          try {
+            const dl = await downloadThumbnail(spCoverUrl, `${baseNoExt}.spotify_cover`);
+            if (dl && fs.existsSync(dl)) itemCover = dl;
+          } catch {}
+        }
+      }
+
+      if (!itemCover) {
+        for (const ext of [".jpg", ".jpeg", ".png", ".webp"]) {
+          const cand = `${baseNoExt}${ext}`;
+          if (fs.existsSync(cand)) { itemCover = cand; break; }
+        }
+      }
 
     const result = await convertMedia(
       filePath, format, bitrate, jobId,
@@ -1074,6 +1143,14 @@ function cleanupSpotifyTempFiles(jobId, files) {
         try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch {}
       });
     }
+
+    try {
+      const prefix = `.retag_cover_${jobId}_`;
+      for (const name of fs.readdirSync(TEMP_DIR)) {
+        if (!name || !name.startsWith(prefix)) continue;
+        try { fs.unlinkSync(path.join(TEMP_DIR, name)); } catch {}
+      }
+    } catch {}
 
     const jobDir = path.join(TEMP_DIR, jobId);
     if (fs.existsSync(jobDir)) {
