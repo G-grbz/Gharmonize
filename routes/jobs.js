@@ -811,7 +811,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         ? parsedVideoSettings
         : null;
 
-    const supported = ["mp3","flac","wav","ogg","mp4","mkv","eac3","ac3","aac"];
+    const supported = ["mp3","flac","wav","ogg","mp4","mkv","eac3","ac3","aac","dts"];
     if (!supported.includes(format)) {
       return sendError(res, ERR.INVALID_FORMAT, "Unsupported format", 400);
     }
