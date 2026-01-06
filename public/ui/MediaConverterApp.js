@@ -696,7 +696,7 @@ export class MediaConverterApp {
         if (!Number.isFinite(compressionLevel)) compressionLevel = null;
     }
 
-    if ((format === 'eac3' || format === 'ac3' || format === 'aac') && !sampleRate) {
+    if ((format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts') && !sampleRate) {
         this.showNotification(this.t('notif.sampleRateRequired'), 'error', 'error');
         return;
     }
