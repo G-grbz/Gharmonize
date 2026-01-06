@@ -1869,7 +1869,9 @@ if (job.currentPhase) {
         try {
             console.log("Sent payload:", payload);
 
-            const format = document.getElementById('formatSelect').value;
+            const format = String(
+                (!isFormData && payload?.format) ? payload.format : (document.getElementById('formatSelect')?.value)
+            ).toLowerCase();
 
             if (!isFormData && payload.youtubeConcurrency != null) {
             payload.youtubeConcurrency = Number(payload.youtubeConcurrency) || 4;
@@ -1877,7 +1879,7 @@ if (job.currentPhase) {
             payload.append('youtubeConcurrency', String(payload.youtubeConcurrency));
         }
 
-            if (format === 'mp4' && this.app.videoManager.videoSettings.transcodeEnabled) {
+            if ((format === 'mp4' || format === 'mkv' || format === 'webm') && this.app.videoManager.videoSettings.transcodeEnabled) {
                 console.log("🎬 Adding video settings to payload:", this.app.videoManager.videoSettings);
                 if (!isFormData) {
                     payload.videoSettings = this.app.videoManager.videoSettings;
@@ -1893,9 +1895,16 @@ if (job.currentPhase) {
                 payload.append('selectedStreams', JSON.stringify(payload.selectedStreams));
             }
 
-            if (format === 'eac3' || format === 'ac3' || format === 'aac') {
-                const stereoConvert = document.getElementById('stereoConvertSelect')?.value || 'auto';
-                const atempoAdjust = document.getElementById('atempoSelect')?.value || 'none';
+            const wantStereoTempo = ['eac3', 'ac3', 'aac', 'dts'].includes(format);
+
+                if (wantStereoTempo) {
+                const stereoConvert =
+                    (!isFormData && payload?.stereoConvert) ? payload.stereoConvert
+                    : (document.getElementById('stereoConvertSelect')?.value || 'auto');
+
+                const atempoAdjust =
+                    (!isFormData && payload?.atempoAdjust) ? payload.atempoAdjust
+                    : (document.getElementById('atempoSelect')?.value || 'none');
 
                 if (!isFormData) {
                     payload.stereoConvert = stereoConvert;
