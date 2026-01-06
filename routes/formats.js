@@ -32,6 +32,12 @@ router.get("/api/formats", (req,res)=>{
     },
 
     {
+      format: "dts",
+      bitrates: ["768k","1024k","1152k","1536k"],
+      type: "audio"
+    },
+
+    {
       format: "eac3",
       bitrates: ["96k","128k","192k","256k","384k","448k","512k","640k","768k"],
       type: "audio"
