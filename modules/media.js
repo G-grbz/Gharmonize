@@ -347,6 +347,7 @@ function commentKeyFor(fmt) {
   if (f === "mp3") return "comment";
   if (f === "eac3" || f === "ac3") return "comment";
   if (f === "aac") return "comment";
+  if (f === "dts") return "comment";
   return "comment";
 }
 
@@ -405,7 +406,7 @@ function buildCommonMetaPairs(resolvedMeta, format) {
 
 function shouldSkipRetag(format) {
   const f = String(format || "").toLowerCase();
-  return (f === "wav" || f === "aac" || f === "ac3" || f === "eac3");
+  return (f === "wav" || f === "aac" || f === "ac3" || f === "eac3" || f === "dts");
 }
 
 export async function retagMediaFile(
@@ -554,7 +555,13 @@ export async function convertMedia(
   typeof opts.isCanceled === "function" ? () => !!opts.isCanceled() : () => false;
 
   const stereoConvert = opts?.stereoConvert || "auto";
-  const atempoAdjust = opts?.atempoAdjust || "none";
+  const atempoAdjustRaw =
+    (opts?.videoSettings?.audioAtempoAdjust != null)
+      ? String(opts.videoSettings.audioAtempoAdjust)
+      : (opts?.atempoAdjust != null)
+      ? String(opts.atempoAdjust)
+      : "none";
+  let atempoAdjust = atempoAdjustRaw || "none";
   const bitDepth = opts?.bitDepth || null;
   const videoSettings = opts.videoSettings || {};
   const selectedStreams = opts.selectedStreams || null;
@@ -749,6 +756,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const audioSampleRate = videoSettings.audioTranscodeEnabled ?
                              videoSettings.audioSampleRate : '48000';
 
+  if (String(audioCodec || "").toLowerCase() === "copy") {
+    atempoAdjust = "none";
+  }
+
   console.log(`🎬 Video Setting:`, { isVideo, format, videoSettings, videoHwaccel });
   console.log(`🎵 Audio Setting: Codec=${audioCodec}, Bitrate=${audioBitrate}, Transcode=${videoSettings.audioTranscodeEnabled}`);
 
@@ -778,7 +789,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     return Number.isFinite(n) ? Math.round(n) : NaN;
   };
 
-  const isEac3Ac3 = format === "eac3" || format === "ac3" || format === "aac";
+  const isEac3Ac3 = format === "eac3" || format === "ac3" || format === "aac" || format === "dts";
   const srOpt1 = parseSR(opts?.sampleRate);
   const srOpt2 = parseSR(opts?.sampleRateHz);
   const srEnv = parseSR(process.env.TARGET_SAMPLE_RATE);
@@ -2135,7 +2146,12 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     if (audioCodec === 'copy') {
         args.push("-c:a", "copy");
     } else {
-        args.push("-c:a", audioCodec);
+        const aCodecRaw = String(audioCodec || '').toLowerCase();
+        const aCodec = (aCodecRaw === 'dts') ? 'dca' : audioCodec;
+        args.push("-c:a", aCodec);
+        if (String(aCodec).toLowerCase() === 'dca') {
+          args.push("-strict", "-2");
+        }
         if (audioCodec === 'flac') {
             args.push("-compression_level", "5");
         } else if (audioBitrate !== 'original' && audioBitrate !== 'lossless') {
@@ -2249,22 +2265,41 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
           );
           if (stereoConvert === "force") args.push("-ac", "2");
           break;
+        case "dts": {
+          const br = (bitrate && bitrate !== "auto" && bitrate !== "0" && bitrate !== "lossless")
+            ? bitrate
+            : "1536k";
+          args.push(
+            "-acodec",
+            "dca",
+            "-strict",
+            "-2",
+            "-b:a",
+            br
+          );
+          if (FINAL_SAMPLE_RATE !== null) {
+            args.push("-ar", String(FINAL_SAMPLE_RATE));
+          } else {
+            args.push("-ar", String(SR_NORM));
+          }
+          if (stereoConvert === "force") args.push("-ac", "2");
+          break;
+        }
       }
     }
 
     const afilters = [];
 
-    if (!isVideo && atempoAdjust !== "none") {
+    if (atempoAdjust !== "none") {
       const ratioTable = {
-        "24000_23976": 24000 / 23976,
+        "24000_23976": 23976 / 24000,
+        "23976_24000": 24000 / 23976,
+        "23976_25000": 25000 / 23976,
+        "24000_25000": 25000 / 24000,
         "25_24": 24 / 25,
         "25_23976": 23976 / 25000,
         "30_23976": 23976 / 30000,
         "30_24": 24 / 30,
-        "24000_25000": 25000 / 24000,
-        "23976_24000": 24000 / 23976,
-        "23976_25000": 25000 / 23976,
-        "30000_23976": 23976 / 30000,
         "30000_25000": 25000 / 30000
       };
 
