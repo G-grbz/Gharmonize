@@ -1,4 +1,5 @@
 {
+  "option.dca": "DTS (core)",
   "option.hdrMode.none": "None (No HDR processing)",
   "option.hdrMode.sdrToHdr": "Convert SDR to HDR (PQ)",
   "label.hdrMode": "HDR Mode",
