@@ -67,6 +67,7 @@ export class VideoSettingsManager {
       audioCodec: 'aac',
       audioChannels: 'original',
       audioSampleRate: '48000',
+      audioAtempoAdjust: 'none',
       audioBitrate: '192k',
       volumeGain: 1.0
     };
@@ -250,6 +251,7 @@ export class VideoSettingsManager {
       this.videoSettings.audioBitrate = this.videoSettings.audioBitrate || '192k';
       this.videoSettings.audioChannels = this.videoSettings.audioChannels || 'original';
       this.videoSettings.audioSampleRate = this.videoSettings.audioSampleRate || '48000';
+      this.videoSettings.audioAtempoAdjust = this.videoSettings.audioAtempoAdjust || 'none';
       this.videoSettings.swSettings = {
         preset: this.videoSettings.swSettings?.preset || 'veryfast',
         quality: this.videoSettings.swSettings?.quality || '23',
@@ -287,8 +289,39 @@ export class VideoSettingsManager {
       const hw = String(this.videoSettings.hwaccel || 'off').toLowerCase();
       if (hw === 'qsv') this.videoSettings.qsvSettings.level = 'auto';
       if (hw === 'vaapi') this.videoSettings.vaapiSettings.level = 'auto';
+      const allowedAtempo = new Set([
+        'none',
+        '23976_24000','23976_25000',
+        '24000_23976','24000_25000',
+        '25_24','25_23976',
+        '30_23976','30_24',
+        '30000_25000'
+      ]);
+      const curAtempo = String(this.videoSettings.audioAtempoAdjust || 'none');
+      if (!allowedAtempo.has(curAtempo)) {
+        this.videoSettings.audioAtempoAdjust = 'none';
+      }
     } catch (e) {
       console.warn('[VideoSettingsManager] Failed to load:', e);
+    }
+  }
+
+  updateAtempoUI() {
+    if (!this.modalEl) return;
+    const sel = this.modalEl.querySelector('#atempoSelect');
+    if (!sel) return;
+
+    const codec = String(this.videoSettings.audioCodec || 'aac').toLowerCase();
+    const disable = (codec === 'copy');
+    sel.disabled = disable;
+    sel.style.opacity = disable ? '0.55' : '';
+
+    if (disable) {
+      if (String(sel.value || '') !== 'none') sel.value = 'none';
+      if (this.videoSettings.audioAtempoAdjust !== 'none') {
+        this.videoSettings.audioAtempoAdjust = 'none';
+        this.saveToStorage();
+      }
     }
   }
 
@@ -546,6 +579,7 @@ export class VideoSettingsManager {
     this.videoSettings.audioCodec = v('#audioCodecSelect') || 'aac';
     this.videoSettings.audioChannels = v('#audioChannelsSelect') || 'original';
     this.videoSettings.audioSampleRate = v('#audioSampleRateSelect') || '48000';
+    this.videoSettings.audioAtempoAdjust = v('#atempoSelect') || 'none';
 
     const abrEl = this.modalEl.querySelector('#audioBitrateSelect');
     if (abrEl) this.videoSettings.audioBitrate = String(abrEl.value ?? '');
@@ -1255,9 +1289,10 @@ export class VideoSettingsManager {
                     <option value="aac" data-i18n="option.audioAAC">${this.t('option.audioAAC', 'AAC')}</option>
                     <option value="ac3" data-i18n="option.audioAC3">${this.t('option.audioAC3', 'AC3')}</option>
                     <option value="eac3" data-i18n="option.audioEAC3">${this.t('option.audioEAC3', 'EAC3')}</option>
+                    <option value="dca" data-i18n="option.audioDTS">${this.t('option.audioDTS', 'DTS (Core)')}</option>
                     <option value="mp3" data-i18n="option.audioMP3">${this.t('option.audioMP3', 'MP3')}</option>
                     <option value="flac" data-i18n="option.audioFLAC">${this.t('option.audioFLAC', 'FLAC')}</option>
-                    <option value="copy" data-i18n="option.audioCopy">${this.t('option.audioCopy', 'Copy')}</option>
+                    <option value="copy" data-i18n="option.audioCopy">${this.t('option.audioCopy', 'Copy (passthrough — DTS/DTS-HD/DTS:X dahil)')}</option>
                   </select>
                 </div>
 
@@ -1281,9 +1316,25 @@ export class VideoSettingsManager {
                     <option value="22050" data-i18n="option.audioSampleRate22">${this.t('option.audioSampleRate22', '22.05 kHz')}</option>
                   </select>
                 </div>
+                <div class="form-group">
+                  <label for="atempoSelect" data-i18n="label.atempoAdjust">
+                    ${this.t('label.atempoAdjust', 'Ses Hızı Düzeltme (FPS Uyumu):')}
+                  </label>
+                  <select id="atempoSelect">
+                    <option value="none" data-i18n="option.none">${this.t('option.none','Ses hızını değiştirme')}</option>
+                    <option value="23976_24000" data-i18n="option.23976_24000">${this.t('option.23976_24000','23.976 FPS → 24 FPS (TV/stream → sinema)')}</option>
+                    <option value="23976_25000" data-i18n="option.23976_25000">${this.t('option.23976_25000','23.976 FPS → 25 FPS (NTSC → PAL TV)')}</option>
+                    <option value="24000_23976" data-i18n="option.24000_23976">${this.t('option.24000_23976','24 FPS → 23.976 FPS (sinema → TV/stream)')}</option>
+                    <option value="24000_25000" data-i18n="option.24000_25000">${this.t('option.24000_25000','24 FPS → 25 FPS (sinema → PAL TV)')}</option>
+                    <option value="25_24" data-i18n="option.25_24">${this.t('option.25_24','25 FPS → 24 FPS (PAL TV → sinema)')}</option>
+                    <option value="25_23976" data-i18n="option.25_23976">${this.t('option.25_23976','25 FPS → 23.976 FPS (PAL TV → NTSC/stream)')}</option>
+                    <option value="30_23976" data-i18n="option.30_23976">${this.t('option.30_23976','30 FPS → 23.976 FPS (NTSC → film/TV)')}</option>
+                    <option value="30_24" data-i18n="option.30_24">${this.t('option.30_24','30 FPS → 24 FPS (NTSC → sinema)')}</option>
+                    <option value="30000_25000" data-i18n="option.30000_25000">${this.t('option.30000_25000','30 FPS → 25 FPS (NTSC → PAL TV)')}</option>
+                  </select>
+                </div>
+                <div id="audioBitrateContainer" class="form-group" style="display:none;"></div>
               </div>
-
-              <div id="audioBitrateContainer" class="form-group" style="display:none;"></div>
             </div>
           </div>
         </div>
@@ -1310,7 +1361,8 @@ export class VideoSettingsManager {
     const codec = String(codecSel.value || '').toLowerCase();
     const isDolbyLike = (codec === 'ac3' || codec === 'eac3');
     const isAac = (codec === 'aac');
-    const restrict = isDolbyLike || isAac;
+    const isDts = (codec === 'dca' || codec === 'dts');
+    const restrict = isDolbyLike || isAac || isDts;
     const banned = new Set(['24000', '22050']);
 
     Array.from(srSel.options).forEach(opt => {
@@ -1355,10 +1407,17 @@ export class VideoSettingsManager {
       eac3: ['96k', '128k', '192k', '256k', '384k', '448k', '512k', '640k', '768k'],
       mp3: ['96k', '128k', '160k', '192k', '256k', '320k'],
       flac: ['lossless'],
+      dca: ['768k', '1024k', '1509k', '1536k'],
       copy: ['original']
     };
 
     const options = bitrateOptions[codec] || ['192k'];
+
+    const current =
+    options.includes(this.videoSettings.audioBitrate)
+      ? this.videoSettings.audioBitrate
+      : options[0];
+  this.videoSettings.audioBitrate = current;
 
     container.innerHTML = '';
     container.style.display = options.length > 1 ? 'block' : 'none';
@@ -1376,7 +1435,7 @@ export class VideoSettingsManager {
       <label for="audioBitrateSelect" data-i18n="label.audioBitrate">${audioBitrateLabel}</label>
       <select id="audioBitrateSelect">
         ${options.map(bitrate =>
-          `<option value="${bitrate}" ${bitrate === this.videoSettings.audioBitrate ? 'selected' : ''}>
+          `<option value="${bitrate}" ${bitrate === current ? 'selected' : ''}>
             ${bitrate === 'lossless' ? losslessText : bitrate === 'original' ? originalText : bitrate}
           </option>`
         ).join('')}
@@ -2069,6 +2128,14 @@ export class VideoSettingsManager {
       this.videoSettings.audioCodec = e.target.value;
       this.updateAudioBitrateOptions(e.target.value);
       this.normalizeAudioSampleRateUI();
+      this.updateAtempoUI();
+      this.saveToStorage();
+    });
+
+    const atempoSelect = this.modalEl.querySelector('#atempoSelect');
+    atempoSelect?.addEventListener('change', (e) => {
+      this.videoSettings.audioAtempoAdjust = String(e.target.value || 'none');
+      this.updateAtempoUI();
       this.saveToStorage();
     });
 
@@ -2263,8 +2330,14 @@ export class VideoSettingsManager {
     const audioSampleRateSelect = this.modalEl.querySelector('#audioSampleRateSelect');
     if (audioSampleRateSelect) audioSampleRateSelect.value = this.videoSettings.audioSampleRate || '48000';
 
+    const atempoSelect = this.modalEl.querySelector('#atempoSelect');
+    if (atempoSelect) {
+      atempoSelect.value = this.videoSettings.audioAtempoAdjust || 'none';
+    }
+
     this.updateAudioBitrateOptions(this.videoSettings.audioCodec);
     this.normalizeAudioSampleRateUI();
+    this.updateAtempoUI();
     this.normalizeTuneForContext(this.videoSettings.videoCodec || 'auto', this.videoSettings.hwaccel || 'off');
 
     const hdrModeSelect = this.modalEl.querySelector('#hdrModeSelect');
