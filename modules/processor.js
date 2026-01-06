@@ -1482,7 +1482,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           flac: ".flac",
           wav: ".wav",
           ogg: ".ogg",
-          mp4: ".mp4"
+          mp4: ".mp4",
+          dts: ".dts"
         };
         const desiredExt =
           extMap[format] || "." + String(format || "mp3");
@@ -1599,7 +1600,8 @@ function findExistingOutput(idPrefix, format, outDir) {
         flac: ["flac"],
         wav: ["wav"],
         ogg: ["ogg", "oga"],
-        mp4: ["mp4", "m4a"]
+        mp4: ["mp4", "m4a"],
+        dts: ["dts"]
       }[format] || [format];
     const files = fs.readdirSync(outDir);
     const hit = files.find(
