@@ -24,7 +24,7 @@ export class FormatManager {
             const formats = await this.getFormats();
             this.updateBitrateOptions(format, formats);
 
-            if (format === 'eac3' || format === 'ac3' || format === 'aac') {
+            if (format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts') {
              this.updateSampleRateOptionsForEac3Ac3();
             }
         });
@@ -33,7 +33,7 @@ export class FormatManager {
         this.app.updateQualityLabel(currentFormat);
         this.toggleFormatSpecificOptions(currentFormat);
 
-        if (currentFormat === 'eac3' || currentFormat === 'ac3' || currentFormat === 'aac') {
+        if (currentFormat === 'eac3' || currentFormat === 'ac3' || currentFormat === 'aac' || currentFormat === 'dts') {
          this.updateSampleRateOptionsForEac3Ac3();
      }
     }
@@ -61,7 +61,7 @@ export class FormatManager {
         const sampleRateGroup = document.querySelector('.form-group:has(#sampleRateSelect)');
         const lyricsGroup = document.getElementById('lyricsCheckboxContainer');
         const isMp4 = format === 'mp4';
-        const isEac3Ac3 = format === 'eac3' || format === 'ac3' || format === 'aac';
+        const isEac3Ac3 = format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts';
         const isFlacWav = format === 'flac' || format === 'wav';
         const isFlac = format === 'flac';
 
