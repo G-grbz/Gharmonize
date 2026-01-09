@@ -1,6 +1,6 @@
 {
   "name": "Gharmonize",
-  "version": "1.0.8",
+  "version": "1.1.0",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -34,6 +34,7 @@
   "build": {
     "appId": "com.gharmonize.app",
     "productName": "Gharmonize",
+    "executableName": "gharmonize",
     "icon": "build/icon.ico",
     "asar": true,
     "directories": {
@@ -56,11 +57,9 @@
       "build/**"
     ],
     "extraResources": [
-      {
-        "from": "build/bin",
-        "to": "bin",
-        "filter": ["**/*"]
-      }
+      { "from": "build/bin", "to": "bin", "filter": ["**/*"] },
+      { "from": "build/icon.png", "to": "icon.png" },
+      { "from": "build/icon.ico", "to": "icon.ico" }
     ],
     "win": {
       "target": [
@@ -78,9 +77,15 @@
       "artifactName": "Gharmonize Setup ${version}.${ext}"
     },
     "linux": {
-      "target": ["AppImage"],
-      "icon": "build/icon.png"
-    },
+    "target": ["AppImage"],
+    "icon": "build/icon.png",
+    "desktop": {
+      "entry": {
+        "Name": "Gharmonize",
+        "StartupWMClass": "Gharmonize"
+      }
+    }
+  },
     "mac": {
       "target": ["dmg"],
       "icon": "build/icon.icns"
