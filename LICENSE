@@ -1,51 +1,11 @@
-MIT License  
-Attribution • Fork-Only • Non-Commercial • Approved Permission Required
----------------------------------------------------------------------------
+# PolyForm Noncommercial License 1.0.0
 
-Copyright (c) 2025 G-grbz
+Copyright (c) 2026 G-grbz
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the “Software”), to deal
-in the Software for **non-commercial purposes only**, including the rights to
-use, copy, modify, and merge copies of the Software, subject to the following
-conditions:
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to use, copy, modify, and distribute the Software for noncommercial purposes only.
 
-1. **Redistribution is limited to public GitHub forks of the original repository.**
-   Creating new standalone repositories containing partial or full copies of
-   the Software—modified or unmodified—is not permitted.
+The Software may not be used for any commercial purpose, including but not limited to providing paid services, selling, sublicensing, or embedding in commercial products, without prior written permission from the copyright holder.
 
-2. **Attribution is mandatory.**
-   Any fork, modification, or redistribution must clearly state:
-   **“Based on work by G-grbz”**  
-   and must include a link to the original repository:
-   **https://github.com/G-grbz/Gharmonize**
+Redistribution must retain this license and attribution to the original author.
 
-3. **Modification notice is required.**
-   If changes are made, they must be documented as:
-   **“Modified by <Name>”**
-
-4. **Commercial activity is prohibited** without **approved permission** from
-   the original author (G-grbz). This includes reselling, sublicensing, paid
-   services, or monetized distribution.
-
-5. **Any redistribution outside GitHub fork form or any re-branding requires
-   approved permission from the original author.**
-
-6. **These restrictions may not be removed, altered, or bypassed** unless
-   **approved permission** is granted by the original author.
-
-7. **Copyright notices and attribution may not be removed** from any portion
-   of the Software.
-
-The Software is provided “as is”, without warranty of any kind, express or
-implied, including but not limited to the warranties of merchantability,
-fitness for a particular purpose and noninfringement. In no event shall the
-authors be liable for any claim, damages or other liability, whether in an
-action of contract, tort or otherwise, arising from, out of or in connection
-with the Software or the use or other dealings in the Software.
-
----------------------------------------------------------------------------
-
-### Approval Requests
-Commercial usage, redistribution outside a GitHub fork, or rebranding
-requires **approved permission from G-grbz**.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
