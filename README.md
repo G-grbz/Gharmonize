@@ -960,33 +960,17 @@ FFMPEG_BIN=
 
 ## License
 
-(MIT — Attribution • Fork-Only • Non-Commercial • Written Permission Required)
+# PolyForm Noncommercial License 1.0.0
 
-This project is licensed under the MIT License **with mandatory attribution**,
-**fork-only redistribution**, **non-commercial usage restrictions**, and **written permission requirement for exceptions**.
+Copyright (c) 2026 G-grbz
 
----
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to use, copy, modify, and distribute the Software for noncommercial purposes only.
 
-## ✔ Allowed
+The Software may not be used for any commercial purpose, including but not limited to providing paid services, selling, sublicensing, or embedding in commercial products, without prior written permission from the copyright holder.
 
-You are permitted to:
+Redistribution must retain this license and attribution to the original author.
 
-* Use, copy, modify, and distribute this software **for non-commercial purposes only**.
-* Create derivative works.
-* Publish your changes **only as a GitHub fork** of the original repository.
-
----
-
-## 🚫 Not Allowed
-
-You are **not permitted** to:
-
-* Use this software or any modified version **for commercial purposes**.
-* Remove or alter copyright notices.
-* Remove attribution to the original author.
-* Re-upload, re-brand, or re-publish this project **as a new repository**.
-* Redistribute modified or unmodified copies **outside of a public GitHub fork**.
-* Bypass these restrictions **without obtaining written permission from the original author**.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ---
 
