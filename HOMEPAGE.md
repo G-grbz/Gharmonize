@@ -90,3 +90,4 @@ You can freely choose which fields you want to display. Simply add or remove map
 `/api/homepage` returns real‑time job and queue status for Homepage widgets.
 
 ---
+
