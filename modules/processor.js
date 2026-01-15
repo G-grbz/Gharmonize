@@ -227,7 +227,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
   const sampleRate = job.sampleRate || 48000;
 
   try {
-    job.status = "running";
+    job.status = "processing";
     job.progress = 0;
     job.downloadProgress = 0;
     job.convertProgress = 0;

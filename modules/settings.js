@@ -47,7 +47,8 @@ const ALLOWED_KEYS = [
   'YT_UI_FORCE_COOKIES',
   'YT_SEARCH_RESULTS',
   'YT_SEARCH_TIMEOUT_MS',
-  'YT_SEARCH_STAGGER_MS'
+  'YT_SEARCH_STAGGER_MS',
+  'HOMEPAGE_WIDGET_KEY'
 ]
 
 function parseEnv() {
@@ -178,6 +179,7 @@ router.get('/settings', authMiddleware, (req, res) => {
   for (const k of ALLOWED_KEYS) {
     let val = env.get(k) ?? ''
     if (k === 'SPOTIFY_CLIENT_SECRET' && val) val = '••••••••'
+    if (k === 'HOMEPAGE_WIDGET_KEY' && val) val = '••••••••'
     data[k] = val
   }
   res.json({ settings: data })
@@ -189,15 +191,24 @@ router.post('/settings', authMiddleware, express.json(), (req, res) => {
   const incoming = (req.body && req.body.settings) || {}
   const env = parseEnv()
   const updates = {}
+
   for (const k of ALLOWED_KEYS) {
     if (!(k in incoming)) continue
     const v = incoming[k]
+
     if (k === 'SPOTIFY_CLIENT_SECRET') {
       updates[k] = (!v || v === '••••••••') ? (env.get(k) || '') : String(v)
-    } else {
-      if (typeof v !== 'undefined' && v !== null) updates[k] = String(v)
+      continue
     }
+
+    if (k === 'HOMEPAGE_WIDGET_KEY') {
+      updates[k] = (!v || v === '••••••••') ? (env.get(k) || '') : String(v)
+      continue
+    }
+
+    if (typeof v !== 'undefined' && v !== null) updates[k] = String(v)
   }
+
   writeEnv(updates)
   for (const [k, v] of Object.entries(updates)) process.env[k] = v
   res.json({ ok: true, appliedInMemory: true })
@@ -234,5 +245,28 @@ router.post('/auth/change-password', authMiddleware, express.json(), (req, res) 
     })
   }
 })
+
+function generateHomepageWidgetKey() {
+  const raw = crypto.randomBytes(32).toString('base64url')
+  return `hwk_${raw}`
+}
+
+router.post('/settings/homepage-widget-key', authMiddleware, express.json(), (req, res) => {
+  const { rotate = true, reveal = false } = req.body || {}
+
+  const env = parseEnv()
+  const existing = (env.get('HOMEPAGE_WIDGET_KEY') || '').trim()
+
+  if (!rotate && existing) {
+    return res.json({ ok: true, rotated: false, key: reveal ? existing : undefined })
+  }
+
+  const next = generateHomepageWidgetKey()
+  writeEnv({ HOMEPAGE_WIDGET_KEY: next }, ['HOMEPAGE_WIDGET_KEY'])
+  process.env.HOMEPAGE_WIDGET_KEY = next
+
+  res.json({ ok: true, rotated: true, key: reveal ? next : undefined })
+})
+
 
 export default router
