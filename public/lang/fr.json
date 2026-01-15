@@ -1,5 +1,5 @@
 {
-  "settings.homepageWidgetKey.hint": "Clé de vérification du widget de la page d’accueil. Utilisez « Œil » pour afficher/masquer, « Copier » pour copier dans le presse-papiers.",
+  "settings.homepageWidgetKey.hint": "Clé de vérification du widget Homepage. Utilisez « Œil » pour afficher/masquer et « Copier » pour copier dans le presse-papiers.",
   "settings.homepageWidgetKey.toggleTitle": "Afficher / Masquer",
   "settings.homepageWidgetKey.copyTitle": "Copier",
   "settings.homepageWidgetKey.rotateBtn": "Générer / Renouveler",

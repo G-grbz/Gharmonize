@@ -1,5 +1,5 @@
 {
-  "settings.homepageWidgetKey.hint": "Verifizierungsschlüssel für das Startseiten-Widget. Mit „Auge“ anzeigen/ausblenden, mit „Kopieren“ in die Zwischenablage kopieren.",
+  "settings.homepageWidgetKey.hint": "Homepage-Widget-Verifizierungsschlüssel. Mit „Auge“ anzeigen/ausblenden und mit „Kopieren“ in die Zwischenablage kopieren.",
   "settings.homepageWidgetKey.toggleTitle": "Anzeigen / Ausblenden",
   "settings.homepageWidgetKey.copyTitle": "Kopieren",
   "settings.homepageWidgetKey.rotateBtn": "Erzeugen / Erneuern",

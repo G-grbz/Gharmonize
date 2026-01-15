@@ -1,5 +1,5 @@
 {
-  "settings.homepageWidgetKey.hint": "Homepage widget verification key. Use \"Eye\" to show/hide, \"Copy\" to copy to clipboard.",
+  "settings.homepageWidgetKey.hint": "Homepage widget verification key. Use \"Eye\" to show/hide, and \"Copy\" to copy it to the clipboard.",
   "settings.homepageWidgetKey.toggleTitle": "Show / Hide",
   "settings.homepageWidgetKey.copyTitle": "Copy",
   "settings.homepageWidgetKey.rotateBtn": "Generate / Rotate",

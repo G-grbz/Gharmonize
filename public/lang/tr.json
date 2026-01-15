@@ -1,5 +1,5 @@
 {
-  "settings.homepageWidgetKey.hint": "Ana sayfa widget doğrulama anahtarı. \"Göz\" ile göster/gizle, \"Kopyala\" ile panoya al.",
+  "settings.homepageWidgetKey.hint": "Homepage widget doğrulama anahtarı. \"Göz\" ile göster/gizle, \"Kopyala\" ile panoya al.",
   "settings.homepageWidgetKey.toggleTitle": "Göster / Gizle",
   "settings.homepageWidgetKey.copyTitle": "Kopyala",
   "settings.homepageWidgetKey.rotateBtn": "Oluştur / Yenile",
