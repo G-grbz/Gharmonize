@@ -1020,12 +1020,28 @@ Add this to your `services.yaml` (or any Homepage service config file):
 
 `X-Lang` supports: `en`, `de`, `fr`, `tr`.
 
+## Available Fields
+
+You can freely choose which fields you want to display. Simply add or remove mappings based on your needs.
+
+| Field               | Description                            |
+| ------------------- | -------------------------------------- |
+| activeCount         | Number of currently active jobs        |
+| queueCount          | Number of jobs waiting in queue        |
+| currentProgressText | Current job progress graph             |
+| completedCount      | Total completed jobs                   |
+| processingCount     | Jobs currently being processed         |
+| errorCount          | Jobs failed with error                 |
+| currentPhaseText    | Current processing phase               |
+| currentId           | Currently running Job ID               |
+| ts                  | Last update timestamp                  |
+
 ## API Endpoint
 
 `/api/homepage` returns real‑time job and queue status for Homepage widgets.
 
-
 ---
+
 
 ## Notes & Troubleshooting
 
