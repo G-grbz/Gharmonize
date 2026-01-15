@@ -1099,7 +1099,7 @@ if (job.currentPhase) {
     let jobElement = document.getElementById(`job-${job.id}`);
     const statusText = {
         queued: this.app.t('status.queued'),
-        running: this.app.t('status.running'),
+        processing: this.app.t('status.processing'),
         completed: this.app.t('status.completed'),
         error: this.app.t('status.error'),
         canceled: this.app.t('status.canceled'),

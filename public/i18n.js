@@ -1,5 +1,25 @@
 (function () {
   const SUPPORTED = ['en', 'tr', 'de', 'fr'];
+  const COOKIE_NAME = 'lang';
+  const COOKIE_DOMAIN = '.grbzhome.com';
+
+  function setLangCookie(lang) {
+    try {
+      const maxAge = 60 * 60 * 24 * 365;
+      document.cookie =
+        `${COOKIE_NAME}=${encodeURIComponent(lang)}; ` +
+        `Max-Age=${maxAge}; Path=/; Domain=${COOKIE_DOMAIN}; SameSite=Lax`;
+    } catch {}
+  }
+
+  function getLangCookie() {
+    try {
+      const m = document.cookie.match(new RegExp(`(?:^|; )${COOKIE_NAME}=([^;]*)`));
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch {
+      return '';
+    }
+  }
   const ATTR_MAP = [
     ['data-i18n', 'textContent'],
     ['data-i18n-title', 'title'],
@@ -19,9 +39,13 @@
     const q = (u.searchParams.get('lang') || '').toLowerCase();
     if (SUPPORTED.includes(q)) {
       localStorage.setItem('lang', q);
+      setLangCookie(q);
       return q;
     }
   } catch {}
+
+  const fromCookie = (getLangCookie() || '').toLowerCase();
+  if (SUPPORTED.includes(fromCookie)) return fromCookie;
 
   const fromLs = (localStorage.getItem('lang') || '').toLowerCase();
   if (SUPPORTED.includes(fromLs)) return fromLs;
@@ -80,6 +104,7 @@
 
       applyDict(dict);
       html.lang = lang;
+      setLangCookie(lang);
 
       const api = {
         lang,
@@ -89,6 +114,7 @@
         async setLang(next) {
           if (!SUPPORTED.includes(next)) return;
           localStorage.setItem('lang', next);
+          setLangCookie(next);
           const newDict = await loadDict(next);
           applyDict(newDict);
           api.lang = next;
