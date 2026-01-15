@@ -78,6 +78,7 @@ npm start
 * [Quick Start (Docker Compose)](#quick-start-docker-compose)
 * [Docker vs Local Usage Notes](#docker-vs-local-usage-notes)
 * [Environment Variables (.env)](#environment-variables-env)
+* [Gharmonize Homepage Widget](#gharmonize-homepage-widget)
 * [Notes & Troubleshooting](#notes--troubleshooting)
 * [License](#license)
 * [Third-Party Licenses](#third-party-licenses)
@@ -946,6 +947,83 @@ FFMPEG_BIN=
 #   FFMPEG_BIN=C:\\ffmpeg\\bin\\ffmpeg.exe
 
 ```
+---
+
+# Gharmonize Homepage Widget
+
+Add Gharmonize as a widget to your Homepage dashboard.
+
+## Requirements
+
+* Homepage ([https://gethomepage.dev](https://gethomepage.dev))
+* Gharmonize running instance
+
+## Generate Widget Key
+
+Open Gharmonize settings panel and generate a `HOMEPAGE_WIDGET_KEY`.
+
+## Example Configuration
+
+Add this to your `services.yaml` (or any Homepage service config file):
+
+```yaml
+- Gharmonize:
+    icon: http://ip:port/src/logo.png
+    href: http://ip:port/
+    description: Jobs / Queue
+    widget:
+      type: customapi
+      url: http://ip:port/api/homepage
+      method: GET
+      refreshInterval: 1000
+      display: block
+      headers:
+        X-Widget-Key: YOUR_HOMEPAGE_WIDGET_KEY
+        X-Lang: en
+      mappings:
+        - label: Active
+          field: activeCount
+          format: number
+        - label: Queue
+          field: queueCount
+          format: number
+        - label: Progress
+          field: currentProgressText
+          format: text
+        - label: Completed
+          field: completedCount
+          format: number
+        - label: Processing
+          field: processingCount
+          format: number
+        - label: Error
+          field: errorCount
+          format: number
+        - label: Now
+          field: currentPhaseText
+          format: text
+        - label: Job ID
+          field: currentId
+          format: text
+        - label: Updated
+          field: ts
+          format: relativeDate
+          locale: en
+          style: short
+          numeric: auto
+        - label: Time
+          field: ts
+          format: date
+```
+
+## Supported Languages
+
+`X-Lang` supports: `en`, `de`, `fr`, `tr`.
+
+## API Endpoint
+
+`/api/homepage` returns real‑time job and queue status for Homepage widgets.
+
 
 ---
 
