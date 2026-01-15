@@ -283,7 +283,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
             throw e;
           }
 
-          j.status = "running";
+          j.status = "processing";
           j.metadata.spotifyKind  = sp.kind;
           j.metadata.spotifyTitle = sp.title;
           j.metadata.isPlaylist   = sp.kind === "playlist";

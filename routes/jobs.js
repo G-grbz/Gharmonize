@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import cookie from "cookie";
 import crypto from "crypto";
 import multer from "multer";
 import { sendOk, sendError, ERR, isDirectMediaUrl } from "../modules/utils.js";
@@ -153,6 +154,191 @@ function cleanupCompletedJobsWithoutOutputs() {
 }
 
 const router = express.Router();
+
+function pickLang(req) {
+  const SUPPORTED = new Set(["en","tr","de","fr"]);
+  const hx = String(req.get("x-lang") || "").toLowerCase().trim();
+  if (SUPPORTED.has(hx)) return hx;
+  const q = String(req.query?.lang || "").toLowerCase().trim();
+  if (SUPPORTED.has(q)) return q;
+
+  try {
+    const raw = String(req.headers?.cookie || "");
+    if (raw) {
+      const parsed = cookie.parse(raw);
+      const c = String(parsed.lang || "").toLowerCase().trim();
+      if (SUPPORTED.has(c)) return c;
+    }
+  } catch {}
+
+  const al = String(req.get("accept-language") || "").toLowerCase();
+  if (al.includes("tr")) return "tr";
+  if (al.includes("de")) return "de";
+  if (al.includes("fr")) return "fr";
+  if (al.includes("en")) return "en";
+  return "en";
+}
+
+function t(lang, key, vars = {}) {
+  const dict = {
+    tr: {
+      idle: "Boşta",
+      queued: "Kuyrukta",
+      processing: "İşleniyor",
+      downloading: "İndiriliyor",
+      converting: "Dönüştürülüyor",
+      completed: "Tamamlandı",
+      error: "Hata",
+      canceled: "İptal",
+      progress: "{n}%",
+    },
+    en: {
+      idle: "Idle",
+      queued: "Queued",
+      processing: "Processing",
+      downloading: "Downloading",
+      converting: "Converting",
+      completed: "Completed",
+      error: "Error",
+      canceled: "Canceled",
+      progress: "{n}%",
+    },
+    de: {
+      idle: "Leerlauf",
+      queued: "Warteschlange",
+      processing: "In Arbeit",
+      downloading: "Wird heruntergeladen",
+      converting: "Wird konvertiert",
+      completed: "Fertig",
+      error: "Fehler",
+      canceled: "Abgebrochen",
+      progress: "{n}%",
+    },
+    fr: {
+      idle: "Inactif",
+      queued: "En file",
+      processing: "Traitement",
+      downloading: "Téléchargement",
+      converting: "Conversion",
+      completed: "Terminé",
+      error: "Erreur",
+      canceled: "Annulé",
+      progress: "{n}%",
+    },
+  };
+
+  const d = dict[lang] || dict.en;
+  let s = d[key] ?? dict.en[key] ?? key;
+  for (const [k, v] of Object.entries(vars)) {
+    s = s.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
+  }
+  return s;
+}
+
+function normalizePhaseKey(s) {
+  const v = String(s || "").toLowerCase().trim();
+  if (!v) return "";
+  if (v.includes("download")) return "downloading";
+  if (v.includes("convert") || v.includes("transcod")) return "converting";
+  if (v === "queued") return "queued";
+  if (v === "processing") return "processing";
+  if (v === "completed") return "completed";
+  if (v === "error") return "error";
+  if (v === "canceled") return "canceled";
+  return v;
+}
+
+function requireWidgetKey(req, res, next) {
+  const expected = String(process.env.HOMEPAGE_WIDGET_KEY || "").trim();
+  if (!expected) {
+    return res.status(500).json({
+      error: { code: "WIDGET_KEY_NOT_SET", message: "HOMEPAGE_WIDGET_KEY is not set" }
+    });
+  }
+  const got =
+    String(req.get("x-widget-key") || req.get("x-widget_key") || "").trim();
+  if (!got || got !== expected) {
+    return res.status(401).json({
+      error: { code: "UNAUTHORIZED", message: "Unauthorized" }
+    });
+  }
+  return next();
+}
+
+router.get("/api/homepage", requireWidgetKey, (req, res) => {
+  try {
+    const lang = pickLang(req);
+    cleanupCompletedJobsWithoutOutputs();
+    const all = Array.from(jobs.values());
+
+    const isActive = (j) =>
+      j && (j.status === "queued" || j.status === "processing");
+
+    const active = all.filter(isActive);
+
+    const current =
+      active
+        .slice()
+        .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0] ||
+      null;
+
+    const toNum = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const clamp0_100 = (n) => Math.max(0, Math.min(100, Math.floor(n)));
+
+    const computeProgress = (j) => {
+      const d = toNum(j?.downloadProgress);
+      const c = toNum(j?.convertProgress);
+      const p = toNum(j?.progress);
+
+      let out = 0;
+      if (d > 0 || c > 0) {
+        out = (d > 0 && c > 0) ? (d + c) / 2 : Math.max(d, c);
+      } else {
+        out = p;
+      }
+      return clamp0_100(out);
+    };
+
+    const currentProgress = current ? computeProgress(current) : 0;
+    const currentProgressText = current
+      ? t(lang, "progress", { n: currentProgress })
+      : t(lang, "idle");
+
+    const rawPhase = current?.currentPhase || current?.status || "";
+    const phaseKey = normalizePhaseKey(rawPhase);
+    const currentPhaseText =
+      phaseKey && (phaseKey in ( {queued:1,processing:1,downloading:1,converting:1,completed:1,error:1,canceled:1} ))
+        ? t(lang, phaseKey)
+        : (rawPhase ? String(rawPhase) : null);
+
+  res.json({
+    totalCount: all.length,
+
+      activeCount: active.length,
+      queueCount: all.filter(j => j.status === "queued").length,
+      processingCount: all.filter(j => j.status === "processing").length,
+      completedCount: all.filter(j => j.status === "completed").length,
+      errorCount: all.filter(j => j.status === "error").length,
+
+      currentId: current?.id || null,
+      currentPhase: rawPhase || null,
+      currentPhaseText,
+      currentProgress,
+      currentProgressText,
+
+      ts: Date.now()
+    });
+  } catch (e) {
+    console.error("[homepage] error:", e);
+    res.status(500).json({
+      error: { code: "HOMEPAGE_FAIL", message: e.message || "failed" }
+    });
+  }
+});
 
 router.get("/api/local-files", requireAuth, (req, res) => {
   try {
