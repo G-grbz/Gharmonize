@@ -282,6 +282,25 @@ async function resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir) {
   return null;
 }
 
+function envTruth(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return null;
+  if (["0", "false", "no", "off", "disable", "disabled"].includes(s)) return false;
+  return true;
+}
+
+function shouldPreferSpotifyCover() {
+  const explicit = envTruth(process.env.PREFER_SPOTIFY_TAGS);
+  if (explicit === null) return true;
+  return explicit;
+}
+
+function looksLikeSpotifyCoverUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return false;
+  return /(^|\/\/)i\.scdn\.co\//i.test(u) || /scdn\.co/i.test(u);
+}
+
 export async function ensureJpegCover(
   coverPath,
   jobId,
@@ -416,6 +435,12 @@ export async function retagMediaFile(
   coverPath = null,
   opts = {}
 ) {
+  const tempFilesToCleanup = [];
+  const safeUnlink = (p) => {
+    try {
+      if (p && fs.existsSync(p)) fs.unlinkSync(p);
+    } catch {}
+  };
   try {
     if (!absOutputPath || !fs.existsSync(absOutputPath)) return null;
     const f = String(format || path.extname(absOutputPath).slice(1) || "").toLowerCase();
@@ -428,6 +453,7 @@ export async function retagMediaFile(
     const ffmpegBin = opts?.ffmpegBin || resolveFfmpegBin();
     const tempDir = opts?.tempDir || path.dirname(absOutputPath);
     const jobId = opts?.jobId || "retag";
+    const preferSpotifyCover = shouldPreferSpotifyCover();
     const resolvedMeta = {
       ...metadata,
       title: cleanTitleForTags(maybeCleanTitle(metadata?.title)),
@@ -438,11 +464,35 @@ export async function retagMediaFile(
     let coverToUse = null;
     const coverOkFormats = new Set(["mp3", "flac", "m4a", "mp4", "ogg"]);
     const preserveExistingCover = !coverPath && coverOkFormats.has(f);
-    if (coverPath && coverOkFormats.has(f)) {
-      try {
-        coverToUse = await ensureJpegCover(coverPath, jobId, tempDir, ffmpegBin);
-      } catch {}
-      if (coverToUse && fs.existsSync(coverToUse)) canEmbedCover = true;
+    if (coverOkFormats.has(f)) {
+      const metaCoverUrl = String(resolvedMeta?.coverUrl || "").trim();
+      const useSpotifyCover = preferSpotifyCover && looksLikeSpotifyCoverUrl(metaCoverUrl);
+
+      let pickedCoverPath = coverPath;
+      if (useSpotifyCover) {
+        try {
+          const dl = await resolveCoverPathFromMeta(
+            { coverUrl: metaCoverUrl },
+            jobId,
+            path.dirname(absOutputPath),
+            tempDir
+          );
+          if (dl && fs.existsSync(dl)) {
+            pickedCoverPath = dl;
+            tempFilesToCleanup.push(dl);
+          }
+        } catch {}
+      }
+
+      if (pickedCoverPath) {
+        try {
+          coverToUse = await ensureJpegCover(pickedCoverPath, jobId, tempDir, ffmpegBin);
+        } catch {}
+        if (coverToUse && fs.existsSync(coverToUse)) {
+          canEmbedCover = true;
+          if (coverToUse !== pickedCoverPath) tempFilesToCleanup.push(coverToUse);
+        }
+      }
     }
 
     const COMMENT_KEY = commentKeyFor(f);
@@ -513,6 +563,10 @@ export async function retagMediaFile(
   } catch (e) {
     console.warn("⚠️ retag warning:", e?.message || e);
     return null;
+    } finally {
+    for (const p of tempFilesToCleanup) {
+      safeUnlink(p);
+    }
   }
 }
 
@@ -550,11 +604,18 @@ export async function convertMedia(
   tempDir,
   opts = {}
 ) {
+  const tempFilesToCleanup = [];
+  const safeUnlink = (p) => {
+    try {
+      if (p && fs.existsSync(p)) fs.unlinkSync(p);
+    } catch {}
+  };
   const ffmpegFromOpts = opts?.ffmpegBin || null;
   const isCanceled =
   typeof opts.isCanceled === "function" ? () => !!opts.isCanceled() : () => false;
 
   const stereoConvert = opts?.stereoConvert || "auto";
+  const preferSpotifyCover = shouldPreferSpotifyCover();
   const atempoAdjustRaw =
     (opts?.videoSettings?.audioAtempoAdjust != null)
       ? String(opts.videoSettings.audioAtempoAdjust)
@@ -922,11 +983,30 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   let outputPath = null;
   let canEmbedCover = false;
   let coverToUse = null;
+  let downloadedCoverPath = null;
+
+  const origCoverPath = coverPath;
+  const metaCoverUrl = String(metadata?.coverUrl || "").trim();
+  const metaLooksSpotify = looksLikeSpotifyCoverUrl(metaCoverUrl);
+  let forcedSpotifyCover = false;
+
+  if (!isVideo && coverPath && preferSpotifyCover && metaLooksSpotify) {
+    forcedSpotifyCover = true;
+    coverPath = null;
+  }
 
   if (!coverPath && !isVideo) {
     try {
-      coverPath = await resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir);
+      downloadedCoverPath = await resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir);
+      if (downloadedCoverPath) {
+        coverPath = downloadedCoverPath;
+        tempFilesToCleanup.push(downloadedCoverPath);
+      }
     } catch {}
+  }
+
+  if (!isVideo && forcedSpotifyCover && !coverPath && origCoverPath) {
+    coverPath = origCoverPath;
   }
 
   if (!isVideo && coverPath && ["mp3", "flac"].includes(format)) {
@@ -935,7 +1015,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     } catch (e) {
       console.warn("⚠️ Cover conversion warning:", e.message);
     }
-    if (coverToUse && fs.existsSync(coverToUse)) canEmbedCover = true;
+    if (coverToUse && fs.existsSync(coverToUse)) {
+      canEmbedCover = true;
+      if (coverToUse !== coverPath) tempFilesToCleanup.push(coverToUse);
+    }
   }
 
   const ffmpegBin = ffmpegFromOpts || resolveFfmpegBin();
@@ -2555,5 +2638,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   } catch (error) {
     console.error("❌ Lyrics processing error:", error);
     return result;
+    } finally {
+    for (const p of tempFilesToCleanup) {
+      safeUnlink(p);
+    }
+    if (downloadedCoverPath) safeUnlink(downloadedCoverPath);
   }
 }
