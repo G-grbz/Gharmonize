@@ -194,7 +194,7 @@ const DEFAULTS = {
       find: 'ffprobe'
     },
     mkvmerge: {
-      url: 'https://mkvtoolnix.download/appimage/MKVToolNix_GUI-96.0-x86_64.AppImage',
+      url: 'https://mkvtoolnix.download/appimage/MKVToolNix_GUI-97.0-x86_64.AppImage',
       type: 'direct',
       out: 'mkvmerge'
     },
@@ -204,7 +204,7 @@ const DEFAULTS = {
       out: 'yt-dlp'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.6.3/deno-x86_64-unknown-linux-gnu.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.6/deno-x86_64-unknown-linux-gnu.zip',
       type: 'zip',
       find: 'deno'
     }
@@ -222,7 +222,7 @@ const DEFAULTS = {
       find: 'ffprobe.exe'
     },
     mkvmerge: {
-      url: 'https://mkvtoolnix.download/windows/releases/96.0/mkvtoolnix-64-bit-96.0.zip',
+      url: 'https://mkvtoolnix.download/windows/releases/97.0/mkvtoolnix-64-bit-97.0.zip',
       type: 'zip',
       find: 'mkvmerge.exe'
     },
@@ -232,7 +232,7 @@ const DEFAULTS = {
       out: 'yt-dlp.exe'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.6.3/deno-x86_64-pc-windows-msvc.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.6/deno-x86_64-pc-windows-msvc.zip',
       type: 'zip',
       find: 'deno.exe'
     }
