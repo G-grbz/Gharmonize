@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import net from "node:net";
 import express from 'express'
 import multer from 'multer'
 import path from 'path'
@@ -229,9 +230,9 @@ app.get('/api/version', (req, res) => {
       name: packageData.name
     });
   } catch (error) {
-    console.error('Package.json okunamadı:', error);
+    console.error('Package.json could not be read:', error);
     res.json({
-      version: '1.0.5',
+      version: '1.1.1',
       name: 'Gharmonize'
     });
   }
@@ -265,21 +266,31 @@ app.use((err, req, res, next) => {
   next()
 })
 
-const PORT = process.env.PORT || 5174
+const PORT = Number(process.env.PORT || 5174)
 
-checkDependencies().then((results) => {
-  app.listen(PORT, async () => {
-    console.log(`🚀 Server running at http://localhost:${PORT}`)
-    console.log(`📁 Base Directory: ${BASE_DIR}`)
-    console.log(`📁 Uploads: ${UPLOAD_DIR}`)
-    console.log(`📁 Outputs: ${OUTPUT_DIR}`)
-    console.log(`📁 Temp: ${TEMP_DIR}`)
-    console.log(`📁 Local Inputs: ${LOCAL_INPUTS_DIR}`)
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Server running at http://localhost:${PORT}`)
+  console.log(`📁 Base Directory: ${BASE_DIR}`)
+  console.log(`📁 Uploads: ${UPLOAD_DIR}`)
+  console.log(`📁 Outputs: ${OUTPUT_DIR}`)
+  console.log(`📁 Temp: ${TEMP_DIR}`)
+  console.log(`📁 Local Inputs: ${LOCAL_INPUTS_DIR}`)
+})
+
+server.on('error', (err) => {
+  console.error('❌ [server] listen error:', err)
+})
+
+setImmediate(async () => {
+  try {
+    const results = await checkDependencies()
     console.log('⚠️ Dependency Status:')
     console.log(`   ${results.ytDlp ? '✅' : '❌'} yt-dlp`)
     console.log(`   ${results.ffmpeg ? '✅' : '❌'} ffmpeg`)
     console.log(`   ${results.deno ? '✅' : '❌'} deno`)
 
     await runStartupDiagnostics()
-  })
+  } catch (e) {
+    console.error('⚠️ Startup checks failed:', e?.message || e)
+  }
 })
