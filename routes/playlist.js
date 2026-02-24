@@ -1,7 +1,19 @@
 import express from "express";
 import { sendOk, sendError } from "../modules/utils.js";
 import { getCache, setCache } from "../modules/cache.js";
-import { isYouTubeUrl, isYouTubePlaylist, isYouTubeAutomix, normalizeYouTubeUrl, extractPlaylistAllFlat, extractPlaylistPage, getPlaylistMetaLite, extractAutomixAllFlat, extractAutomixPage } from "../modules/yt.js";
+import {
+  isYouTubeUrl,
+  isDailymotionUrl,
+  isYouTubePlaylist,
+  isDailymotionPlaylist,
+  isYouTubeAutomix,
+  normalizeYouTubeUrl,
+  extractPlaylistAllFlat,
+  extractPlaylistPage,
+  getPlaylistMetaLite,
+  extractAutomixAllFlat,
+  extractAutomixPage
+} from "../modules/yt.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import { searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
@@ -27,10 +39,14 @@ router.post("/api/playlist/preview", async (req, res) => {
       } catch (e) { return sendError(res, 'PREVIEW_FAILED', e.message || "Spotify önizleme hatası", 400); }
     }
 
-    if (!url || !isYouTubeUrl(url)) return sendError(res, 'PREVIEW_NEED_YT_URL', "A valid YouTube URL is required", 400);
+    const isYouTubeSource = isYouTubeUrl(url);
+    const isDailymotionSource = !isYouTubeSource && isDailymotionUrl(url);
+    if (!url || (!isYouTubeSource && !isDailymotionSource)) {
+      return sendError(res, 'PREVIEW_NEED_YT_URL', "A valid YouTube or Dailymotion URL is required", 400);
+    }
 
-    const keyUrl = normalizeYouTubeUrl(url);
-    const isAutomix = isYouTubeAutomix(keyUrl);
+    const keyUrl = isYouTubeSource ? normalizeYouTubeUrl(url) : String(url).trim();
+    const isAutomix = isYouTubeSource && isYouTubeAutomix(keyUrl);
     const ps = Math.max(1, Math.min(100, Number(pageSize) || (isAutomix ? 50 : 25)));
     const p  = Math.max(1, Number(page) || 1);
 
@@ -182,7 +198,9 @@ router.post("/api/playlist/preview", async (req, res) => {
     });
   }
 
-    if (!isYouTubePlaylist(keyUrl)) return sendError(res, 'PLAYLIST_REQUIRED', "This URL is not a playlist", 400);
+    if (!isYouTubePlaylist(keyUrl) && !isDailymotionPlaylist(keyUrl)) {
+      return sendError(res, 'PLAYLIST_REQUIRED', "This URL is not a playlist", 400);
+    }
 
     let cached = getCache(keyUrl);
     if (!cached) {

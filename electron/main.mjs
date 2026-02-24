@@ -20,6 +20,7 @@ let isHidingToTray = false;
 let creatingWindowPromise = null;
 let showOnWindowReady = false;
 
+// Cleans up windows run entries for the Electron runtime bridge.
 async function cleanupWindowsRunEntries() {
   if (process.platform !== 'win32') return;
   const suspectNames = [
@@ -47,6 +48,7 @@ async function cleanupWindowsRunEntries() {
   }
 }
 
+// Creates window once for the Electron runtime bridge.
 function createWindowOnce() {
   if (mainWindowRef && !mainWindowRef.isDestroyed()) return mainWindowRef;
   if (creatingWindowPromise) return creatingWindowPromise;
@@ -60,6 +62,7 @@ function createWindowOnce() {
   return creatingWindowPromise;
 }
 
+// Resolves tray icon for the Electron runtime bridge.
 function resolveTrayIcon() {
   if (!app.isPackaged) {
     return process.platform === 'win32'
@@ -72,6 +75,7 @@ function resolveTrayIcon() {
     : path.join(process.resourcesPath, 'icon.png');
 }
 
+// Shows main window in the Electron runtime bridge.
 function showMainWindow(win) {
   if (!win || win.isDestroyed()) return;
 
@@ -85,10 +89,12 @@ function showMainWindow(win) {
   }, 120);
 }
 
+// Returns prefs path used for the Electron runtime bridge.
 function getPrefsPath() {
   return path.join(app.getPath('userData'), 'preferences.json');
 }
 
+// Loads prefs for the Electron runtime bridge.
 async function loadPrefs() {
   try {
     const p = getPrefsPath();
@@ -100,6 +106,7 @@ async function loadPrefs() {
   }
 }
 
+// Persists prefs for the Electron runtime bridge.
 async function savePrefs(prefs) {
   try {
     await fs.promises.writeFile(getPrefsPath(), JSON.stringify(prefs, null, 2));
@@ -108,6 +115,7 @@ async function savePrefs(prefs) {
   }
 }
 
+// Loads language dict for the Electron runtime bridge.
 async function loadLanguageDict(lang) {
   try {
     let filePath;
@@ -136,6 +144,7 @@ async function loadLanguageDict(lang) {
 let currentLanguage = 'en';
 let currentDict = {};
 
+// Initializes language for the Electron runtime bridge.
 async function initializeLanguage() {
   try {
     const prefs = await loadPrefs();
@@ -153,16 +162,19 @@ async function initializeLanguage() {
   }
 }
 
+// Handles t in the Electron runtime bridge.
 function t(key, fallback = key) {
   const value = currentDict[key];
   if (value === undefined) return fallback;
   return value;
 }
 
+// Returns linux autostart desktop path used for the Electron runtime bridge.
 function getLinuxAutostartDesktopPath() {
   return path.join(app.getPath('home'), '.config', 'autostart', 'Gharmonize.desktop');
 }
 
+// Builds linux desktop file for the Electron runtime bridge.
 function buildLinuxDesktopFile(prefs = {}) {
   const appImage = process.env.APPIMAGE;
   const execPath = appImage || process.execPath;
@@ -195,6 +207,7 @@ function buildLinuxDesktopFile(prefs = {}) {
   ].join('\n');
 }
 
+// Handles apply linux autostart in the Electron runtime bridge.
 async function applyLinuxAutostart(enabled) {
   const desktopPath = getLinuxAutostartDesktopPath();
   const dir = path.dirname(desktopPath);
@@ -208,6 +221,7 @@ async function applyLinuxAutostart(enabled) {
   }
 }
 
+// Handles apply auto start from prefs in the Electron runtime bridge.
 async function applyAutoStartFromPrefs() {
   const prefs = await loadPrefs();
   if (prefs.autoStart === undefined) return;
@@ -232,11 +246,13 @@ async function applyAutoStartFromPrefs() {
   }
 }
 
+// Handles sync keep alive flag from prefs in the Electron runtime bridge.
 async function syncKeepAliveFlagFromPrefs() {
   const prefs = await loadPrefs();
   keepAliveInTray = !!prefs.alwaysMinimizeToTray;
 }
 
+// Updates auto start enabled used for the Electron runtime bridge.
 async function setAutoStartEnabled(enabled) {
   const prefs = await loadPrefs();
   prefs.autoStart = !!enabled;
@@ -266,6 +282,7 @@ async function setAutoStartEnabled(enabled) {
   }
 }
 
+// Checks whether launched by auto start is valid for the Electron runtime bridge.
 function isLaunchedByAutoStart() {
   if (process.platform === 'win32') {
     if (process.argv.includes('--autostart') || process.argv.includes('--hidden')) return true;
@@ -274,6 +291,7 @@ function isLaunchedByAutoStart() {
   return process.env.GHARMONIZE_AUTOSTART === '1';
 }
 
+// Handles refresh tray menu in the Electron runtime bridge.
 async function refreshTrayMenu() {
   if (!tray || !mainWindowRef) return;
 
@@ -336,6 +354,7 @@ async function refreshTrayMenu() {
   tray.setToolTip(t('tray.tooltip', 'Gharmonize'));
 }
 
+// Handles ensure tray in the Electron runtime bridge.
 async function ensureTray(win) {
   if (tray) return tray;
 
@@ -361,6 +380,7 @@ async function ensureTray(win) {
   return tray;
 }
 
+// Resolves icon for the Electron runtime bridge.
 function resolveIcon() {
   if (process.platform === 'win32') {
     return app.isPackaged
@@ -375,9 +395,11 @@ function resolveIcon() {
   return undefined;
 }
 
+// Checks whether port ready is valid for the Electron runtime bridge.
 function isPortReady(port, host = HOST, timeout = 400) {
   return new Promise((resolve) => {
     const s = new net.Socket()
+    // Handles done in the Electron runtime bridge.
     const done = ok => { try { s.destroy() } catch {} ; resolve(ok) }
     s.setTimeout(timeout)
     s.once('connect', () => done(true))
@@ -387,6 +409,7 @@ function isPortReady(port, host = HOST, timeout = 400) {
   })
 }
 
+// Handles wait for server in the Electron runtime bridge.
 async function waitForServer(port, retries = 75, delayMs = 200) {
   for (let i = 0; i < retries; i++) {
     if (await isPortReady(port)) return;
@@ -395,6 +418,7 @@ async function waitForServer(port, retries = 75, delayMs = 200) {
   throw new Error(`Server not reachable on ${HOST}:${port}`)
 }
 
+// Handles check desktop binaries in the Electron runtime bridge.
 function checkDesktopBinaries() {
   const missing = [];
   const tools = [
@@ -416,6 +440,7 @@ function checkDesktopBinaries() {
   }
 }
 
+// Handles start server if packaged in the Electron runtime bridge.
 async function startServerIfPackaged() {
   if (!app.isPackaged) return;
 
@@ -440,6 +465,7 @@ async function startServerIfPackaged() {
   await waitForServer(PORT)
 }
 
+// Handles attach downloads in the Electron runtime bridge.
 function attachDownloads(win) {
   const ses = win.webContents.session || session.defaultSession;
   ses.removeAllListeners('will-download');
@@ -451,6 +477,7 @@ function attachDownloads(win) {
   });
 }
 
+// Returns nav state used for the Electron runtime bridge.
 function getNavState(webContents) {
   const nav = webContents.navigationHistory;
   if (nav && typeof nav.canGoBack === 'function' && typeof nav.canGoForward === 'function') {
@@ -459,6 +486,7 @@ function getNavState(webContents) {
   return { canGoBack: webContents.canGoBack(), canGoForward: webContents.canGoForward() };
 }
 
+// Builds and show context menu for the Electron runtime bridge.
 function buildAndShowContextMenu(win, params) {
   const wc = win.webContents;
   const { canGoBack, canGoForward } = getNavState(wc);
@@ -519,6 +547,7 @@ function buildAndShowContextMenu(win, params) {
   menu.popup({ window: win });
 }
 
+// Creates app menu for the Electron runtime bridge.
 function createAppMenu(win) {
   const template = [];
 
@@ -554,6 +583,7 @@ function createAppMenu(win) {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// Determines whether start hidden should run for the Electron runtime bridge.
 async function shouldStartHidden() {
   const prefs = await loadPrefs();
   if (process.argv.includes('--hidden')) return true;
@@ -563,6 +593,7 @@ async function shouldStartHidden() {
   return false;
 }
 
+// Creates window for the Electron runtime bridge.
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,

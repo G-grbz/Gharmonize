@@ -51,6 +51,7 @@ const ALLOWED_KEYS = [
   'HOMEPAGE_WIDGET_KEY'
 ]
 
+// Parses environment key-value pairs from the app env file.
 function parseEnv() {
   const m = new Map()
   if (fs.existsSync(ENV_PATH)) {
@@ -68,6 +69,7 @@ function parseEnv() {
   return m
 }
 
+// Writes updated environment values back to the app env file.
 function writeEnv(updates, extraAllowed = []) {
   const envMap = parseEnv()
   for (const [k, v] of Object.entries(updates)) {
@@ -101,6 +103,7 @@ function writeEnv(updates, extraAllowed = []) {
   fs.writeFileSync(ENV_PATH, clean.join('\n').trim() + '\n', 'utf8')
 }
 
+// Returns an environment value from process vars or the env file.
 function getEnv(key) {
   const direct = (process.env[key] ?? '').toString().trim()
   if (direct) return direct
@@ -108,20 +111,24 @@ function getEnv(key) {
   return (m.get(key) ?? '').toString().trim()
 }
 
+// Returns the configured admin password from environment settings.
 function getAdminPassword() {
   return getEnv('ADMIN_PASSWORD')
 }
+// Updates the admin password in memory and persists it to the env file.
 function setAdminPasswordSync(newPass) {
   const val = (newPass || '').toString()
   writeEnv({ ADMIN_PASSWORD: val }, ['ADMIN_PASSWORD'])
   process.env.ADMIN_PASSWORD = val
 }
 
+// Creates an HMAC signature for the auth token payload.
 function sign(payloadObj) {
   const payload = Buffer.from(JSON.stringify(payloadObj)).toString('base64url')
   const mac = crypto.createHmac('sha256', APP_SECRET).update(payload).digest('base64url')
   return `${payload}.${mac}`
 }
+// Verifies auth token signature and token expiration.
 function verify(token) {
   if (!token || typeof token !== 'string' || !token.includes('.')) return null
   const [payload, mac] = token.split('.')
@@ -137,6 +144,7 @@ function verify(token) {
   return obj
 }
 
+// Extracts the auth token from authorization header or query params.
 function getTokenFromReq(req) {
   const h = req.get('authorization') || ''
   if (h.startsWith('Bearer ')) return h.slice(7)
@@ -144,12 +152,14 @@ function getTokenFromReq(req) {
   return null
 }
 
+// Guards API routes by requiring a valid admin auth token.
 function authMiddleware(req, res, next) {
   const ok = verify(getTokenFromReq(req))
   if (!ok) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } })
   next()
 }
 
+// Requires valid admin authentication before continuing the request.
 export function requireAuth(req, res, next) {
   const ok = verify(getTokenFromReq(req))
   if (!ok) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } })
@@ -246,6 +256,7 @@ router.post('/auth/change-password', authMiddleware, express.json(), (req, res) 
   }
 })
 
+// Generates homepage widget key for admin auth and settings management.
 function generateHomepageWidgetKey() {
   const raw = crypto.randomBytes(32).toString('base64url')
   return `hwk_${raw}`

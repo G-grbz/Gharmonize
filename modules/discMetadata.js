@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { sanitizeFilename } from "./utils.js";
 
+// Generates metadata for disc scanning and ripping.
 export async function generateMetadata(titleInfo, outputPath) {
   let baseTitle;
 
@@ -35,6 +36,7 @@ export async function generateMetadata(titleInfo, outputPath) {
   return metadata;
 }
 
+// Persists metadata to mkv for disc scanning and ripping.
 export async function writeMetadataToMKV(mkvPath, metadata) {
   let command = `mkvpropedit "${mkvPath}" `;
 
@@ -55,6 +57,7 @@ export async function writeMetadataToMKV(mkvPath, metadata) {
   }
 }
 
+// Generates disc metadata filename for disc scanning and ripping.
 export function generateDiscFilename(titleInfo, extension = "mkv") {
   const sourceNameRaw = path.basename(titleInfo.sourcePath || "disc");
   const sourceName = sanitizeFilename(sourceNameRaw);

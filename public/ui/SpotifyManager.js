@@ -1,4 +1,5 @@
 export class SpotifyManager {
+    // Initializes class state and defaults for Spotify mapping and metadata flow.
     constructor(app) {
         this.app = app;
         this.currentSpotifyTask = {
@@ -10,6 +11,7 @@ export class SpotifyManager {
         this.integratedRenderedCount = 0;
     }
 
+    // Handles start Spotify metadata preview in Spotify mapping and metadata flow.
     async startSpotifyPreview() {
         const url = document.getElementById('urlInput').value.trim();
         if (!url) {
@@ -54,6 +56,7 @@ export class SpotifyManager {
         }
     }
 
+    // Shows Spotify metadata preview in Spotify mapping and metadata flow.
     showSpotifyPreview(data) {
         this.app.previewManager.hidePreview();
 
@@ -71,6 +74,7 @@ export class SpotifyManager {
         document.getElementById('spotifyDownloadList').innerHTML = '';
     }
 
+    // Streams Spotify metadata logs in Spotify mapping and metadata flow.
     streamSpotifyLogs(mapId) {
         if (this.spotifyEventSource) {
             this.spotifyEventSource.close();
@@ -138,6 +142,7 @@ export class SpotifyManager {
         };
     }
 
+    // Handles add Spotify metadata item in Spotify mapping and metadata flow.
     addSpotifyItem(item) {
         const listContainer = document.getElementById('spotifyPreviewList');
         const matched = item.id !== null;
@@ -162,6 +167,7 @@ export class SpotifyManager {
         document.getElementById('spotifyMatched').textContent = matchedCount;
     }
 
+    // Handles add log entry in Spotify mapping and metadata flow.
     addLogEntry(message, level = 'info') {
         const logsContainer = document.getElementById('spotifyLogs');
         const logEntry = document.createElement('div');
@@ -172,6 +178,7 @@ export class SpotifyManager {
         logsContainer.scrollTop = logsContainer.scrollHeight;
     }
 
+    // Updates Spotify metadata progress for Spotify mapping and metadata flow.
     updateSpotifyProgress(done, total) {
         const progress = total > 0 ? Math.round((done / total) * 100) : 0;
         document.getElementById('spotifyProgress').textContent = `${progress}%`;
@@ -180,6 +187,7 @@ export class SpotifyManager {
         });
     }
 
+    // Handles on Spotify metadata mapping completed in Spotify mapping and metadata flow.
     onSpotifyMappingCompleted() {
         this.currentSpotifyTask.completed = true;
 
@@ -190,12 +198,14 @@ export class SpotifyManager {
         }
     }
 
+    // Handles start integrated Spotify metadata process in Spotify mapping and metadata flow.
     async startIntegratedSpotifyProcess() {
     const url = document.getElementById('urlInput').value.trim();
     const format = document.getElementById('formatSelect').value;
     const bitrate = document.getElementById('bitrateSelect').value;
     const sampleRate = document.getElementById('sampleRateSelect').value;
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+    const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
     const videoSettings = this.app.videoManager?.getSettings() || {};
     const bitDepthSelect = document.getElementById('bitDepthSelect');
 
@@ -249,6 +259,7 @@ export class SpotifyManager {
             bitrate,
             sampleRate,
             includeLyrics,
+            embedLyrics,
             volumeGain: this.app.currentVolumeGain || 1.0,
             autoCreateZip: this.app.autoCreateZip,
             ...(compressionLevel != null ? { compressionLevel } : {}),
@@ -291,6 +302,7 @@ export class SpotifyManager {
     }
 }
 
+    // Streams integrated logs in Spotify mapping and metadata flow.
     streamIntegratedLogs(jobId) {
         const eventSource = new EventSource(`/api/stream/${jobId}`);
         const logsContainer = document.getElementById('spotifyLogs');
@@ -406,6 +418,7 @@ export class SpotifyManager {
         };
     }
 
+    // Updates Spotify metadata preview list for Spotify mapping and metadata flow.
     updateSpotifyPreviewList(entries) {
         const listContainer = document.getElementById('spotifyPreviewList');
         listContainer.innerHTML = '';
@@ -435,6 +448,7 @@ export class SpotifyManager {
         document.getElementById('spotifyMatched').textContent = matchedCount;
     }
 
+    // Converts matched Spotify metadata for Spotify mapping and metadata flow.
     async convertMatchedSpotify() {
     if (!this.currentSpotifyTask.id) {
         this.app.showNotification(this.app.t('notif.spotifyMappingFirst'), 'error', 'error');
@@ -446,6 +460,7 @@ export class SpotifyManager {
         const bitrate = document.getElementById('bitrateSelect').value;
         const sampleRate = document.getElementById('sampleRateSelect').value;
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+        const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
         const videoSettings = this.app.videoManager?.getSettings() || {};
         const isVideoFormat = format === 'mp4' || format === 'mkv';
         const compressionLevel =
@@ -473,6 +488,8 @@ export class SpotifyManager {
             format,
             bitrate,
             sampleRate: sampleRate,
+            includeLyrics,
+            embedLyrics,
             isPlaylist: true,
             volumeGain: this.app.currentVolumeGain || 1.0,
             autoCreateZip: this.app.autoCreateZip,
@@ -489,6 +506,7 @@ export class SpotifyManager {
                 frozenEntries: validItems,
                 spotifyMapId: this.currentSpotifyTask.id,
                 includeLyrics,
+                embedLyrics,
                 volumeGain: this.app.currentVolumeGain || 1.0
             }
         };
@@ -510,6 +528,7 @@ export class SpotifyManager {
     }
 }
 
+    // Returns current Spotify metadata matched items used for Spotify mapping and metadata flow.
     getCurrentSpotifyMatchedItems() {
         const validItems = [];
         const listItems = document.querySelectorAll('.spotify-track-item.matched');
@@ -534,6 +553,7 @@ export class SpotifyManager {
         return validItems;
     }
 
+    // Returns valid Spotify metadata items used for Spotify mapping and metadata flow.
     async getValidSpotifyItems() {
         const validItems = [];
         const listItems = document.querySelectorAll('.spotify-track-item.matched');
@@ -558,6 +578,7 @@ export class SpotifyManager {
         return validItems;
     }
 
+    // Handles submit Spotify metadata job state in Spotify mapping and metadata flow.
     async submitSpotifyJob(payload) {
         try {
             const response = await fetch('/api/jobs', {

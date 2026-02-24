@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
-import { resolveYtDlp, withYT403Workarounds, YT_USE_MUSIC } from "./yt.js";
+import { resolveYtDlp, withYT403Workarounds, isMusicEnabled } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
 import { getUserAgent, getYouTubeHeaders, addGeoArgs, getExtraArgs, FLAGS } from "./config.js";
@@ -16,7 +16,9 @@ const YT_SEARCH_TIMEOUT_MS = Math.max(3000, Number(process.env.YT_SEARCH_TIMEOUT
 const YT_SEARCH_STAGGER_MS = Math.max(0, Number(process.env.YT_SEARCH_STAGGER_MS || 140));
 const _searchCache = new Map();
 const _SEARCH_CACHE_MAX = 800;
+// Handles cached data get in core application logic.
 function _cacheGet(k) { return _searchCache.has(k) ? _searchCache.get(k) : undefined; }
+// Handles cached data set in core application logic.
 function _cacheSet(k, v) {
   _searchCache.set(k, v);
   if (_searchCache.size > _SEARCH_CACHE_MAX) {
@@ -25,10 +27,12 @@ function _cacheSet(k, v) {
   }
 }
 
+// Handles make map id in core application logic.
 export function makeMapId() {
   return crypto.randomBytes(8).toString("hex");
 }
 
+// Returns YouTube metadata dlp search args lite used for core application logic.
 function getYtDlpSearchArgsLite() {
   const ua = getUserAgent();
   const headers = getYouTubeHeaders();
@@ -57,6 +61,7 @@ function getYtDlpSearchArgsLite() {
   return base;
 }
 
+// Runs YouTube metadata json lite for core application logic.
 async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEARCH_TIMEOUT_MS) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp not found");
@@ -88,6 +93,7 @@ async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEA
   });
 }
 
+// Handles search ytm best id in core application logic.
 export async function searchYtmBestId(artist, title) {
   const q = `${artist} ${title}`.trim();
   const qNorm = q.toLowerCase().replace(/\s+/g, " ").trim();
@@ -109,7 +115,8 @@ export async function searchYtmBestId(artist, title) {
   return fallback;
 }
 
-export function idsToMusicUrls(ids, useMusic = YT_USE_MUSIC) {
+// Handles ids to music URLs in core application logic.
+export function idsToMusicUrls(ids, useMusic = isMusicEnabled()) {
   return ids.map((id) =>
     useMusic
       ? `https://music.youtube.com/watch?v=${id}`
@@ -117,6 +124,7 @@ export function idsToMusicUrls(ids, useMusic = YT_USE_MUSIC) {
   );
 }
 
+// Returns YouTube metadata dlp common args used for core application logic.
 function getYtDlpCommonArgs() {
   const ua = getUserAgent();
   const headers = getYouTubeHeaders();
@@ -147,6 +155,7 @@ function getYtDlpCommonArgs() {
   return base;
 }
 
+// Handles map Spotify metadata to ytm in core application logic.
 export async function mapSpotifyToYtm(
   sp,
   onUpdate,
@@ -155,8 +164,9 @@ export async function mapSpotifyToYtm(
   let i = 0,
     running = 0;
   const results = new Array(sp.items.length);
-  const useMusic = YT_USE_MUSIC;
+  const useMusic = isMusicEnabled();
   return new Promise((resolve) => {
+    // Handles kick in core application logic.
     const kick = () => {
       if (shouldCancel && shouldCancel()) {
         return resolve(results);
@@ -239,6 +249,7 @@ export async function mapSpotifyToYtm(
   });
 }
 
+// Downloads matched Spotify metadata tracks for core application logic.
 export async function downloadMatchedSpotifyTracks(
   matchedItems,
   jobId,
@@ -263,6 +274,7 @@ export async function downloadMatchedSpotifyTracks(
     });
 
   return new Promise((resolve, _reject) => {
+    // Processes next in core application logic.
     const processNext = async () => {
       while (running < concurrency && currentIndex < total) {
         const index = currentIndex++;
@@ -354,6 +366,7 @@ export async function downloadMatchedSpotifyTracks(
   });
 }
 
+// Downloads single you tube video for core application logic.
 export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp not found");
@@ -394,6 +407,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
   let finalArgs = withYT403Workarounds(args, { stripCookies });
 
   return new Promise((resolve, reject) => {
+    // Finds downloaded for core application logic.
     const findDownloaded = () => {
       try {
         const files = fs
@@ -481,6 +495,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
   });
 }
 
+// Creates download metadata queue for core application logic.
 export function createDownloadQueue(
   jobId,
   { concurrency = 4, onProgress, onLog, shouldCancel, onItemDone } = {}
@@ -496,6 +511,7 @@ export function createDownloadQueue(
   let idleResolve;
   let ended = false;
 
+  // Handles pump in core application logic.
   const pump = async () => {
     while (running < concurrency && q.length) {
       if (shouldCancel && shouldCancel()) {
@@ -586,21 +602,25 @@ export function createDownloadQueue(
     };
 
   return {
+    // Handles enqueue in core application logic.
     enqueue(item, idxZeroBased) {
       total++;
       q.push({ item, idx: idxZeroBased });
       pump();
     },
+    // Handles wait for idle in core application logic.
     async waitForIdle() {
       if (running === 0 && q.length === 0) return;
       return new Promise((res) => {
         idleResolve = res;
       });
     },
+    // Handles end in core application logic.
     end() {
       ended = true;
       if (q.length === 0 && running === 0 && idleResolve) idleResolve();
     },
+    // Returns results used for core application logic.
     getResults() {
       return results.sort((a, b) => a.index - b.index);
     },

@@ -1,3 +1,4 @@
+// Normalizes market code for core application logic.
 function normalizeMarketCode(code) {
   if (!code) return null;
   const s = String(code).trim();
@@ -6,6 +7,7 @@ function normalizeMarketCode(code) {
   return /^[A-Z]{2}$/.test(up) ? up : null;
 }
 
+// Resolves market for core application logic.
 export function resolveMarket(preferred, opts = {}) {
   const { allowEnv = true } = opts || {};
 
@@ -21,10 +23,12 @@ export function resolveMarket(preferred, opts = {}) {
   return undefined;
 }
 
+// Returns fallback markets used for core application logic.
 export function getFallbackMarkets(opts = {}) {
   const { includeEnv = true, includeDefault = true } = opts || {};
   const seen = new Set();
   const out = [];
+  // Handles push unique in core application logic.
   const pushUnique = (code) => {
     const n = normalizeMarketCode(code);
     if (!n) return;
@@ -54,6 +58,7 @@ export function getFallbackMarkets(opts = {}) {
   return out.length ? out : ["US", "GB", "DE", "FR"];
 }
 
+// Handles with market fallback in core application logic.
 export async function withMarketFallback(
   callFn,
   preferred,

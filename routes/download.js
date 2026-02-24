@@ -6,6 +6,18 @@ const router = express.Router();
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
 
+router.get("/api/outputs/location", (_req, res) => {
+  const isWindows = process.platform === "win32";
+  const linuxPath = isWindows ? OUTPUT_DIR.replace(/\\/g, "/") : OUTPUT_DIR;
+  const windowsPath = isWindows ? OUTPUT_DIR : OUTPUT_DIR.replace(/\//g, "\\");
+
+  res.json({
+    outputDir: OUTPUT_DIR,
+    linuxPath,
+    windowsPath
+  });
+});
+
 router.get("/download/:file", (req, res) => {
   const requested = req.params.file || "";
   const filename = path.basename(requested);

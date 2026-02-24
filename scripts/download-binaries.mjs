@@ -18,13 +18,16 @@ const NO_PATH = args.includes('--no-path');
 
 const TARGET_DIR = path.join(__dirname, '..', 'build', 'bin');
 
+// Handles log in project setup tooling.
 function log(...a) {
   console.log('[download-binaries]', ...a);
 }
+// Handles log error in project setup tooling.
 function logError(...a) {
   console.error('[download-binaries][ERROR]', ...a);
 }
 
+// Handles which in project setup tooling.
 async function which(bin) {
   const paths = process.env.PATH ? process.env.PATH.split(path.delimiter) : [];
   for (const p of paths) {
@@ -37,14 +40,17 @@ async function which(bin) {
   return null;
 }
 
+// Handles ensure dir in project setup tooling.
 async function ensureDir(dir) {
   await fsp.mkdir(dir, { recursive: true });
 }
 
+// Downloads file with redirect for project setup tooling.
 function downloadFileWithRedirect(url, dest, onProgress = null, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
     const visited = [];
 
+    // Handles do request in project setup tooling.
     function doRequest(currentUrl, redirectsLeft) {
       visited.push(currentUrl);
 
@@ -113,6 +119,7 @@ function downloadFileWithRedirect(url, dest, onProgress = null, maxRedirects = 5
   });
 }
 
+// Creates progress bar for project setup tooling.
 function createProgressBar(toolName) {
   let lastPercent = -1;
 
@@ -137,6 +144,7 @@ function createProgressBar(toolName) {
   };
 }
 
+// Runs run for project setup tooling.
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: 'inherit' });
@@ -148,10 +156,12 @@ function run(cmd, args) {
   });
 }
 
+// Extracts tar xz for project setup tooling.
 async function extractTarXZ(archivePath, outputDir) {
   await run('tar', ['-xf', archivePath, '-C', outputDir]);
 }
 
+// Extracts zip for project setup tooling.
 async function extractZip(zipPath, outputDir) {
   if (PLATFORM === 'win32') {
     const psArgs = [
@@ -167,6 +177,7 @@ async function extractZip(zipPath, outputDir) {
   }
 }
 
+// Finds file recursive for project setup tooling.
 async function findFileRecursive(dir, fileName) {
   const entries = await fsp.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -199,12 +210,12 @@ const DEFAULTS = {
       out: 'mkvmerge'
     },
     ytdlp: {
-      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.12.08/yt-dlp',
+      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.02.21/yt-dlp',
       type: 'direct',
       out: 'yt-dlp'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.6.6/deno-x86_64-unknown-linux-gnu.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.10/deno-x86_64-unknown-linux-gnu.zip',
       type: 'zip',
       find: 'deno'
     }
@@ -227,12 +238,12 @@ const DEFAULTS = {
       find: 'mkvmerge.exe'
     },
     ytdlp: {
-      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2025.12.08/yt-dlp.exe',
+      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.02.21/yt-dlp.exe',
       type: 'direct',
       out: 'yt-dlp.exe'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.6.6/deno-x86_64-pc-windows-msvc.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.6.10/deno-x86_64-pc-windows-msvc.zip',
       type: 'zip',
       find: 'deno.exe'
     }
@@ -243,6 +254,7 @@ const TOOL_ORDER = ['ffmpeg', 'ffprobe', 'mkvmerge', 'ytdlp', 'deno'];
 const downloadCache = new Map();
 const extractCache = new Map();
 
+// Processes tool in project setup tooling.
 async function processTool(tool) {
   const defaults = DEFAULTS[PLATFORM]?.[tool];
   if (!defaults) {
@@ -342,6 +354,7 @@ async function processTool(tool) {
   log(`${tool}: OK → ${outPath}`);
 }
 
+// Runs the script entrypoint and orchestrates the full workflow.
 async function main() {
   log(`Platform: ${PLATFORM}  Arch: ${ARCH}`);
   log(`Target bin: ${TARGET_DIR}`);

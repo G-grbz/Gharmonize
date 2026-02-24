@@ -1,4 +1,5 @@
 export class VideoSettingsManager {
+  // Initializes class state and defaults for the browser UI layer.
   constructor(app) {
     this.app = app;
     this.ffmpegCaps = null;
@@ -162,6 +163,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Updates disabled used for the browser UI layer.
   setDisabled(el, disabled) {
     if (!el) return;
     el.disabled = !!disabled;
@@ -171,6 +173,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Updates FFmpeg arguments caps used for the browser UI layer.
   setFfmpegCaps(caps) {
     this.ffmpegCaps = caps || null;
 
@@ -182,6 +185,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Handles t in the browser UI layer.
   t(key, fallback = '') {
     try {
       const val = window?.i18n?.t?.(key);
@@ -191,6 +195,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Initializes startup state for the browser UI layer.
   initialize() {
     this.loadFromStorage();
 
@@ -202,6 +207,7 @@ export class VideoSettingsManager {
     this.attachEvents();
   }
 
+  // Normalizes hdr tone mapping for the browser UI layer.
   normalizeHdrToneMapping() {
     const cur = String(this.videoSettings.hdrToneMapping || '').toLowerCase();
     if (!this.allowedToneMappings.has(cur)) {
@@ -209,6 +215,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Loads from storage for the browser UI layer.
   loadFromStorage() {
     const saved = localStorage.getItem('videoSettings');
     if (!saved) return;
@@ -306,6 +313,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Updates atempo UI state for the browser UI layer.
   updateAtempoUI() {
     if (!this.modalEl) return;
     const sel = this.modalEl.querySelector('#atempoSelect');
@@ -325,6 +333,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Persists to storage for the browser UI layer.
   saveToStorage() {
     this.normalizeHdrToneMapping();
     const hw = String(this.videoSettings.hwaccel || 'off').toLowerCase();
@@ -345,6 +354,7 @@ export class VideoSettingsManager {
     localStorage.setItem('videoSettings', JSON.stringify(this.videoSettings));
   }
 
+  // Creates UI state for the browser UI layer.
   createUI() {
     const formatSelect = document.getElementById('formatSelect');
     if (!formatSelect) return;
@@ -386,6 +396,7 @@ export class VideoSettingsManager {
     if (window.i18n?.apply) window.i18n.apply(container);
   }
 
+  // Handles attach events in the browser UI layer.
   attachEvents() {
     const transcodeCheckbox = document.getElementById('videoTranscodeCheckbox');
     if (!transcodeCheckbox) return;
@@ -426,6 +437,7 @@ export class VideoSettingsManager {
     });
   }
 
+  // Handles ensure modal in the browser UI layer.
   ensureModal() {
     if (!this.backdropEl) {
       const bd = document.createElement('div');
@@ -460,6 +472,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Opens settings modal in the browser UI layer.
   openSettingsModal({ onCancel, onApply } = {}) {
     this.ensureModal();
     this._modalOnCancel = typeof onCancel === 'function' ? onCancel : null;
@@ -478,6 +491,7 @@ export class VideoSettingsManager {
     first?.focus?.();
   }
 
+  // Closes settings modal in the browser UI layer.
   closeSettingsModal() {
     if (!this.modalEl || !this.backdropEl) return;
     this.modalEl.style.display = 'none';
@@ -486,11 +500,13 @@ export class VideoSettingsManager {
     this.pendingOpenFromCheckbox = false;
   }
 
+  // Handles handle modal cancel in the browser UI layer.
   handleModalCancel() {
     if (this._modalOnCancel) this._modalOnCancel();
     this.closeSettingsModal();
   }
 
+  // Handles handle modal apply in the browser UI layer.
   handleModalApply() {
     this.syncStateFromModalUI();
     const c = this.videoSettings.videoCodec || 'auto';
@@ -504,13 +520,16 @@ export class VideoSettingsManager {
     this.closeSettingsModal();
   }
 
+  // Handles sync state from modal UI state in the browser UI layer.
   syncStateFromModalUI() {
     if (!this.modalEl) return;
 
+    // Handles v in the browser UI layer.
     const v = (sel) => {
       const el = this.modalEl.querySelector(sel);
       return el ? String(el.value ?? '') : '';
     };
+    // Handles b in the browser UI layer.
     const b = (sel) => {
       const el = this.modalEl.querySelector(sel);
       return !!(el && el.checked);
@@ -585,11 +604,13 @@ export class VideoSettingsManager {
     if (abrEl) this.videoSettings.audioBitrate = String(abrEl.value ?? '');
   }
 
+  // Handles hw key in the browser UI layer.
   hwKey(hardware) {
     const h = String(hardware || '').toLowerCase();
     return (h === 'off' || h === 'software') ? 'sw' : h;
   }
 
+  // Determines whether enable tune should run for the browser UI layer.
   shouldEnableTune(baseCodec, hardware) {
     const hw = String(hardware || 'off').toLowerCase();
     if (hw === 'nvenc') return true;
@@ -597,6 +618,7 @@ export class VideoSettingsManager {
     return (baseCodec === 'h264' || baseCodec === 'h265');
   }
 
+  // Normalizes tune for context for the browser UI layer.
   normalizeTuneForContext(codecValue, hardware) {
     const hw = this.hwKey(hardware);
     const baseCodec = String(codecValue || '').replace(/_10bit$/, '');
@@ -634,10 +656,12 @@ export class VideoSettingsManager {
     }
   }
 
+  // Updates encoder specific options for the browser UI layer.
   updateEncoderSpecificOptions(codecValue, hardware) {
     const baseCodec = String(codecValue || 'auto').replace(/_10bit$/, '');
     const hw = String(hardware || 'off').toLowerCase();
 
+    // Selects profiles for for the browser UI layer.
     const pickProfilesFor = (baseCodec, codecValue, hw) => {
     const is10 = /_10bit$/.test(codecValue);
 
@@ -679,6 +703,7 @@ export class VideoSettingsManager {
     this.normalizeTuneForContext(codecValue, hardware);
   }
 
+  // Updates tune options for the browser UI layer.
   updateTuneOptions(tuneOptions, hardware, baseCodec = '') {
     const hw = this.hwKey(hardware);
     const tuneSelectId = `${hw}TuneSelect`;
@@ -710,6 +735,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Updates profile options for the browser UI layer.
   updateProfileOptions(profileOptions, hardware) {
     const hw = this.hwKey(hardware);
     const profileSelectId = `${hw}ProfileSelect`;
@@ -733,6 +759,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Updates level options for the browser UI layer.
   updateLevelOptions(hardware, codecValue) {
     const hw = this.hwKey(hardware);
     const levelSelectId = `${hw}LevelSelect`;
@@ -776,6 +803,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Normalizes profile for current context for the browser UI layer.
   normalizeProfileForCurrentContext(codecValue, hardware, profileOptions) {
     const hw = this.hwKey(hardware);
     const baseCodec = String(codecValue || 'auto').replace(/_10bit$/, '');
@@ -808,6 +836,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Returns modal html used for the browser UI layer.
   getModalHTML() {
     return `
       <div class="vs-modal-shell">
@@ -1347,11 +1376,13 @@ export class VideoSettingsManager {
     `;
   }
 
+  // Handles toggle audio codec settings in the browser UI layer.
   toggleAudioCodecSettings(show) {
     const box = this.modalEl?.querySelector('#audioCodecSettings');
     if (box) box.style.display = show ? 'block' : 'none';
   }
 
+  // Normalizes audio sample rate UI state for the browser UI layer.
   normalizeAudioSampleRateUI() {
     if (!this.modalEl) return;
     const srSel = this.modalEl.querySelector('#audioSampleRateSelect');
@@ -1382,6 +1413,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Shows encoder specific settings in the browser UI layer.
   showEncoderSpecificSettings(encoder) {
     if (!this.modalEl) return;
 
@@ -1397,6 +1429,7 @@ export class VideoSettingsManager {
     }
   }
 
+  // Updates audio bitrate options for the browser UI layer.
   updateAudioBitrateOptions(codec) {
     const container = this.modalEl?.querySelector('#audioBitrateContainer');
     if (!container) return;
@@ -1452,6 +1485,7 @@ export class VideoSettingsManager {
   }
 
 
+  // Checks whether codec allowed by caps is valid for the browser UI layer.
   isCodecAllowedByCaps(hardware, codecValue) {
     if (codecValue === 'auto' || codecValue === 'copy') return true;
     if (!this.ffmpegCaps) return true;
@@ -1459,6 +1493,7 @@ export class VideoSettingsManager {
     const hw = String(hardware || 'off').toLowerCase();
     const is10 = /_10bit$/.test(codecValue);
     const base = codecValue.replace(/_10bit$/, '');
+    // Handles map in the browser UI layer.
     const map = () => {
       if (hw === 'nvenc') {
       if (base === 'h264') return is10 ? 'h264_nvenc_10bit' : 'h264_nvenc';
@@ -1492,6 +1527,7 @@ export class VideoSettingsManager {
     return true;
     }
 
+  // Returns supported codecs used for the browser UI layer.
   getSupportedCodecs(hardware) {
     const C = (value, nameKey, descKey, fallbackName, fallbackDesc) => ({
       value, nameKey, descKey, nameFallback: fallbackName, descFallback: fallbackDesc
@@ -1601,6 +1637,7 @@ export class VideoSettingsManager {
     return codecSupport[hardware] || codecSupport.off;
   }
 
+  // Updates prores uistate for the browser UI layer.
   updateProresUIState(codecValue, hardware) {
     if (!this.modalEl) return;
 
@@ -1625,6 +1662,7 @@ export class VideoSettingsManager {
     if (swHints) swHints.style.opacity = isProres ? '0.55' : '';
   }
 
+  // Updates prores visibility for the browser UI layer.
   updateProresVisibility(codecValue, hardware) {
     if (!this.modalEl) return;
     const group = this.modalEl.querySelector('#proresProfileGroup');
@@ -1647,6 +1685,7 @@ export class VideoSettingsManager {
     this.updateProresUIState(codecValue, hardware);
   }
 
+  // Updates video codec options for the browser UI layer.
   updateVideoCodecOptions() {
     const videoCodecSelect = this.modalEl?.querySelector('#videoCodecSelect');
     const hwaccelSelect = this.modalEl?.querySelector('#hwaccelSelect');
@@ -1708,6 +1747,7 @@ export class VideoSettingsManager {
     this.updateProresUIState(chosen, hardware);
   }
 
+  // Returns codec info used for the browser UI layer.
   getCodecInfo(codecValue) {
     const info = {
       auto: { nameKey: 'ui.codec.auto.name', descKey: 'ui.codec.auto.desc', nameFallback: 'Auto (H.264 8-bit)', descFallback: 'Chooses H.264 for below 1080p, H.265 for 4K and above' },
@@ -1736,6 +1776,7 @@ export class VideoSettingsManager {
     };
   }
 
+  // Returns hardware support info used for the browser UI layer.
   getHardwareSupportInfo(codecValue, hardware) {
     const reqKey = `ui.hwRequirement.${codecValue}.${hardware}`;
 
@@ -1772,6 +1813,7 @@ export class VideoSettingsManager {
     return `⚠️ ${translated}`;
   }
 
+  // Handles bind modal events once in the browser UI layer.
   bindModalEventsOnce() {
     if (this._modalEventsBound) return;
     this._modalEventsBound = true;
@@ -1868,6 +1910,7 @@ export class VideoSettingsManager {
 
     const cropEnabledCheckbox = this.modalEl.querySelector('#cropEnabledCheckbox');
     const cropBox = this.modalEl.querySelector('#cropSettingsBox');
+    // Handles toggle crop box in the browser UI layer.
     const toggleCropBox = (show) => { if (cropBox) cropBox.style.display = show ? 'block' : 'none'; };
 
     cropEnabledCheckbox?.addEventListener('change', (e) => {
@@ -1876,6 +1919,7 @@ export class VideoSettingsManager {
       this.saveToStorage();
     });
 
+    // Handles wire crop in the browser UI layer.
     const wireCrop = (id, key) => {
       const el = this.modalEl.querySelector(id);
       el?.addEventListener('input', (ev) => {
@@ -1890,6 +1934,7 @@ export class VideoSettingsManager {
 
     const borderEnabledCheckbox = this.modalEl.querySelector('#borderEnabledCheckbox');
     const borderBox = this.modalEl.querySelector('#borderSettingsBox');
+    // Handles toggle border box in the browser UI layer.
     const toggleBorderBox = (show) => { if (borderBox) borderBox.style.display = show ? 'block' : 'none'; };
 
     borderEnabledCheckbox?.addEventListener('change', (e) => {
@@ -2057,6 +2102,7 @@ export class VideoSettingsManager {
     const widthModeSelect = this.modalEl.querySelector('#widthModeSelect');
     const customWidthInput = this.modalEl.querySelector('#customWidthInput');
 
+    // Handles sync w in the browser UI layer.
     const syncW = () => {
       const mode = widthModeSelect?.value || 'auto';
       if (customWidthInput) customWidthInput.disabled = (mode !== 'custom');
@@ -2084,6 +2130,7 @@ export class VideoSettingsManager {
     const customHeightInput = this.modalEl.querySelector('#customHeightInput');
     const allowUpscaleCheckbox = this.modalEl.querySelector('#allowUpscaleCheckbox');
 
+    // Handles sync h in the browser UI layer.
     const syncH = () => {
       const mode = heightModeSelect?.value || 'auto';
       const isCustom = mode === 'custom';
@@ -2152,6 +2199,7 @@ export class VideoSettingsManager {
     });
   }
 
+  // Updates hdrui for the browser UI layer.
   updateHDRUI(hdrMode) {
     if (!this.modalEl) return;
 
@@ -2165,6 +2213,7 @@ export class VideoSettingsManager {
     if (peakBrightnessGroup) peakBrightnessGroup.style.display = showPeak ? 'block' : 'none';
   }
 
+  // Handles sync modal uifrom state in the browser UI layer.
   syncModalUIFromState() {
     if (!this.modalEl) return;
 
@@ -2354,6 +2403,7 @@ export class VideoSettingsManager {
     this.updateHDRUI(this.videoSettings.hdrMode || 'auto');
   }
 
+    // Handles handle language changed in the browser UI layer.
     handleLanguageChanged() {
       try {
         const container = document.getElementById('videoSettingsContainer');
@@ -2386,6 +2436,7 @@ export class VideoSettingsManager {
       }
     }
 
+  // Returns settings used for the browser UI layer.
   getSettings() {
     return { ...this.videoSettings };
   }

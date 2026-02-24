@@ -1,6 +1,7 @@
 import "dotenv/config";
 import os from "os";
 
+// Handles bool in core application logic.
 const bool = (v, def = false) => {
   if (v == null) return def;
   const s = String(v).toLowerCase();
@@ -22,6 +23,7 @@ export const FLAGS = {
   STRIP_COOKIES:         bool(process.env.YT_STRIP_COOKIES, false),
 };
 
+// Returns you tube headers used for core application logic.
 export function getYouTubeHeaders(lang = DEFAULT_LANG, acceptLanguage = DEFAULT_AL) {
   return {
     "Referer": "https://www.youtube.com/",
@@ -30,10 +32,12 @@ export function getYouTubeHeaders(lang = DEFAULT_LANG, acceptLanguage = DEFAULT_
   };
 }
 
+// Returns user agent used for core application logic.
 export function getUserAgent() {
   return DEFAULT_UA;
 }
 
+// Handles add geo args in core application logic.
 export function addGeoArgs(
   args,
   { region = DEFAULT_REGION, forceIPv4 = FLAGS.FORCE_IPV4 } = {}
@@ -48,11 +52,13 @@ export function addGeoArgs(
   return out;
 }
 
+// Returns extra args used for core application logic.
 export function getExtraArgs() {
   const raw = process.env.YTDLP_ARGS_EXTRA || process.env.YTDLP_EXTRA;
   return raw ? raw.split(/\s+/).filter(Boolean) : [];
 }
 
+// Returns locale config used for core application logic.
 export function getLocaleConfig() {
   return {
     region:          DEFAULT_REGION,

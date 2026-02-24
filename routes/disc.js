@@ -20,6 +20,7 @@ fs.mkdirSync(LOCAL_INPUTS_DIR, { recursive: true });
 
 const discClients = new Set();
 
+// Sends one SSE payload to a connected client.
 function sendToClient(res, payload) {
   try {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -27,6 +28,7 @@ function sendToClient(res, payload) {
   }
 }
 
+// Broadcasts progress updates to all connected SSE clients.
 function broadcastProgress(payload) {
   for (const res of discClients) {
     sendToClient(res, payload);
@@ -49,6 +51,7 @@ router.get("/api/disc/stream", (req, res) => {
   });
 });
 
+// Sends scan progress log in Express API request handling.
 function sendScanLog(payload) {
   if (payload && typeof payload === "object" && payload.__i18n) {
     broadcastProgress({
@@ -154,6 +157,7 @@ router.post("/api/disc/rip", express.json(), async (req, res) => {
       outputFile: fileName
     });
 
+    // Handles progress callback in Express API request handling.
     const progressCallback = (payload) => {
       broadcastProgress({ ...payload, outputFile: fileName });
     };

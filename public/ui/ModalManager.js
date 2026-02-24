@@ -1,9 +1,11 @@
 export class ModalManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor() {
         this.modalContainer = null;
         this.init();
     }
 
+    // Initializes init for the browser UI layer.
     init() {
         const existing = document.getElementById('custom-modal-container');
         if (existing) {
@@ -21,6 +23,7 @@ export class ModalManager {
         this.modalContainer = container;
     }
 
+    // Shows confirm in the browser UI layer.
     showConfirm(options) {
         return new Promise((resolve) => {
             const {
@@ -81,6 +84,7 @@ export class ModalManager {
                 return;
             }
 
+            // Cleans up cleanup for the browser UI layer.
             const cleanup = () => {
                 if (modal.parentNode) {
                     modal.parentNode.removeChild(modal);
@@ -93,6 +97,7 @@ export class ModalManager {
                 backdrop.removeEventListener('click', backdropHandler);
             };
 
+            // Resolves and cleanup for the browser UI layer.
             const resolveAndCleanup = (value) => {
                 cleanup();
                 resolve(value);
@@ -101,12 +106,14 @@ export class ModalManager {
             const confirmHandler = () => resolveAndCleanup(true);
             const cancelHandler = () => resolveAndCleanup(false);
 
+            // Handles esc handler in the browser UI layer.
             const escHandler = (e) => {
                 if (e.key === 'Escape') {
                     cancelHandler();
                 }
             };
 
+            // Handles backdrop handler in the browser UI layer.
             const backdropHandler = (e) => {
                 if (e.target === backdrop) {
                     cancelHandler();
@@ -137,6 +144,7 @@ export class ModalManager {
         });
     }
 
+    // Shows alert in the browser UI layer.
     showAlert(options) {
         return new Promise((resolve) => {
             const {
@@ -192,6 +200,7 @@ export class ModalManager {
                 return;
             }
 
+            // Cleans up cleanup for the browser UI layer.
             const cleanup = () => {
                 if (modal.parentNode) {
                     modal.parentNode.removeChild(modal);
@@ -204,17 +213,20 @@ export class ModalManager {
                 backdrop.removeEventListener('click', backdropHandler);
             };
 
+            // Resolves and cleanup for the browser UI layer.
             const resolveAndCleanup = (value) => {
                 cleanup();
                 resolve(value);
             };
 
             const okHandler = () => resolveAndCleanup(true);
+            // Handles esc handler in the browser UI layer.
             const escHandler = (e) => {
                 if (e.key === 'Escape') {
                     resolveAndCleanup(false);
                 }
             };
+            // Handles backdrop handler in the browser UI layer.
             const backdropHandler = (e) => {
                 if (e.target === backdrop) {
                     resolveAndCleanup(false);
@@ -245,6 +257,7 @@ export class ModalManager {
         });
     }
 
+    // Shows custom node in the browser UI layer.
     showCustomNode(options) {
         return new Promise((resolve) => {
             const {
@@ -301,6 +314,7 @@ export class ModalManager {
 
             bodyEl.appendChild(node);
 
+            // Cleans up cleanup for the browser UI layer.
             const cleanup = () => {
                 if (placeholder.parentNode) {
                     placeholder.parentNode.replaceChild(node, placeholder);
@@ -318,17 +332,20 @@ export class ModalManager {
                 }
             };
 
+            // Resolves and cleanup for the browser UI layer.
             const resolveAndCleanup = () => {
                 cleanup();
                 resolve();
             };
 
+            // Handles esc handler in the browser UI layer.
             const escHandler = (e) => {
                 if (e.key === 'Escape') {
                     resolveAndCleanup();
                 }
             };
 
+            // Handles backdrop handler in the browser UI layer.
             const backdropHandler = (e) => {
                 if (e.target === backdrop) {
                     resolveAndCleanup();
@@ -360,6 +377,7 @@ export class ModalManager {
         });
     }
 
+    // Handles escape html in the browser UI layer.
     escapeHtml(str) {
         if (str == null) return "";
         const escapeMap = {
@@ -369,6 +387,7 @@ export class ModalManager {
         return String(str).replace(/[&<>"'`=\/]/g, s => escapeMap[s] || s);
     }
 
+    // Handles destroy in the browser UI layer.
     destroy() {
         if (this.modalContainer) {
             this.modalContainer.remove();

@@ -1,4 +1,5 @@
 export class JobManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor(app) {
         this.app = app;
         this.currentJobs = new Map();
@@ -10,6 +11,7 @@ export class JobManager {
         this.progressCache = new Map();
 
         if (typeof window !== 'undefined') {
+            // Handles do restore in the browser UI layer.
             const doRestore = () => {
                 try {
                     this.restoreSessionState();
@@ -26,11 +28,13 @@ export class JobManager {
         }
     }
 
+        // Handles track job state in the browser UI layer.
         trackJob(jobId, batchId = null) {
         if (this.currentJobs.has(jobId)) return;
 
         const maxRetries = 3;
 
+        // Handles start job state sse in the browser UI layer.
         const startJobSSE = (retryCount = 0) => {
         const eventSource = new EventSource(`/api/stream/${jobId}`);
         this.currentJobs.set(jobId, eventSource);
@@ -204,16 +208,19 @@ export class JobManager {
     startJobSSE(0);
     }
 
+    // Normalizes status for the browser UI layer.
     normalizeStatus(s) {
         const v = String(s || '').toLowerCase();
         return v === 'cancelled' ? 'canceled' : v;
     }
 
+    // Handles safe num in the browser UI layer.
     safeNum(v, d = 0) {
         const n = Number(v);
         return Number.isFinite(n) ? n : d;
     }
 
+    // Returns dl cv counts used for the browser UI layer.
     getDlCvCounts(job, parsed = null) {
         const p = job?.playlist || {};
         const c = job?.counters || {};
@@ -237,6 +244,7 @@ export class JobManager {
         return { dlDone, cvDone, dlTotal, cvTotal };
     }
 
+    // Handles merge job state state in the browser UI layer.
     mergeJobState(prev, next) {
         const merged = { ...prev, ...next };
 
@@ -251,12 +259,14 @@ export class JobManager {
         return merged;
     }
 
+    // Parses xof y for the browser UI layer.
     parseXofY(text) {
         const m = String(text || '').match(/\((\d+)\s*\/\s*(\d+)\)/);
         if (!m) return null;
         return { done: Number(m[1]), total: Number(m[2]) };
     }
 
+    // Computes raw prog for the browser UI layer.
     computeRawProg(job) {
     const source = job.metadata?.source || 'file';
     const isLocalSource = source === 'local' || source === 'file';
@@ -378,6 +388,7 @@ computeProg(job) {
     return next;
 }
 
+    // Computes skipped for the browser UI layer.
     computeSkipped(job) {
         const fromStats = Number(job?.metadata?.skipStats?.skippedCount);
         if (Number.isFinite(fromStats) && fromStats >= 0) return fromStats;
@@ -407,6 +418,7 @@ computeProg(job) {
         return 0;
     }
 
+    // Handles UI state current index in the browser UI layer.
     uiCurrentIndex(job) {
         const total = job.playlist?.total;
         const done = job.playlist?.done;
@@ -417,6 +429,7 @@ computeProg(job) {
         return null;
     }
 
+    // Handles UI state now title in the browser UI layer.
     uiNowTitle(job) {
         if (job.metadata?.isPlaylist && Array.isArray(job.metadata?.frozenEntries) && job.metadata.frozenEntries.length) {
             const i0 = job.playlist?.current || this.uiCurrentIndex(job);
@@ -429,6 +442,7 @@ computeProg(job) {
         return ex.track || ex.title || job.metadata?.originalName || null;
     }
 
+    // Returns channels text used for the browser UI layer.
     getChannelsText(channels) {
        const texts = {
            stereo: '2.0',
@@ -438,6 +452,7 @@ computeProg(job) {
        return texts[channels] || channels;
    }
 
+   // Returns hwaccel icon used for the browser UI layer.
    getHwaccelIcon(hwaccel) {
     const icons = {
         nvenc: '🔵',
@@ -446,6 +461,29 @@ computeProg(job) {
         off: '⚪'
     };
     return icons[hwaccel] || '⚪';
+}
+
+getOutputLocationBadgeHtml() {
+    const title = this.app.t('jobsPanel.outputLocationTitle') || 'Output Location';
+    const linuxLabel = this.app.t('jobsPanel.outputLocationLinux') || 'Linux';
+    const windowsLabel = this.app.t('jobsPanel.outputLocationWindows') || 'Windows';
+
+    const linuxPath = this.app.outputLocations?.linuxPath || '/path/to/outputs';
+    const windowsPath = this.app.outputLocations?.windowsPath || 'C:\\path\\to\\outputs';
+    const platformHint = `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+    const isWindows = platformHint.includes('win');
+    const osLabel = isWindows ? windowsLabel : linuxLabel;
+    const outputPath = isWindows ? windowsPath : linuxPath;
+
+    return `
+        <div class="output-location-badge" role="note" aria-label="${this.app.escapeHtml(title)}">
+            <div class="output-location-badge__title">📁 ${this.app.escapeHtml(title)}</div>
+            <div class="output-location-badge__row">
+                <span class="output-location-badge__os">${this.app.escapeHtml(osLabel)}</span>
+                <code>${this.app.escapeHtml(outputPath)}</code>
+            </div>
+        </div>
+    `;
 }
 
 updateJobUI(job, batchId = null) {
@@ -1186,6 +1224,10 @@ if (job.currentPhase) {
                 : '';
             resultContent = `${baseBtn} ${lrcBtn}`;
         }
+
+        if (resultContent) {
+            resultContent += this.getOutputLocationBadgeHtml();
+        }
     }
 
     let totalProgress = this.computeProg(job);
@@ -1437,6 +1479,7 @@ if (job.currentPhase) {
         });
     }
 }
+    // Handles ensure batch in the browser UI layer.
     ensureBatch(batchId, total, meta) {
         let batch = this.batches.get(batchId);
 
@@ -1492,6 +1535,7 @@ if (job.currentPhase) {
         return batch;
     }
 
+    // Handles append batch row in the browser UI layer.
     appendBatchRow(batchId, { title, href }) {
         const list = document.getElementById(`batch-list-${batchId}`);
         if (!list) return;
@@ -1515,6 +1559,7 @@ if (job.currentPhase) {
         list.appendChild(row);
     }
 
+    // Updates batch progress for the browser UI layer.
     updateBatchProgress(batchId) {
         const batch = this.batches.get(batchId);
         if (!batch) return;
@@ -1573,6 +1618,7 @@ if (job.currentPhase) {
         if (stopBtn) stopBtn.disabled = !anyActive;
     }
 
+    // Removes job state completely from the browser UI layer.
     removeJobCompletely(jobId) {
     const batchId = this.jobToBatch.get(jobId) || null;
     this.jobStates.delete(jobId);
@@ -1608,6 +1654,7 @@ if (job.currentPhase) {
     if (completedBadge) completedBadge.textContent = String(completedCount);
     this.saveSessionState();
 }
+    // Cancels batch in the browser UI layer.
     async cancelBatch(batchId) {
         const batch = this.batches.get(batchId);
         if (!batch) return;
@@ -1640,6 +1687,7 @@ if (job.currentPhase) {
         this.saveSessionState();
     }
 
+        // Determines whether persist job state should run for the browser UI layer.
         shouldPersistJob(job) {
         const s = this.normalizeStatus(job.status);
         if (s === 'canceled' || s === 'error') {
@@ -1647,6 +1695,7 @@ if (job.currentPhase) {
         }
         return true;
     }
+        // Persists session state for the browser UI layer.
         saveSessionState() {
         try {
             const all = Array.from(this.jobStates.values())
@@ -1701,6 +1750,7 @@ if (job.currentPhase) {
         }
     }
 
+        // Handles job state has existing output in the browser UI layer.
         async jobHasExistingOutput(job) {
             const s = this.normalizeStatus(job.status);
             if (s !== 'completed') return true;
@@ -1743,6 +1793,7 @@ if (job.currentPhase) {
             }
         }
 
+        // Handles prune playlist data outputs in the browser UI layer.
         async prunePlaylistOutputs(job) {
             const s = this.normalizeStatus(job.status);
             if (s !== 'completed') return true;
@@ -1794,6 +1845,7 @@ if (job.currentPhase) {
             return true;
         }
 
+        // Handles restore session state in the browser UI layer.
         async restoreSessionState() {
             try {
                 const raw = localStorage.getItem(this.storageKey);
@@ -1865,6 +1917,7 @@ if (job.currentPhase) {
             }
         }
 
+    // Handles submit job state in the browser UI layer.
     async submitJob(payload, isFormData = false) {
         try {
             console.log("Sent payload:", payload);

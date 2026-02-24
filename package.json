@@ -18,7 +18,7 @@
     "archiver": "^7.0.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.2",
     "music-metadata": "^11.9.0",
     "node-fetch": "^3.3.2",
     "node-id3": "^0.2.9",
@@ -57,15 +57,29 @@
       "build/**"
     ],
     "extraResources": [
-      { "from": "build/bin", "to": "bin", "filter": ["**/*"] },
-      { "from": "build/icon.png", "to": "icon.png" },
-      { "from": "build/icon.ico", "to": "icon.ico" }
+      {
+        "from": "build/bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico"
@@ -77,17 +91,21 @@
       "artifactName": "Gharmonize Setup ${version}.${ext}"
     },
     "linux": {
-    "target": ["AppImage"],
-    "icon": "build/icon.png",
-    "desktop": {
-      "entry": {
-        "Name": "Gharmonize",
-        "StartupWMClass": "Gharmonize"
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icon.png",
+      "desktop": {
+        "entry": {
+          "Name": "Gharmonize",
+          "StartupWMClass": "Gharmonize"
+        }
       }
-    }
-  },
+    },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "build/icon.icns"
     }
   }

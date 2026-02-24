@@ -9,6 +9,7 @@ import { modalManager } from './ModalManager.js';
 import { settingsManager } from './SettingsManager.js';
 
 export class MediaConverterApp {
+    // Initializes class state and defaults for the browser UI layer.
     constructor() {
         this._escapeMap = {
             '&': '&amp;', '<': '&lt;', '>': '&gt;',
@@ -16,6 +17,7 @@ export class MediaConverterApp {
         };
 
         this.includeLyrics = false;
+        this.embedLyrics = false;
         this.currentSampleRate = 48000;
         this.currentVolumeGain = 1.0;
         this.videoManager = new VideoSettingsManager(this);
@@ -29,8 +31,10 @@ export class MediaConverterApp {
         this.modalManager = modalManager;
         this.lastPreviewedPlaylistUrl = null;
         this.qualityLabelElement = null;
+        this.outputLocations = null;
     }
 
+    // Initializes startup state for the browser UI layer.
     async initialize() {
         this.initializeTheme();
         const savedAutoZip = localStorage.getItem('autoCreateZip');
@@ -43,6 +47,7 @@ export class MediaConverterApp {
         }
 
         this.loadFfmpegCaps();
+        this.loadOutputLocations();
         this.initializeEventListeners();
         this.jobManager.restoreSessionState();
 
@@ -54,6 +59,27 @@ export class MediaConverterApp {
         });
     }
 
+    // Loads output locations for the browser UI layer.
+    async loadOutputLocations() {
+        try {
+            const resp = await fetch('/api/outputs/location');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (!data || (!data.linuxPath && !data.windowsPath)) return;
+            this.outputLocations = {
+                linuxPath: String(data.linuxPath || ''),
+                windowsPath: String(data.windowsPath || '')
+            };
+
+            for (const job of this.jobManager.jobStates.values()) {
+                this.jobManager.updateJobUI(job, this.jobManager.jobToBatch.get(job.id) || null);
+            }
+        } catch (e) {
+            console.warn('Failed to load output locations:', e);
+        }
+    }
+
+    // Parses Spotify metadata type for the browser UI layer.
     parseSpotifyType(u) {
         if (!u) return null;
         const s = String(u).trim();
@@ -80,12 +106,25 @@ export class MediaConverterApp {
         }
     }
 
+    // Handles sync embed lyrics metadata checkbox visibility in the browser UI layer.
+    syncEmbedLyricsCheckboxVisibility() {
+        const embedContainer = document.getElementById('embedLyricsCheckboxContainer');
+        const lyricsContainer = document.getElementById('lyricsCheckboxContainer');
+
+        if (!embedContainer || !lyricsContainer) return;
+
+        const shouldShow = lyricsContainer.style.display !== 'none';
+        embedContainer.style.display = shouldShow ? 'flex' : 'none';
+    }
+
+    // Updates auto zip visibility used for the browser UI layer.
     setAutoZipVisibility(show) {
         const c = document.getElementById('autoZipCheckboxContainer');
         if (!c) return;
         c.style.display = show ? 'flex' : 'none';
     }
 
+    // Handles ensure warn styles in the browser UI layer.
     ensureWarnStyles() {
         if (document.getElementById('skipped-badge-style')) return;
         const st = document.createElement('style');
@@ -93,6 +132,7 @@ export class MediaConverterApp {
         document.head.appendChild(st);
     }
 
+    // Determines whether show auto zip for current UI state should run for the browser UI layer.
     shouldShowAutoZipForCurrentUI({ url, total = null } = {}) {
         const format = document.getElementById('formatSelect')?.value || 'mp3';
         const isVideo = (format === 'mp4' || format === 'mkv');
@@ -116,6 +156,7 @@ export class MediaConverterApp {
         return this.isYoutubePlaylistUrl(u);
         }
 
+    // Initializes theme for the browser UI layer.
     initializeTheme() {
         const savedTheme = localStorage.getItem('theme') || 'light';
         document.documentElement.setAttribute('data-theme', savedTheme);
@@ -147,6 +188,7 @@ export class MediaConverterApp {
         }
     }
 
+    // Initializes event listeners for the browser UI layer.
     initializeEventListeners() {
         document.getElementById('formatSelect').addEventListener('change', async (e) => {
             const format = e.target.value;
@@ -221,7 +263,7 @@ export class MediaConverterApp {
                     this.onPlaylistToggle(true);
                     this.showNotification(
                         this.t('notif.autoPlaylistChecked') ||
-                        'Bu URL bir YouTube playlist gibi görünüyor. Playlist modunu açtım, önce listeyi önizleyip sonra dönüştürebilirsin.',
+                        'Bu URL bir YouTube/Dailymotion playlist gibi görünüyor. Playlist modunu açtım, önce listeyi önizleyip sonra dönüştürebilirsin.',
                         'info',
                         'default'
                     );
@@ -290,7 +332,12 @@ export class MediaConverterApp {
 
         document.getElementById('lyricsCheckbox').addEventListener('change', (e) => {
             this.includeLyrics = e.target.checked;
+            this.syncEmbedLyricsCheckboxVisibility();
         });
+        document.getElementById('embedLyricsCheckbox')?.addEventListener('change', (e) => {
+            this.embedLyrics = e.target.checked;
+        });
+        this.syncEmbedLyricsCheckboxVisibility();
 
         document.getElementById('sampleRateSelect').addEventListener('change', (e) => {
             this.currentSampleRate = parseInt(e.target.value);
@@ -309,6 +356,7 @@ export class MediaConverterApp {
             volumeLabel.textContent = initial.toFixed(1) + 'x';
             this.currentVolumeGain = initial;
 
+            // Updates volume UI state for the browser UI layer.
             const updateVolumeUI = () => {
                 const v = parseFloat(volumeRange.value) || 1.0;
                 this.currentVolumeGain = v;
@@ -373,6 +421,7 @@ export class MediaConverterApp {
         this.checkInitialAuthState();
     }
 
+    // Updates quality label for the browser UI layer.
     updateQualityLabel(format) {
          const qualityLabel = document.querySelector('label[for="bitrateSelect"]');
          if (!qualityLabel) return;
@@ -385,6 +434,7 @@ export class MediaConverterApp {
          qualityLabel.textContent = isVideo ? videoText : audioText;
      }
 
+    // Handles handle authentication state state change in the browser UI layer.
     handleAuthStateChange(isLoggedIn) {
         console.log('Auth state changed:', isLoggedIn);
         const jobsBell = document.getElementById('jobsBell');
@@ -400,6 +450,7 @@ export class MediaConverterApp {
         });
     }
 
+    // Handles check initial authentication state state in the browser UI layer.
     async checkInitialAuthState() {
         const token = localStorage.getItem('gharmonize_admin_token');
         const isLoggedIn = !!token;
@@ -423,6 +474,7 @@ export class MediaConverterApp {
         this.handleAuthStateChange(isLoggedIn);
     }
 
+        // Loads local files files for the browser UI layer.
         async loadLocalFiles() {
             const selectEl = document.getElementById('localFileSelect');
             const listEl   = document.getElementById('localFileCheckboxList');
@@ -535,6 +587,7 @@ export class MediaConverterApp {
             }
         }
 
+        // Handles add login button to local files files in the browser UI layer.
         addLoginButtonToLocalFiles(listEl) {
         if (!listEl) return;
         if (listEl.querySelector('#localFilesLoginBtn')) return;
@@ -561,6 +614,7 @@ export class MediaConverterApp {
         });
     }
 
+    // Handles add selection info in the browser UI layer.
     addSelectionInfo() {
         const selectEl = document.getElementById('localFileSelect');
         const parent = selectEl.parentElement;
@@ -577,6 +631,7 @@ export class MediaConverterApp {
         parent.appendChild(info);
     }
 
+    // Handles on playlist data toggle in the browser UI layer.
     onPlaylistToggle(isChecked) {
             if (isChecked) {
                 this.setAutoZipVisibility(this.shouldShowAutoZipForCurrentUI());
@@ -589,6 +644,7 @@ export class MediaConverterApp {
             }
         }
 
+    // Handles on URL input change in the browser UI layer.
     onUrlInputChange(url) {
         const isSpotify = this.isSpotifyUrl(url);
         const isYoutubePl = !isSpotify && this.isYoutubePlaylistUrl(url);
@@ -636,11 +692,13 @@ export class MediaConverterApp {
         this.onPlaylistToggle(true);
     }
 
+    // Checks whether Spotify metadata URL is valid for the browser UI layer.
     isSpotifyUrl(u) {
         const s = String(u || "").trim();
         return /^(spotify:|https?:\/\/(open\.spotify\.com|spotify\.link|spotify\.app\.link))/i.test(s);
     }
 
+    // Checks whether youtube playlist data URL is valid for the browser UI layer.
     isYoutubePlaylistUrl(u) {
         if (!u) return false;
         const str = String(u);
@@ -653,9 +711,17 @@ export class MediaConverterApp {
                 host.includes('youtube.com') ||
                 host.includes('youtu.be') ||
                 host.includes('music.youtube.com');
+            const isDailymotionHost =
+                host.includes('dailymotion.com') ||
+                host === 'dai.ly' ||
+                host.endsWith('.dai.ly');
 
             if (isYoutubeHost) {
                 if (url.searchParams.has('list')) return true;
+                if (/\/playlist/i.test(url.pathname)) return true;
+            }
+            if (isDailymotionHost) {
+                if (url.searchParams.has('playlist')) return true;
                 if (/\/playlist/i.test(url.pathname)) return true;
             }
         } catch {
@@ -663,10 +729,12 @@ export class MediaConverterApp {
 
         if (/[?&]list=/.test(str)) return true;
         if (/\/playlist/i.test(str)) return true;
+        if (/(dailymotion\.com|dai\.ly)/i.test(str) && /[?&]playlist=/.test(str)) return true;
 
         return false;
     }
 
+    // Handles handle URL submit in the browser UI layer.
     async handleUrlSubmit(e) {
     e.preventDefault();
     const url = document.getElementById('urlInput').value.trim();
@@ -678,6 +746,7 @@ export class MediaConverterApp {
     const isPlaylist = playlistCheckboxEl?.checked;
     const sequential = document.getElementById('sequentialChk')?.checked;
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+    const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
     const volumeGain = this.currentVolumeGain || 1.0;
     const youtubeConcurrency = document.getElementById('youtubeConcurrencyInput')?.value || '4';
     const autoCreateZip = this.autoCreateZip;
@@ -728,6 +797,7 @@ export class MediaConverterApp {
             isPlaylist: false,
             sampleRate: Number(sampleRate),
             includeLyrics,
+            embedLyrics,
             volumeGain,
             autoCreateZip
         };
@@ -736,16 +806,22 @@ export class MediaConverterApp {
         document.getElementById('urlForm').reset();
         document.getElementById('playlistCheckbox').checked = false;
         document.getElementById('lyricsCheckbox').checked = false;
+        if (document.getElementById('embedLyricsCheckbox')) {
+            document.getElementById('embedLyricsCheckbox').checked = false;
+        }
+        this.syncEmbedLyricsCheckboxVisibility();
         this.previewManager.hidePreview();
         this.setAutoZipVisibility(false);
     }
 
+    // Loads binary versions for the browser UI layer.
     async loadBinaryVersions() {
         try {
             const res = await fetch('/api/binaries');
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
 
+            // Handles shorten version metadata in the browser UI layer.
             const shortenVersion = (v) => {
                 if (!v) return '';
                 const nightly = v.match(/^N-(\d+)-(?:g[0-9a-f]+-)?(\d{8})$/);
@@ -791,6 +867,7 @@ export class MediaConverterApp {
         }
     }
 
+    // Loads FFmpeg arguments caps for the browser UI layer.
     async loadFfmpegCaps() {
     try {
         const res = await fetch('/api/ffmpeg/caps', { cache: 'no-store' });
@@ -810,6 +887,7 @@ export class MediaConverterApp {
     }
 }
 
+    // Handles handle URL submit with spinner in the browser UI layer.
     async handleUrlSubmitWithSpinner(e) {
         e.preventDefault();
 
@@ -829,7 +907,7 @@ export class MediaConverterApp {
 
             this.showNotification(
                 this.t('notif.autoPlaylistChecked') ||
-                'Bu URL bir YouTube playlist gibi görünüyor. Lütfen dönüşümleri önizleme penceresinden başlatın.',
+                'Bu URL bir YouTube/Dailymotion playlist gibi görünüyor. Lütfen dönüşümleri önizleme penceresinden başlatın.',
                 'info',
                 'default'
             );
@@ -868,6 +946,7 @@ export class MediaConverterApp {
         }
     }
 
+    // Shows button spinner in the browser UI layer.
     showButtonSpinner(button, spinner, btnText) {
         if (!button) return;
         if (!spinner) {
@@ -898,6 +977,7 @@ export class MediaConverterApp {
         button.disabled = true;
     }
 
+    // Hides button spinner in the browser UI layer.
     hideButtonSpinner(button, spinner, btnText) {
         if (!button) return;
         button.classList.remove('btn-loading');
@@ -905,6 +985,7 @@ export class MediaConverterApp {
         button.disabled = false;
     }
 
+    // Handles escape html in the browser UI layer.
     escapeHtml(str) {
         if (str == null) return "";
         if (typeof str === "object") {
@@ -922,6 +1003,7 @@ export class MediaConverterApp {
         return str.replace(/[&<>"'`=\/]/g, s => this._escapeMap[s] || s);
     }
 
+    // Formats seconds for the browser UI layer.
     formatSeconds(sec) {
         const h = Math.floor(sec / 3600);
         const m = Math.floor((sec % 3600) / 60);
@@ -929,6 +1011,7 @@ export class MediaConverterApp {
         return (h ? h.toString().padStart(2, '0') + ':' : '') + m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
     }
 
+    // Normalizes log for the browser UI layer.
     normalizeLog(msg) {
         if (msg == null) return '';
         if (typeof msg === 'string') {
@@ -946,6 +1029,7 @@ export class MediaConverterApp {
         return String(msg);
     }
 
+    // Normalizes backend log for the browser UI layer.
     normalizeBackendLog(txt) {
         if (txt == null) return '';
         try { txt = String(txt); } catch { return ''; }
@@ -957,6 +1041,7 @@ export class MediaConverterApp {
         return txt.replace(/\s+/g, ' ').trim();
     }
 
+    // Handles to relative in the browser UI layer.
     toRelative(u) {
         if (!u) return u;
         try {
@@ -970,6 +1055,7 @@ export class MediaConverterApp {
         }
     }
 
+    // Handles t in the browser UI layer.
     t(key, vars) {
         if (typeof key === 'string' && key.startsWith('log.download.')) {
             const fixed = key.replace('log.download.', 'log.downloading.');
@@ -979,18 +1065,22 @@ export class MediaConverterApp {
         return (window.i18n?.t?.(key, vars)) ?? key;
     }
 
+    // Shows notification in the browser UI layer.
     showNotification(message, type = 'info', group = 'default') {
         this.notificationManager.showNotification(message, type, group, 3000);
     }
 
+    // Shows queue notification in the browser UI layer.
     showQueueNotification(message) {
         this.showNotification(message, 'success', 'queue');
     }
 
+    // Shows error notification in the browser UI layer.
     showErrorNotification(message) {
         this.showNotification(message, 'error', 'error');
     }
 
+    // Shows progress notification in the browser UI layer.
     showProgressNotification(message) {
         this.showNotification(message, 'info', 'progress');
     }

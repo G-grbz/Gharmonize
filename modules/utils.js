@@ -17,16 +17,26 @@ export const ERR = {
   INTERNAL: 'INTERNAL'
 };
 
+// Parses id from path for core application logic.
 export function parseIdFromPath(filePath) {
   const base = path.basename(String(filePath || ""));
-  const m = base.match(/(?:^\d+\s*-\s*)?([A-Za-z0-9_-]{6,})\.[A-Za-z0-9]+$/);
-  return m ? m[1] : null;
+  const noExt = base.replace(/\.[A-Za-z0-9]+$/i, "");
+  if (!noExt) return null;
+
+  // Selected-id downloads are saved as "<videoId>.<ext>" and IDs can start with "2-...".
+  // Only treat a numeric prefix as playlist index when it is the explicit "N - " form.
+  if (/^[A-Za-z0-9_-]{6,}$/.test(noExt)) return noExt;
+
+  const withLegacyPrefix = noExt.match(/^\d+\s*-\s+([A-Za-z0-9_-]{6,})$/);
+  return withLegacyPrefix ? withLegacyPrefix[1] : null;
 }
 
+// Handles escape reg exp in core application logic.
 export function escapeRegExp(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Normalizes title for core application logic.
 export function normalizeTitle(rawTitle, artist) {
   if (!rawTitle) return rawTitle;
   const a = String(artist || "").trim();
@@ -40,18 +50,22 @@ export function normalizeTitle(rawTitle, artist) {
   return title;
 }
 
+// Sends ok in core application logic.
 export function sendOk(res, payload = {}, status = 200) {
   return res.status(status).json({ ok: true, ...payload });
 }
 
+// Sends error in core application logic.
 export function sendError(res, code, message, status = 400, extra = {}) {
   return res.status(status).json({ ok: false, error: { code, message, ...extra } });
 }
 
+// Checks whether executable is valid for core application logic.
 export function isExecutable(p) {
   try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
 }
 
+// Finds on path for core application logic.
 export function findOnPATH(name) {
   const paths = (process.env.PATH || "").split(path.delimiter);
   for (const p of paths) {
@@ -63,9 +77,12 @@ export function findOnPATH(name) {
 
 export const toNFC = (s) => (typeof s === "string" ? s.normalize("NFC") : s);
 
+// Handles sanitize filename in core application logic.
 export function sanitizeFilename(name, replacement = "_") {
   const n = toNFC(name);
   const cleaned = n
+    .replace(/\s*\u2022+\s*/g, " - ")
+    .replace(/\s+&\s+/g, ", ")
     .replace(/[\/\\?%*:|"<>]/g, replacement)
     .replace(/\s+/g, " ")
     .trim();
@@ -74,7 +91,9 @@ export function sanitizeFilename(name, replacement = "_") {
 
 export const isDirectMediaUrl = (url) => /(\.(mp4|avi|mov|mkv|webm|mp3|wav|flac|aac|ogg|m4a))$/i.test(url);
 
+// Handles make t in core application logic.
 export function makeT(req) {
+  // Handles fallback in core application logic.
   const fallback = (key, vars={}) => {
     let s = String(key);
     for (const [k, v] of Object.entries(vars)) {
@@ -86,6 +105,7 @@ export function makeT(req) {
   return fallback;
 }
 
+// Handles unique id in core application logic.
 export function uniqueId(prefix) {
   try {
     const id = randomUUID();
@@ -96,6 +116,7 @@ export function uniqueId(prefix) {
   }
 }
 
+// Handles add cookie args in core application logic.
 export function addCookieArgs(args, { ui = false } = {}) {
   if (ui && process.env.YT_UI_FORCE_COOKIES === "1") {
     const cookieBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER;
@@ -124,6 +145,7 @@ export function addCookieArgs(args, { ui = false } = {}) {
   return args;
 }
 
+// Returns js runtime args used for core application logic.
 export function getJsRuntimeArgs() {
   const envVal = (process.env.YTDLP_JS_RUNTIME || "").trim();
   if (envVal) {

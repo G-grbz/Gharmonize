@@ -3,6 +3,7 @@ import path from "path";
 
 const _cache = new Map();
 
+// Runs run for core application logic.
 function run(bin, args, timeoutMs = 4000) {
   return new Promise((resolve) => {
     const p = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -30,6 +31,7 @@ function run(bin, args, timeoutMs = 4000) {
   });
 }
 
+// Handles media probe data encoder in core application logic.
 async function probeEncoder(ffmpegBin, encoder, extraArgs = []) {
   const args = [
     "-hide_banner",
@@ -54,6 +56,7 @@ async function probeEncoder(ffmpegBin, encoder, extraArgs = []) {
   };
 }
 
+// Checks whether encoder listed exists for core application logic.
 async function hasEncoderListed(ffmpegBin, encoder) {
   const { code, stdout, stderr } = await run(ffmpegBin, ["-hide_banner", "-encoders"], 8000);
   if (code !== 0) return false;
@@ -62,9 +65,11 @@ async function hasEncoderListed(ffmpegBin, encoder) {
   return new RegExp(`\\b${encoder}\\b`).test(txt);
 }
 
+// Returns FFmpeg arguments caps used for core application logic.
 export async function getFfmpegCaps(ffmpegBin) {
   if (_cache.has(ffmpegBin)) return _cache.get(ffmpegBin);
 
+  // Handles job state in core application logic.
   const job = (async () => {
     const listed = async (enc) => await hasEncoderListed(ffmpegBin, enc);
     const results = {};
@@ -85,6 +90,7 @@ export async function getFfmpegCaps(ffmpegBin) {
   return job;
 }
 
+// Handles guess ffprobe path in core application logic.
 function guessFfprobePath(ffmpegBin) {
   const s = String(ffmpegBin || "");
   if (!s) return "ffprobe";
@@ -100,6 +106,7 @@ function guessFfprobePath(ffmpegBin) {
   return path.join(dir, process.platform === "win32" ? "ffprobe.exe" : "ffprobe");
 }
 
+// Runs ffprobe maybe for core application logic.
 async function runFfprobeMaybe(ffmpegBin, inputPath, timeoutMs) {
   const ffprobeBin = guessFfprobePath(ffmpegBin);
 
@@ -121,11 +128,13 @@ async function runFfprobeMaybe(ffmpegBin, inputPath, timeoutMs) {
   return { ok: false, ffprobeBin, detail: (r.stderr || "").slice(-400) };
 }
 
+// Selects video stream payload for core application logic.
 function pickVideoStream(obj) {
   const streams = Array.isArray(obj?.streams) ? obj.streams : [];
   return streams.find(s => s?.codec_type === "video") || null;
 }
 
+// Handles detect hdr dv from stream payload in core application logic.
 function detectHdrDvFromStream(vs) {
   const pix  = String(vs?.pix_fmt || "").toLowerCase();
   const ct   = String(vs?.color_transfer || "").toLowerCase();
@@ -156,10 +165,12 @@ function detectHdrDvFromStream(vs) {
   return { is10bit, isHDR, isDV };
 }
 
+// Extracts hdr metadata for core application logic.
 function extractHdrMetadata(vs) {
   const side = Array.isArray(vs?.side_data_list) ? vs.side_data_list : [];
   const sideTxt = JSON.stringify(side);
 
+  // Returns any used for core application logic.
   const getAny = (keys) => {
     for (const it of side) {
       for (const k of keys) {
@@ -180,6 +191,7 @@ function extractHdrMetadata(vs) {
   return { mastering_display, content_light_level };
 }
 
+// Handles media probe data video stream payload info in core application logic.
 export async function probeVideoStreamInfo(ffmpegBin, inputPath, timeoutMs = 15000) {
   const probe = await runFfprobeMaybe(ffmpegBin, inputPath, timeoutMs);
 

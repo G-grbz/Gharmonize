@@ -7,6 +7,7 @@ import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs, parse
 import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
 import { YTDLP_BIN as BINARY_YTDLP_BIN, DENO_BIN } from "./binaries.js";
 
+// Checks whether music enabled is valid for the yt-dlp YouTube download pipeline.
 export function isMusicEnabled() {
   const v = process.env.YT_USE_MUSIC;
   if (v === "0") return false;
@@ -14,7 +15,6 @@ export function isMusicEnabled() {
   return false;
 }
 
-export const YT_USE_MUSIC = isMusicEnabled();
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_USER_AGENT = getUserAgent();
 const DEFAULT_HEADERS = getYouTubeHeaders();
@@ -40,6 +40,7 @@ const PLAYLIST_META_FALLBACK_TIMEOUT =
   Number(process.env.PLAYLIST_META_FALLBACK_TIMEOUT_MS || 15000);
 
 
+// Checks whether benign sabr warning is valid for the yt-dlp YouTube download pipeline.
 function isBenignSabrWarning(line) {
   if (!line) return false;
   const s = String(line);
@@ -49,12 +50,14 @@ function isBenignSabrWarning(line) {
   );
 }
 
+// Normalizes concurrency for the yt-dlp YouTube download pipeline.
 function normalizeConcurrency(n) {
   const num = Number(n);
   if (!Number.isFinite(num) || num <= 0) return 4;
   return Math.max(1, Math.min(16, Math.round(num)));
 }
 
+// Runs with concurrency for the yt-dlp YouTube download pipeline.
 async function runWithConcurrency(limit, tasks) {
   const max = Math.max(1, Number(limit) || 1);
   if (!tasks.length) return;
@@ -64,6 +67,7 @@ async function runWithConcurrency(limit, tasks) {
   let fatalError = null;
 
   return new Promise((resolve, reject) => {
+    // Handles next in the yt-dlp YouTube download pipeline.
     const next = () => {
       if (fatalError) return;
       if (index >= tasks.length && active === 0) {
@@ -90,6 +94,7 @@ async function runWithConcurrency(limit, tasks) {
   });
 }
 
+// Handles headers to args in the yt-dlp YouTube download pipeline.
 function headersToArgs(headersObj) {
   const out = [];
   for (const key of ["Referer", "Origin", "Accept-Language"]) {
@@ -99,6 +104,7 @@ function headersToArgs(headersObj) {
   return out;
 }
 
+// Handles emit event in the yt-dlp YouTube download pipeline.
 function emitEvent(progressCallback, opts, payload) {
   if (opts && typeof opts.onEvent === "function") {
     try { opts.onEvent(payload); } catch {}
@@ -108,6 +114,7 @@ function emitEvent(progressCallback, opts, payload) {
   }
 }
 
+// Normalizes you tube URL for the yt-dlp YouTube download pipeline.
 export function normalizeYouTubeUrl(input) {
   try {
     let url = new URL(input);
@@ -120,7 +127,7 @@ export function normalizeYouTubeUrl(input) {
       if (list) url.searchParams.set("list", list);
     }
 
-    if (YT_USE_MUSIC && url.hostname === "www.youtube.com" &&
+    if (isMusicEnabled() && url.hostname === "www.youtube.com" &&
         url.pathname === "/watch" && url.searchParams.get("v")) {
       url.hostname = getLocaleConfig().hostnameForWatch(true);
     }
@@ -139,18 +146,87 @@ export function normalizeYouTubeUrl(input) {
   }
 }
 
-export const isYouTubeUrl = (url) =>
-  url.includes("youtube.com/") || url.includes("youtu.be/") ||
-  url.includes("youtube.com/watch") || url.includes("youtube.com/playlist");
+// Checks whether you tube URL is valid for the yt-dlp YouTube download pipeline.
+export const isYouTubeUrl = (url) => {
+  const s = String(url || "");
+  return (
+    s.includes("youtube.com/") ||
+    s.includes("youtu.be/") ||
+    s.includes("youtube.com/watch") ||
+    s.includes("youtube.com/playlist")
+  );
+};
 
-export const isYouTubePlaylist = (url) =>
-  url.includes("list=") || url.includes("/playlist") ||
-  url.includes("&list=") || url.match(/youtube\.com.*[&?]list=/);
+// Checks whether dailymotion URL is valid for the yt-dlp YouTube download pipeline.
+export const isDailymotionUrl = (url) => {
+  const s = String(url || "").trim();
+  if (!s) return false;
+  try {
+    const host = new URL(s).hostname.toLowerCase();
+    return (
+      host.includes("dailymotion.com") ||
+      host === "dai.ly" ||
+      host.endsWith(".dai.ly")
+    );
+  } catch {
+    return /(?:^|\/\/)(?:www\.)?(?:dailymotion\.com|dai\.ly)\//i.test(s);
+  }
+};
+
+// Builds video format selector for the yt-dlp YouTube download pipeline.
+function buildVideoFormatSelector(sourceUrl, maxHeight = 1080) {
+  const h = Number.isFinite(Number(maxHeight)) ? Number(maxHeight) : 1080;
+  const s = String(sourceUrl || "");
+  const isYouTubeLike = isYouTubeUrl(s) || isDailymotionUrl(s);
+
+  if (isYouTubeLike) {
+    return (
+      `bestvideo[height<=${h}]+bestaudio[abr>=128][vcodec=none]/` +
+      `bestvideo[height<=${h}]+bestaudio[vcodec=none]/` +
+      `best[vcodec!=none][height<=${h}]/` +
+      `best[vcodec!=none]/best`
+    );
+  }
+
+  return (
+    `best[height<=${h}]/` +
+    `bestvideo[height<=${h}]+bestaudio/` +
+    `bestvideo+bestaudio/` +
+    `best`
+  );
+}
+
+// Checks whether you tube playlist data is valid for the yt-dlp YouTube download pipeline.
+export const isYouTubePlaylist = (url) => {
+  const s = String(url || "");
+  return (
+    s.includes("list=") ||
+    s.includes("/playlist") ||
+    s.includes("&list=") ||
+    !!s.match(/youtube\.com.*[&?]list=/)
+  );
+};
+
+// Checks whether dailymotion playlist data is valid for the yt-dlp YouTube download pipeline.
+export const isDailymotionPlaylist = (url) => {
+  if (!isDailymotionUrl(url)) return false;
+  const s = String(url || "");
+  try {
+    const u = new URL(s);
+    return /\/playlist\//i.test(u.pathname) || u.searchParams.has("playlist");
+  } catch {
+    return /\/playlist\//i.test(s) || /[?&]playlist=/.test(s);
+  }
+};
 
 export const isYouTubeAutomix = (url) =>
-  url.includes("&index=") || (url.includes("/watch?v=") && url.includes("&list=RD")) ||
-  url.toLowerCase().includes("automix") || url.includes("list=RD");
+  String(url || "").includes("&index=") ||
+  (String(url || "").includes("/watch?v=") &&
+    String(url || "").includes("&list=RD")) ||
+  String(url || "").toLowerCase().includes("automix") ||
+  String(url || "").includes("list=RD");
 
+// Resolves YouTube metadata dlp for the yt-dlp YouTube download pipeline.
 export function resolveYtDlp() {
   const fromEnv = process.env.YTDLP_BIN;
   if (fromEnv && isExecutable(fromEnv)) {
@@ -181,45 +257,104 @@ export function resolveYtDlp() {
   return null;
 }
 
+// Handles ids to music URLs in the yt-dlp YouTube download pipeline.
 export function idsToMusicUrls(ids) {
-  return ids.map(id => YT_USE_MUSIC ?
+  return ids.map(id => isMusicEnabled() ?
     `https://music.youtube.com/watch?v=${id}` :
     `https://www.youtube.com/watch?v=${id}`
   );
 }
 
+// Handles ids to watch URLs in the yt-dlp YouTube download pipeline.
 export function idsToWatchUrls(ids) {
   return ids.map(id =>
     normalizeYouTubeUrl(`https://www.youtube.com/watch?v=${id}`)
   );
 }
 
-function buildBaseArgs(additionalArgs = []) {
+// Checks whether likely you tube video id is valid for the yt-dlp YouTube download pipeline.
+function isLikelyYouTubeVideoId(id) {
+  return /^[A-Za-z0-9_-]{11}$/.test(String(id || ""));
+}
+
+// Handles ids to download metadata URLs in the yt-dlp YouTube download pipeline.
+function idsToDownloadUrls(ids, frozenEntries = [], sourceUrl = "") {
+  const byIdWebpage = new Map(
+    (Array.isArray(frozenEntries) ? frozenEntries : [])
+      .filter((e) => e?.id && e?.webpage_url)
+      .map((e) => [String(e.id), String(e.webpage_url)])
+  );
+  const fromDailymotion = isDailymotionUrl(sourceUrl);
+
+  return (Array.isArray(ids) ? ids : []).map((raw) => {
+    const id = String(raw || "").trim();
+    if (!id) return id;
+    if (/^https?:\/\//i.test(id)) return id;
+
+    if (isLikelyYouTubeVideoId(id)) {
+      return normalizeYouTubeUrl(`https://www.youtube.com/watch?v=${id}`);
+    }
+
+    const mappedUrl = byIdWebpage.get(id);
+    if (mappedUrl && /^https?:\/\//i.test(mappedUrl)) {
+      return mappedUrl;
+    }
+
+    if (fromDailymotion && /^x[0-9a-z]+$/i.test(id)) {
+      return `https://www.dailymotion.com/video/${id}`;
+    }
+
+    return normalizeYouTubeUrl(`https://www.youtube.com/watch?v=${id}`);
+  });
+}
+
+// Determines whether use flat playlist data should run for the yt-dlp YouTube download pipeline.
+function shouldUseFlatPlaylist(url) {
+  return !isDailymotionUrl(url);
+}
+
+// Determines whether attach cookies should run for the yt-dlp YouTube download pipeline.
+function shouldAttachCookies(sourceUrl = "", forceCookies = false) {
+  if (forceCookies) return true;
+  return isYouTubeUrl(String(sourceUrl || ""));
+}
+
+// Builds base args for the yt-dlp YouTube download pipeline.
+function buildBaseArgs(additionalArgs = [], { sourceUrl = "" } = {}) {
+  const isYouTubeSource = isYouTubeUrl(String(sourceUrl || ""));
   const args = [
     "--ignore-config", "--no-warnings",
     "--socket-timeout", "15",
-    "--extractor-args", "youtube:player_client=android,web",
     "--user-agent", DEFAULT_USER_AGENT,
     "--retries", "3", "--retry-sleep", "1",
     "--sleep-requests", "0.1",
     "-J"
   ];
 
+  if (isYouTubeSource) {
+    args.push("--extractor-args", "youtube:player_client=android,web");
+  }
+
   if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
 
-  Object.entries(DEFAULT_HEADERS).forEach(([key, value]) => {
-    args.push("--add-header", `${key}: ${value}`);
-  });
+  if (isYouTubeSource) {
+    Object.entries(DEFAULT_HEADERS).forEach(([key, value]) => {
+      args.push("--add-header", `${key}: ${value}`);
+    });
+  }
 
   const extra = getExtraArgs();
   if (extra.length) args.push(...extra);
 
-  addCookieArgs(args, { ui: true });
+  if (shouldAttachCookies(sourceUrl)) {
+    addCookieArgs(args, { ui: true });
+  }
   args.push(...getJsRuntimeArgs());
 
   return [...args, ...additionalArgs];
 }
 
+// Determines whether strip cookies should run for the yt-dlp YouTube download pipeline.
 function shouldStripCookies(explicit = false) {
   const env = process.env.YT_STRIP_COOKIES;
 
@@ -237,6 +372,7 @@ function shouldStripCookies(explicit = false) {
   return !!explicit;
 }
 
+// Handles with yt403 workarounds in the yt-dlp YouTube download pipeline.
 export function withYT403Workarounds(baseArgs, { stripCookies = false } = {}) {
   let args = [...baseArgs];
 
@@ -264,6 +400,7 @@ export function withYT403Workarounds(baseArgs, { stripCookies = false } = {}) {
   return args;
 }
 
+// Runs YouTube metadata json for the yt-dlp YouTube download pipeline.
 export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOUT) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) {
@@ -271,7 +408,11 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
   }
 
   return new Promise((resolve, reject) => {
-    const finalArgs = buildBaseArgs(args);
+    const sourceUrl =
+      [...(Array.isArray(args) ? args : [])]
+        .reverse()
+        .find((x) => typeof x === "string" && /^https?:\/\//i.test(x)) || "";
+    const finalArgs = buildBaseArgs(args, { sourceUrl });
     let stdoutData = "", stderrData = "";
 
     const process = spawn(YTDLP_BIN, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
@@ -306,32 +447,70 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
   });
 }
 
+// Processes entry in the yt-dlp YouTube download pipeline.
 function processEntry(entry, index) {
+  const id = entry?.id || "";
+  const isDmId = /^x[0-9a-z]+$/i.test(String(id || ""));
+  const directUrl = entry?.webpage_url || entry?.url || "";
+  let resolvedUrl = directUrl;
+  if (!resolvedUrl && id) {
+    if (isLikelyYouTubeVideoId(id)) {
+      resolvedUrl = normalizeYouTubeUrl(`https://www.youtube.com/watch?v=${id}`);
+    } else if (isDmId) {
+      resolvedUrl = `https://www.dailymotion.com/video/${id}`;
+    }
+  }
+
+  const titleRaw =
+    entry?.title ||
+    entry?.alt_title ||
+    entry?.track ||
+    entry?.name ||
+    "";
+
   return {
     index: Number(entry?.playlist_index ?? (index + 1)),
-    id: entry?.id || "",
-    title: toNFC(entry?.title || entry?.alt_title || ""),
+    id,
+    title: toNFC(titleRaw || id || ""),
     duration: Number.isFinite(entry?.duration) ? entry.duration : null,
     duration_string: entry?.duration_string || null,
-    uploader: toNFC(entry?.uploader || entry?.channel || ""),
-    webpage_url: entry?.webpage_url || entry?.url || "",
+    uploader: toNFC(
+      entry?.uploader ||
+      entry?.channel ||
+      entry?.artist ||
+      entry?.creator ||
+      entry?.owner?.screenname ||
+      entry?.owner?.username ||
+      ""
+    ),
+    webpage_url: resolvedUrl,
     thumbnail: (Array.isArray(entry?.thumbnails) && entry.thumbnails.length ?
-      entry.thumbnails.at(-1).url : entry?.thumbnail || null)
+      entry.thumbnails.at(-1).url :
+      entry?.thumbnail ||
+      entry?.thumbnail_720_url ||
+      entry?.thumbnail_360_url ||
+      entry?.thumbnail_url ||
+      null)
   };
 }
 
+// Processes entries in the yt-dlp YouTube download pipeline.
 function processEntries(entries, maxEntries = PREVIEW_MAX_ENTRIES) {
   return entries
+    .filter(Boolean)
     .slice(0, maxEntries)
     .map(processEntry)
     .sort((a, b) => a.index - b.index);
 }
 
+// Extracts playlist data all flat for the yt-dlp YouTube download pipeline.
 export async function extractPlaylistAllFlat(url) {
+  const useFlat = shouldUseFlatPlaylist(url);
+  const args = useFlat
+    ? ["--yes-playlist", "--flat-playlist", "--ignore-errors", url]
+    : ["--yes-playlist", "--ignore-errors", "--skip-download", url];
   const data = await runYtJson(
-    [
-      "--yes-playlist", "--flat-playlist", "--ignore-errors", url
-    ],
+    args,
     "playlist-all-flat",
     PLAYLIST_ALL_TIMEOUT
   );
@@ -344,6 +523,7 @@ export async function extractPlaylistAllFlat(url) {
   return { title, count, items };
 }
 
+// Returns playlist data meta lite used for the yt-dlp YouTube download pipeline.
 export async function getPlaylistMetaLite(url) {
   const isAutomix = isYouTubeAutomix(url);
 
@@ -368,9 +548,14 @@ export async function getPlaylistMetaLite(url) {
     }
   }
 
+  const useFlat = shouldUseFlatPlaylist(url);
+  const metaArgs = useFlat
+    ? ["--yes-playlist", "--flat-playlist", "--ignore-errors", url]
+    : ["--yes-playlist", "--ignore-errors", "--skip-download", "--playlist-items", "1", url];
+
   try {
     const data = await runYtJson(
-      ["--yes-playlist", "--flat-playlist", "--ignore-errors", url],
+      metaArgs,
       "playlist-meta",
       PLAYLIST_META_TIMEOUT
     );
@@ -398,14 +583,23 @@ export async function getPlaylistMetaLite(url) {
   }
 }
 
+// Extracts playlist data page for the yt-dlp YouTube download pipeline.
 export async function extractPlaylistPage(url, start, end) {
   try {
+    const useFlat = shouldUseFlatPlaylist(url);
+    const args = useFlat
+      ? [
+          "--yes-playlist", "--flat-playlist",
+          "--playlist-items", `${start}-${end}`,
+          url
+        ]
+      : [
+          "--yes-playlist", "--ignore-errors", "--skip-download",
+          "--playlist-items", `${start}-${end}`,
+          url
+        ];
     const data = await runYtJson(
-      [
-        "--yes-playlist", "--flat-playlist",
-        "--playlist-items", `${start}-${end}`,
-        url
-      ],
+      args,
       `playlist-page-${start}-${end}`,
       PLAYLIST_PAGE_TIMEOUT
     );
@@ -420,6 +614,7 @@ export async function extractPlaylistPage(url, start, end) {
   }
 }
 
+// Extracts automix all flat for the yt-dlp YouTube download pipeline.
 export async function extractAutomixAllFlat(url) {
   const data = await runYtJson([
     "--yes-playlist", "--flat-playlist", "--ignore-errors", url
@@ -441,6 +636,7 @@ export async function extractAutomixAllFlat(url) {
   return { title, count: Math.max(1, count), items };
 }
 
+// Extracts automix page for the yt-dlp YouTube download pipeline.
 export async function extractAutomixPage(url, start, end) {
   try {
     const data = await runYtJson(
@@ -471,6 +667,7 @@ export async function extractAutomixPage(url, start, end) {
   }
 }
 
+// Handles ensure automix upto in the yt-dlp YouTube download pipeline.
 export async function ensureAutomixUpto(url, upto, batchSize = 50) {
   const cache = getCache(url);
   if (!cache) return;
@@ -492,12 +689,14 @@ export async function ensureAutomixUpto(url, upto, batchSize = 50) {
   }
 }
 
+// Loads YouTube metadata metadata for the yt-dlp YouTube download pipeline.
 export async function fetchYtMetadata(url, isPlaylist = false) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp not found.");
 
+  // Builds args for the yt-dlp YouTube download pipeline.
   const buildArgs = (flat = false, { stripCookies = false } = {}) => {
-    let args = buildBaseArgs();
+    let args = buildBaseArgs([], { sourceUrl: url });
     if (!args.includes("--no-check-formats")) {
       args.push("--no-check-formats");
     }
@@ -571,6 +770,7 @@ for (const attempt of attempts) {
 throw new Error(`All metadata attempts failed. Last error: ${lastError?.message}`);
 }
 
+// Resolves playlist data selected ids for the yt-dlp YouTube download pipeline.
 export async function resolvePlaylistSelectedIds(url, indices = []) {
   const data = await extractPlaylistAllFlat(url);
   const items = Array.isArray(data?.items) ? data.items : [];
@@ -583,6 +783,7 @@ export async function resolvePlaylistSelectedIds(url, indices = []) {
   return { ids, entries: picked, title };
 }
 
+// Resolves automix selected ids for the yt-dlp YouTube download pipeline.
 export async function resolveAutomixSelectedIds(url, indices = []) {
   const data = await extractAutomixAllFlat(url);
   const items = Array.isArray(data?.items) ? data.items : [];
@@ -595,6 +796,7 @@ export async function resolveAutomixSelectedIds(url, indices = []) {
   return { ids, entries: picked, title };
 }
 
+// Downloads you tube video for the yt-dlp YouTube download pipeline.
 export async function downloadYouTubeVideo(
   url,
   jobId,
@@ -613,7 +815,9 @@ export async function downloadYouTubeVideo(
 
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp not found.");
-  url = normalizeYouTubeUrl(url);
+  if (isYouTubeUrl(String(url || ""))) {
+    url = normalizeYouTubeUrl(url);
+  }
 
   const hasSelectedIds =
     (isAutomix || isPlaylist) &&
@@ -659,6 +863,7 @@ export async function downloadYouTubeVideo(
   );
 }
 
+// Downloads selected ids for the yt-dlp YouTube download pipeline.
 async function downloadSelectedIds(
   ytDlpBin,
   selectedIds,
@@ -671,7 +876,9 @@ async function downloadSelectedIds(
   const idToIndex = new Map((opts?.frozenEntries || []).filter(e => e?.id && Number.isFinite(e.index)).map(e => [e.id, e.index]));
   const seenSkip = new Set();
   const listFile = path.join(tempDir, `${jobId}.urls.txt`);
-  const urls = idsToWatchUrls(selectedIds);
+  const urls = idsToDownloadUrls(selectedIds, opts?.frozenEntries, opts?.sourceUrl || "");
+  const sourceUrl = opts?.sourceUrl || urls?.[0] || "";
+  const sourceHeaders = isYouTubeUrl(String(sourceUrl || "")) ? DEFAULT_HEADERS : null;
   const fragmentConc = normalizeConcurrency(
     process.env.YTDLP_FRAGMENT_CONCURRENCY || DEFAULT_FRAGMENT_CONCURRENCY
   );
@@ -691,12 +898,14 @@ async function downloadSelectedIds(
   let skippedCount = 0;
   let errorsCount = 0;
 
+  // Updates skip stats for the yt-dlp YouTube download pipeline.
   const updateSkipStats = () => {
     if (opts.onSkipUpdate) {
       opts.onSkipUpdate({ skippedCount, errorsCount });
     }
   };
 
+  // Handles bump skip in the yt-dlp YouTube download pipeline.
   const bumpSkip = (line) => {
     if (isBenignSabrWarning(line)) return;
     if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
@@ -734,7 +943,7 @@ if (opts.video) {
       "--no-part",
       "--progress", "--newline",
       "-N", String(fragmentConc),
-      "-f", `bestvideo[height<=${h}]+bestaudio[vcodec=none]/best[height<=${h}]`,
+      "-f", buildVideoFormatSelector(opts?.sourceUrl || urls?.[0] || "", h),
       "-o", path.join(playlistDir, "%(id)s.%(ext)s"),
       "-a", listFile
     ];
@@ -743,7 +952,7 @@ if (opts.video) {
       "--ignore-config", "--no-warnings",
       "--socket-timeout", "15",
       "--user-agent", DEFAULT_USER_AGENT,
-      ...headersToArgs(DEFAULT_HEADERS),
+      ...headersToArgs(sourceHeaders),
       "--no-playlist",
       "-N", String(fragmentConc),
       "--ignore-errors", "--no-abort-on-error",
@@ -764,7 +973,10 @@ if (opts.video) {
       args.push(...extraEnv.split(/\s+/).filter(Boolean));
     }
   }
-  addCookieArgs(args);
+  const cookieSourceUrl = opts?.sourceUrl || urls?.[0] || "";
+  if (shouldAttachCookies(cookieSourceUrl, !!opts?.forceCookies)) {
+    addCookieArgs(args, { ui: !!opts?.forceCookies });
+  }
   args.push(...getJsRuntimeArgs());
 
   return new Promise((resolve, reject) => {
@@ -774,6 +986,7 @@ if (opts.video) {
     const child = spawn(ytDlpBin, args);
     try { registerJobProcess(jobId, child); } catch {}
 
+    // Handles abort if canceled in the yt-dlp YouTube download pipeline.
     const abortIfCanceled = () => {
       if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
         try { child.kill("SIGTERM"); } catch {}
@@ -782,6 +995,7 @@ if (opts.video) {
       return false;
     };
 
+    // Handles handle line in the yt-dlp YouTube download pipeline.
     const handleLine = (line) => {
     if (!line) return;
     if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
@@ -885,6 +1099,7 @@ if (opts.video) {
   });
 }
 
+// Downloads selected ids parallel for the yt-dlp YouTube download pipeline.
 async function downloadSelectedIdsParallel(
   ytDlpBin,
   selectedIds,
@@ -895,7 +1110,7 @@ async function downloadSelectedIdsParallel(
   ctrl = {}
 ) {
   const idToIndex = new Map((opts?.frozenEntries || []).filter(e => e?.id && Number.isFinite(e.index)).map(e => [e.id, e.index]));
-  const urls = idsToWatchUrls(selectedIds);
+  const urls = idsToDownloadUrls(selectedIds, opts?.frozenEntries, opts?.sourceUrl || "");
   const playlistDir = path.join(tempDir, jobId);
   fs.mkdirSync(playlistDir, { recursive: true });
 
@@ -915,12 +1130,14 @@ async function downloadSelectedIdsParallel(
   let errorsCount = 0;
   const seenSkip = new Set();
 
+  // Updates skip stats for the yt-dlp YouTube download pipeline.
   const updateSkipStats = () => {
     if (typeof opts.onSkipUpdate === "function") {
       opts.onSkipUpdate({ skippedCount, errorsCount });
     }
   };
 
+  // Handles bump skip in the yt-dlp YouTube download pipeline.
   const bumpSkip = (line) => {
     if (isBenignSabrWarning(line)) return;
     if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
@@ -947,6 +1164,7 @@ async function downloadSelectedIdsParallel(
     }
   };
 
+  // Handles overall progress in the yt-dlp YouTube download pipeline.
   const overallProgress = () => {
     if (!progressCallback) return;
     const pct = Math.min(100, (completedCount / totalCount) * 100);
@@ -974,7 +1192,7 @@ async function downloadSelectedIdsParallel(
         "--no-part",
         "--progress", "--newline",
         "-N", String(fragmentConc),
-        "-f", `bestvideo[height<=${h}]+bestaudio[vcodec=none]/best[height<=${h}]`,
+        "-f", buildVideoFormatSelector(url, h),
         "-o", outputTemplate,
         url
       ];
@@ -983,7 +1201,7 @@ async function downloadSelectedIdsParallel(
         "--ignore-config", "--no-warnings",
         "--socket-timeout", "15",
         "--user-agent", DEFAULT_USER_AGENT,
-        ...headersToArgs(DEFAULT_HEADERS),
+        ...headersToArgs(isYouTubeUrl(String(url || "")) ? DEFAULT_HEADERS : null),
         "--no-playlist",
         "--ignore-errors", "--no-abort-on-error",
         "--write-thumbnail", "--convert-thumbnails", "jpg",
@@ -1006,15 +1224,20 @@ async function downloadSelectedIdsParallel(
       }
     }
 
-    addCookieArgs(args);
+    if (shouldAttachCookies(url, !!opts?.forceCookies)) {
+      addCookieArgs(args, { ui: !!opts?.forceCookies });
+    }
     args.push(...getJsRuntimeArgs());
 
     return new Promise((resolve, reject) => {
       let stderrBuf = "";
+      let mediaDestAbs = null;
+      let emittedDone = false;
 
       const child = spawn(ytDlpBin, args);
       try { registerJobProcess(jobId, child); } catch {}
 
+      // Handles abort if canceled in the yt-dlp YouTube download pipeline.
       const abortIfCanceled = () => {
         if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
           try { child.kill("SIGTERM"); } catch {}
@@ -1023,6 +1246,56 @@ async function downloadSelectedIdsParallel(
         return false;
       };
 
+      // Handles fallback abs path by id in the yt-dlp YouTube download pipeline.
+      const fallbackAbsPathById = () => {
+        const fallbackId = selectedIds[index];
+        if (!fallbackId) return null;
+        try {
+          const all = fs
+            .readdirSync(playlistDir)
+            .map((f) => path.join(playlistDir, f))
+            .filter((p) => parseIdFromPath(p) === fallbackId);
+          return all[0] || null;
+        } catch {
+          return null;
+        }
+      };
+
+      // Handles emit file done once in the yt-dlp YouTube download pipeline.
+      const emitFileDoneOnce = () => {
+        if (emittedDone) return;
+        const donePath =
+          (mediaDestAbs && fs.existsSync(mediaDestAbs) && mediaDestAbs) ||
+          fallbackAbsPathById();
+        if (!donePath) return;
+        emittedDone = true;
+
+        completedCount++;
+        overallProgress();
+
+        emitEvent(progressCallback, opts, {
+          type: "file-done",
+          downloaded: completedCount,
+          total: totalCount,
+          jobId
+        });
+
+        if (typeof opts.onFileDone === "function") {
+          const fileId = parseIdFromPath(donePath);
+          const playlistIndex = (fileId && idToIndex.has(fileId))
+            ? idToIndex.get(fileId)
+            : parsePlaylistIndexFromPath(donePath);
+          try {
+            opts.onFileDone({
+              filePath: donePath,
+              playlistIndex,
+              id: fileId || null
+            });
+          } catch {}
+        }
+      };
+
+      // Handles handle line in the yt-dlp YouTube download pipeline.
       const handleLine = (line) => {
         if (!line) return;
 
@@ -1033,32 +1306,8 @@ async function downloadSelectedIdsParallel(
         if (line.includes("[download] Destination:")) {
           const m = line.match(/Destination:\s*(.+)$/i);
           const dest = m ? m[1].trim() : "";
-
-          completedCount++;
-          overallProgress();
-
-          emitEvent(progressCallback, opts, {
-            type: "file-done",
-            downloaded: completedCount,
-            total: totalCount,
-            jobId
-          });
-
-          if (typeof opts.onFileDone === "function" && dest) {
-            let absPath = dest;
-            if (!path.isAbsolute(absPath)) {
-              absPath = path.join(playlistDir, dest);
-            }
-
-            const fileId = parseIdFromPath(absPath);
-            const playlistIndex = (fileId && idToIndex.has(fileId)) ? idToIndex.get(fileId) : parsePlaylistIndexFromPath(absPath);
-            try {
-              opts.onFileDone({
-                filePath: absPath,
-                playlistIndex,
-                id: fileId || null
-              });
-            } catch {}
+          if (dest && !/\.(jpe?g|png|webp)$/i.test(dest)) {
+            mediaDestAbs = path.isAbsolute(dest) ? dest : path.join(playlistDir, dest);
           }
         }
       };
@@ -1080,11 +1329,15 @@ async function downloadSelectedIdsParallel(
           return reject(new Error("CANCELED"));
         }
 
-        if (code === 0) return resolve();
+        if (code === 0) {
+          emitFileDoneOnce();
+          return resolve();
+        }
 
         const tail = String(stderrBuf).split("\n").slice(-20).join("\n");
 
         if (SKIP_RE.test(tail) || ERROR_WORD.test(tail)) {
+          emitFileDoneOnce();
           return resolve();
         }
 
@@ -1123,6 +1376,7 @@ async function downloadSelectedIdsParallel(
   throw new Error("Download appears successful but output files were not found");
 }
 
+// Downloads standard for the yt-dlp YouTube download pipeline.
 async function downloadStandard(
   ytDlpBin,
   url,
@@ -1168,9 +1422,7 @@ async function downloadStandard(
       "--force-ipv4",
       "--progress", "--newline",
       "-f",
-      `bestvideo[height<=${h}]+bestaudio[abr>=128][vcodec=none]/` +
-      `bestvideo[height<=${h}]+bestaudio[vcodec=none]/` +
-      `best[height<=${h}]`
+      buildVideoFormatSelector(url, h)
     ];
 
     if (isPlaylist || isAutomix) {
@@ -1200,19 +1452,23 @@ async function downloadStandard(
     if (extraEnv) {
       args.push(...extraEnv.split(/\s+/).filter(Boolean));
     }
-    addCookieArgs(args);
+    if (shouldAttachCookies(opts?.sourceUrl || url, !!opts?.forceCookies)) {
+      addCookieArgs(args, { ui: !!opts?.forceCookies });
+    }
     args.push(...getJsRuntimeArgs());
 
     args.push(url);
       } else {
-      args = [
-        "--ignore-config", "--no-warnings",
-        "--socket-timeout", "15",
-        "--user-agent", DEFAULT_USER_AGENT,
-        ...headersToArgs(DEFAULT_HEADERS),
-        "--progress", "--newline",
-        "-f", "bestaudio[abr>=128]/bestaudio/best"
-      ];
+    args = [
+      "--ignore-config", "--no-warnings",
+      "--socket-timeout", "15",
+      "--user-agent", DEFAULT_USER_AGENT,
+      ...headersToArgs(
+        opts?.requestHeaders || (isYouTubeUrl(String(url || "")) ? DEFAULT_HEADERS : null)
+      ),
+      "--progress", "--newline",
+      "-f", "bestaudio[abr>=128]/bestaudio/best"
+    ];
 
         if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
         const geoNetArgs = addGeoArgs([]);
@@ -1254,7 +1510,9 @@ async function downloadStandard(
     if (extraEnv) {
       args.push(...extraEnv.split(/\s+/).filter(Boolean));
     }
-    addCookieArgs(args);
+    if (shouldAttachCookies(opts?.sourceUrl || url, !!opts?.forceCookies)) {
+      addCookieArgs(args, { ui: !!opts?.forceCookies });
+    }
     args.push(...getJsRuntimeArgs());
     args.push(url);
   }
@@ -1264,6 +1522,7 @@ async function downloadStandard(
     const child = spawn(ytDlpBin, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
     try { registerJobProcess(jobId, child); } catch {}
 
+    // Handles abort if canceled in the yt-dlp YouTube download pipeline.
     const abortIfCanceled = () => {
       if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
         try { child.kill("SIGTERM"); } catch {}
@@ -1284,12 +1543,14 @@ async function downloadStandard(
     let downloadedFiles = 0;
     let curFilePct = 0;
 
+    // Updates skip stats for the yt-dlp YouTube download pipeline.
     const updateSkipStats = () => {
       if (opts.onSkipUpdate) {
         opts.onSkipUpdate({ skippedCount, errorsCount });
       }
     };
 
+    // Handles bump skip std in the yt-dlp YouTube download pipeline.
     const bumpSkipStd = (line) => {
       if (isBenignSabrWarning(line)) return;
       if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
@@ -1321,6 +1582,7 @@ async function downloadStandard(
     const itemRe = /Downloading item\s+(\d+)\s+of\s+(\d+)/i;
     const destinationRe = /\[download\]\s+Destination:/i;
 
+    // Handles bump progress in the yt-dlp YouTube download pipeline.
     const bumpProgress = () => {
       if (!progressCallback) return;
 
@@ -1335,6 +1597,7 @@ async function downloadStandard(
       }
     };
 
+    // Handles handle line in the yt-dlp YouTube download pipeline.
     const handleLine = (line) => {
     if (!line) return;
 
@@ -1469,6 +1732,7 @@ async function downloadStandard(
   });
 }
 
+// Returns downloaded files used for the yt-dlp YouTube download pipeline.
 function getDownloadedFiles(directory, isPlaylist = false, jobId = null) {
   if (!fs.existsSync(directory)) return [];
 
@@ -1492,12 +1756,20 @@ function getDownloadedFiles(directory, isPlaylist = false, jobId = null) {
     return files;
 }
 
+// Parses playlist data index from path for the yt-dlp YouTube download pipeline.
 export function parsePlaylistIndexFromPath(filePath) {
   const basename = path.basename(filePath);
-  const match = basename.match(/^(\d+)(?=[^\d]|$)/);
-  return match ? Number(match[1]) : null;
+  const noExt = basename.replace(/\.[A-Za-z0-9]+$/i, "");
+  if (!noExt) return null;
+
+  // Accept true index-based names:
+  // "12.ext" or legacy "12 - title.ext"
+  if (/^\d+$/.test(noExt)) return Number(noExt);
+  const legacy = noExt.match(/^(\d+)\s*-\s+.+$/);
+  return legacy ? Number(legacy[1]) : null;
 }
 
+// Builds entries map for the yt-dlp YouTube download pipeline.
 export function buildEntriesMap(ytMetadata) {
   const map = new Map();
   const entries = Array.isArray(ytMetadata?.entries) ? ytMetadata.entries : [];
@@ -1511,6 +1783,7 @@ export function buildEntriesMap(ytMetadata) {
   return map;
 }
 
+// Handles media probe data youtube music meta in the yt-dlp YouTube download pipeline.
 export async function probeYoutubeMusicMeta(input) {
   const url = typeof input === "string" && !/^https?:\/\//i.test(input)
     ? `https://www.youtube.com/watch?v=${input}`

@@ -6,6 +6,7 @@ import { MKVMERGE_BIN } from "./binaries.js";
 let currentRipProcess = null;
 let ripCancelled = false;
 
+// Handles exec json unlimited in disc scanning and ripping.
 function execJsonUnlimited(cmd, progressCallback = null) {
     if (progressCallback) {
       progressCallback(0, { __i18n: true, key: "disc.progress.analyzingTracks", vars: {} });
@@ -28,6 +29,7 @@ function execJsonUnlimited(cmd, progressCallback = null) {
   });
 }
 
+// Runs rip progress command for disc scanning and ripping.
 function runRipCommand(
   args,
   outputPath,
@@ -168,6 +170,7 @@ function runRipCommand(
   });
 }
 
+// Handles estimate dvd title size in disc scanning and ripping.
 async function estimateDvdTitleSize(videoTsPath, titleIndex) {
   const vobFiles = await getMainVOBFilesForTitle(videoTsPath, titleIndex);
   let total = 0;
@@ -183,6 +186,7 @@ async function estimateDvdTitleSize(videoTsPath, titleIndex) {
   return total;
 }
 
+// Formats file size for disc scanning and ripping.
 function formatFileSize(bytes) {
   if (bytes === 0) return "0 B";
   const k = 1024;
@@ -191,6 +195,7 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
+// Parses mkv merge progress for disc scanning and ripping.
 function parseMkvMergeProgress(output) {
   const patterns = [
     /Progress:\s*(\d+)%/i,
@@ -212,6 +217,7 @@ function parseMkvMergeProgress(output) {
   return null;
 }
 
+// Parses file based progress for disc scanning and ripping.
 function parseFileBasedProgress(output) {
   const sizeMatch = output.match(/(\d+\.?\d*)\s*MiB\s*\/\s*(\d+\.?\d*)\s*MiB/i);
   if (sizeMatch) {
@@ -236,6 +242,7 @@ function parseFileBasedProgress(output) {
   return null;
 }
 
+// Cancels rip progress in disc scanning and ripping.
 function cancelRip() {
   if (!currentRipProcess) return;
 
@@ -263,6 +270,7 @@ function cancelRip() {
   }, 5000);
 }
 
+// Handles rip progress title in disc scanning and ripping.
 async function ripTitle(
   sourcePath,
   titleIndex,
@@ -277,6 +285,7 @@ async function ripTitle(
     subtitleTracks = []
   } = options;
 
+  // Sends progress in disc scanning and ripping.
   const sendProgress = (percent, message = "") => {
     if (!progressCallback) return;
 
@@ -334,6 +343,7 @@ async function ripTitle(
   }
 }
 
+// Handles rip progress dvd title in disc scanning and ripping.
 async function ripDvdTitle(
   sourcePath,
   titleIndex,
@@ -474,6 +484,7 @@ async function ripDvdTitle(
   }
 }
 
+// Handles rip progress blu ray title in disc scanning and ripping.
 async function ripBluRayTitle(
   sourcePath,
   titleIndex,
@@ -619,6 +630,7 @@ async function ripBluRayTitle(
   }
 }
 
+// Handles estimate blu ray title size in disc scanning and ripping.
 async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
   try {
     const props = mkvmergeInfo?.container?.properties || {};
@@ -700,7 +712,9 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
   }
 }
 
+// Handles analyze dvd tracks in disc scanning and ripping.
 async function analyzeDvdTracks(videoTsPath, titleIndex) {
+  // Parses tracks for disc scanning and ripping.
   const parseTracks = (info) => {
     const audioIds = [];
     const subtitleIds = [];
@@ -749,6 +763,7 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
   }
 }
 
+// Returns main vobfiles for title used for disc scanning and ripping.
 async function getMainVOBFilesForTitle(videoTsPath, titleIndex) {
   try {
     const files = await fs.readdir(videoTsPath);

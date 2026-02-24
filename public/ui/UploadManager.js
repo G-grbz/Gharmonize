@@ -1,4 +1,5 @@
 export class UploadManager {
+  // Initializes class state and defaults for the browser UI layer.
   constructor(app) {
     this.app = app;
     this.uploadCanceled = false;
@@ -9,6 +10,7 @@ export class UploadManager {
     this.currentProbeAbortController = null;
   }
 
+  // Handles media probe data and show stream payload selection in the browser UI layer.
   async probeAndShowStreamSelection(file, isLocalFile = false, currentFormat = 'mp4') {
   console.log('🔍 probeAndShowStreamSelection called:', { file, isLocalFile, currentFormat });
     const controller = new AbortController();
@@ -143,6 +145,7 @@ export class UploadManager {
     }
   }
 
+  // Shows stream payload selection modal in the browser UI layer.
   async showStreamSelectionModal(streams, defaultSelection, currentFormat = 'mp4', fileName = null) {
     console.log('🎬 Opening stream selection modal...', { streams, defaultSelection, fileName });
 
@@ -284,6 +287,7 @@ export class UploadManager {
       `;
 
       const backdrop = this.app.modalManager.modalContainer;
+      // Cleans up cleanup for the browser UI layer.
       const cleanup = () => {
         if (modal.parentNode) {
           modal.parentNode.removeChild(modal);
@@ -296,11 +300,13 @@ export class UploadManager {
         backdrop.removeEventListener('click', backdropHandler);
       };
 
+      // Resolves and cleanup for the browser UI layer.
       const resolveAndCleanup = (value) => {
         cleanup();
         resolve(value);
       };
 
+      // Handles confirm handler in the browser UI layer.
       const confirmHandler = async () => {
         const selectedAudio = Array.from(
           modal.querySelectorAll('.audio-stream-checkbox:checked')
@@ -350,6 +356,7 @@ export class UploadManager {
           const unsupported = [];
           const supported = [];
 
+          // Checks whether bitmap subtitle is valid for the browser UI layer.
           const isBitmapSubtitle = (stream) => {
             if (!stream) return false;
             const codec = (stream.codec || stream.codec_name || '').toLowerCase();
@@ -433,17 +440,20 @@ export class UploadManager {
         });
       };
 
+      // Cancels handler in the browser UI layer.
       const cancelHandler = () => {
         console.log('❌ Closing modal');
         resolveAndCleanup(null);
       };
 
+      // Handles esc handler in the browser UI layer.
       const escHandler = (e) => {
         if (e.key === 'Escape') {
           cancelHandler();
         }
       };
 
+      // Handles backdrop handler in the browser UI layer.
       const backdropHandler = (e) => {
         if (e.target === backdrop) {
           cancelHandler();
@@ -474,6 +484,7 @@ export class UploadManager {
     });
   }
 
+  // Handles handle file submit in the browser UI layer.
   async handleFileSubmit(e) {
     console.log('🚀 handleFileSubmit called');
     e.preventDefault();
@@ -483,9 +494,10 @@ export class UploadManager {
     const bitrate = document.getElementById('bitrateSelect').value;
     const sampleRate = document.getElementById('sampleRateSelect').value;
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+    const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
     const sourceType = document.querySelector('input[name="fileSourceType"]:checked')?.value || 'upload';
 
-    console.log('📋 Form data:', { format, bitrate, sampleRate, includeLyrics, sourceType });
+    console.log('📋 Form data:', { format, bitrate, sampleRate, includeLyrics, embedLyrics, sourceType });
 
     const audioOutputFormats = ['mp3','aac','ac3','eac3','ogg','opus','m4a','alac','flac','wav'];
     const isVideoFormat = (format === 'mp4' || format === 'mkv');
@@ -539,6 +551,7 @@ export class UploadManager {
                   bitrate,
                   sampleRate,
                   includeLyrics,
+                  embedLyrics,
                   localPath: fileName,
                   volumeGain: this.app.currentVolumeGain
                 };
@@ -660,6 +673,7 @@ export class UploadManager {
               bitrate,
               sampleRate,
               includeLyrics,
+              embedLyrics,
               volumeGain: this.app.currentVolumeGain,
               selectedStreams: {
                 audio: streamSelection.audio,
@@ -685,6 +699,7 @@ export class UploadManager {
               bitrate,
               sampleRate,
               includeLyrics,
+              embedLyrics,
               volumeGain: this.app.currentVolumeGain
             };
             if (uploadBatchId) {
@@ -714,6 +729,7 @@ export class UploadManager {
               bitrate,
               sampleRate,
               includeLyrics,
+              embedLyrics,
               volumeGain: this.app.currentVolumeGain,
               selectedStreams: {
                 audio: streamSelection.audio,
@@ -739,6 +755,7 @@ export class UploadManager {
               formData.append('volumeGain', this.app.currentVolumeGain);
               formData.append('sampleRate', sampleRate);
               formData.append('includeLyrics', includeLyrics);
+              formData.append('embedLyrics', embedLyrics);
               formData.append('selectedStreams', JSON.stringify(payload.selectedStreams));
 
               if (uploadBatchId) {
@@ -754,6 +771,7 @@ export class UploadManager {
             formData.append('bitrate', bitrate);
             formData.append('sampleRate', sampleRate);
             formData.append('includeLyrics', includeLyrics);
+            formData.append('embedLyrics', embedLyrics);
 
             if (uploadBatchId) {
               formData.append('clientBatch', uploadBatchId);
@@ -772,6 +790,10 @@ export class UploadManager {
       if (!this.uploadCanceled) {
         document.getElementById('fileForm').reset();
         document.getElementById('lyricsCheckbox').checked = false;
+        if (document.getElementById('embedLyricsCheckbox')) {
+          document.getElementById('embedLyricsCheckbox').checked = false;
+        }
+        this.app.syncEmbedLyricsCheckboxVisibility?.();
       }
       setTimeout(() => this.resetUploadProgress(), 5000);
       this.currentUploadId = null;
@@ -779,6 +801,7 @@ export class UploadManager {
     }
   }
 
+  // Handles submit job state for existing file in the browser UI layer.
   async submitJobForExistingFile(finalPath, payload) {
     console.log('📨 submitJobForExistingFile:', finalPath, payload);
 
@@ -790,6 +813,7 @@ export class UploadManager {
     return this.submitJobWithProgress(jobPayload, false);
   }
 
+  // Handles submit large file with chunks in the browser UI layer.
   async submitLargeFileWithChunks(file, payload, isFormData = false) {
     console.log('📦 submitLargeFileWithChunks called:', file.name, payload);
     const CHUNK_SIZE = 32 * 1024 * 1024;
@@ -825,6 +849,7 @@ export class UploadManager {
         chunkFormData.append('bitrate', payload.bitrate);
         chunkFormData.append('sampleRate', payload.sampleRate);
         chunkFormData.append('includeLyrics', payload.includeLyrics);
+        chunkFormData.append('embedLyrics', payload.embedLyrics);
         if (payload.selectedStreams) {
           chunkFormData.append('selectedStreams', JSON.stringify(payload.selectedStreams));
         }
@@ -872,6 +897,7 @@ export class UploadManager {
     }
   }
 
+    // Handles media probe data with chunks in the browser UI layer.
     async probeWithChunks(file, currentFormat = 'mp4') {
     console.log('📦 probeWithChunks called:', file.name);
 
@@ -948,6 +974,7 @@ export class UploadManager {
     }
   }
 
+  // Cancels upload state in the browser UI layer.
   cancelUpload() {
     console.log('❌ Cancelling upload');
     this.uploadCanceled = true;
@@ -1027,6 +1054,7 @@ export class UploadManager {
     }
   }
 
+  // Handles reset cancel button in the browser UI layer.
   resetCancelButton() {
     const cancelBtn = document.getElementById('cancelUploadBtn');
     if (cancelBtn) {
@@ -1035,6 +1063,7 @@ export class UploadManager {
     }
   }
 
+  // Creates upload state progress bar for the browser UI layer.
   createUploadProgressBar() {
     console.log('📊 Creating progress bar');
     const fileForm = document.getElementById('fileForm');
@@ -1070,6 +1099,7 @@ export class UploadManager {
     }
   }
 
+  // Handles reset upload state progress in the browser UI layer.
   resetUploadProgress() {
     console.log('📊 Resetting progress bar');
     const container = document.getElementById('uploadProgressContainer');
@@ -1081,6 +1111,7 @@ export class UploadManager {
     if (text) text.textContent = '0%';
   }
 
+  // Updates upload state progress for the browser UI layer.
   updateUploadProgress(percentage) {
     const container = document.getElementById('uploadProgressContainer');
     const fill = document.getElementById('uploadProgressFill');
@@ -1096,6 +1127,7 @@ export class UploadManager {
     text.textContent = `${Math.round(percentage)}%`;
   }
 
+  // Handles submit job state with progress in the browser UI layer.
   async submitJobWithProgress(payload, isFormData = false) {
     console.log('🚀 submitJobWithProgress called:', { payload, isFormData });
 
@@ -1218,6 +1250,11 @@ export class UploadManager {
                     includeLyricsRaw === true ||
                     includeLyricsRaw === 'true' ||
                     includeLyricsRaw === '1';
+                  const embedLyricsRaw = payload.get('embedLyrics');
+                  const embedLyrics =
+                    embedLyricsRaw === true ||
+                    embedLyricsRaw === 'true' ||
+                    embedLyricsRaw === '1';
 
                   const clientBatch = payload.get('clientBatch') || null;
 
@@ -1232,6 +1269,7 @@ export class UploadManager {
                     bitrate,
                     sampleRate,
                     includeLyrics,
+                    embedLyrics,
                     selectedStreams,
                     volumeGain
                   };

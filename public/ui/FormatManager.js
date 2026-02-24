@@ -1,8 +1,10 @@
 export class FormatManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor(app) {
         this.app = app;
     }
 
+    // Loads formats for the browser UI layer.
     async loadFormats() {
         try {
             const response = await fetch('/api/formats');
@@ -14,6 +16,7 @@ export class FormatManager {
         }
     }
 
+    // Handles handle format change in the browser UI layer.
     handleFormatChange() {
         const formatSelect = document.getElementById('formatSelect');
         formatSelect.addEventListener('change', async (e) => {
@@ -38,6 +41,7 @@ export class FormatManager {
      }
     }
 
+    // Updates sample rate options for eac3 ac3 for the browser UI layer.
     updateSampleRateOptionsForEac3Ac3() {
      const sampleRateSelect = document.getElementById('sampleRateSelect');
      if (!sampleRateSelect) return;
@@ -57,9 +61,11 @@ export class FormatManager {
      }
  }
 
+    // Handles toggle format specific options in the browser UI layer.
     toggleFormatSpecificOptions(format) {
         const sampleRateGroup = document.querySelector('.form-group:has(#sampleRateSelect)');
         const lyricsGroup = document.getElementById('lyricsCheckboxContainer');
+        const embedLyricsGroup = document.getElementById('embedLyricsCheckboxContainer');
         const isMp4 = format === 'mp4';
         const isEac3Ac3 = format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts';
         const isFlacWav = format === 'flac' || format === 'wav';
@@ -83,6 +89,10 @@ export class FormatManager {
 
         if (lyricsGroup) {
             lyricsGroup.style.display = (isMp4 || isEac3Ac3) ? 'none' : '';
+        }
+        if (embedLyricsGroup) {
+            const canShowLyrics = !(isMp4 || isEac3Ac3);
+            embedLyricsGroup.style.display = canShowLyrics ? 'flex' : 'none';
         }
         let bitDepthGroup = document.getElementById('bitDepthGroup');
 
@@ -148,6 +158,7 @@ export class FormatManager {
         this.toggleEac3Ac3Options(isEac3Ac3);
         }
 
+        // Handles toggle eac3 ac3 options in the browser UI layer.
         toggleEac3Ac3Options(show) {
         let container = document.getElementById('eac3Ac3Options');
 
@@ -191,6 +202,7 @@ export class FormatManager {
         }
     }
 
+    // Updates format options for the browser UI layer.
     updateFormatOptions(formats) {
         const formatSelect = document.getElementById('formatSelect');
         formatSelect.innerHTML = '';
@@ -205,6 +217,7 @@ export class FormatManager {
         this.toggleFormatSpecificOptions(currentFormat);
     }
 
+    // Returns formats used for the browser UI layer.
     async getFormats() {
         try {
             const response = await fetch('/api/formats');
@@ -215,6 +228,7 @@ export class FormatManager {
         }
     }
 
+    // Updates bitrate options for the browser UI layer.
     updateBitrateOptions(format, formats) {
         const bitrateSelect = document.getElementById('bitrateSelect');
         const formatData = formats.find((f) => f.format === format);

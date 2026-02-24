@@ -1,4 +1,5 @@
 export class JobsPanelManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor() {
         this.tokenKey = "gharmonize_admin_token";
         this.panel = null;
@@ -21,6 +22,7 @@ export class JobsPanelManager {
         this.outputExistenceCache = new Map();
     }
 
+    // Initializes startup state for the browser UI layer.
     initialize() {
         if (this.isStarted) return;
 
@@ -82,12 +84,14 @@ export class JobsPanelManager {
         }
     }
 
+    // Handles start access token check in the browser UI layer.
     startTokenCheck() {
         this.tokenCheckInterval = setInterval(() => {
             this.checkTokenValidity();
         }, 100000);
     }
 
+    // Handles check access token validity in the browser UI layer.
     async checkTokenValidity() {
         const token = localStorage.getItem(this.tokenKey);
         if (!token) {
@@ -109,6 +113,7 @@ export class JobsPanelManager {
         }
     }
 
+    // Handles handle access token expired in the browser UI layer.
     handleTokenExpired() {
         console.log('Token expired or invalid, going offline');
         localStorage.removeItem(this.tokenKey);
@@ -118,6 +123,7 @@ export class JobsPanelManager {
         }));
     }
 
+    // Updates event listeners used for the browser UI layer.
     setupEventListeners() {
         document.getElementById('jobsBell')?.addEventListener('click', () => this.open());
         this.overlay?.addEventListener('click', () => this.close());
@@ -137,6 +143,7 @@ export class JobsPanelManager {
         });
     }
 
+    // Opens open in the browser UI layer.
     open() {
         const panel = this.panel;
         if (!panel) return;
@@ -150,6 +157,7 @@ export class JobsPanelManager {
         });
     }
 
+    // Closes close in the browser UI layer.
     close() {
         const panel = this.panel;
         if (!panel) return;
@@ -163,6 +171,7 @@ export class JobsPanelManager {
         }
     }
 
+    // Updates filter used for the browser UI layer.
     setFilter(newFilter) {
         this.filter = newFilter;
         document.getElementById('jobsFilterActive')?.classList.toggle('chip--active', newFilter === 'active');
@@ -170,11 +179,13 @@ export class JobsPanelManager {
         this.render();
     }
 
+    // Handles go online in the browser UI layer.
     goOnline() {
         document.getElementById('jobsBell').hidden = false;
         this.startSSE();
     }
 
+    // Handles go offline in the browser UI layer.
     goOffline() {
     const jobsBell = document.getElementById('jobsBell');
     if (jobsBell) {
@@ -191,6 +202,7 @@ export class JobsPanelManager {
         }
     }
 
+    // Handles destroy in the browser UI layer.
     destroy() {
         if (this.tokenCheckInterval) {
             clearInterval(this.tokenCheckInterval);
@@ -204,6 +216,7 @@ export class JobsPanelManager {
         this.isStarted = false;
     }
 
+    // Handles start sse in the browser UI layer.
     startSSE() {
     try {
             const token = localStorage.getItem(this.tokenKey) || "";
@@ -246,7 +259,9 @@ export class JobsPanelManager {
         }
     }
 
+    // Handles start polling in the browser UI layer.
     startPolling() {
+        // Handles poll in the browser UI layer.
         const poll = () => {
             const token = localStorage.getItem(this.tokenKey) || "";
             if (!token) {
@@ -305,11 +320,13 @@ export class JobsPanelManager {
         this.pollingInterval = setInterval(poll, 1500);
     }
 
+    // Handles norm in the browser UI layer.
     norm(s) {
         const v = String(s || '').toLowerCase();
         return v === 'cancelled' ? 'canceled' : v;
     }
 
+    // Checks whether newer version metadata fallback is valid for the browser UI layer.
     isNewerVersionFallback(latest, current) {
         if (!latest) return false;
 
@@ -325,6 +342,7 @@ export class JobsPanelManager {
         return false;
     }
 
+    // Handles title of in the browser UI layer.
     titleOf(j) {
         const m = j.metadata || {};
         const ex = m.extracted || {};
@@ -332,6 +350,7 @@ export class JobsPanelManager {
                (m.isAutomix ? this.t('jobsPanel.automix') : (m.isPlaylist ? this.t('jobsPanel.playlist') : this.t('jobsPanel.job')));
     }
 
+    // Returns hwaccel icon used for the browser UI layer.
     getHwaccelIcon(hwaccel) {
         const icons = {
             nvenc: '🔵',
@@ -342,6 +361,7 @@ export class JobsPanelManager {
         return icons[hwaccel] || '⚪';
     }
 
+    // Returns channels text used for the browser UI layer.
     getChannelsText(channels) {
         const texts = {
             stereo: this.t('option.forceStereo') || '2.0',
@@ -351,6 +371,7 @@ export class JobsPanelManager {
         return texts[channels] || channels;
     }
 
+    // Handles source pill in the browser UI layer.
     sourcePill(j) {
         const s = j.metadata?.source || 'file';
         const sources = {
@@ -363,6 +384,7 @@ export class JobsPanelManager {
         return sources[s] || s;
     }
 
+    // Handles phase pill in the browser UI layer.
     phasePill(j) {
         const p = this.norm(j.currentPhase || j.status);
         const map = {
@@ -377,6 +399,7 @@ export class JobsPanelManager {
         return map[p] || (j.currentPhase || j.status);
     }
 
+    // Handles status dot in the browser UI layer.
     statusDot(j) {
         const s = this.norm(j.status);
         if (s === 'error') return '<span class="dot status-err">●</span>';
@@ -385,6 +408,7 @@ export class JobsPanelManager {
         return '<span class="dot status-warn">●</span>';
     }
 
+    // Handles raw prog in the browser UI layer.
     rawProg(j) {
         const source = j.metadata?.source || 'file';
         const isLocalSource = source === 'local' || source === 'file';
@@ -439,6 +463,7 @@ export class JobsPanelManager {
         return 0;
     }
 
+    // Handles prog in the browser UI layer.
     prog(j) {
         const id = j.id ?? j._id ?? null;
         const source = j.metadata?.source || 'file';
@@ -500,6 +525,7 @@ export class JobsPanelManager {
         return next;
     }
 
+    // Handles current index in the browser UI layer.
     currentIndex(j) {
         const total = j.playlist?.total;
         const done = j.playlist?.done;
@@ -510,6 +536,7 @@ export class JobsPanelManager {
         return null;
     }
 
+    // Handles now title in the browser UI layer.
     nowTitle(j) {
         if (j.metadata?.isPlaylist && Array.isArray(j.metadata?.frozenEntries) && j.metadata.frozenEntries.length) {
             const i0 = this.currentIndex(j);
@@ -521,6 +548,7 @@ export class JobsPanelManager {
         return ex.track || ex.title || j.metadata?.originalName || null;
     }
 
+    // Computes skipped panel for the browser UI layer.
     computeSkippedPanel(j) {
         const direct = Number(j?.skippedCount ?? j?.metadata?.skippedCount ?? 0);
         if (direct > 0) return direct;
@@ -536,6 +564,7 @@ export class JobsPanelManager {
         return 0;
     }
 
+        // Handles job state has existing output panel in the browser UI layer.
         async jobHasExistingOutputPanel(job) {
             const s = this.norm(job.status);
             if (s !== 'completed') return true;
@@ -587,6 +616,7 @@ export class JobsPanelManager {
             }
         }
 
+        // Handles prune playlist data outputs panel in the browser UI layer.
         async prunePlaylistOutputsPanel(job) {
             const s = this.norm(job.status);
             if (s !== 'completed') return true;
@@ -657,6 +687,7 @@ export class JobsPanelManager {
             return true;
         }
 
+    // Cleans up server items for the browser UI layer.
     async cleanupServerItems(items) {
         const cleaned = [];
 
@@ -691,6 +722,7 @@ export class JobsPanelManager {
         return cleaned;
     }
 
+        // Handles reconcile lost job state in the browser UI layer.
         async reconcileLostJobs(existing, incoming) {
         const safeExisting = Array.isArray(existing) ? existing : [];
         const safeIncoming = Array.isArray(incoming) ? incoming : [];
@@ -750,10 +782,12 @@ export class JobsPanelManager {
         return result;
     }
 
+    // Handles merge items in the browser UI layer.
     mergeItems(existing, incoming) {
         const result = [];
         const byId = new Map();
 
+        // Handles add in the browser UI layer.
         const add = (job, isExisting = false) => {
             if (!job) return;
             const id = job.id ?? job._id;
@@ -787,6 +821,7 @@ export class JobsPanelManager {
         return result;
     }
 
+        // Handles limit completed in the browser UI layer.
         limitCompleted(items, maxCompleted = 15) {
         if (!Array.isArray(items)) return [];
 
@@ -811,6 +846,7 @@ export class JobsPanelManager {
         return [...active, ...completed.slice(0, maxCompleted)];
     }
 
+        // Persists state for the browser UI layer.
         saveState() {
         try {
             const items = this.limitCompleted(this.state.items || [], 15);
@@ -827,6 +863,7 @@ export class JobsPanelManager {
         }
     }
 
+    // Handles restore state in the browser UI layer.
     async restoreState() {
         try {
             const raw = localStorage.getItem(this.storageKey);
@@ -851,6 +888,7 @@ export class JobsPanelManager {
         }
     }
 
+        // Updates job state bell for the browser UI layer.
         updateJobsBell() {
         const allItems = Array.isArray(this.state.items)
             ? this.state.items
@@ -905,6 +943,7 @@ export class JobsPanelManager {
         }
     }
 
+    // Renders render in the browser UI layer.
     render() {
     if (!this.list) return;
     const prevScrollTop = this.list.scrollTop;
@@ -1270,6 +1309,7 @@ export class JobsPanelManager {
     this.list.scrollTop = prevScrollTop;
     this.saveState();
 }
+    // Handles t in the browser UI layer.
     t(key, vars) {
         return (window.i18n?.t?.(key, vars)) ?? key;
     }

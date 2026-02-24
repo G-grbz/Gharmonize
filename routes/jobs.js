@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import cookie from "cookie";
 import crypto from "crypto";
 import multer from "multer";
 import { sendOk, sendError, ERR, isDirectMediaUrl } from "../modules/utils.js";
@@ -19,7 +18,9 @@ import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "../modules/binaries.js";
 import "dotenv/config";
 import {
   isYouTubeUrl,
+  isDailymotionUrl,
   isYouTubePlaylist,
+  isDailymotionPlaylist,
   isYouTubeAutomix,
   normalizeYouTubeUrl,
   resolvePlaylistSelectedIds,
@@ -28,6 +29,7 @@ import {
   extractPlaylistPage,
   extractAutomixPage
 } from "../modules/yt.js";
+import { isSupportedPlatformUrl, detectPlatform } from "../modules/platform.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
@@ -43,6 +45,7 @@ console.log('[jobs] UPLOAD_DIR:', UPLOAD_DIR);
 console.log('[jobs] LOCAL_INPUT_DIR:', LOCAL_INPUT_DIR);
 
 const DEFAULT_UPLOAD_MAX_BYTES = 1000 * 1024 * 1024;
+// Uploads max bytes for Express API request handling.
 const UPLOAD_MAX_BYTES = (() => {
   const raw = process.env.UPLOAD_MAX_BYTES;
   if (!raw) return DEFAULT_UPLOAD_MAX_BYTES;
@@ -68,6 +71,28 @@ console.log(
 
 const inFlightAutomix = new Map();
 
+// Parses cookie header for Express API request handling.
+function parseCookieHeader(raw) {
+  const out = {};
+  const src = String(raw || "");
+  if (!src) return out;
+  const parts = src.split(";");
+  for (const part of parts) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const k = part.slice(0, idx).trim();
+    const v = part.slice(idx + 1).trim();
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+// Handles to utf8 filename in Express API request handling.
 function toUtf8Filename(name) {
   try {
     return Buffer.from(name, "latin1").toString("utf8");
@@ -89,7 +114,9 @@ const upload = multer({
   limits: { fileSize: UPLOAD_MAX_BYTES }
 });
 
+// Handles job state has any existing output in Express API request handling.
 function jobHasAnyExistingOutput(job) {
+  // Resolves download metadata path for Express API request handling.
   const resolveDownloadPath = (downloadPath) => {
     if (!downloadPath) return null;
     const rel = decodeURIComponent(
@@ -100,6 +127,7 @@ function jobHasAnyExistingOutput(job) {
     return path.join(OUTPUT_DIR, rel);
   };
 
+  // Handles check file in Express API request handling.
   const checkFile = (downloadPath) => {
     const abs = resolveDownloadPath(downloadPath);
     if (!abs) return false;
@@ -135,6 +163,7 @@ function jobHasAnyExistingOutput(job) {
   return false;
 }
 
+// Cleans up completed job state without outputs for Express API request handling.
 function cleanupCompletedJobsWithoutOutputs() {
   let removed = 0;
 
@@ -155,6 +184,7 @@ function cleanupCompletedJobsWithoutOutputs() {
 
 const router = express.Router();
 
+// Selects lang for Express API request handling.
 function pickLang(req) {
   const SUPPORTED = new Set(["en","tr","de","fr"]);
   const hx = String(req.get("x-lang") || "").toLowerCase().trim();
@@ -165,7 +195,7 @@ function pickLang(req) {
   try {
     const raw = String(req.headers?.cookie || "");
     if (raw) {
-      const parsed = cookie.parse(raw);
+      const parsed = parseCookieHeader(raw);
       const c = String(parsed.lang || "").toLowerCase().trim();
       if (SUPPORTED.has(c)) return c;
     }
@@ -179,6 +209,7 @@ function pickLang(req) {
   return "en";
 }
 
+// Handles t in Express API request handling.
 function t(lang, key, vars = {}) {
   const dict = {
     tr: {
@@ -235,6 +266,7 @@ function t(lang, key, vars = {}) {
   return s;
 }
 
+// Normalizes phase key for Express API request handling.
 function normalizePhaseKey(s) {
   const v = String(s || "").toLowerCase().trim();
   if (!v) return "";
@@ -248,6 +280,7 @@ function normalizePhaseKey(s) {
   return v;
 }
 
+// Handles require widget key in Express API request handling.
 function requireWidgetKey(req, res, next) {
   const expected = String(process.env.HOMEPAGE_WIDGET_KEY || "").trim();
   if (!expected) {
@@ -282,6 +315,7 @@ router.get("/api/homepage", requireWidgetKey, (req, res) => {
         .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0] ||
       null;
 
+    // Handles to num in Express API request handling.
     const toNum = (v) => {
       const n = Number(v);
       return Number.isFinite(n) ? n : 0;
@@ -289,6 +323,7 @@ router.get("/api/homepage", requireWidgetKey, (req, res) => {
 
     const clamp0_100 = (n) => Math.max(0, Math.min(100, Math.floor(n)));
 
+    // Computes progress for Express API request handling.
     const computeProgress = (j) => {
       const d = toNum(j?.downloadProgress);
       const c = toNum(j?.convertProgress);
@@ -350,6 +385,7 @@ router.get("/api/local-files", requireAuth, (req, res) => {
 
     const items = [];
 
+    // Handles walk in Express API request handling.
     function walk(dir, baseDir) {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
 
@@ -605,6 +641,7 @@ router.get("/api/stream/:id", (req, res) => {
   res.flushHeaders?.();
   res.write(`: ping\n\n`);
 
+  // Sends update in Express API request handling.
   const sendUpdate = () => {
     try { res.write(`data: ${JSON.stringify(job)}\n\n`); } catch {}
   };
@@ -902,6 +939,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       clientBatch,
       spotifyMapId,
       includeLyrics = false,
+      embedLyrics = false,
       volumeGain,
       spotifyConcurrency,
       stereoConvert = "auto",
@@ -911,6 +949,10 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       youtubeConcurrency,
       frozenEntries: rawFrozenEntries
     } = body;
+    const includeLyricsFlag =
+      includeLyrics === true || includeLyrics === "true" || includeLyrics === "1";
+    const embedLyricsFlag =
+      embedLyrics === true || embedLyrics === "true" || embedLyrics === "1";
 
     let frozenEntriesParsed = null;
     if (rawFrozenEntries) {
@@ -954,6 +996,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       }
     }
 
+    // Parses sr for Express API request handling.
     const parseSR = (v) => {
       if (v == null) return NaN;
       const s = String(v).trim().toLowerCase();
@@ -967,6 +1010,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       Number.isFinite(parseSR(sampleRateHz))  ? parseSR(sampleRateHz) :
       48000;
 
+    // Normalizes flac level for Express API request handling.
     const normalizeFlacLevel = (fmt, val) => {
       if (fmt !== "flac") return null;
       const n = Number(val);
@@ -977,6 +1021,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
 
     const normalizedCompressionLevel = normalizeFlacLevel(format, compressionLevel);
 
+    // Parses video settings for Express API request handling.
     const parseVideoSettings = (raw) => {
       if (!raw) return null;
       if (typeof raw === "string") {
@@ -1091,14 +1136,17 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         }
       }
 
-    else if (isYouTubeUrl(url)) {
-      const normalized = normalizeYouTubeUrl(url);
+    else if (isYouTubeUrl(url) || isDailymotionUrl(url)) {
+      const isYouTubeSource = isYouTubeUrl(url);
+      const normalized = isYouTubeSource ? normalizeYouTubeUrl(url) : String(url).trim();
       metadata.source = "youtube";
       metadata.url = normalized;
       metadata.originalUrl = url;
 
-      const playlistUrl = isYouTubePlaylist(normalized);
-      const automixUrl  = isYouTubeAutomix(normalized);
+      const playlistUrl = isYouTubeSource
+        ? isYouTubePlaylist(normalized)
+        : isDailymotionPlaylist(normalized);
+      const automixUrl  = isYouTubeSource ? isYouTubeAutomix(normalized) : false;
       metadata.isPlaylist = playlistUrl || automixUrl || (isPlaylist === true || isPlaylist === "true");
       metadata.isAutomix  = automixUrl;
 
@@ -1112,11 +1160,32 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         sel = metadata.isPlaylist ? "all" : null;
       }
       metadata.selectedIndices = sel;
-      if (Array.isArray(req.body.selectedIds) && req.body.selectedIds.length > 0) {
-        metadata.selectedIds = req.body.selectedIds;
+      if (
+        Array.isArray(req.body.selectedIds) &&
+        req.body.selectedIds.length > 0 &&
+        (isYouTubeSource || (Array.isArray(frozenEntriesParsed) && frozenEntriesParsed.length > 0))
+      ) {
+        if (!isYouTubeSource && Array.isArray(frozenEntriesParsed) && frozenEntriesParsed.length > 0) {
+          const idToUrl = new Map(
+            frozenEntriesParsed
+              .filter((e) => e?.id && e?.webpage_url)
+              .map((e) => [String(e.id), String(e.webpage_url)])
+          );
+          metadata.selectedIds = req.body.selectedIds
+            .map((raw) => {
+              const v = String(raw || "").trim();
+              if (!v) return null;
+              if (/^https?:\/\//i.test(v)) return v;
+              return idToUrl.get(v) || v;
+            })
+            .filter(Boolean);
+        } else {
+          metadata.selectedIds = req.body.selectedIds;
+        }
       }
 
-      console.log("=== YOUTUBE DEBUG ===");
+      console.log("=== MEDIA DEBUG ===");
+      console.log("platform:", isYouTubeSource ? "youtube" : "dailymotion");
       console.log("URL:", normalized);
       console.log("isPlaylist:", metadata.isPlaylist);
       console.log("isAutomix:", metadata.isAutomix);
@@ -1149,6 +1218,14 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         }
       }
     }
+    else if (isSupportedPlatformUrl(url)) {
+      metadata.source = "platform";
+      metadata.platform = detectPlatform(url);
+      metadata.url = url;
+      metadata.originalUrl = url;
+      metadata.isPlaylist = false;
+      metadata.isAutomix = false;
+    }
 
     else if (isDirectMediaUrl(url)) {
         metadata.source = "direct_url";
@@ -1173,7 +1250,8 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       videoSettings: effectiveVideoSettings,
       metadata: {
         ...metadata,
-        includeLyrics: includeLyrics === true || includeLyrics === "true",
+        includeLyrics: includeLyricsFlag,
+        embedLyrics: embedLyricsFlag,
         spotifyConcurrency: (Number.isFinite(Number(spotifyConcurrency)) && Number(spotifyConcurrency) > 0)
         ? Math.min(16, Math.max(1, Math.round(Number(spotifyConcurrency))))
         : undefined,
@@ -1289,6 +1367,7 @@ router.get("/api/stream", requireAuth, (req, res) => {
     "X-Accel-Buffering": "no",
   });
 
+  // Handles payload in Express API request handling.
   const payload = () => {
     const items = Array.from(jobs.values()).map(j => ({
       id: j.id,
@@ -1336,6 +1415,7 @@ router.get("/api/stream", requireAuth, (req, res) => {
   req.on("close", ()=> clearInterval(iv));
 });
 
+// Cleans up old chunks for Express API request handling.
 function cleanupOldChunks() {
   const now = Date.now();
   const MAX_AGE = 2 * 60 * 60 * 1000;

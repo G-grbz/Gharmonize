@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import { FFPROBE_BIN } from "./binaries.js";
 
+// Handles media probe data media file in core application logic.
 export async function probeMediaFile(filePath) {
   return new Promise((resolve, reject) => {
     const ffprobeBin = FFPROBE_BIN || 'ffprobe';
@@ -44,6 +45,7 @@ export async function probeMediaFile(filePath) {
   });
 }
 
+// Parses streams for core application logic.
 export function parseStreams(probeData) {
   const streams = probeData.streams || [];
   const audioStreams = [];
@@ -86,6 +88,7 @@ export function parseStreams(probeData) {
   };
 }
 
+// Returns default stream payload selection used for core application logic.
 export function getDefaultStreamSelection(streams) {
   const selectedAudio = streams.audio.find(stream => stream.default) ||
                        streams.audio[0] ||

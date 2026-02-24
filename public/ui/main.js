@@ -51,6 +51,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (settingsBtn) {
         const labelEl = settingsBtn.querySelector('.settings-btn__label');
 
+        // Updates settings button for the browser UI layer.
         const updateSettingsButton = (loggedIn) => {
             const key = loggedIn ? 'settings.title' : 'btn.login';
             const fallback = loggedIn ? 'Ayarlar' : 'Giriş';
@@ -91,7 +92,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 window.versionManager = versionManager;
 
+// Updates collapsible sections used for the browser UI layer.
 function setupCollapsibleSections() {
+    // Updates collapsible used for the browser UI layer.
     function setupCollapsible(headerId, contentId) {
         const header = document.getElementById(headerId);
         const content = document.getElementById(contentId);
@@ -116,6 +119,7 @@ function setupCollapsibleSections() {
     }
 }
 
+// Updates title positioning used for the browser UI layer.
 function setupTitlePositioning() {
   const title = document.querySelector('.title-section');
   const container = document.querySelector('.container');
@@ -126,6 +130,7 @@ function setupTitlePositioning() {
 
   const GAP = 8;
 
+  // Checks whether measure is allowed for the browser UI layer.
   function canMeasure() {
     const cont = container.getBoundingClientRect();
     const card = firstCard.getBoundingClientRect();
@@ -133,6 +138,7 @@ function setupTitlePositioning() {
     return cont.width > 0 && card.width > 0 && titleH > 0;
   }
 
+  // Handles place title in the browser UI layer.
   function placeTitle() {
     const cont = container.getBoundingClientRect();
     const card = firstCard.getBoundingClientRect();
@@ -151,6 +157,7 @@ function setupTitlePositioning() {
     title.style.visibility = 'visible';
   }
 
+  // Handles wait and place in the browser UI layer.
   async function waitAndPlace() {
     try { await document.fonts.ready; } catch(e) {}
     if (logoImg && logoImg.decode) {

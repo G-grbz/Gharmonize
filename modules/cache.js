@@ -2,6 +2,7 @@ const PREVIEW_CACHE_TTL_MS = Number(process.env.PREVIEW_CACHE_TTL_MS || 30 * 60 
 const PREVIEW_MAX_ENTRIES  = Number(process.env.PREVIEW_MAX_ENTRIES  || 1000);
 const previewCache = new Map();
 
+// Returns cached data used for core application logic.
 export function getCache(url) {
   const c = previewCache.get(url);
   if (!c) return null;
@@ -12,6 +13,7 @@ export function getCache(url) {
   return c;
 }
 
+// Updates cached data used for core application logic.
 export function setCache(url, payload) {
   previewCache.set(url, { ...payload, ts: Date.now() });
   if (previewCache.size > 100) {
@@ -20,6 +22,7 @@ export function setCache(url, payload) {
   }
 }
 
+// Handles merge cached data entries in core application logic.
 export function mergeCacheEntries(url, newItems = []) {
   const c = getCache(url);
   if (!c) return;

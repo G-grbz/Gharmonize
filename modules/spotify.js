@@ -8,10 +8,12 @@ let _spotifyAccessToken = null;
 let _spotifyTokenExpiresAtMs = 0;
 const _SPOTIFY_TOKEN_SAFETY_WINDOW_MS = 60_000;
 
+// Checks whether Spotify metadata URL is valid for Spotify mapping and metadata flow.
 export function isSpotifyUrl(url) {
   return /^(https?:\/\/open\.spotify\.com|spotify:)/i.test(String(url || ""));
 }
 
+// Parses Spotify metadata URL for Spotify mapping and metadata flow.
 export function parseSpotifyUrl(url) {
   const s = String(url || "").trim();
   let m = s.match(/^spotify:(track|playlist|album):([A-Za-z0-9]+)$/i);
@@ -25,11 +27,13 @@ export function parseSpotifyUrl(url) {
   return { type: "unknown", id: null };
 }
 
+// Checks whether personalized mix id is valid for Spotify mapping and metadata flow.
 export function isPersonalizedMixId(id="") {
   const s = String(id || "");
   return /^37i9dQZF1E/i.test(s);
 }
 
+// Handles make Spotify metadata in Spotify mapping and metadata flow.
 export async function makeSpotify() {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -68,15 +72,18 @@ export async function makeSpotify() {
   return api;
 }
 
+// Selects best image for Spotify mapping and metadata flow.
 export function pickBestImage(images=[]) {
   if (!Array.isArray(images) || !images.length) return null;
   return images.slice().sort((a,b)=> (b.width||0) - (a.width||0))[0]?.url || null;
 }
 
+// Handles search Spotify metadata best track in Spotify mapping and metadata flow.
 export async function searchSpotifyBestTrack(artist, title, market) {
   return searchSpotifyBestTrackStrict(artist, title, market, {});
 }
 
+// Handles norm in Spotify mapping and metadata flow.
 function _norm(s=""){
   return String(s)
     .toLowerCase()
@@ -88,6 +95,7 @@ function _norm(s=""){
     .trim();
 }
 
+// Handles search Spotify metadata best track strict in Spotify mapping and metadata flow.
 export async function searchSpotifyBestTrackStrict(
   artist, title, market,
   {
@@ -112,6 +120,7 @@ export async function searchSpotifyBestTrackStrict(
   const tN = _norm(title || "");
   const tRawN = _norm(titleRaw || title || "");
 
+  // Handles score in Spotify mapping and metadata flow.
   const score = (it) => {
     const spTitle = _norm(it?.name || "");
     const spArtist = _norm(it?.artists?.[0]?.name || "");
@@ -143,6 +152,7 @@ export async function searchSpotifyBestTrackStrict(
   return bestScore >= minScore ? best : null;
 }
 
+// Handles track to ID3 metadata meta in Spotify mapping and metadata flow.
 export function trackToId3Meta(track) {
   if (!track) return null;
   const releaseDate = track.album?.release_date || "";
@@ -177,6 +187,7 @@ export function trackToId3Meta(track) {
   };
 }
 
+// Loads track for Spotify mapping and metadata flow.
 async function fetchTrack(api, id, market) {
   const t = await withMarketFallback(async (mkt) => {
     const r = await api.getTrack(id, { ...(mkt ? { market: mkt } : {}) });
@@ -222,6 +233,7 @@ async function fetchTrack(api, id, market) {
   };
 }
 
+// Loads playlist data items for Spotify mapping and metadata flow.
 async function fetchPlaylistItems(api, id, market) {
   const out = [];
   const albumCache = new Map();
@@ -295,6 +307,7 @@ async function fetchPlaylistItems(api, id, market) {
   return out;
 }
 
+// Loads album items for Spotify mapping and metadata flow.
 async function fetchAlbumItems(api, id, market) {
   const out = [];
   let page = await withMarketFallback(async (mkt) => {
@@ -377,6 +390,7 @@ async function fetchAlbumItems(api, id, market) {
   return out;
 }
 
+// Resolves Spotify metadata URL for Spotify mapping and metadata flow.
 export async function resolveSpotifyUrl(url, { market } = {}) {
   const { type, id } = parseSpotifyUrl(url);
   if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
@@ -439,6 +453,7 @@ export async function resolveSpotifyUrl(url, { market } = {}) {
   throw new Error("This type of Spotify URL is not supported yet");
 }
 
+// Finds Spotify metadata meta by query for Spotify mapping and metadata flow.
 export async function findSpotifyMetaByQuery(artist, title, market) {
   const api = await makeSpotify();
   const q = [artist, title].filter(Boolean).join(" ").trim();

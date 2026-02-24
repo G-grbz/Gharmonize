@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" translate="no" class="notranslate">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="google" content="notranslate" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     (function() {
@@ -26,8 +27,8 @@
 
   <title>🎵 Gharmonize</title>
   <link rel="stylesheet" href="style.css" />
-  <link rel="icon" type="image/x-icon" href="./src/favicon.ico">
-  <link rel="shortcut icon" type="image/x-icon" href="./src/favicon.ico">
+  <link rel="icon" type="image/x-icon" href="/src/favicon.ico">
+  <link rel="shortcut icon" type="image/x-icon" href="/src/favicon.ico">
 </head>
 <body>
 <div id="loading-screen">
@@ -146,6 +147,7 @@
     </div>
     <div class="card">
         <h2 data-i18n="section.url">🔗 Convert from URL</h2>
+        <small class="comment" data-i18n="ph.urlcomment"></small>
         <form id="urlForm">
           <div class="form-group">
             <input type="url" id="urlInput" data-i18n-ph="ph.url" placeholder="YouTube URL or direct media link" required />
@@ -200,6 +202,10 @@
           <div class="checkbox-group" id="lyricsCheckboxContainer">
             <input type="checkbox" id="lyricsCheckbox" />
             <label for="lyricsCheckbox" data-i18n="label.includeLyrics">Include lyrics</label>
+          </div>
+          <div class="checkbox-group" id="embedLyricsCheckboxContainer">
+            <input type="checkbox" id="embedLyricsCheckbox" />
+            <label for="embedLyricsCheckbox" data-i18n="label.embedLyrics">Embed lyrics into track</label>
           </div>
 
           <div class="spotify-actions" id="urlSpotifyActions" style="display: none;">

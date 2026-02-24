@@ -1,4 +1,5 @@
 export class NotificationManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor() {
         this.notificationQueue = new Map();
         this.activeNotifications = new Set();
@@ -6,6 +7,7 @@ export class NotificationManager {
         this.ensureStyles();
     }
 
+    // Handles ensure styles in the browser UI layer.
     ensureStyles() {
         if (document.getElementById('notification-styles')) return;
 
@@ -13,6 +15,7 @@ export class NotificationManager {
         style.id = 'notification-styles';
     }
 
+    // Shows notification in the browser UI layer.
     showNotification(message, type = 'info', group = 'default', duration = 3000) {
         if (this.notificationTimers.has(group)) {
             clearTimeout(this.notificationTimers.get(group));
@@ -51,6 +54,7 @@ export class NotificationManager {
         this.notificationTimers.set(group, timer);
     }
 
+    // Hides notification in the browser UI layer.
     hideNotification(notification, group) {
         notification.style.transform = 'translateX(100%)';
         notification.style.opacity = '0';
@@ -64,10 +68,12 @@ export class NotificationManager {
         }, 300);
     }
 
+    // Handles quick notify in the browser UI layer.
     quickNotify(message, type = 'info', group = 'default') {
         this.showNotification(message, type, group, 2000);
     }
 
+    // Handles clear all in the browser UI layer.
     clearAll() {
         document.querySelectorAll('.notification').forEach(notification => {
             notification.remove();

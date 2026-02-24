@@ -7,10 +7,12 @@ import fetch from "node-fetch";
 import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
 import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
+import { rewriteId3v11Tag } from "./id3.js";
 import "dotenv/config";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 import { getFfmpegCaps } from "./ffmpegCaps.js";
 
+// Returns optimal encoder params used for the FFmpeg media conversion pipeline.
 function getOptimalEncoderParams(codec, hardware, quality = 'medium') {
     const params = {
         'h264': {
@@ -39,6 +41,7 @@ function getOptimalEncoderParams(codec, hardware, quality = 'medium') {
     return params[codec]?.[hardware] || params['h264'][hardware] || params['h264']['software'];
 }
 
+// Normalizes nvenc preset and tune for the FFmpeg media conversion pipeline.
 function normalizeNvencPresetAndTune(rawPreset) {
   const v = String(rawPreset || "").trim().toLowerCase();
 
@@ -66,6 +69,7 @@ function normalizeNvencPresetAndTune(rawPreset) {
   return { preset: "p4", tune: null };
 }
 
+// Normalizes nvenc profile for encoder for the FFmpeg media conversion pipeline.
 function normalizeNvencProfileForEncoder(enc, rawProfile) {
   const e = String(enc || "").toLowerCase();
   const p = String(rawProfile || "").trim().toLowerCase();
@@ -87,6 +91,7 @@ function normalizeNvencProfileForEncoder(enc, rawProfile) {
   return p || "high";
 }
 
+// Handles force8bit codec if tonemapping in the FFmpeg media conversion pipeline.
 function force8bitCodecIfTonemapping(selectedCodec, codecConfig) {
   if (!selectedCodec || selectedCodec.bitDepth !== 10) return selectedCodec;
 
@@ -116,22 +121,26 @@ const PRESET_ORDER = [
   "veryslow"
 ];
 
+// Normalizes sw preset for the FFmpeg media conversion pipeline.
 function normalizeSwPreset(p) {
   const v = String(p || "").trim().toLowerCase();
   return PRESET_ORDER.includes(v) ? v : "veryfast";
 }
 
+// Handles preset rank in the FFmpeg media conversion pipeline.
 function presetRank(p) {
   const v = normalizeSwPreset(p);
   const idx = PRESET_ORDER.indexOf(v);
   return idx >= 0 ? idx : 2;
 }
 
+// Handles preset to aom cpu used in the FFmpeg media conversion pipeline.
 function presetToAomCpuUsed(p) {
   const r = presetRank(p);
   return Math.max(0, Math.min(8, 8 - r));
 }
 
+// Handles preset to svt preset in the FFmpeg media conversion pipeline.
 function presetToSvtPreset(p) {
   const map = {
     ultrafast: 12,
@@ -147,10 +156,12 @@ function presetToSvtPreset(p) {
   return map[normalizeSwPreset(p)] ?? 10;
 }
 
+// Handles preset to vp9 cpu used in the FFmpeg media conversion pipeline.
 function presetToVp9CpuUsed(p) {
   return presetToAomCpuUsed(p);
 }
 
+// Handles preset to vp9 deadline in the FFmpeg media conversion pipeline.
 function presetToVp9Deadline(p) {
   const r = presetRank(p);
   if (r <= 2) return "realtime";
@@ -158,6 +169,7 @@ function presetToVp9Deadline(p) {
   return "best";
 }
 
+// Resolves FFmpeg arguments bin for the FFmpeg media conversion pipeline.
 function resolveFfmpegBin() {
   const isWin = process.platform === "win32";
   const exe = isWin ? "ffmpeg.exe" : "ffmpeg";
@@ -201,11 +213,13 @@ function resolveFfmpegBin() {
   return exe;
 }
 
+// Handles emit log in the FFmpeg media conversion pipeline.
 function emitLog(onLog, payload) {
   if (payload?.fallback) console.log(payload.fallback);
   if (onLog) onLog(payload);
 }
 
+// Resolves template for the FFmpeg media conversion pipeline.
 export function resolveTemplate(meta, template) {
   const pick = (a, b) =>
     (meta[a] || "").toString().trim() || (meta[b] || "").toString().trim();
@@ -225,6 +239,7 @@ export function resolveTemplate(meta, template) {
     .trim();
 }
 
+// Handles maybe clean title in the FFmpeg media conversion pipeline.
 export function maybeCleanTitle(t) {
   if (!t) return t;
   if (process.env.TITLE_CLEAN_PIPE === "1") {
@@ -234,6 +249,38 @@ export function maybeCleanTitle(t) {
   return t;
 }
 
+// Handles refine output basename in the FFmpeg media conversion pipeline.
+function refineOutputBasename(name) {
+  let s = String(name || "").trim();
+  if (!s) return "";
+
+  s = s.replace(/\s*[|｜]\s*/g, " • ");
+  s = s.replace(/\s+/g, " ").trim();
+
+  s = s.replace(
+    /\s*[–—-]\s*(cover|official\s*video|official\s*audio|audio|mv|hd|4k|lyrics?|lyric|visualizer|remaster(?:ed)?)\b.*$/i,
+    ""
+  ).trim();
+
+  const lParts = s
+    .split(/\s+\bl\b\s+/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (lParts.length >= 3) {
+    const head = lParts[0];
+    const tailMatch = s.match(/[–—-]\s*([^–—-]+)$/);
+    const tail = tailMatch ? tailMatch[1].trim() : "";
+    if (head && tail) s = `${head} - ${tail}`;
+    else if (head) s = head;
+  }
+
+  s = s.replace(/\s*(?:[-–—•]\s*)+$/, "").trim();
+  s = s.replace(/\s{2,}/g, " ").trim();
+  return s;
+}
+
+// Handles clean title for audio tags in the FFmpeg media conversion pipeline.
 function cleanTitleForTags(t) {
   if (!t) return t;
   let s = String(t).trim();
@@ -245,6 +292,7 @@ function cleanTitleForTags(t) {
   return s;
 }
 
+// Downloads thumbnail for the FFmpeg media conversion pipeline.
 export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
   if (!thumbnailUrl) return null;
   try {
@@ -264,6 +312,7 @@ export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
   }
 }
 
+// Resolves cover path from meta for the FFmpeg media conversion pipeline.
 async function resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir) {
   const url =
     metadata?.coverUrl ||
@@ -282,6 +331,7 @@ async function resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir) {
   return null;
 }
 
+// Handles environment variables truth in the FFmpeg media conversion pipeline.
 function envTruth(v) {
   const s = String(v ?? "").trim().toLowerCase();
   if (!s) return null;
@@ -289,18 +339,21 @@ function envTruth(v) {
   return true;
 }
 
+// Determines whether prefer Spotify metadata cover should run for the FFmpeg media conversion pipeline.
 function shouldPreferSpotifyCover() {
   const explicit = envTruth(process.env.PREFER_SPOTIFY_TAGS);
   if (explicit === null) return true;
   return explicit;
 }
 
+// Handles looks like Spotify metadata cover URL in the FFmpeg media conversion pipeline.
 function looksLikeSpotifyCoverUrl(url) {
   const u = String(url || "").trim();
   if (!u) return false;
   return /(^|\/\/)i\.scdn\.co\//i.test(u) || /scdn\.co/i.test(u);
 }
 
+// Handles ensure jpeg cover in the FFmpeg media conversion pipeline.
 export async function ensureJpegCover(
   coverPath,
   jobId,
@@ -345,11 +398,15 @@ export async function ensureJpegCover(
   }
 }
 
+// Returns comment text used for the FFmpeg media conversion pipeline.
 const getCommentText = () => {
   if (process.env.MEDIA_COMMENT) return process.env.MEDIA_COMMENT;
   if (process.env.COMMENT_TEXT) return process.env.COMMENT_TEXT;
   return "Gharmonize";
 };
+
+const shouldWriteId3v1 = () => process.env.WRITE_ID3V1 !== "0";
+const shouldWriteMp3Xing = () => process.env.MP3_WRITE_XING === "1";
 
 const VIDEO_HWACCEL = (process.env.VIDEO_HWACCEL || "off").toLowerCase();
 const NVENC_PRESET  = process.env.NVENC_PRESET  || "fast";
@@ -359,10 +416,11 @@ const QSV_Q         = process.env.QSV_Q         || "23";
 const VAAPI_DEVICE  = process.env.VAAPI_DEVICE  || "/dev/dri/renderD128";
 const VAAPI_QUALITY = process.env.VAAPI_QUALITY || "23";
 
+// Handles comment key for in the FFmpeg media conversion pipeline.
 function commentKeyFor(fmt) {
   const f = String(fmt || "").toLowerCase();
   if (f === "flac" || f === "ogg") return "DESCRIPTION";
-  if (f === "mp4" || f === "m4a") return "comment";
+  if (f === "mp4" || f === "m4a") return "\u00A9cmt";
   if (f === "mp3") return "comment";
   if (f === "eac3" || f === "ac3") return "comment";
   if (f === "aac") return "comment";
@@ -370,6 +428,25 @@ function commentKeyFor(fmt) {
   return "comment";
 }
 
+// Handles append comment metadata in the FFmpeg media conversion pipeline.
+function appendCommentMetadata(args, format, commentText) {
+  if (!commentText) return;
+  const key = commentKeyFor(format);
+  args.push("-metadata", `${key}=${commentText}`);
+}
+
+// Selects composer text for the FFmpeg media conversion pipeline.
+function pickComposerText(meta = {}) {
+  return (
+    meta.composer ||
+    meta.album_artist ||
+    meta.artist ||
+    meta.uploader ||
+    ""
+  );
+}
+
+// Builds common meta pairs for the FFmpeg media conversion pipeline.
 function buildCommonMetaPairs(resolvedMeta, format) {
   const baseNumbers = {
     track_number: resolvedMeta.track_number ?? null,
@@ -397,7 +474,8 @@ function buildCommonMetaPairs(resolvedMeta, format) {
     date:   dateTag || "",
     track:  trackTag || "",
     disc:   discTag || "",
-    genre:  resolvedMeta.genre || ""
+    genre:  resolvedMeta.genre || "",
+    composer: pickComposerText(resolvedMeta)
   };
 
   if (resolvedMeta.album_artist) {
@@ -423,11 +501,13 @@ function buildCommonMetaPairs(resolvedMeta, format) {
   return metaPairs;
 }
 
+// Determines whether skip retag should run for the FFmpeg media conversion pipeline.
 function shouldSkipRetag(format) {
   const f = String(format || "").toLowerCase();
   return (f === "wav" || f === "aac" || f === "ac3" || f === "eac3" || f === "dts");
 }
 
+// Handles retag media file in the FFmpeg media conversion pipeline.
 export async function retagMediaFile(
   absOutputPath,
   format,
@@ -436,6 +516,7 @@ export async function retagMediaFile(
   opts = {}
 ) {
   const tempFilesToCleanup = [];
+  // Handles safe unlink in the FFmpeg media conversion pipeline.
   const safeUnlink = (p) => {
     try {
       if (p && fs.existsSync(p)) fs.unlinkSync(p);
@@ -495,7 +576,6 @@ export async function retagMediaFile(
       }
     }
 
-    const COMMENT_KEY = commentKeyFor(f);
     const metaPairs = buildCommonMetaPairs(resolvedMeta, f);
     const ext = path.extname(absOutputPath) || `.${f}`;
     const base = absOutputPath.slice(0, -ext.length);
@@ -511,7 +591,7 @@ export async function retagMediaFile(
     }
 
       const commentText = getCommentText();
-      if (commentText) args.push("-metadata", `${COMMENT_KEY}=${commentText}`);
+      appendCommentMetadata(args, f, commentText);
       if (resolvedMeta.isrc) args.push("-metadata", `ISRC=${resolvedMeta.isrc}`);
       if (resolvedMeta.webpage_url) args.push("-metadata", `URL=${resolvedMeta.webpage_url}`);
       args.push("-map", "0:a");
@@ -535,7 +615,7 @@ export async function retagMediaFile(
       args.push("-c:a", "copy");
       if (f === "mp3") {
         args.push("-id3v2_version", "3");
-        if (process.env.WRITE_ID3V1 === "1") args.push("-write_id3v1", "1");
+        if (shouldWriteId3v1()) args.push("-write_id3v1", "1");
       }
 
       args.push(tmpOut);
@@ -558,6 +638,13 @@ export async function retagMediaFile(
       try { fs.unlinkSync(tmpOut); } catch {}
     }
 
+    if (f === "mp3" && shouldWriteId3v1()) {
+      rewriteId3v11Tag(absOutputPath, {
+        ...resolvedMeta,
+        comment: getCommentText()
+      });
+    }
+
     console.log(`✅ retag ok: ${path.basename(absOutputPath)}`);
     return absOutputPath;
   } catch (e) {
@@ -570,6 +657,7 @@ export async function retagMediaFile(
   }
 }
 
+// Handles force10bit codec for hdr output in the FFmpeg media conversion pipeline.
 function force10bitCodecForHdrOutput(selectedCodec, codecConfig) {
   if (!selectedCodec) return selectedCodec;
   if (selectedCodec.bitDepth === 10) return selectedCodec;
@@ -591,6 +679,7 @@ function force10bitCodecForHdrOutput(selectedCodec, codecConfig) {
   }
 }
 
+// Converts media for the FFmpeg media conversion pipeline.
 export async function convertMedia(
   inputPath,
   format,
@@ -605,6 +694,7 @@ export async function convertMedia(
   opts = {}
 ) {
   const tempFilesToCleanup = [];
+  // Handles safe unlink in the FFmpeg media conversion pipeline.
   const safeUnlink = (p) => {
     try {
       if (p && fs.existsSync(p)) fs.unlinkSync(p);
@@ -651,18 +741,21 @@ export async function convertMedia(
     volumeGainRaw = metadata.volumeGain;
   }
 
+  // Handles clamp int in the FFmpeg media conversion pipeline.
   const clampInt = (v, min, max) => {
    const n = Math.round(Number(v));
    if (!Number.isFinite(n)) return null;
    return Math.min(max, Math.max(min, n));
  };
 
+  // Handles clamp non neg int in the FFmpeg media conversion pipeline.
   const clampNonNegInt = (v, fallback = 0) => {
     const n = Math.floor(Number(v));
     if (!Number.isFinite(n) || n < 0) return fallback;
     return n;
   };
 
+  // Normalizes hex color for the FFmpeg media conversion pipeline.
   const normalizeHexColor = (c) => {
     const s = String(c || '').trim();
     if (/^#[0-9a-fA-F]{6}$/.test(s)) return s;
@@ -670,6 +763,7 @@ export async function convertMedia(
     return '#000000';
   };
 
+  // Handles ensure vf append in the FFmpeg media conversion pipeline.
   const ensureVfAppend = (args, frag) => {
     if (!frag) return;
     const i = args.lastIndexOf("-vf");
@@ -680,6 +774,7 @@ export async function convertMedia(
     }
   };
 
+  // Builds orientation filter for the FFmpeg media conversion pipeline.
   const buildOrientationFilter = (mode) => {
     const m = String(mode || 'auto').toLowerCase();
     if (m === '90cw') return "transpose=1";
@@ -690,6 +785,7 @@ export async function convertMedia(
     return null;
   };
 
+  // Builds crop edges filter for the FFmpeg media conversion pipeline.
   const buildCropEdgesFilter = (settings) => {
     if (!settings?.cropEnabled) return null;
     const L = clampNonNegInt(settings.cropLeft, 0);
@@ -700,6 +796,7 @@ export async function convertMedia(
     return `crop=in_w-${L + R}:in_h-${T + B}:${L}:${T}`;
   };
 
+  // Builds border filter for the FFmpeg media conversion pipeline.
   const buildBorderFilter = (settings, targetWidth, targetHeight) => {
     if (!settings?.borderEnabled) return null;
     const bs = clampNonNegInt(settings.borderSize, 0);
@@ -723,6 +820,7 @@ export async function convertMedia(
 
   const swCrf = clampInt(videoSettings?.swSettings?.quality, 16, 30);
 
+  // Handles to even in the FFmpeg media conversion pipeline.
   const toEven = (n) => {
   const x = Number(n);
   if (!Number.isFinite(x) || x <= 0) return null;
@@ -730,6 +828,7 @@ export async function convertMedia(
   return (xi % 2 === 0) ? xi : (xi - 1);
 };
 
+// Computes target height for the FFmpeg media conversion pipeline.
 function computeTargetHeight({ heightMode, targetHeight, srcH, fallbackH, allowUpscale }) {
   const mode = String(heightMode || 'auto').toLowerCase();
 
@@ -751,6 +850,7 @@ function computeTargetHeight({ heightMode, targetHeight, srcH, fallbackH, allowU
   return { targetH: 0, reason: 'auto->no-height' };
 }
 
+// Computes width for scaling for the FFmpeg media conversion pipeline.
 function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const mode = String(scaleMode || "auto").toLowerCase();
   if (mode !== "custom" && mode !== "auto") return { widthW: null, reason: `mode=${mode}` };
@@ -824,6 +924,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   console.log(`🎬 Video Setting:`, { isVideo, format, videoSettings, videoHwaccel });
   console.log(`🎵 Audio Setting: Codec=${audioCodec}, Bitrate=${audioBitrate}, Transcode=${videoSettings.audioTranscodeEnabled}`);
 
+  // Parses fps for the FFmpeg media conversion pipeline.
   const parseFps = (v) => {
      if (v == null) return null;
      const s = String(v).trim().toLowerCase();
@@ -845,6 +946,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
    targetFps
  });
 
+  // Parses sr for the FFmpeg media conversion pipeline.
   const parseSR = (v) => {
     const n = Number(String(v || "").replace(/[^0-9.]/g, ""));
     return Number.isFinite(n) ? Math.round(n) : NaN;
@@ -887,8 +989,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       allowed[0]
     );
 
-  const COMMENT_KEY = commentKeyFor(format);
-
+  // Normalizes sr for the FFmpeg media conversion pipeline.
   function normalizeSR(fmt, sr) {
     const f = String(fmt || "").toLowerCase();
     if (f === "mp3") {
@@ -918,6 +1019,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
   const { sr: SR_NORM, note: SR_NOTE } = normalizeSR(format, baseSR);
 
+  // Builds unique out for the FFmpeg media conversion pipeline.
   const buildUniqueOut = (baseName, fmt) => {
     let fileName = `${baseName}.${fmt}`;
     let outPath = path.join(outputDir, fileName);
@@ -954,7 +1056,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       inputPath
     )} | fmt=${format} | lyrics=${
       opts.includeLyrics !== false ? "yes" : "no"
-    } | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}`
+    } | embedLyrics=${opts.embedLyrics === true ? "yes" : "no"} | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}`
   );
 
   const template = isVideo
@@ -971,6 +1073,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const VIDEO_PRESET = process.env.VIDEO_PRESET || "veryfast";
 
     let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
+    basename = refineOutputBasename(basename);
     basename = sanitizeFilename(basename);
 
     basename = basename.replace(/\s*(?:_+\s*)+$/, '').replace(/\s{2,}/g, ' ').trim();
@@ -1027,6 +1130,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const result = await new Promise(async (resolve, reject) => {
 
   const previewClip = selectedStreams?.previewClip || null;
+  // Handles timecode to seconds in the FFmpeg media conversion pipeline.
   const timecodeToSeconds = (tc) => {
     if (!tc) return NaN;
     const m = String(tc).trim().match(/^(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/);
@@ -1108,15 +1212,18 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     const commentText = getCommentText();
-    if (commentText && format !== "mp3") {
-      args.push("-metadata", `${COMMENT_KEY}=${commentText}`);
-    }
+    if (format !== "mp3") appendCommentMetadata(args, format, commentText);
 
     if (resolvedMeta.isrc) args.push("-metadata", `ISRC=${resolvedMeta.isrc}`);
 
     if (!isVideo && (format === "flac" || format === "ogg")) {
       if (resolvedMeta.album_artist)
         args.push("-metadata", `ALBUMARTIST=${resolvedMeta.album_artist}`);
+      const composer = pickComposerText(resolvedMeta);
+      if (composer) {
+        args.push("-metadata", `composer=${composer}`);
+        args.push("-metadata", `COMPOSER=${composer}`);
+      }
       if (labelLike) {
         args.push("-metadata", `LABEL=${labelLike}`);
         args.push("-metadata", `PUBLISHER=${labelLike}`);
@@ -1131,6 +1238,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     if (!isVideo && format === "mp3") {
       if (resolvedMeta.album_artist)
         args.push("-metadata", `ALBUMARTIST=${resolvedMeta.album_artist}`);
+      const composer = pickComposerText(resolvedMeta);
+      if (composer) args.push("-metadata", `composer=${composer}`);
       if (resolvedMeta.genre) args.push("-metadata", `genre=${resolvedMeta.genre}`);
       if (resolvedMeta.copyright)
         args.push("-metadata", `copyright=${resolvedMeta.copyright}`);
@@ -1138,7 +1247,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         args.push("-metadata", `URL=${resolvedMeta.webpage_url}`);
 
       const cmt = getCommentText();
-      if (cmt) args.push("-metadata", `comment=${cmt}`);
+      appendCommentMetadata(args, format, cmt);
     }
 
     if (canEmbedCover) {
@@ -1160,9 +1269,14 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       else if (format === "flac") args.push("-c:v", "mjpeg");
     }
 
+    if (!isVideo && format === "mp3") {
+      args.push("-id3v2_version", "3");
+      if (shouldWriteId3v1()) args.push("-write_id3v1", "1");
+    }
+
     if (isVideo) {
       if (hasVideoFlag) {
-    args.push("-map", "0:v:0");
+    args.push("-map", "0:v:0?");
   } else {
     args.push("-vn");
   }
@@ -1274,6 +1388,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const forceNoneHdr = hdrMode === "none";
   const forceSdrToHdr = hdrMode === "sdr_to_hdr";
 
+  // Handles target is sdr fn in the FFmpeg media conversion pipeline.
   const targetIsSdrFn = () => {
     if (forceTonemap) return true;
     if (forceKeepHdr) return false;
@@ -1354,16 +1469,19 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     let colorMetaPushed = false;
 
+    // Handles map color range in the FFmpeg media conversion pipeline.
     function mapColorRange(v) {
       if (v === "tv" || v === "limited") return "tv";
       if (v === "pc" || v === "full") return "pc";
       return null;
     }
 
+    // Normalizes prim for the FFmpeg media conversion pipeline.
     function normalizePrim(p) {
       return String(p || "").trim().toLowerCase();
     }
 
+    // Handles decide sdr color meta in the FFmpeg media conversion pipeline.
     function decideSdrColorMeta(prim) {
       if (prim === "bt2020") {
         return { primaries: "bt2020", trc: "bt2020-10", colorspace: "bt2020nc" };
@@ -1374,6 +1492,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       return { primaries: prim, trc: null, colorspace: null };
     }
 
+    // Handles push color metadata in the FFmpeg media conversion pipeline.
     const pushColorMetadata = () => {
       if (colorMetaPushed) return;
       colorMetaPushed = true;
@@ -1405,6 +1524,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     };
 
+    // Builds set params for the FFmpeg media conversion pipeline.
     function buildSetParams() {
       const prim = normalizePrim(colorPrim);
       if (!prim || prim === "auto") return null;
@@ -1421,6 +1541,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       return parts.length ? `setparams=${parts.join(":")}` : null;
     }
 
+    // Builds resize filter for the FFmpeg media conversion pipeline.
     function buildResizeFilter({ widthW, targetHeight, resizeMode, borderColor }) {
       const w = Number.isFinite(Number(widthW)) ? Number(widthW) : null;
       const h = Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : 0;
@@ -1440,6 +1561,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       return `scale=${wExpr}:${hExpr}`;
     }
 
+  // Builds base vf for the FFmpeg media conversion pipeline.
   function buildBaseVf(selectedCodecLocal) {
       const chain = [];
 
@@ -1640,11 +1762,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     const useVaapi = hwMode === "vaapi";
     const baseVf = buildBaseVf(selectedCodec);
 
+    // Handles qsv pix fmt for in the FFmpeg media conversion pipeline.
     const qsvPixFmtFor = (enc, bitDepth) => {
       if (bitDepth === 10 || String(enc || "").includes("10bit") || String(enc || "").endsWith("_10bit")) return "p010le";
       return "nv12";
     };
 
+    // Normalizes qsv profile for the FFmpeg media conversion pipeline.
     const normalizeQsvProfile = (enc, rawProfile) => {
       const p = String(rawProfile || "").trim().toLowerCase();
       if (enc === "hevc" || enc === "hevc_10bit") {
@@ -1661,6 +1785,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     let pixFmtAlreadySet = false;
+    // Handles push pix fmt in the FFmpeg media conversion pipeline.
     const pushPixFmt = (fmt) => {
       if (!fmt) return;
       if (pixFmtAlreadySet) return;
@@ -2259,8 +2384,6 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     } else {
       switch (format) {
         case "mp3":
-          args.push("-id3v2_version", "3");
-          if (process.env.WRITE_ID3V1 === "1") args.push("-write_id3v1", "1");
           if (bitrate === "auto" || bitrate === "0" || bitrate === "lossless") {
             args.push(
               "-acodec",
@@ -2280,6 +2403,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
               FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
             );
           }
+          args.push("-write_xing", shouldWriteMp3Xing() ? "1" : "0");
           break;
         case "flac": {
           let cl = Number(opts?.compressionLevel);
@@ -2388,6 +2512,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       const target = ratioTable[atempoAdjust];
       if (Number.isFinite(target) && target > 0) {
+        // Handles split atempo in the FFmpeg media conversion pipeline.
         const splitAtempo = (f) => {
           const parts = [];
           let x = f;
@@ -2442,6 +2567,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     let stderrData = "";
     let canceledByFlag = false;
 
+    // Handles try cancel in the FFmpeg media conversion pipeline.
     const tryCancel = () => {
       if (!canceledByFlag && isCanceled()) {
         canceledByFlag = true;
@@ -2536,11 +2662,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       return result;
     }
     const includeLyricsFlag = opts.includeLyrics !== false;
+    const embedLyricsFlag = opts.embedLyrics === true;
+    const shouldProcessLyrics = includeLyricsFlag || embedLyricsFlag;
 
     console.log(
-      `🔍 Lyrics check → Will it be added?: ${
-        includeLyricsFlag ? "yes" : "no"
-      } | video: ${isVideo ? "yes" : "no"} | format: ${format} | meta: ${[
+      `🔍 Lyrics check → Will it be processed?: ${
+        shouldProcessLyrics ? "yes" : "no"
+      } | embed: ${embedLyricsFlag ? "yes" : "no"} | video: ${isVideo ? "yes" : "no"} | format: ${format} | meta: ${[
         metadata.artist,
         metadata.title || metadata.track
       ]
@@ -2548,7 +2676,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         .join(" - ")}`
     );
 
-    if (includeLyricsFlag && !isVideo && result && result.outputPath) {
+    if (shouldProcessLyrics && !isVideo && result && result.outputPath) {
       console.log("🎵 Adding lyrics...");
       const actualOutputPath = path.join(
         outputDir,
@@ -2559,6 +2687,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         return result;
       }
 
+      // Handles lyrics metadata log callback in the FFmpeg media conversion pipeline.
       const lyricsLogCallback = (message) => {
         const line =
           typeof message === "object" && message?.fallback
@@ -2585,6 +2714,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       try {
         const lyricsPath = await attachLyricsToMedia(actualOutputPath, metadata, {
           includeLyrics: includeLyricsFlag,
+          embedLyrics: embedLyricsFlag,
           jobId: jobId.split("_")[0],
           onLog: lyricsLogCallback,
           onLyricsStats: opts.onLyricsStats
@@ -2628,10 +2758,21 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     } else {
       console.log(
-        `⚙️ no lyrics added → Will it be added?: ${
-          includeLyricsFlag ? "yes" : "no"
+        `⚙️ no lyrics added → Will it be processed?: ${
+          shouldProcessLyrics ? "yes" : "no"
         } | reason: ${isVideo ? "Video format" : "Disabled"}`
       );
+    }
+
+    if (!isVideo && String(format || "").toLowerCase() === "mp3" && shouldWriteId3v1() && result?.outputPath) {
+      const actualOutputPath = path.join(
+        outputDir,
+        decodeURIComponent(String(result.outputPath).replace("/download/", ""))
+      );
+      rewriteId3v11Tag(actualOutputPath, {
+        ...resolvedMeta,
+        comment: getCommentText()
+      });
     }
 
     return result;

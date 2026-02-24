@@ -1,6 +1,7 @@
 import { modalManager } from './ModalManager.js';
 
 export class SettingsManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor() {
         this.tokenKey = "gharmonize_admin_token";
         this.modal = null;
@@ -8,6 +9,7 @@ export class SettingsManager {
         this.loginOnly = false;
     }
 
+    // Initializes startup state for the browser UI layer.
     async initialize() {
         if (this.isInitialized) return;
 
@@ -16,6 +18,7 @@ export class SettingsManager {
         this.isInitialized = true;
     }
 
+    // Creates modal for the browser UI layer.
     createModal() {
         if (document.getElementById('settingsModal')) return;
 
@@ -28,6 +31,7 @@ export class SettingsManager {
         this.modal = modal;
     }
 
+    // Returns modal html used for the browser UI layer.
     getModalHTML() {
         return `
             <div class="settings-dialog">
@@ -43,6 +47,7 @@ export class SettingsManager {
         `;
     }
 
+    // Returns login view html used for the browser UI layer.
     getLoginViewHTML() {
         return `
             <div id="loginView">
@@ -65,6 +70,7 @@ export class SettingsManager {
         `;
     }
 
+    // Shows notification in the browser UI layer.
     showNotification(message, type = 'info') {
     console.log(`[${type.toUpperCase()}] ${message}`);
     if (window.app?.showNotification) {
@@ -75,12 +81,14 @@ export class SettingsManager {
     this.showSimpleToast(message, type);
 }
 
+    // Handles tt in the browser UI layer.
     tt(key, fallback = '') {
       const v = this.t(key);
       if (!v || v === key) return fallback || v;
       return v;
     }
 
+    // Shows simple toast in the browser UI layer.
     showSimpleToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.style.cssText = `
@@ -111,6 +119,7 @@ export class SettingsManager {
     }, 3000);
 }
 
+    // Handles refresh i18n in the browser UI layer.
     refreshI18n() {
       if (!this.modal) return;
       if (window.i18n?.apply) window.i18n.apply(this.modal);
@@ -128,6 +137,7 @@ export class SettingsManager {
       }
     }
 
+    // Returns form view html used for the browser UI layer.
     getFormViewHTML() {
     return `
         <div id="formView" style="display:none">
@@ -506,6 +516,7 @@ export class SettingsManager {
     `;
     }
 
+    // Updates event listeners used for the browser UI layer.
     setupEventListeners() {
     document.getElementById('settingsClose').onclick = () => this.close();
     document.getElementById('loginBtn').onclick = () => this.doLogin();
@@ -550,6 +561,7 @@ export class SettingsManager {
         }
     }
 
+    // Opens login only in the browser UI layer.
     openLoginOnly() {
         if (!this.isInitialized) this.initialize();
 
@@ -563,6 +575,7 @@ export class SettingsManager {
         requestAnimationFrame(() => document.getElementById('adminPass')?.focus());
     }
 
+    // Opens open in the browser UI layer.
     open() {
         if (!this.isInitialized) this.initialize();
 
@@ -580,6 +593,7 @@ export class SettingsManager {
         }
     }
 
+    // Closes close in the browser UI layer.
     close() {
     if (this.modal) {
         this.modal.style.display = 'none';
@@ -589,6 +603,7 @@ export class SettingsManager {
     document.getElementById('settingsBtn')?.focus();
     }
 
+    // Shows login in the browser UI layer.
     showLogin() {
         document.getElementById('loginView').style.display = 'flex';
         document.getElementById('formView').style.display = 'none';
@@ -596,11 +611,13 @@ export class SettingsManager {
         document.getElementById('adminError').style.display = 'none';
     }
 
+    // Shows form in the browser UI layer.
     showForm() {
         document.getElementById('loginView').style.display = 'none';
         document.getElementById('formView').style.display = 'block';
     }
 
+    // Handles do login in the browser UI layer.
     async doLogin() {
         const password = document.getElementById('adminPass').value;
         const errEl = document.getElementById('adminError');
@@ -670,6 +687,7 @@ export class SettingsManager {
         }
     }
 
+    // Handles do logout in the browser UI layer.
     async doLogout() {
         localStorage.removeItem(this.tokenKey);
         this.triggerGlobalLogout();
@@ -677,6 +695,7 @@ export class SettingsManager {
         requestAnimationFrame(() => document.getElementById('adminPass')?.focus());
     }
 
+    // Handles trigger global logout in the browser UI layer.
     triggerGlobalLogout() {
         window.dispatchEvent(new CustomEvent('gharmonize:auth', {
             detail: { loggedIn: false }
@@ -686,6 +705,7 @@ export class SettingsManager {
         }
     }
 
+    // Loads settings for the browser UI layer.
     async loadSettings() {
         const token = localStorage.getItem(this.tokenKey) || "";
         try {
@@ -751,6 +771,7 @@ export class SettingsManager {
         }
     }
 
+    // Persists settings for the browser UI layer.
     async saveSettings() {
         const token = localStorage.getItem(this.tokenKey) || "";
         const payload = {
@@ -830,6 +851,7 @@ export class SettingsManager {
         }
     }
 
+    // Handles change password in the browser UI layer.
     async changePassword() {
         const token = localStorage.getItem(this.tokenKey) || "";
         const oldPassword = document.getElementById('f_ADMIN_OLD').value;
@@ -913,6 +935,7 @@ export class SettingsManager {
         }
     }
 
+    // Generates homepage widget key for the browser UI layer.
     async generateHomepageWidgetKey() {
         const token = localStorage.getItem(this.tokenKey) || "";
         const btn = document.getElementById('genWidgetKeyBtn');
@@ -962,6 +985,7 @@ export class SettingsManager {
         }
     }
 
+    // Handles toggle homepage widget key visibility in the browser UI layer.
     async toggleHomepageWidgetKeyVisibility() {
       const el = document.getElementById('f_HOMEPAGE_WIDGET_KEY');
       const btn = document.getElementById('toggleWidgetKeyBtn');
@@ -1021,6 +1045,7 @@ export class SettingsManager {
       if (btn) btn.textContent = '👁️';
     }
 
+        // Handles copy homepage widget key in the browser UI layer.
         async copyHomepageWidgetKey() {
         const token = localStorage.getItem(this.tokenKey) || "";
         const btn = document.getElementById('copyWidgetKeyBtn');
@@ -1087,6 +1112,7 @@ export class SettingsManager {
         }
     }
 
+    // Updates tabs used for the browser UI layer.
     setupTabs() {
     const root = this.modal;
     if (!root) return;
@@ -1094,6 +1120,7 @@ export class SettingsManager {
     const tabs = Array.from(root.querySelectorAll('.settings-tab'));
     const panels = Array.from(root.querySelectorAll('.settings-panel'));
 
+    // Handles activate in the browser UI layer.
     const activate = (tabId) => {
         for (const t of tabs) {
         const on = t.dataset.tab === tabId;
@@ -1117,6 +1144,7 @@ export class SettingsManager {
     this.activateSettingsTab = activate;
     }
 
+    // Handles t in the browser UI layer.
     t(key, vars) {
         return (window.i18n?.t?.(key, vars)) ?? key;
     }

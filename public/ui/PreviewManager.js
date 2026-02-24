@@ -1,4 +1,5 @@
 export class PreviewManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor(app) {
         this.app = app;
         this.currentPreview = {
@@ -14,6 +15,7 @@ export class PreviewManager {
         this.previewAbort = null;
     }
 
+    // Cleans up uploader for the browser UI layer.
     cleanUploader(uploader = '') {
         let s = String(uploader).trim().replace(/\s+/g, ' ');
 
@@ -21,22 +23,93 @@ export class PreviewManager {
         s = s.replace(/\s*-\s*(official)(?:\s+(channel))?\s*$/i, '');
         s = s.replace(/\s+(official|topic)\s*$/i, '');
         s = s.replace(/\s*\((official)\)\s*$/i, '');
+        s = s.replace(/\s+(?:and|&)\s+/gi, ', ');
+        s = s.replace(/\s*,\s*/g, ', ');
 
         return s.trim();
     }
 
+    // Normalizes artist tokens for the browser UI layer.
+    normalizeArtistTokens(value = '') {
+        return String(value || '')
+            .toLowerCase()
+            .replace(/[&+]/g, ' and ')
+            .replace(/[,/]/g, ' ')
+            .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+            .split(/\s+/)
+            .map(t => t.trim())
+            .filter(Boolean)
+            .filter(t => t !== 'and');
+    }
+
+    // Handles looks like artist in the browser UI layer.
+    looksLikeArtist(candidate = '', uploader = '') {
+        const a = this.normalizeArtistTokens(candidate);
+        const b = this.normalizeArtistTokens(uploader);
+        if (!a.length || !b.length) return false;
+
+        const aSet = new Set(a);
+        const bSet = new Set(b);
+        let overlap = 0;
+        aSet.forEach(t => { if (bSet.has(t)) overlap += 1; });
+        return overlap >= Math.max(1, Math.ceil(Math.min(aSet.size, bSet.size) * 0.6));
+    }
+
+    // Parses title artist pair for the browser UI layer.
+    parseTitleArtistPair(title = '') {
+        const raw = String(title || '').trim();
+        if (!raw) return null;
+        const m = raw.match(/^(.+?)\s*[-–—]\s+(.+)$/);
+        if (!m) return null;
+
+        const artist = (m[1] || '').trim();
+        const track = (m[2] || '').trim();
+        if (!artist || !track) return null;
+
+        return { artist, track };
+    }
+
+    // Returns artist display used for the browser UI layer.
     getArtistDisplay(item) {
         const title = (item?.title || '').toString().trim();
-        const m = title.match(/^(.+?)\s*[-–—]\s+.+$/);
-
-        if (m && m[1]) {
-            const left = m[1].trim();
-            if (left && !left.startsWith('-')) return left;
+        const pair = this.parseTitleArtistPair(title);
+        if (pair?.artist && !pair.artist.startsWith('-')) {
+            return pair.artist;
         }
 
         return this.cleanUploader(item?.uploader || '');
     }
 
+    // Selects track title for the browser UI layer.
+    pickTrackTitle(item) {
+        const rawTitle = (item?.title || '').toString().trim();
+        if (!rawTitle) return '';
+
+        const pair = this.parseTitleArtistPair(rawTitle);
+        if (pair?.track) return pair.track;
+
+        const uploader = this.cleanUploader(item?.uploader || '');
+        const parts = rawTitle
+            .split(/\s*(?:[-–—|｜·•])\s*/g)
+            .map(p => p.trim())
+            .filter(Boolean);
+
+        if (parts.length < 2) return rawTitle;
+
+        const uploaderIdx = parts.findIndex(p => this.looksLikeArtist(p, uploader));
+        if (uploaderIdx >= 0) {
+            const candidates = parts.filter((_, i) => i !== uploaderIdx);
+            if (!candidates.length) return rawTitle;
+            return candidates.sort((a, b) => b.length - a.length)[0];
+        }
+
+        if (this.looksLikeArtist(parts[0], uploader)) return parts[parts.length - 1];
+        if (this.looksLikeArtist(parts[parts.length - 1], uploader)) return parts[0];
+
+        return parts[0];
+    }
+
+    // Handles clean title for UI state in the browser UI layer.
     cleanTitleForUI(title = '') {
         let s = String(title || '').trim();
         s = s.replace(/\s*_\s*/g, ' • ');
@@ -68,6 +141,7 @@ export class PreviewManager {
         return s;
     }
 
+    // Handles handle preview click in the browser UI layer.
     async handlePreviewClick() {
         const url = document.getElementById('urlInput').value.trim();
         if (this.app.isSpotifyUrl(url)) {
@@ -77,6 +151,7 @@ export class PreviewManager {
         }
     }
 
+    // Handles preview playlist data in the browser UI layer.
     async previewPlaylist() {
         const url = document.getElementById('urlInput').value.trim();
         const isPlaylist = document.getElementById('playlistCheckbox').checked;
@@ -90,6 +165,13 @@ export class PreviewManager {
 
         this.currentPreview.isSpotify = false;
         this.currentPreview.streaming = false;
+        this.currentPreview.selected = new Set();
+        this.currentPreview.items = [];
+        this.currentPreview.indexToId.clear();
+        this.currentPreview.indexToTitle.clear();
+        this.currentPreview.indexToUploader.clear();
+        this.currentPreview.indexToDuration.clear();
+        this.currentPreview.indexToWebpageUrl.clear();
 
         if (this.app.isSpotifyUrl(url)) {
             try {
@@ -165,12 +247,18 @@ export class PreviewManager {
         }
     }
 
+    // Streams preview by paging in the browser UI layer.
     async streamPreviewByPaging(url, batchSize) {
         this.currentPreview.url = url;
         this.currentPreview.isSpotify = true;
         this.currentPreview.streaming = true;
         this.currentPreview.selected = new Set();
         this.currentPreview.items = [];
+        this.currentPreview.indexToId.clear();
+        this.currentPreview.indexToTitle.clear();
+        this.currentPreview.indexToUploader.clear();
+        this.currentPreview.indexToDuration.clear();
+        this.currentPreview.indexToWebpageUrl.clear();
         this.currentPreview.page = 1;
         this.currentPreview.pageSize = batchSize;
         this.showPreview();
@@ -214,36 +302,31 @@ export class PreviewManager {
         this.updateStreamLog(null, true);
     }
 
+    // Handles append preview items in the browser UI layer.
     appendPreviewItems(items) {
         const listEl = document.getElementById('previewList');
         for (const item of items) {
             this.currentPreview.items.push(item);
             if (item && Number.isFinite(item.index)) {
-                if (item.id) {
-                    this.currentPreview.indexToId.set(item.index, item.id);
-                }
-                if (item.title) {
-                    this.currentPreview.indexToTitle.set(item.index, item.title);
-                }
-                if (item.uploader) {
-                    this.currentPreview.indexToUploader.set(item.index, item.uploader);
-                }
-                if (Number.isFinite(item.duration)) {
-                    this.currentPreview.indexToDuration.set(item.index, item.duration);
-                }
-                if (item.webpage_url) {
-                    this.currentPreview.indexToWebpageUrl.set(item.index, item.webpage_url);
-                }
+                this.currentPreview.indexToId.set(item.index, item.id || null);
+                this.currentPreview.indexToTitle.set(item.index, this.pickTrackTitle(item) || '');
+                this.currentPreview.indexToUploader.set(item.index, this.getArtistDisplay(item) || '');
+                this.currentPreview.indexToDuration.set(
+                    item.index,
+                    Number.isFinite(item.duration) ? item.duration : null
+                );
+                this.currentPreview.indexToWebpageUrl.set(item.index, item.webpage_url || '');
             }
 
             const artistName = this.getArtistDisplay(item);
+            const titleForRow = this.cleanTitleForUI(item.title || item.id || item.webpage_url || '');
 
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
                 <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
                 <div>
-                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(this.cleanTitleForUI(item.title || ''))}</div>
+                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(titleForRow)}</div>
                     <div class="muted">${this.app.escapeHtml(artistName)}</div>
                 </div>
                 <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
@@ -262,6 +345,7 @@ export class PreviewManager {
         }
     }
 
+    // Updates stream payload log for the browser UI layer.
     updateStreamLog(lastItem, done = false) {
         const el = document.getElementById('plStreamLog');
         if (!el) return;
@@ -280,6 +364,7 @@ export class PreviewManager {
         }
     }
 
+    // Loads page for the browser UI layer.
     async loadPage(p, force = false) {
         if (!this.currentPreview.url) return;
         if (this.currentPreview.isSpotify && this.currentPreview.streaming) {
@@ -330,6 +415,7 @@ export class PreviewManager {
         }
     }
 
+    // Renders preview in the browser UI layer.
     renderPreview() {
         const listEl = document.getElementById('previewList');
         const titleEl = document.getElementById('plTitle');
@@ -351,31 +437,25 @@ export class PreviewManager {
 
         this.currentPreview.items.forEach((item) => {
             if (item && Number.isFinite(item.index)) {
-            if (item.id) {
-                this.currentPreview.indexToId.set(item.index, item.id);
+                this.currentPreview.indexToId.set(item.index, item.id || null);
+                this.currentPreview.indexToTitle.set(item.index, this.pickTrackTitle(item) || '');
+                this.currentPreview.indexToUploader.set(item.index, this.getArtistDisplay(item) || '');
+                this.currentPreview.indexToDuration.set(
+                    item.index,
+                    Number.isFinite(item.duration) ? item.duration : null
+                );
+                this.currentPreview.indexToWebpageUrl.set(item.index, item.webpage_url || '');
             }
-            if (item.title) {
-                this.currentPreview.indexToTitle.set(item.index, item.title);
-            }
-            if (item.uploader) {
-                this.currentPreview.indexToUploader.set(item.index, item.uploader);
-            }
-            if (Number.isFinite(item.duration)) {
-                this.currentPreview.indexToDuration.set(item.index, item.duration);
-            }
-            if (item.webpage_url) {
-                this.currentPreview.indexToWebpageUrl.set(item.index, item.webpage_url);
-            }
-        }
 
             const artistName = this.getArtistDisplay(item);
+            const titleForRow = this.cleanTitleForUI(item.title || item.id || item.webpage_url || '');
 
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
                 <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
                 <div>
-                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(this.cleanTitleForUI(item.title || ''))}</div>
+                    <div class="preview-title">${item.index}. ${this.app.escapeHtml(titleForRow)}</div>
                     <div class="muted">${this.app.escapeHtml(artistName)}</div>
                 </div>
                 <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
@@ -399,6 +479,7 @@ export class PreviewManager {
         this.updateSelectAllState();
     }
 
+    // Updates select all state for the browser UI layer.
     updateSelectAllState() {
         const listEl = document.getElementById('previewList');
         const chks = [...listEl.querySelectorAll('input[type="checkbox"]')];
@@ -425,6 +506,7 @@ export class PreviewManager {
         document.getElementById('plSelected').textContent = this.currentPreview.selected.size;
     }
 
+    // Handles toggle select all in the browser UI layer.
     toggleSelectAll(flag) {
         const listEl = document.getElementById('previewList');
         const chks = listEl.querySelectorAll('input[type="checkbox"]');
@@ -437,6 +519,7 @@ export class PreviewManager {
         this.updateSelectAllState();
     }
 
+    // Converts selected for the browser UI layer.
     async convertSelected() {
         if (!this.currentPreview.url) {
             this.app.showNotification(this.app.t('notif.previewFirst'), 'error', 'error');
@@ -462,6 +545,7 @@ export class PreviewManager {
             const sampleRate = document.getElementById('sampleRateSelect').value;
             const sequential = document.getElementById('sequentialChk')?.checked;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+            const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
             const volumeGain = this.app.currentVolumeGain || 1.0;
             const compressionLevel =
             format === 'flac'
@@ -471,9 +555,9 @@ export class PreviewManager {
             const ytConcEl = document.getElementById('youtubeConcurrencyInput');
             const youtubeConcurrency = ytConcEl ? Number(ytConcEl.value) || 4 : 4;
 
-            const selectedIds = selected
-            .map(i => this.currentPreview.indexToId.get(i))
-            .filter(Boolean);
+            const selectedIdRaw = selected.map(i => this.currentPreview.indexToId.get(i) || null);
+            const selectedIdsComplete = selectedIdRaw.every(Boolean);
+            const selectedIds = selectedIdsComplete ? selectedIdRaw : null;
 
             const frozenEntries = selected.map(idx => ({
                 index: idx,
@@ -505,6 +589,7 @@ export class PreviewManager {
                         sampleRate,
                         clientBatch: batchId,
                         includeLyrics,
+                        embedLyrics,
                         autoCreateZip: this.app.autoCreateZip,
                         volumeGain,
                         youtubeConcurrency,
@@ -516,11 +601,12 @@ export class PreviewManager {
                     url: this.currentPreview.url,
                     isPlaylist: true,
                     selectedIndices: selected,
-                    selectedIds: selectedIds.length ? selectedIds : null,
+                    selectedIds,
                     format,
                     bitrate,
                     sampleRate,
                     includeLyrics,
+                    embedLyrics,
                     autoCreateZip: this.app.autoCreateZip,
                     volumeGain,
                     youtubeConcurrency,
@@ -540,6 +626,7 @@ export class PreviewManager {
         }
     }
 
+    // Converts all for the browser UI layer.
     async convertAll() {
         if (!this.currentPreview.url) {
             this.app.showNotification(this.app.t('notif.previewFirst'), 'error', 'error');
@@ -558,16 +645,19 @@ export class PreviewManager {
             const bitrate = document.getElementById('bitrateSelect').value;
             const sampleRate = document.getElementById('sampleRateSelect').value;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+            const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
             const volumeGain = this.app.currentVolumeGain || 1.0;
             const ytConcEl = document.getElementById('youtubeConcurrencyInput');
             const youtubeConcurrency = ytConcEl ? Number(ytConcEl.value) || 4 : 4;
-            const allIds = this.currentPreview.items.map(item => item.id).filter(Boolean);
+            const allIdsRaw = this.currentPreview.items.map(item => item.id || null);
+            const allIdsComplete = allIdsRaw.length > 0 && allIdsRaw.every(Boolean);
+            const allIds = allIdsComplete ? allIdsRaw : null;
 
             const frozenEntries = this.currentPreview.items.map(item => ({
                 index: item.index,
                 id: item.id || null,
-                title: item.title || '',
-                uploader: item.uploader || '',
+                title: this.pickTrackTitle(item),
+                uploader: this.cleanUploader(item.uploader || ''),
                 duration: item.duration || null,
                 webpage_url: item.webpage_url || ''
             }));
@@ -581,6 +671,7 @@ export class PreviewManager {
                 bitrate,
                 sampleRate,
                 includeLyrics,
+                embedLyrics,
                 autoCreateZip: this.app.autoCreateZip,
                 volumeGain,
                 youtubeConcurrency,
@@ -599,11 +690,13 @@ export class PreviewManager {
         }
     }
 
+    // Shows preview in the browser UI layer.
     showPreview() {
         document.getElementById('spotifyPreviewCard').style.display = 'none';
         document.getElementById('playlistPreviewCard').style.display = 'block';
     }
 
+    // Hides preview in the browser UI layer.
     hidePreview() {
         document.getElementById('playlistPreviewCard').style.display = 'none';
         const spotifyCard = document.getElementById('spotifyPreviewCard');

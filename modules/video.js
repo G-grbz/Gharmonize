@@ -13,6 +13,7 @@ import "dotenv/config";
 import { spawn as spawnChild } from "child_process";
 import { jobs, registerJobProcess } from "./store.js";
 
+// Handles safe rm in core application logic.
 function safeRm(pathLike) {
   try {
     if (!pathLike || !fs.existsSync(pathLike)) return;
@@ -25,6 +26,7 @@ function safeRm(pathLike) {
   } catch {}
 }
 
+// Cleans up temp for job state for core application logic.
 function cleanupTempForJob(TEMP_DIR, jobId) {
   const playlistDir = path.join(TEMP_DIR, jobId);
   safeRm(playlistDir);
@@ -39,6 +41,7 @@ function cleanupTempForJob(TEMP_DIR, jobId) {
   } catch {}
 }
 
+// Handles safe move sync in core application logic.
 function safeMoveSync(src, dest) {
   try {
     fs.renameSync(src, dest);
@@ -63,11 +66,13 @@ function safeMoveSync(src, dest) {
   }
 }
 
+// Handles strip leading prefix in core application logic.
 function stripLeadingPrefix(basename, jobId) {
   const noJob = basename.replace(new RegExp(`^${jobId}\\s*-\\s*`), "");
   return noJob.replace(/^(\d+)\s*-\s*/, "");
 }
 
+// Handles media probe data video height in core application logic.
 async function probeVideoHeight(inputPath) {
   return await new Promise((resolve) => {
     try {
@@ -100,6 +105,7 @@ async function probeVideoHeight(inputPath) {
   });
 }
 
+// Handles unique out path in core application logic.
 function uniqueOutPath(dir, base, ext) {
   let name = `${base}${ext}`;
   let out = path.join(dir, name);
@@ -111,6 +117,7 @@ function uniqueOutPath(dir, base, ext) {
   return out;
 }
 
+// Handles quality to height in core application logic.
 export function qualityToHeight(q) {
   const v = String(q || "").toLowerCase();
   if (v.includes("2160") || v.includes("4k")) return 2160;
@@ -122,6 +129,7 @@ export function qualityToHeight(q) {
   return 1080;
 }
 
+// Processes you tube video job state in core application logic.
 export async function processYouTubeVideoJob(job, {
   OUTPUT_DIR = path.resolve(process.cwd(), "outputs"),
   TEMP_DIR   = path.resolve(process.cwd(), "temp"),
@@ -188,6 +196,7 @@ export async function processYouTubeVideoJob(job, {
     }
   }
 
+  // Handles on progress in core application logic.
   const onProgress = (p) => {
     if (p && typeof p === "object" && p.__event) {
       if ((isPl || isAutomix) && p.type === "file-done" && job.counters) {
@@ -587,6 +596,7 @@ export async function processYouTubeVideoJob(job, {
   }
 }
 
+// Processes Spotify metadata video job state in core application logic.
 async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings }) {
   console.log(`🎬 Starting Spotify video processing: ${job.metadata.spotifyTitle}`);
 
@@ -608,6 +618,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
   };
   job.lastLog = `🎬 Starting Spotify video processing: ${job.metadata.spotifyTitle} (${selectedIds.length} tracks)`;
 
+  // Handles on progress in core application logic.
   const onProgress = (p) => {
     if (p && typeof p === "object" && p.__event) {
       if (p.type === "file-done" && job.counters) {
@@ -930,11 +941,13 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
   cleanupTempForJob(TEMP_DIR, job.id);
 }
 
+// Checks whether video format is valid for core application logic.
 export function isVideoFormat(format) {
   const f = String(format || "").toLowerCase();
   return f === "mp4" || f === "mkv";
 }
 
+// Processes Spotify metadata video in core application logic.
 export async function processSpotifyVideo(job, options = {}) {
   return processSpotifyVideoJob(job, options);
 }

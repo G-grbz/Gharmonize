@@ -9,16 +9,19 @@ const execAsync = promisify(_exec);
 let currentScanProcess = null;
 let scanCancelled = false;
 
+// Sends scan progress log payload in disc scanning and ripping.
 function sendScanLogPayload(payload) {
   if (typeof global.discScanLog === "function") {
     global.discScanLog(payload);
   }
 }
 
+// Sends scan progress log in disc scanning and ripping.
 function sendScanLog(message) {
   sendScanLogPayload(message);
 }
 
+// Sends scan progress log key in disc scanning and ripping.
 function sendScanLogKey(key, vars = {}) {
   sendScanLogPayload({
     __i18n: true,
@@ -27,6 +30,7 @@ function sendScanLogKey(key, vars = {}) {
   });
 }
 
+// Handles t in disc scanning and ripping.
 function t(key, vars = {}) {
   let str = key;
   for (const [k, v] of Object.entries(vars)) {
@@ -35,6 +39,7 @@ function t(key, vars = {}) {
   return str;
 }
 
+// Reads blu ray meta for disc scanning and ripping.
 async function readBluRayMeta(rawPath) {
   try {
     let discRoot = rawPath;
@@ -119,6 +124,7 @@ async function readBluRayMeta(rawPath) {
   }
 }
 
+// Cancels scan progress in disc scanning and ripping.
 function cancelScan() {
   scanCancelled = true;
   if (currentScanProcess) {
@@ -132,6 +138,7 @@ function cancelScan() {
   }
 }
 
+// Handles scan progress disc metadata in disc scanning and ripping.
 async function scanDisc(sourcePath) {
   scanCancelled = false;
 
@@ -156,6 +163,7 @@ async function scanDisc(sourcePath) {
   }
 }
 
+// Handles detect disc metadata type in disc scanning and ripping.
 async function detectDiscType(sourcePath) {
   try {
     const stats = await fs.stat(sourcePath);
@@ -214,6 +222,7 @@ async function detectDiscType(sourcePath) {
   throw new Error(t("disc.error.noValidStructure"));
 }
 
+// Handles scan progress dvd in disc scanning and ripping.
 async function scanDVD(sourcePath) {
   try {
     let videoTsPath = path.join(sourcePath, "VIDEO_TS");
@@ -247,6 +256,7 @@ async function scanDVD(sourcePath) {
   }
 }
 
+// Handles scan progress blu ray in disc scanning and ripping.
 async function scanBluRay(sourcePath) {
   try {
     const bdmvPath = path.join(sourcePath, "BDMV");
@@ -394,6 +404,7 @@ async function scanBluRay(sourcePath) {
   }
 }
 
+// Handles analyze blu ray playlist data in disc scanning and ripping.
 async function analyzeBluRayPlaylist(playlistPath) {
   const playlistFileName = path.basename(playlistPath);
   const playlistNumber = parseInt(playlistFileName.replace(".mpls", ""), 10);
@@ -526,12 +537,14 @@ async function analyzeBluRayPlaylist(playlistPath) {
   }
 }
 
+// Handles analyze with mkvmerge in disc scanning and ripping.
 async function analyzeWithMkvmerge(playlistPath) {
   try {
     sendScanLogKey("disc.log.analyzingVobTracks", {
       file: path.basename(playlistPath)
     });
 
+    // Parses mkvmerge info for disc scanning and ripping.
     const parseMkvmergeInfo = (trackInfo) => {
       const duration =
         trackInfo.container &&
@@ -601,6 +614,7 @@ async function analyzeWithMkvmerge(playlistPath) {
   }
 }
 
+// Handles scan progress dvdmanual in disc scanning and ripping.
 async function scanDVDManual(sourcePath) {
   try {
     const videoTsPath =
@@ -833,6 +847,7 @@ async function scanDVDManual(sourcePath) {
   }
 }
 
+// Runs scan progress command for disc scanning and ripping.
 function runScanCommand(cmd) {
   return new Promise((resolve, reject) => {
     if (scanCancelled) {

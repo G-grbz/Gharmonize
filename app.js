@@ -84,6 +84,7 @@ if (!rawCookiesEnv) {
   console.log('🍪 Cookie file exists?:', fs.existsSync(process.env.YTDLP_COOKIES));
 }
 
+// Handles check dependencies in application bootstrap and route wiring.
 function checkDependencies() {
   return new Promise((resolve) => {
     const results = { ytDlp: false, ffmpeg: false, deno: false }
@@ -120,6 +121,7 @@ function checkDependencies() {
   })
 }
 
+// Runs startup diagnostics for application bootstrap and route wiring.
 async function runStartupDiagnostics() {
   console.log('\n🔎 Startup Diagnostics')
   console.log('────────────────────────────────────────────────')
@@ -147,6 +149,7 @@ async function runStartupDiagnostics() {
     deno: DENO_BIN || 'deno'
   }
 
+  // Handles check bin in application bootstrap and route wiring.
   const checkBin = async (name, bin, args = '--version') => {
     const { err, stdout, stderr } = await execPromise(`"${bin}" ${args}`)
     if (err) {

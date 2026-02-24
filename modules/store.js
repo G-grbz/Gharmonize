@@ -8,6 +8,7 @@ const GC_INTERVAL_MS = 60 * 60 * 1000;
 const JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const procByJob = new Map();
 
+// Creates job state for core application logic.
 export function createJob(initial = {}) {
   const id = uniqueId("job");
   const job = {
@@ -30,18 +31,22 @@ export function createJob(initial = {}) {
   return job;
 }
 
+// Returns job state used for core application logic.
 export function getJob(id) { return jobs.get(id); }
 
+// Handles register job state process in core application logic.
 export function registerJobProcess(jobId, child) {
   if (!jobId || !child) return;
   let set = procByJob.get(jobId);
   if (!set) { set = new Set(); procByJob.set(jobId, set); }
   set.add(child);
+  // Cleans up cleanup for core application logic.
   const cleanup = () => { try { set.delete(child); } catch {} };
   child.on?.('exit', cleanup);
   child.on?.('close', cleanup);
 }
 
+// Handles kill job state processes in core application logic.
 export function killJobProcesses(jobId) {
   const set = procByJob.get(jobId);
   if (!set || set.size === 0) return 0;

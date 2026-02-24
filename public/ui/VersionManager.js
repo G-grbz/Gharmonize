@@ -1,5 +1,7 @@
 export class VersionManager {
+    // Initializes class state and defaults for the browser UI layer.
     constructor() {
+        // Reads cached browser values before initializing live state.
         const cached = (() => {
             try {
                 return localStorage.getItem('gharmonize_current_version');
@@ -20,6 +22,7 @@ export class VersionManager {
         this.isManualCheck = false;
     }
 
+    // Initializes startup state for the browser UI layer.
     async initialize() {
     try {
         const response = await fetch('/api/version');
@@ -43,6 +46,7 @@ export class VersionManager {
     }
 }
 
+    // Determines whether check should run for the browser UI layer.
     shouldCheck() {
         if (this.isManualCheck) return true;
 
@@ -53,6 +57,7 @@ export class VersionManager {
         return Date.now() - lastCheckTime > this.checkInterval;
     }
 
+    // Handles check for updates in the browser UI layer.
     async checkForUpdates() {
     if (this.isChecking) return;
     this.isChecking = true;
@@ -102,6 +107,7 @@ export class VersionManager {
 }
 
 
+    // Checks whether newer version metadata is valid for the browser UI layer.
     isNewerVersion(latest, current) {
         if (!latest) return false;
 
@@ -117,6 +123,7 @@ export class VersionManager {
         return false;
     }
 
+    // Sends new version metadata notifications in the browser UI layer.
     async notifyNewVersion(latestVersion, releaseData) {
         const updateShown = localStorage.getItem(this.updateShownKey + latestVersion);
         const releaseNotes = releaseData.body || '';
@@ -134,6 +141,7 @@ export class VersionManager {
         }
     }
 
+    // Shows job state panel notification in the browser UI layer.
     showJobsPanelNotification(latestVersion, releaseUrl) {
         if (window.jobsPanelManager) {
             const jobsPanelManager = window.jobsPanelManager;
@@ -146,6 +154,7 @@ export class VersionManager {
         }
     }
 
+    // Shows main notification in the browser UI layer.
     async showMainNotification(latestVersion, releaseNotes, releaseUrl) {
         if (!window.modalManager) {
             const msg = `${this.t('version.newVersionAvailable')}: v${latestVersion}`;
@@ -194,11 +203,13 @@ export class VersionManager {
         });
     }
 
+    // Handles check now in the browser UI layer.
     async checkNow() {
         this.isManualCheck = true;
         await this.checkForUpdates();
     }
 
+    // Shows up to date notification in the browser UI layer.
     showUpToDateNotification() {
         if (window.modalManager) {
             const html = `
@@ -220,6 +231,7 @@ export class VersionManager {
         }
     }
 
+    // Shows error notification in the browser UI layer.
     showErrorNotification(error) {
         if (window.modalManager) {
             const html = `
@@ -246,6 +258,7 @@ export class VersionManager {
         }
     }
 
+    // Shows simple notification in the browser UI layer.
     showSimpleNotification(message, type = 'info') {
         console.log(`[${type.toUpperCase()}] ${message}`);
 
@@ -283,6 +296,7 @@ export class VersionManager {
         }, 3000);
     }
 
+    // Formats release notes for the browser UI layer.
     formatReleaseNotes(notes) {
         const text = notes || '';
         if (window.marked && typeof window.marked.parse === 'function') {
@@ -298,6 +312,7 @@ export class VersionManager {
             .replace(/\n/g, '<br>');
     }
 
+    // Handles dismiss update in the browser UI layer.
     dismissUpdate() {
         if (window.jobsPanelManager) {
             window.jobsPanelManager.state.hasUpdate = false;
@@ -306,12 +321,14 @@ export class VersionManager {
         }
     }
 
+    // Handles view release in the browser UI layer.
     viewRelease() {
         if (window.jobsPanelManager?.state?.releaseUrl) {
             window.open(window.jobsPanelManager.state.releaseUrl, '_blank');
         }
     }
 
+    // Handles escape html in the browser UI layer.
     escapeHtml(str) {
         if (str == null) return '';
         const escapeMap = {
@@ -327,6 +344,7 @@ export class VersionManager {
         return String(str).replace(/[&<>"'`=\/]/g, s => escapeMap[s] || s);
     }
 
+    // Handles t in the browser UI layer.
     t(key, vars) {
         return (window.i18n?.t?.(key, vars)) ?? key;
     }

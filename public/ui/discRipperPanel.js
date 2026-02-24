@@ -16,6 +16,7 @@ let currentProgress = {
 
 const API_BASE = '';
 
+// Handles t in the browser UI layer.
 function t(key, vars = {}) {
   if (window.i18n && typeof window.i18n.t === 'function') {
     return window.i18n.t(key, vars);
@@ -27,6 +28,7 @@ function t(key, vars = {}) {
   return str;
 }
 
+// Handles log disc metadata in the browser UI layer.
 function logDisc(message) {
   const el = document.getElementById('discLog');
   if (!el) return;
@@ -48,6 +50,7 @@ function logDisc(message) {
 }
 
 
+// Handles ensure disc metadata modal open in the browser UI layer.
 function ensureDiscModalOpen() {
   if (!window.modalManager) {
     return;
@@ -81,6 +84,7 @@ function ensureDiscModalOpen() {
     });
 }
 
+// Renders audio streams in the browser UI layer.
 function renderAudioStreams(title, listIndex) {
   const container = document.createElement('div');
   container.className = 'disc-stream-group collapsed';
@@ -193,6 +197,7 @@ function renderAudioStreams(title, listIndex) {
   return container;
 }
 
+// Renders subtitle streams in the browser UI layer.
 function renderSubtitleStreams(title, listIndex) {
   const container = document.createElement('div');
   container.className = 'disc-stream-group collapsed';
@@ -298,6 +303,7 @@ function renderSubtitleStreams(title, listIndex) {
   return container;
 }
 
+// Formats duration display for the browser UI layer.
 function formatDurationDisplay(raw) {
   if (raw == null) return '-';
 
@@ -315,6 +321,7 @@ function formatDurationDisplay(raw) {
   return String(raw);
 }
 
+// Formats duration from seconds for the browser UI layer.
 function formatDurationFromSeconds(sec) {
   if (!Number.isFinite(sec)) return '-';
   sec = Math.max(0, Math.round(sec));
@@ -329,6 +336,7 @@ function formatDurationFromSeconds(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+// Formats size gi b for the browser UI layer.
 function formatSizeGiB(bytes) {
   if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return null;
   const gib = bytes / (1024 * 1024 * 1024);
@@ -337,6 +345,7 @@ function formatSizeGiB(bytes) {
 }
 
 
+// Shows disc metadata modal in the browser UI layer.
 function showDiscModal(type, title, message, onConfirm = null, onCancel = null) {
   if (window.modalManager && (modalManager.showAlert || modalManager.showConfirm)) {
     if (type === 'confirm') {
@@ -390,6 +399,7 @@ function showDiscModal(type, title, message, onConfirm = null, onCancel = null) 
   }
 }
 
+// Initializes disc metadata progress stream payload for the browser UI layer.
 function initDiscProgressStream() {
   try {
     const es = new EventSource(`${API_BASE}/api/disc/stream`);
@@ -412,6 +422,7 @@ function initDiscProgressStream() {
   }
 }
 
+// Handles reset progress in the browser UI layer.
 function resetProgress() {
   currentProgress = {
     current: 0,
@@ -422,6 +433,7 @@ function resetProgress() {
   updateProgressUI(0, 0, t('disc.progress.ready') || 'Hazır');
 }
 
+// Handles start progress in the browser UI layer.
 function startProgress(total, firstTitleIndex = null) {
   currentProgress = {
     current: 0,
@@ -432,6 +444,7 @@ function startProgress(total, firstTitleIndex = null) {
   updateProgressUI(0, total, t('disc.progress.starting') || 'Başlatılıyor...');
 }
 
+// Updates progress UI state for the browser UI layer.
 function updateProgressUI(percent, total, text = '') {
   const fill = document.getElementById('discProgressFill');
   const overlay = document.getElementById('discProgressOverlay');
@@ -463,6 +476,7 @@ function updateProgressUI(percent, total, text = '') {
   }
 }
 
+// Handles handle progress update in the browser UI layer.
 function handleProgressUpdate(data) {
   if (!data || typeof data !== 'object') return;
 
@@ -540,6 +554,7 @@ function handleProgressUpdate(data) {
 }
 
 
+// Handles scan progress disc metadata in the browser UI layer.
 async function scanDisc() {
   const input = document.getElementById('discSourcePath');
   if (!input) return;
@@ -620,6 +635,7 @@ async function scanDisc() {
   }
 }
 
+// Cancels scan progress in the browser UI layer.
 async function cancelScan() {
   if (!isScanning) return;
   try {
@@ -630,6 +646,7 @@ async function cancelScan() {
   }
 }
 
+// Builds title stats line for the browser UI layer.
 function buildTitleStatsLine(title, listIndex) {
   const realIndex = title.index ?? (listIndex + 1);
   const duration = formatDurationDisplay(title.duration);
@@ -657,6 +674,7 @@ function buildTitleStatsLine(title, listIndex) {
   return statsPieces.join(' • ');
 }
 
+// Handles display titles in the browser UI layer.
 function displayTitles(titles) {
   const listEl = document.getElementById('discTitlesList');
   const sectionEl = document.getElementById('discTitlesSection');
@@ -740,6 +758,7 @@ function displayTitles(titles) {
 }
 
 
+// Handles on title select change in the browser UI layer.
 function onTitleSelectChange(listIndex, isChecked, title) {
   if (!currentDiscInfo || !currentDiscInfo.titles) return;
 
@@ -773,12 +792,14 @@ function onTitleSelectChange(listIndex, isChecked, title) {
   updateRipButtonState();
 }
 
+// Updates rip progress button state for the browser UI layer.
 function updateRipButtonState() {
   const btn = document.getElementById('discRipBtn');
   if (!btn) return;
   btn.disabled = selectedTitleIndexes.size === 0 || !currentDiscInfo;
 }
 
+// Cancels rip progress in the browser UI layer.
 async function cancelRip() {
   if (!isRipping) return;
 
@@ -802,6 +823,7 @@ async function cancelRip() {
   );
 }
 
+// Handles perform rip progress cancel in the browser UI layer.
 async function performRipCancel() {
   if (!isRipping) return;
 
@@ -821,6 +843,7 @@ async function performRipCancel() {
   }
 }
 
+// Handles rip progress selected in the browser UI layer.
 async function ripSelected() {
   if (!currentDiscInfo || !Array.isArray(currentDiscInfo.titles)) {
     showDiscModal(
@@ -865,6 +888,7 @@ async function ripSelected() {
   );
 }
 
+// Handles start rip progress process in the browser UI layer.
 async function startRipProcess(titlesToRip) {
   if (!currentDiscInfo) return;
 
@@ -1000,6 +1024,7 @@ async function startRipProcess(titlesToRip) {
   if (cancelBtn2) cancelBtn2.style.display = 'none';
 }
 
+// Initializes disc metadata ripper panel for the browser UI layer.
 export function initDiscRipperPanel() {
   const sourceInput = document.getElementById('discSourcePath');
   const scanBtn = document.getElementById('discScanBtn');

@@ -26,8 +26,10 @@ console.log("[spotify] BASE_DIR   =", BASE_DIR);
 console.log("[spotify] OUTPUT_DIR =", OUTPUT_DIR);
 console.log("[spotify] TEMP_DIR   =", TEMP_DIR);
 
+// Handles make map id in Spotify mapping and metadata flow.
 function makeMapId() { return uniqueId("map"); }
 
+// Resolves cover for retag for Spotify mapping and metadata flow.
 async function resolveCoverForRetag({
   absOutputPath,
   preferUrl,
@@ -55,17 +57,20 @@ async function resolveCoverForRetag({
   return null;
 }
 
+// Handles make bg access token in Spotify mapping and metadata flow.
 function makeBgToken() {
   try { return crypto.randomBytes(8).toString("hex"); }
   catch { return String(Date.now()); }
 }
 
+// Parses concurrency for Spotify mapping and metadata flow.
 function parseConcurrency(v, fallback = 4) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(16, Math.max(1, Math.round(n)));
 }
 
+// Handles lite track to item in Spotify mapping and metadata flow.
 function _liteTrackToItem(t) {
   if (!t) return null;
   const artist = (t.artists || []).map(a => a?.name).filter(Boolean).join(", ");
@@ -96,6 +101,7 @@ function _liteTrackToItem(t) {
   };
 }
 
+// Resolves Spotify metadata URL lite for Spotify mapping and metadata flow.
 async function resolveSpotifyUrlLite(url, { market } = {}) {
   const { type, id } = parseSpotifyUrl(url);
   if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
@@ -187,6 +193,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
       sampleRate = "48000",
       market: marketIn,
       includeLyrics,
+      embedLyrics,
       volumeGain,
       compressionLevel,
       bitDepth,
@@ -194,6 +201,10 @@ router.post("/api/spotify/process/start", async (req, res) => {
       spotifyConcurrency,
       autoCreateZip
     } = req.body || {};
+    const includeLyricsFlag =
+      includeLyrics === true || includeLyrics === "true" || includeLyrics === "1";
+    const embedLyricsFlag =
+      embedLyrics === true || embedLyrics === "true" || embedLyrics === "1";
 
    const autoCreateZipFlag =
      autoCreateZip === undefined
@@ -233,7 +244,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
       isPlaylist: true,
       isAlbum: false,
       isAutomix: false,
-      includeLyrics: (includeLyrics === true || includeLyrics === "true"),
+      includeLyrics: includeLyricsFlag,
+      embedLyrics: embedLyricsFlag,
       volumeGain: volumeGainNum,
       compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
       bitDepth: bitDepth || null,
@@ -312,11 +324,13 @@ router.post("/api/spotify/process/start", async (req, res) => {
     }
 });
 
+// Creates limiter for Spotify mapping and metadata flow.
 function createLimiter(max) {
   let active = 0;
   const queue = [];
 
   const run = (fn) => new Promise((resolve, reject) => {
+    // Handles task in Spotify mapping and metadata flow.
     const task = () => {
       active++;
       Promise.resolve()
@@ -341,6 +355,7 @@ function createLimiter(max) {
   return run;
 }
 
+// Processes Spotify metadata integrated in Spotify mapping and metadata flow.
 async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } = {}) {
   const job = jobs.get(jobId);
   if (!job) return;
@@ -372,6 +387,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     job.playlist.downloadTotal = 0;
     job.playlist.convertTotal = 0;
 
+    // Determines whether cancel should run for Spotify mapping and metadata flow.
     const shouldCancel = () => {
     const j = jobs.get(jobId);
     return !!(j && (j.canceled || j.status === "canceled"));
@@ -471,6 +487,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       } catch {}
     })();
 
+    // Converts downloaded item for Spotify mapping and metadata flow.
     const convertDownloadedItem = async (dlResult, idxZeroBased) => {
       if (shouldCancel()) {
         console.log(`[Spotify ${jobId}] convertDownloadedItem → canceled before start, skipping`);
@@ -587,6 +604,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           {
             onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
             includeLyrics: !!job.metadata.includeLyrics,
+            embedLyrics: !!job.metadata.embedLyrics,
             sampleRate: job.sampleRate || 48000,
             volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
             compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
@@ -881,6 +899,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
   }
 }
 
+// Processes single track in Spotify mapping and metadata flow.
 async function processSingleTrack(jobId, sp, format, bitrate) {
   const job = jobs.get(jobId);
   if (!job) return;
@@ -893,6 +912,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     job.lastLog = `🔍 Searching: ${sp.items[0]?.artist} - ${sp.items[0]?.title}`;
 
     let matchedItem = null;
+    // Determines whether cancel should run for Spotify mapping and metadata flow.
     const shouldCancel = () => {
       const j = jobs.get(jobId);
       return !!(j && (j.canceled || j.status === "canceled"));
@@ -1049,6 +1069,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       {
         onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
         includeLyrics: !!job.metadata.includeLyrics,
+        embedLyrics: !!job.metadata.embedLyrics,
         sampleRate: job.sampleRate || 48000,
         volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
         compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
@@ -1097,6 +1118,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
   }
 }
 
+// Handles make zip from outputs in Spotify mapping and metadata flow.
 async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includeLyrics = false) {
   const outDir = OUTPUT_DIR;
   fs.mkdirSync(outDir, { recursive: true });
@@ -1136,6 +1158,7 @@ async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includ
   });
 }
 
+// Cleans up Spotify metadata temp files for Spotify mapping and metadata flow.
 function cleanupSpotifyTempFiles(jobId, files) {
   try {
     if (Array.isArray(files)) {

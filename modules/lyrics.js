@@ -1,14 +1,19 @@
 import fs from "fs";
 import path from "path";
+import { spawn } from "child_process";
 import { getCache, setCache } from "./cache.js";
+import { FFMPEG_BIN } from "./binaries.js";
+import { rewriteId3v11Tag } from "./id3.js";
 
 const LYRICS_CACHE_TTL = 24 * 60 * 60 * 1000;
 
+// Handles emit log in core application logic.
 function emitLog(onLog, payload) {
   if (payload?.fallback) console.log(payload.fallback);
   if (onLog) onLog(payload);
 }
 
+// Normalizes artist name for core application logic.
 function normalizeArtistName(name = "") {
   if (!name) return "";
 
@@ -23,6 +28,7 @@ function normalizeArtistName(name = "") {
     .trim();
 }
 
+// Normalizes title for core application logic.
 function normalizeTitle(name = "") {
   if (!name) return "";
 
@@ -38,10 +44,12 @@ function normalizeTitle(name = "") {
 }
 
 export class LyricsFetcher {
+  // Initializes class state and defaults for core application logic.
   constructor() {
     this.baseURL = "https://lrclib.net/api";
   }
 
+  // Handles search lyrics metadata in core application logic.
   async searchLyrics(artist, title, duration = null, options = {}) {
     const { onLog = null } = options;
     const cacheKey = `lyrics_${artist}_${title}_${duration}`;
@@ -128,6 +136,7 @@ export class LyricsFetcher {
     }
   }
 
+  // Downloads lyrics metadata for core application logic.
   async downloadLyrics(artist, title, duration = null, outputPath, options = {}) {
     const { onLog = null } = options;
 
@@ -209,12 +218,14 @@ export class LyricsFetcher {
     }
   }
 
+  // Converts to lrc for core application logic.
   convertToLRC(plainLyrics) {
     const lines = plainLyrics.split("\n").filter((line) => line.trim());
     const lrcLines = lines.map((line) => `[00:00.00]${line.trim()}`);
     return lrcLines.join("\n");
   }
 
+  // Formats lrc time for core application logic.
   formatLrcTime(seconds) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -228,14 +239,145 @@ ${cents.toString().padStart(2, "0")}]`;
 
 export const lyricsFetcher = new LyricsFetcher();
 
-export async function attachLyricsToMedia(filePath, metadata, options = {}) {
-  const { includeLyrics = true, jobId = null, onLog = null, onLyricsStats = null } = options;
+// Handles strip lrc timestamps in core application logic.
+function stripLrcTimestamps(text = "") {
+  return String(text)
+    .split("\n")
+    .map((line) => line.replace(/\[[0-9]{1,2}:[0-9]{2}(?:\.[0-9]{1,3})?\]/g, "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
 
-  if (!includeLyrics) {
+// Checks whether embeddable audio format is valid for core application logic.
+function isEmbeddableAudioFormat(filePath) {
+  const ext = String(path.extname(filePath) || "").toLowerCase();
+  return [".mp3", ".m4a", ".mp4", ".flac", ".ogg", ".opus", ".wav", ".aac", ".alac"].includes(ext);
+}
+
+// Embeds lyrics in media into media.
+async function embedLyricsInMedia(filePath, lyricsContent, options = {}) {
+  const { onLog = null, metadata = null } = options;
+  const inputFile = path.basename(filePath);
+
+  if (!isEmbeddableAudioFormat(filePath)) {
+    emitLog(onLog, {
+      logKey: "log.lyrics.embeddingSkippedUnsupported",
+      logVars: { file: inputFile },
+      fallback: `⚠️ Lyrics embedding is not supported for this format: ${inputFile}`,
+    });
+    return false;
+  }
+
+  const cleaned = stripLrcTimestamps(lyricsContent);
+  const finalLyrics = (cleaned || lyricsContent || "").trim();
+  if (!finalLyrics) return false;
+
+  emitLog(onLog, {
+    logKey: "log.lyrics.embedding",
+    logVars: { file: inputFile },
+    fallback: `🧩 Embedding lyrics into track: ${inputFile}`,
+  });
+
+  const ext = path.extname(filePath);
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath, ext);
+  const tmpPath = path.join(dir, `${base}.lyrics_embed_tmp${ext}`);
+  const backupPath = path.join(dir, `${base}.lyrics_embed_backup${ext}`);
+  const isMp3 = String(ext).toLowerCase() === ".mp3";
+  const args = [
+    "-y",
+    "-i",
+    filePath,
+    "-map",
+    "0",
+    "-c",
+    "copy",
+    "-metadata",
+    `lyrics=${finalLyrics}`,
+    "-metadata:s:a:0",
+    `lyrics=${finalLyrics}`,
+  ];
+  if (isMp3) {
+    args.push("-id3v2_version", "3");
+    if (process.env.WRITE_ID3V1 !== "0") args.push("-write_id3v1", "1");
+  }
+  args.push(tmpPath);
+
+  try {
+    await new Promise((resolve, reject) => {
+      const stderrChunks = [];
+      const child = spawn(FFMPEG_BIN, args);
+
+      child.stderr.on("data", (d) => {
+        const line = String(d || "");
+        stderrChunks.push(line);
+        if (stderrChunks.length > 50) stderrChunks.shift();
+      });
+
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code === 0) return resolve(stderrChunks.join("").trim());
+        return reject(new Error(stderrChunks.join("").trim() || `ffmpeg exited with code ${code}`));
+      });
+    });
+
+    if (!fs.existsSync(tmpPath)) {
+      throw new Error("Temporary output missing after embedding");
+    }
+
+    fs.renameSync(filePath, backupPath);
+    fs.renameSync(tmpPath, filePath);
+    try {
+      fs.unlinkSync(backupPath);
+    } catch {}
+
+    if (isMp3 && process.env.WRITE_ID3V1 !== "0") {
+      rewriteId3v11Tag(filePath, metadata || {});
+    }
+
+    emitLog(onLog, {
+      logKey: "log.lyrics.embedded",
+      logVars: { file: inputFile },
+      fallback: `✅ Lyrics embedded into track: ${inputFile}`,
+    });
+    return true;
+  } catch (error) {
+    try {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    } catch {}
+    try {
+      if (!fs.existsSync(filePath) && fs.existsSync(backupPath)) {
+        fs.renameSync(backupPath, filePath);
+      }
+    } catch {}
+    try {
+      if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+    } catch {}
+
+    emitLog(onLog, {
+      logKey: "log.lyrics.embeddingError",
+      logVars: { err: error.message, file: inputFile },
+      fallback: `❌ Error embedding lyrics: ${error.message} — ${inputFile}`,
+    });
+    return false;
+  }
+}
+
+// Handles attach lyrics metadata to media in core application logic.
+export async function attachLyricsToMedia(filePath, metadata, options = {}) {
+  const {
+    includeLyrics = true,
+    embedLyrics = false,
+    jobId = null,
+    onLog = null,
+    onLyricsStats = null
+  } = options;
+
+  if (!includeLyrics && !embedLyrics) {
     const disabledLogMsg = {
       logKey: "log.lyrics.disabled",
       logVars: { file: path.basename(filePath) },
-      fallback: `⚙️ Lyrics embedding is disabled — ${path.basename(filePath)}`,
+      fallback: `⚙️ Lyrics download and embedding are disabled — ${path.basename(filePath)}`,
     };
     emitLog(onLog, disabledLogMsg);
     return null;
@@ -317,19 +459,63 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
       return null;
     }
 
-    const lyricsPath = await lyricsFetcher.downloadLyrics(
-      artist,
-      title,
-      duration,
-      filePath,
-      { onLog }
-    );
+    let lyricsPath = null;
+    let lyricsContentForEmbed = null;
 
+    if (includeLyrics) {
+      lyricsPath = await lyricsFetcher.downloadLyrics(
+        artist,
+        title,
+        duration,
+        filePath,
+        { onLog }
+      );
+      if (lyricsPath && embedLyrics) {
+        try {
+          lyricsContentForEmbed = fs.readFileSync(lyricsPath, "utf8");
+        } catch {}
+      }
+    } else if (embedLyrics) {
+      const lyricsData = await lyricsFetcher.searchLyrics(
+        artist,
+        title,
+        duration,
+        { onLog }
+      );
+      lyricsContentForEmbed = (
+        lyricsData?.syncedLyrics ||
+        lyricsData?.plainLyrics ||
+        ""
+      ).trim();
+    }
+
+    const hasLyrics = !!lyricsPath || !!lyricsContentForEmbed;
     if (onLyricsStats) {
-      if (lyricsPath) {
-        onLyricsStats({ found: 1, notFound: 0 });
-      } else {
-        onLyricsStats({ found: 0, notFound: 1 });
+      onLyricsStats(hasLyrics ? { found: 1, notFound: 0 } : { found: 0, notFound: 1 });
+    }
+
+    if (!hasLyrics) {
+      const notFoundForTrackLogMsg = {
+        logKey: "log.lyrics.notFoundForTrack",
+        logVars: { artist, title },
+        fallback: `❌ Lyrics not found: "${artist}" - "${title}"`,
+      };
+      emitLog(onLog, notFoundForTrackLogMsg);
+      return null;
+    }
+
+    if (embedLyrics && lyricsContentForEmbed) {
+      try {
+        await embedLyricsInMedia(filePath, lyricsContentForEmbed, {
+          onLog,
+          metadata
+        });
+      } catch (embedError) {
+        emitLog(onLog, {
+          logKey: "log.lyrics.embeddingError",
+          logVars: { err: embedError.message, file: path.basename(filePath) },
+          fallback: `❌ Error embedding lyrics: ${embedError.message} — ${path.basename(filePath)}`,
+        });
       }
     }
 
@@ -340,13 +526,6 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
         fallback: `✅ Lyrics successfully attached: ${path.basename(lyricsPath)}`,
       };
       emitLog(onLog, attachedLogMsg);
-    } else {
-      const notFoundForTrackLogMsg = {
-        logKey: "log.lyrics.notFoundForTrack",
-        logVars: { artist, title },
-        fallback: `❌ Lyrics not found: "${artist}" - "${title}"`,
-      };
-      emitLog(onLog, notFoundForTrackLogMsg);
     }
 
     return lyricsPath;

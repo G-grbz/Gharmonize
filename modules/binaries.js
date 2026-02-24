@@ -18,6 +18,7 @@ const PACKAGED_BIN_DIR = resourcesPath
   : null;
 const DEV_BIN_DIR = path.resolve(__dirname, "..", "build", "bin");
 
+// Selects exe name for core application logic.
 function pickExeName(baseName) {
   if (process.platform === "win32") {
     return `${baseName}.exe`;
@@ -25,6 +26,7 @@ function pickExeName(baseName) {
   return baseName;
 }
 
+// Resolves bin for core application logic.
 function resolveBin(envVarName, baseName) {
   if (process.env[envVarName]) {
     return process.env[envVarName];
@@ -51,6 +53,7 @@ export const MKVMERGE_BIN = resolveBin("MKVMERGE_BIN", "mkvmerge");
 export const YTDLP_BIN    = resolveBin("YTDLP_BIN",    "yt-dlp");
 export const DENO_BIN     = resolveBin("DENO_BIN",     "deno");
 
+// Handles debug binaries in core application logic.
 export function debugBinaries() {
   console.log("[binaries] isElectron:", isElectron);
   console.log("[binaries] isPackagedElectron:", isPackagedElectron);
