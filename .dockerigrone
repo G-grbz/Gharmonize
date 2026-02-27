@@ -1,4 +1,4 @@
-node_modules
+node_modules/
 npm-debug.log*
 yarn-error.log*
 .vscode
@@ -6,15 +6,15 @@ yarn-error.log*
 .DS_Store
 .git
 .gitignore
-dist
-build
+dist/
+build/
 electron/dist
 release
 out
 *.asar
-uploads
-outputs
-temp
-cookies
+uploads/
+outputs/
+temp/
+cookies/
 coverage
 *.log
