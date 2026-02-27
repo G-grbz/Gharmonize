@@ -12,6 +12,7 @@ import { convertMedia } from "./media.js";
 import "dotenv/config";
 import { spawn as spawnChild } from "child_process";
 import { jobs, registerJobProcess } from "./store.js";
+import { toDownloadPath } from "./outputPaths.js";
 
 // Handles safe rm in core application logic.
 function safeRm(pathLike) {
@@ -115,6 +116,23 @@ function uniqueOutPath(dir, base, ext) {
     out = path.join(dir, name);
   }
   return out;
+}
+
+// Formats fps for live conversion logs in core application logic.
+function formatLiveFps(fps) {
+  const n = Number(fps);
+  if (!Number.isFinite(n) || n <= 0) return "--";
+  return n.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+// Builds live conversion text in core application logic.
+function buildLiveConvertLog(progress, details = {}, label = "") {
+  const pct = Math.max(0, Math.min(100, Math.floor(Number(progress) || 0)));
+  const elapsed = details?.elapsedText || "--:--:--";
+  const duration = details?.durationText || "--:--:--";
+  const fps = formatLiveFps(details?.fps);
+  const suffix = label ? `: ${label}` : "";
+  return `⚙️ Converting ${pct}% (${elapsed}/${duration} • ${fps} FPS)${suffix}`;
 }
 
 // Handles quality to height in core application logic.
@@ -403,9 +421,12 @@ export async function processYouTubeVideoJob(job, {
         const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
         console.log(`🎬 Transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
         safeMoveSync(filePath, targetAbs);
+        const downloadPath =
+          toDownloadPath(targetAbs) ||
+          `/download/${encodeURIComponent(path.basename(targetAbs))}`;
 
         results.push({
-          outputPath: `/download/${encodeURIComponent(path.basename(targetAbs))}`,
+          outputPath: downloadPath,
           fileSize: fs.statSync(targetAbs).size
         });
 
@@ -443,7 +464,7 @@ export async function processYouTubeVideoJob(job, {
           format,
           job.bitrate || "auto",
           convJobId,
-          (p) => {
+          (p, details) => {
             const overallConv = ((i + p / 100) / sorted.length) * 100;
             job.convertProgress = Math.max(
               job.convertProgress || 0,
@@ -452,6 +473,16 @@ export async function processYouTubeVideoJob(job, {
             job.progress = Math.floor(
               (job.downloadProgress + (job.convertProgress || 0)) / 2
             );
+
+            if (String(format || "").toLowerCase() === "mp4") {
+              const label = [artistRaw, titleRaw]
+                .map((s) => String(s || "").trim())
+                .filter(Boolean)
+                .join(" - ");
+              job.lastLog = buildLiveConvertLog(p, details, label);
+              job.lastLogKey = null;
+              job.lastLogVars = null;
+            }
           },
           meta,
           null,
@@ -527,13 +558,16 @@ export async function processYouTubeVideoJob(job, {
   if (!transcodeEnabled) {
     const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
     safeMoveSync(filePath, targetAbs);
+    const downloadPath =
+      toDownloadPath(targetAbs) ||
+      `/download/${encodeURIComponent(path.basename(targetAbs))}`;
 
     job.convertProgress   = 100;
     job.counters.dlTotal  = 1;
     job.counters.dlDone   = 1;
     job.counters.cvTotal  = 1;
     job.counters.cvDone   = 1;
-    job.resultPath        = `/download/${encodeURIComponent(path.basename(targetAbs))}`;
+    job.resultPath        = downloadPath;
     job.status            = "completed";
     job.progress          = 100;
     job.downloadProgress  = 100;
@@ -559,11 +593,21 @@ export async function processYouTubeVideoJob(job, {
       format,
       job.bitrate || "auto",
       `${job.id}_v1`,
-      (p) => {
+      (p, details) => {
         job.convertProgress = Math.max(job.convertProgress || 0, Math.floor(p));
         job.progress = Math.floor(
           (job.downloadProgress + (job.convertProgress || 0)) / 2
         );
+
+        if (String(format || "").toLowerCase() === "mp4") {
+          const label = [artistRaw, titleRaw]
+            .map((s) => String(s || "").trim())
+            .filter(Boolean)
+            .join(" - ");
+          job.lastLog = buildLiveConvertLog(p, details, label);
+          job.lastLogKey = null;
+          job.lastLogVars = null;
+        }
       },
       meta,
       null,
@@ -821,9 +865,12 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
       const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
       console.log(`🎬 Spotify transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
       safeMoveSync(filePath, targetAbs);
+      const downloadPath =
+        toDownloadPath(targetAbs) ||
+        `/download/${encodeURIComponent(path.basename(targetAbs))}`;
 
       results.push({
-        outputPath: `/download/${encodeURIComponent(path.basename(targetAbs))}`,
+        outputPath: downloadPath,
         fileSize: fs.statSync(targetAbs).size
       });
 
@@ -870,7 +917,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         format,
         job.bitrate || "auto",
         convJobId,
-        (p) => {
+        (p, details) => {
           const overallConv = ((i + p / 100) / sorted.length) * 100;
           job.convertProgress = Math.max(
             job.convertProgress || 0,
@@ -881,15 +928,21 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
           );
 
           if (p > 0 && p < 100) {
+            const elapsed = details?.elapsedText || "--:--:--";
+            const duration = details?.durationText || "--:--:--";
+            const fps = formatLiveFps(details?.fps);
             job.lastLogKey = 'log.spotify.videoConvertingProgress';
             job.lastLogVars = {
               artist: artistRaw,
               title: titleRaw,
               progress: Math.floor(p),
+              elapsed,
+              duration,
+              fps,
               current: i + 1,
               total: sorted.length
             };
-            job.lastLog = `⚙️ Converting (${Math.floor(p)}%) (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
+            job.lastLog = `⚙️ Converting (${Math.floor(p)}%) (${elapsed}/${duration} • ${fps} FPS) (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
           }
         },
         meta,

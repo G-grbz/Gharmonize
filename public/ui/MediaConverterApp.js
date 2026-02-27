@@ -646,6 +646,7 @@ export class MediaConverterApp {
 
     // Handles on URL input change in the browser UI layer.
     onUrlInputChange(url) {
+        this.applyUrlDrivenDefaultFormat(url);
         const isSpotify = this.isSpotifyUrl(url);
         const isYoutubePl = !isSpotify && this.isYoutubePlaylistUrl(url);
         const spotifyConcContainer = document.getElementById('spotifyConcurrencyContainer');
@@ -732,6 +733,50 @@ export class MediaConverterApp {
         if (/(dailymotion\.com|dai\.ly)/i.test(str) && /[?&]playlist=/.test(str)) return true;
 
         return false;
+    }
+
+    // Checks whether URL should default to mp4 for social video platforms in the browser UI layer.
+    isMp4DefaultSocialUrl(u) {
+        const s = String(u || '').trim();
+        if (!s) return false;
+
+        try {
+            const parsed = new URL(s, window.location.origin);
+            const host = String(parsed.hostname || '').toLowerCase();
+
+            if (
+                host.includes('instagram.com') ||
+                host.includes('instagr.am') ||
+                host.includes('tiktok.com') ||
+                host.includes('facebook.com') ||
+                host === 'fb.watch' ||
+                host.endsWith('.fb.watch') ||
+                host.includes('twitter.com') ||
+                host === 'x.com' ||
+                host.endsWith('.x.com') ||
+                host === 't.co' ||
+                host.endsWith('.t.co')
+            ) {
+                return true;
+            }
+        } catch {}
+
+        return /(?:instagram\.com|instagr\.am|tiktok\.com|facebook\.com|fb\.watch|twitter\.com|(?:^|\/\/)(?:www\.)?x\.com|(?:^|\/\/)t\.co)/i.test(s);
+    }
+
+    // Applies URL-driven default format in the browser UI layer.
+    applyUrlDrivenDefaultFormat(url) {
+        const formatSelect = document.getElementById('formatSelect');
+        if (!formatSelect) return;
+
+        const desired = this.isMp4DefaultSocialUrl(url) ? 'mp4' : 'mp3';
+        if (formatSelect.value === desired) return;
+
+        const hasDesired = Array.from(formatSelect.options || []).some((opt) => opt.value === desired);
+        if (!hasDesired) return;
+
+        formatSelect.value = desired;
+        formatSelect.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     // Handles handle URL submit in the browser UI layer.

@@ -12,6 +12,11 @@ import { convertMedia, downloadThumbnail, retagMediaFile } from "../modules/medi
 import archiver from "archiver";
 import { resolveMarket } from "../modules/market.js";
 import { isVideoFormat, processYouTubeVideoJob } from "../modules/video.js";
+import {
+  resolveJobOutputDir,
+  toDownloadPath,
+  resolveDownloadPathToAbs
+} from "../modules/outputPaths.js";
 
 const router = express.Router();
 
@@ -25,6 +30,14 @@ fs.mkdirSync(TEMP_DIR, { recursive: true });
 console.log("[spotify] BASE_DIR   =", BASE_DIR);
 console.log("[spotify] OUTPUT_DIR =", OUTPUT_DIR);
 console.log("[spotify] TEMP_DIR   =", TEMP_DIR);
+
+// Converts absolute output path to public download path with fallback.
+function toDownloadPathSafe(absPath) {
+  return (
+    toDownloadPath(absPath, OUTPUT_DIR) ||
+    `/download/${encodeURIComponent(path.basename(absPath || ""))}`
+  );
+}
 
 // Handles make map id in Spotify mapping and metadata flow.
 function makeMapId() { return uniqueId("map"); }
@@ -68,6 +81,23 @@ function parseConcurrency(v, fallback = 4) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(16, Math.max(1, Math.round(n)));
+}
+
+// Formats fps text for live conversion logs in Spotify mapping and metadata flow.
+function formatLiveFps(fps) {
+  const n = Number(fps);
+  if (!Number.isFinite(n) || n <= 0) return "--";
+  return n.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+// Builds live conversion log line with duration and real fps.
+function buildLiveConvertLog(progress, details = {}, label = "") {
+  const pct = Math.max(0, Math.min(100, Math.floor(Number(progress) || 0)));
+  const elapsed = details?.elapsedText || "--:--:--";
+  const duration = details?.durationText || "--:--:--";
+  const fps = formatLiveFps(details?.fps);
+  const suffix = label ? `: ${label}` : "";
+  return `⚙️ Converting ${pct}% (${elapsed}/${duration} • ${fps} FPS)${suffix}`;
 }
 
 // Handles lite track to item in Spotify mapping and metadata flow.
@@ -361,6 +391,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
   if (!job) return;
 
   try {
+    const outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
     const effectiveVolumeGain =
       job.metadata?.volumeGain != null
         ? job.metadata.volumeGain
@@ -586,7 +617,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 
         const result = await convertMedia(
           filePath, format, bitrate, `${jobId}_${logicalIndex}`,
-          (progress) => {
+          (progress, details) => {
             const totalForProgress = job.playlist.total || totalItems || 1;
             const fileProgress = (logicalIndex / totalForProgress) * 25;
             const cur = (progress / 100) * (25 / totalForProgress);
@@ -595,11 +626,21 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
               Math.floor(70 + fileProgress + cur)
             );
             job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
+
+            if (String(format || "").toLowerCase() === "mp4") {
+              const label = [entry?.uploader || entry?.artist || "", entry?.title || ""]
+                .map((s) => String(s || "").trim())
+                .filter(Boolean)
+                .join(" - ");
+              job.lastLogKey = null;
+              job.lastLogVars = null;
+              job.lastLog = buildLiveConvertLog(progress, details, label);
+            }
           },
           fileMeta,
           itemCover,
           (format === "mp4"),
-          OUTPUT_DIR,
+          outputDir,
           TEMP_DIR,
           {
             onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
@@ -632,10 +673,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 
         try {
           if (result?.outputPath) {
-            const abs = path.join(
-              OUTPUT_DIR,
-              decodeURIComponent(result.outputPath.replace("/download/", ""))
-            );
+            const abs = resolveDownloadPathToAbs(result.outputPath, OUTPUT_DIR);
             outputAbsByIndex.set(logicalIndex, abs);
           }
         } catch {}
@@ -799,7 +837,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       };
       job.lastLog = `🎬 Starting Spotify video processing: ${playlistTitle} (${trackCount} track(s))`;
 
-      await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
+      await processYouTubeVideoJob(job, { OUTPUT_DIR: outputDir, TEMP_DIR });
 
       try {
         if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch) {
@@ -808,7 +846,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             jobId,
             job.resultPath,
             titleHint || "playlist",
-            job.metadata?.includeLyrics
+            job.metadata?.includeLyrics,
+            outputDir
           );
         }
       } catch {}
@@ -848,7 +887,13 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         job.lastLogKey = 'log.zip.creating';
         job.lastLogVars = {};
         job.lastLog = `📦 Creating ZIP file...`;
-        job.zipPath = await makeZipFromOutputs(jobId, successfulResults, zipTitle, !!job.metadata.includeLyrics);
+        job.zipPath = await makeZipFromOutputs(
+          jobId,
+          successfulResults,
+          zipTitle,
+          !!job.metadata.includeLyrics,
+          outputDir
+        );
         job.lastLogKey = 'log.zip.ready';
         job.lastLogVars = { title: zipTitle };
         job.lastLog = `✅ ZIP file is ready: ${zipTitle}`;
@@ -905,6 +950,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
   if (!job) return;
 
   try {
+    const outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
     job.phase = "mapping"; job.currentPhase = "mapping";
     job.progress = 10;
     job.lastLogKey = 'log.searchingSingleTrack';
@@ -1060,11 +1106,21 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
 
     const result = await convertMedia(
       filePath, format, bitrate, jobId,
-      (progress) => {
+      (progress, details) => {
         job.progress = 80 + Math.floor(progress * 0.2);
+
+        if (String(format || "").toLowerCase() === "mp4") {
+          const label = [matchedItem?.uploader || matchedItem?.artist || "", matchedItem?.title || ""]
+            .map((s) => String(s || "").trim())
+            .filter(Boolean)
+            .join(" - ");
+          job.lastLogKey = null;
+          job.lastLogVars = null;
+          job.lastLog = buildLiveConvertLog(progress, details, label);
+        }
       },
       fileMeta, itemCover, (format === "mp4"),
-      OUTPUT_DIR,
+      outputDir,
       TEMP_DIR,
       {
         onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
@@ -1119,8 +1175,14 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
 }
 
 // Handles make zip from outputs in Spotify mapping and metadata flow.
-async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includeLyrics = false) {
-  const outDir = OUTPUT_DIR;
+async function makeZipFromOutputs(
+  jobId,
+  outputs,
+  titleHint = "playlist",
+  includeLyrics = false,
+  outputDir = OUTPUT_DIR
+) {
+  const outDir = path.resolve(outputDir || OUTPUT_DIR);
   fs.mkdirSync(outDir, { recursive: true });
 
   const safeBase = `${(titleHint || 'playlist')}_${jobId}`
@@ -1134,7 +1196,7 @@ async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includ
     const output  = fs.createWriteStream(zipAbs);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
-    output.on("close", () => resolve(`/download/${encodeURIComponent(zipName)}`));
+    output.on("close", () => resolve(toDownloadPathSafe(zipAbs)));
     output.on("error", reject);
     archive.on("error", reject);
 
@@ -1142,9 +1204,8 @@ async function makeZipFromOutputs(jobId, outputs, titleHint = "playlist", includ
 
     for (const r of outputs) {
       if (!r?.outputPath) continue;
-      const rel = decodeURIComponent(r.outputPath.replace(/^\/download\//, ""));
-      const abs = path.join(outDir, rel);
-      if (fs.existsSync(abs)) {
+      const abs = resolveDownloadPathToAbs(r.outputPath, OUTPUT_DIR);
+      if (abs && fs.existsSync(abs)) {
         archive.file(abs, { name: path.basename(abs).normalize("NFC") });
         if (includeLyrics) {
           const lrcPath = abs.replace(/\.[^/.]+$/, "") + ".lrc";

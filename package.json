@@ -1,11 +1,13 @@
 {
   "name": "Gharmonize",
-  "version": "1.1.1",
+  "version": "1.2.0",
+  "description": "Gharmonize is a desktop application that brings together third-party tools from various platforms to help you build and manage your local music library.",
+  "author": "G-grbz <gkhn.gurbuz@hotmail.com>",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js",
+    "start": "cross-env ENV_DEFAULT_PATH= ENV_USER_PATH= DATA_DIR= node app.js",
+    "dev": "cross-env ENV_DEFAULT_PATH= ENV_USER_PATH= DATA_DIR= nodemon app.js",
     "desktop:dev": "wait-on tcp:127.0.0.1:5174 && electron .",
     "desktop:build:nsis": "electron-builder --win nsis --x64",
     "download:binaries": "node scripts/download-binaries.mjs",

@@ -20,6 +20,7 @@ export class JobsPanelManager {
         this.completedAtCache = new Map();
         this.storageKey = 'gharmonize_jobs_panel_state';
         this.outputExistenceCache = new Map();
+        this.outputExistenceCacheTtlMs = 15000;
     }
 
     // Initializes startup state for the browser UI layer.
@@ -326,6 +327,52 @@ export class JobsPanelManager {
         return v === 'cancelled' ? 'canceled' : v;
     }
 
+    // Gets cached output existence if cache item is still fresh.
+    getCachedOutputExistence(url) {
+        const cached = this.outputExistenceCache.get(url);
+        if (!cached) return null;
+
+        const checkedAt = Number(cached.checkedAt || 0);
+        const age = Date.now() - checkedAt;
+        if (!Number.isFinite(checkedAt) || age > this.outputExistenceCacheTtlMs) {
+            this.outputExistenceCache.delete(url);
+            return null;
+        }
+        return cached;
+    }
+
+    // Caches output existence state.
+    setOutputExistence(url, exists) {
+        this.outputExistenceCache.set(url, { exists: !!exists, checkedAt: Date.now() });
+    }
+
+    // Checks whether output exists without triggering /download 404 noise.
+    async checkOutputExistsPanel(rawUrl) {
+        const url = String(rawUrl || '').trim();
+        if (!url) return false;
+
+        const cached = this.getCachedOutputExistence(url);
+        if (cached) {
+            return cached.exists;
+        }
+
+        try {
+            const resp = await fetch(`/api/outputs/exists?path=${encodeURIComponent(url)}`, {
+                cache: 'no-store'
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+            const data = await resp.json();
+            const exists = !!data?.exists;
+            this.setOutputExistence(url, exists);
+            return exists;
+        } catch (_e) {
+            // Fail-open: avoid removing completed jobs on transient network issues.
+            this.setOutputExistence(url, true);
+            return true;
+        }
+    }
+
     // Checks whether newer version metadata fallback is valid for the browser UI layer.
     isNewerVersionFallback(latest, current) {
         if (!latest) return false;
@@ -374,14 +421,17 @@ export class JobsPanelManager {
     // Handles source pill in the browser UI layer.
     sourcePill(j) {
         const s = j.metadata?.source || 'file';
+        const mediaPlatform = String(j.metadata?.mediaPlatform || '').toLowerCase();
+        const sourceKey = mediaPlatform || s;
         const sources = {
            youtube: `▶️ ${this.t('jobsPanel.sourceYouTube')}`,
+            dailymotion: `🎬 ${this.t('jobsPanel.sourceDailymotion')}`,
             spotify: `🎵 ${this.t('jobsPanel.sourceSpotify')}`,
             direct_url: `🌐 ${this.t('jobsPanel.sourceURL')}`,
             file: `💾 ${this.t('jobsPanel.sourceFile')}`,
             local: `💻 ${this.t('jobsPanel.sourceLocal')}`
         };
-        return sources[s] || s;
+        return sources[sourceKey] || sources[s] || sourceKey;
     }
 
     // Handles phase pill in the browser UI layer.
@@ -594,26 +644,7 @@ export class JobsPanelManager {
             if (!candidates.length) return false;
 
             const url = candidates[0];
-            const cached = this.outputExistenceCache.get(url);
-            if (cached) {
-                return cached.exists;
-            }
-
-            try {
-                const resp = await fetch(url, { method: 'HEAD' });
-
-                if (resp.status === 404) {
-                    this.outputExistenceCache.set(url, { exists: false, checkedAt: Date.now() });
-                    return false;
-                }
-
-                this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
-                return true;
-            } catch (e) {
-                console.warn('[JobsPanel] jobHasExistingOutputPanel HEAD error:', e);
-                this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
-                return true;
-            }
+            return this.checkOutputExistsPanel(url);
         }
 
         // Handles prune playlist data outputs panel in the browser UI layer.
@@ -632,50 +663,17 @@ export class JobsPanelManager {
                 if (!raw) continue;
 
                 const url = raw;
-                const cached = this.outputExistenceCache.get(url);
-                if (cached) {
-                    if (cached.exists) {
-                        keptResults.push(r);
-                    }
-                    continue;
-                }
-
-                try {
-                    const resp = await fetch(url, { method: 'HEAD' });
-
-                    if (resp.status === 404) {
-                        this.outputExistenceCache.set(url, { exists: false, checkedAt: Date.now() });
-                        continue;
-                    }
-
-                    this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
-                    keptResults.push(r);
-                } catch (e) {
-                    console.warn('[JobsPanel] prunePlaylistOutputsPanel HEAD error:', e);
-                    this.outputExistenceCache.set(url, { exists: true, checkedAt: Date.now() });
+                const exists = await this.checkOutputExistsPanel(url);
+                if (exists) {
                     keptResults.push(r);
                 }
             }
 
             if (job.zipPath) {
                 const zipUrl = job.zipPath;
-                const cachedZip = this.outputExistenceCache.get(zipUrl);
-
-                if (cachedZip && !cachedZip.exists) {
+                const zipExists = await this.checkOutputExistsPanel(zipUrl);
+                if (!zipExists) {
                     job.zipPath = null;
-                } else if (!cachedZip) {
-                    try {
-                        const zipResp = await fetch(zipUrl, { method: 'HEAD' });
-                        if (zipResp.status === 404) {
-                            this.outputExistenceCache.set(zipUrl, { exists: false, checkedAt: Date.now() });
-                            job.zipPath = null;
-                        } else {
-                            this.outputExistenceCache.set(zipUrl, { exists: true, checkedAt: Date.now() });
-                        }
-                    } catch (e) {
-                        console.warn('[JobsPanel] prunePlaylistOutputsPanel zip HEAD error:', e);
-                        this.outputExistenceCache.set(zipUrl, { exists: true, checkedAt: Date.now() });
-                    }
                 }
             }
 

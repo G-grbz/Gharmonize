@@ -26,6 +26,13 @@ export class JobManager {
                 doRestore();
             }
         }
+
+        if (typeof document !== 'undefined') {
+            this.handleOutputLocationBadgeClick = this.handleOutputLocationBadgeClick.bind(this);
+            this.handleOutputLocationBadgeKeydown = this.handleOutputLocationBadgeKeydown.bind(this);
+            document.addEventListener('click', this.handleOutputLocationBadgeClick);
+            document.addEventListener('keydown', this.handleOutputLocationBadgeKeydown);
+        }
     }
 
         // Handles track job state in the browser UI layer.
@@ -212,6 +219,60 @@ export class JobManager {
     normalizeStatus(s) {
         const v = String(s || '').toLowerCase();
         return v === 'cancelled' ? 'canceled' : v;
+    }
+
+    // Formats date/time values for the browser UI layer.
+    formatDateTime(value) {
+        const ts = Number(value);
+        const date = Number.isFinite(ts) ? new Date(ts) : new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+    }
+
+    // Formats milliseconds as HH:MM:SS for the browser UI layer.
+    formatDurationMs(ms) {
+        if (!Number.isFinite(ms) || ms < 0) return null;
+        const totalSeconds = Math.floor(ms / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return [hours, minutes, seconds].map(v => String(v).padStart(2, '0')).join(':');
+    }
+
+    // Detects playlist platform for the browser UI layer.
+    detectPlaylistPlatform(job) {
+        const mediaPlatform = String(job?.metadata?.mediaPlatform || '').toLowerCase();
+        if (mediaPlatform === 'dailymotion' || mediaPlatform === 'youtube') {
+            return mediaPlatform;
+        }
+
+        const source = String(job?.metadata?.source || '').toLowerCase();
+        if (source === 'spotify') return 'spotify';
+
+        const urlCandidate =
+            job?.metadata?.url ||
+            job?.metadata?.originalUrl ||
+            job?.metadata?.extracted?.webpage_url ||
+            '';
+        if (/(?:dailymotion\.com|dai\.ly)/i.test(String(urlCandidate))) return 'dailymotion';
+        return 'youtube';
+    }
+
+    // Resolves playlist source title for the browser UI layer.
+    playlistSourceTitle(job) {
+        const platform = this.detectPlaylistPlatform(job);
+        if (platform === 'spotify') return this.app.t('ui.spotifyPlaylist');
+        if (platform === 'dailymotion') return this.app.t('ui.dailymotionPlaylist');
+        return this.app.t('ui.youtubePlaylist');
+    }
+
+    // Resolves batch source text for the browser UI layer.
+    formatBatchSource(meta = {}) {
+        const src = String(meta?.source || '').toLowerCase();
+        if (src === 'spotify') return this.app.t('ui.spotifyPlaylist');
+        if (src === 'dailymotion') return this.app.t('ui.dailymotionPlaylist');
+        if (src === 'youtube') return this.app.t('ui.youtubePlaylist');
+        if (meta?.source) return String(meta.source);
+        return this.app.t('ui.playlist');
     }
 
     // Handles safe num in the browser UI layer.
@@ -463,20 +524,31 @@ computeProg(job) {
     return icons[hwaccel] || '⚪';
 }
 
-getOutputLocationBadgeHtml() {
+getOutputLocationBadgeHtml(job = null) {
     const title = this.app.t('jobsPanel.outputLocationTitle') || 'Output Location';
     const linuxLabel = this.app.t('jobsPanel.outputLocationLinux') || 'Linux';
     const windowsLabel = this.app.t('jobsPanel.outputLocationWindows') || 'Windows';
+    const openFolderLabel = this.app.t('download.openFolder') || 'Open folder';
 
     const linuxPath = this.app.outputLocations?.linuxPath || '/path/to/outputs';
     const windowsPath = this.app.outputLocations?.windowsPath || 'C:\\path\\to\\outputs';
     const platformHint = `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
     const isWindows = platformHint.includes('win');
     const osLabel = isWindows ? windowsLabel : linuxLabel;
-    const outputPath = isWindows ? windowsPath : linuxPath;
+    let outputPath = isWindows ? windowsPath : linuxPath;
+
+    const rawSubdir = job?.metadata?.isPlaylist ? job?.metadata?.outputSubdir : '';
+    const subdir = typeof rawSubdir === 'string'
+        ? rawSubdir.trim().replace(/^[/\\]+|[/\\]+$/g, '')
+        : '';
+    if (subdir) {
+        const sep = isWindows ? '\\' : '/';
+        const normalizedSubdir = subdir.replace(/[\\/]+/g, sep);
+        outputPath = outputPath.replace(/[\\/]+$/g, '') + sep + normalizedSubdir;
+    }
 
     return `
-        <div class="output-location-badge" role="note" aria-label="${this.app.escapeHtml(title)}">
+        <div class="output-location-badge" role="button" tabindex="0" title="${this.app.escapeHtml(openFolderLabel)}" aria-label="${this.app.escapeHtml(`${openFolderLabel}: ${outputPath}`)}" data-output-subdir="${this.app.escapeHtml(subdir)}" style="cursor:pointer;">
             <div class="output-location-badge__title">📁 ${this.app.escapeHtml(title)}</div>
             <div class="output-location-badge__row">
                 <span class="output-location-badge__os">${this.app.escapeHtml(osLabel)}</span>
@@ -484,6 +556,54 @@ getOutputLocationBadgeHtml() {
             </div>
         </div>
     `;
+}
+
+// Handles output location badge click in the browser UI layer.
+handleOutputLocationBadgeClick(event) {
+    const badge = event?.target?.closest?.('.output-location-badge');
+    if (!badge) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.openOutputLocationBadge(badge);
+}
+
+// Handles output location badge keyboard activation in the browser UI layer.
+handleOutputLocationBadgeKeydown(event) {
+    if (!event || (event.key !== 'Enter' && event.key !== ' ')) return;
+    const badge = event?.target?.closest?.('.output-location-badge');
+    if (!badge) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.openOutputLocationBadge(badge);
+}
+
+// Opens output folder from badge context for the browser UI layer.
+async openOutputLocationBadge(badge) {
+    const subdir = String(badge?.dataset?.outputSubdir || '').trim();
+
+    try {
+        if (window.electronAPI?.openOutputFolder) {
+            const ret = await window.electronAPI.openOutputFolder(subdir);
+            if (!ret?.success) {
+                throw new Error(ret?.error || 'Failed to open output folder');
+            }
+            return;
+        }
+
+        const resp = await fetch('/api/outputs/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subdir })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data?.ok) {
+            throw new Error(data?.error || `HTTP ${resp.status}`);
+        }
+    } catch (err) {
+        const label = this.app.t('download.openFolder') || 'Open folder';
+        const reason = err?.message ? `: ${err.message}` : '';
+        this.app.showNotification(`${label}${reason}`, 'error', 'error');
+    }
 }
 
 updateJobUI(job, batchId = null) {
@@ -1162,7 +1282,7 @@ if (job.currentPhase) {
                 job.metadata?.frozenTitle
                 || (job.metadata?.source === 'spotify'
                     ? (job.metadata?.spotifyTitle || this.app.t('ui.spotifyPlaylist'))
-                    : this.app.t('ui.youtubePlaylist'));
+                    : this.playlistSourceTitle(job));
             jobTitle = `${this.app.escapeHtml(listName)} — ${this.app.escapeHtml(nowTrack)}`;
         }
     }
@@ -1226,7 +1346,7 @@ if (job.currentPhase) {
         }
 
         if (resultContent) {
-            resultContent += this.getOutputLocationBadgeHtml();
+            resultContent += this.getOutputLocationBadgeHtml(job);
         }
     }
 
@@ -1284,14 +1404,33 @@ if (job.currentPhase) {
     }
 
     let completedAtInfo = '';
-    if (job.completedAt) {
-        const d = new Date(job.completedAt);
-        const formatted = d.toLocaleString();
-        completedAtInfo = `
-            <div class="job-time" style="font-size: 12px; color: var(--text-muted); margin: 4px 0;">
-                🕒 ${this.app.escapeHtml(formatted)}
-            </div>
-        `;
+    if (job.completedAt || job.createdAt) {
+        const startedLabel = this.app.escapeHtml(this.app.t('jobsPanel.timeStart'));
+        const endedLabel = this.app.escapeHtml(this.app.t('jobsPanel.timeEnd'));
+        const totalLabel = this.app.escapeHtml(this.app.t('jobsPanel.timeTotal'));
+
+        const startedFormatted = this.formatDateTime(job.createdAt);
+        const completedFormatted = this.formatDateTime(job.completedAt);
+
+        const startedAtMs = new Date(job.createdAt).getTime();
+        const completedAtMs = new Date(job.completedAt).getTime();
+        const elapsedMs = Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)
+            ? completedAtMs - startedAtMs
+            : NaN;
+        const elapsedFormatted = this.formatDurationMs(elapsedMs);
+
+        const rows = [];
+        if (startedFormatted) rows.push(`🟢 ${startedLabel}: ${this.app.escapeHtml(startedFormatted)}`);
+        if (completedFormatted) rows.push(`🔴 ${endedLabel}: ${this.app.escapeHtml(completedFormatted)}`);
+        if (elapsedFormatted) rows.push(`⏱️ ${totalLabel}: ${this.app.escapeHtml(elapsedFormatted)}`);
+
+        if (rows.length) {
+            completedAtInfo = `
+                <div class="job-time" style="font-size: 12px; color: var(--text-muted); margin: 4px 0;">
+                    ${rows.map(row => `<div>${row}</div>`).join('')}
+                </div>
+            `;
+        }
     }
 
     const jobContent = `
@@ -1495,8 +1634,7 @@ if (job.currentPhase) {
         const batchElement = document.createElement('div');
         batchElement.className = 'job-item';
         batchElement.id = `batch-${batchId}`;
-        const sourceText = meta?.source || this.app.t('ui.playlist');
-        const seqText = this.app.t('label.sequential');
+        const sourceText = this.formatBatchSource(meta);
         batchElement.innerHTML = `
             <strong>${sourceText} — ${this.app.t('label.sequential')}</strong>
             <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
@@ -2004,7 +2142,7 @@ if (job.currentPhase) {
                 this.ensureBatch(result.clientBatch, result.batchTotal, {
                     format: result.format,
                     bitrate: result.bitrate,
-                    source: result.source
+                    source: result.mediaPlatform || result.source
                 });
                 this.trackJob(result.id, result.clientBatch);
             } else {

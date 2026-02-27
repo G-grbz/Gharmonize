@@ -190,7 +190,7 @@ function buildLinuxDesktopFile(prefs = {}) {
   return [
     '[Desktop Entry]',
     'Type=Application',
-    'Version=1.0.9',
+    'Version=1.2.0',
     'Name=Gharmonize',
     'GenericName=Media Toolkit',
     'Comment=Gharmonize',
@@ -486,6 +486,44 @@ function getNavState(webContents) {
   return { canGoBack: webContents.canGoBack(), canGoForward: webContents.canGoForward() };
 }
 
+// Resolves safest existing output root for open-folder actions.
+function resolveOutputOpenRootDir() {
+  const baseDir = process.env.DATA_DIR || process.cwd();
+  const outputDir = path.resolve(baseDir, 'outputs');
+  const displayRaw = String(process.env.OUTPUTS_DISPLAY_DIR || '').trim();
+  const displayDir = displayRaw
+    ? (path.isAbsolute(displayRaw) ? path.resolve(displayRaw) : path.resolve(baseDir, displayRaw))
+    : '';
+
+  const candidates = [displayDir, outputDir];
+  for (const c of candidates) {
+    if (!c) continue;
+    try {
+      if (!fs.existsSync(c)) continue;
+      if (!fs.statSync(c).isDirectory()) continue;
+      return c;
+    } catch {
+    }
+  }
+  return outputDir;
+}
+
+// Resolves output subdir safely against root.
+function resolveOutputOpenDir(rawSubdir = '', outputRootDir = resolveOutputOpenRootDir()) {
+  const root = path.resolve(outputRootDir || resolveOutputOpenRootDir());
+  const src = String(rawSubdir || '').trim().replace(/^[/\\]+|[/\\]+$/g, '');
+  if (!src) return root;
+
+  const parts = src.split(/[\\/]+/).filter(Boolean);
+  if (!parts.length) return root;
+  if (parts.some((p) => p === '.' || p === '..')) return null;
+
+  const rel = parts.join(path.sep);
+  const abs = path.resolve(root, rel);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  return abs;
+}
+
 // Builds and show context menu for the Electron runtime bridge.
 function buildAndShowContextMenu(win, params) {
   const wc = win.webContents;
@@ -717,6 +755,65 @@ ipcMain.handle('update-language', async (_event, lang) => {
   } catch (e) {
     console.error('Language update failed:', e);
     return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('select-directory', async (_event, defaultPath = '') => {
+  try {
+    const raw = String(defaultPath || '').trim();
+    let suggestedPath;
+
+    if (raw) {
+      const resolved = path.resolve(raw);
+      if (fs.existsSync(resolved)) {
+        try {
+          const stat = fs.statSync(resolved);
+          suggestedPath = stat.isDirectory() ? resolved : path.dirname(resolved);
+        } catch {
+          suggestedPath = path.dirname(resolved);
+        }
+      } else {
+        suggestedPath = path.dirname(resolved);
+      }
+    }
+
+    const win =
+      BrowserWindow.getFocusedWindow()
+      || mainWindowRef
+      || BrowserWindow.getAllWindows()[0];
+
+    const result = await dialog.showOpenDialog(win || undefined, {
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: suggestedPath
+    });
+
+    if (result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    return { canceled: false, path: result.filePaths[0] };
+  } catch (e) {
+    return { canceled: true, error: e?.message || 'Failed to select directory' };
+  }
+});
+
+ipcMain.handle('open-output-folder', async (_event, subdir = '') => {
+  try {
+    const rootDir = resolveOutputOpenRootDir();
+    const targetDir = resolveOutputOpenDir(subdir, rootDir);
+    if (!targetDir) {
+      return { success: false, error: 'Invalid output folder path' };
+    }
+
+    await fs.promises.mkdir(targetDir, { recursive: true });
+    const errMsg = await shell.openPath(targetDir);
+    if (errMsg) {
+      return { success: false, error: errMsg };
+    }
+
+    return { success: true, path: targetDir };
+  } catch (e) {
+    return { success: false, error: e?.message || 'Failed to open output folder' };
   }
 });
 

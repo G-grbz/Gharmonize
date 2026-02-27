@@ -235,7 +235,7 @@ app.get('/api/version', (req, res) => {
   } catch (error) {
     console.error('Package.json could not be read:', error);
     res.json({
-      version: '1.1.1',
+      version: '1.2.0',
       name: 'Gharmonize'
     });
   }

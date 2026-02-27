@@ -36,6 +36,39 @@ export function escapeRegExp(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const TITLE_FOLD_MAP = Object.freeze({
+  I: "i",
+  İ: "i",
+  ı: "i",
+  Ş: "s",
+  ş: "s",
+  Ğ: "g",
+  ğ: "g",
+  Ü: "u",
+  ü: "u",
+  Ö: "o",
+  ö: "o",
+  Ç: "c",
+  ç: "c",
+  ß: "ss",
+  Æ: "ae",
+  æ: "ae",
+  Œ: "oe",
+  œ: "oe",
+});
+
+// Handles normalize loose compare text in core application logic.
+function normalizeLooseCompareText(s = "") {
+  return String(s)
+    .replace(/[IİıŞşĞğÜüÖöÇçßÆæŒœ]/g, (ch) => TITLE_FOLD_MAP[ch] || ch)
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Normalizes title for core application logic.
 export function normalizeTitle(rawTitle, artist) {
   if (!rawTitle) return rawTitle;
@@ -45,7 +78,18 @@ export function normalizeTitle(rawTitle, artist) {
 
   const escaped = escapeRegExp(a);
   const re = new RegExp(`^(?:${escaped}\\s*[-_–]+\\s*)+`, "i");
-  title = title.replace(re, "").trim();
+  const exactTrimmed = title.replace(re, "").trim();
+  if (exactTrimmed !== title) return exactTrimmed;
+
+  const parts = title.match(/^\s*(.+?)\s*[-_–—]+\s*(.+)\s*$/);
+  if (!parts) return title;
+  const left = parts[1].trim();
+  const right = parts[2].trim();
+  if (!left || !right) return title;
+
+  if (normalizeLooseCompareText(left) === normalizeLooseCompareText(a)) {
+    return right;
+  }
 
   return title;
 }
@@ -118,13 +162,23 @@ export function uniqueId(prefix) {
 
 // Handles add cookie args in core application logic.
 export function addCookieArgs(args, { ui = false } = {}) {
+  const hasCookieFile = (cookieFile) => {
+    const filePath = String(cookieFile || "").trim();
+    if (!filePath) return false;
+    try {
+      return fs.existsSync(filePath);
+    } catch {
+      return false;
+    }
+  };
+
   if (ui && process.env.YT_UI_FORCE_COOKIES === "1") {
     const cookieBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER;
     const cookieFile = process.env.YTDLP_COOKIES;
 
     if (cookieBrowser) {
       args.push("--cookies-from-browser", cookieBrowser);
-    } else if (cookieFile) {
+    } else if (hasCookieFile(cookieFile)) {
       args.push("--cookies", cookieFile);
     }
     return args;
@@ -138,7 +192,7 @@ export function addCookieArgs(args, { ui = false } = {}) {
 
   if (cookieBrowser) {
     args.push("--cookies-from-browser", cookieBrowser);
-  } else if (cookieFile) {
+  } else if (hasCookieFile(cookieFile)) {
     args.push("--cookies", cookieFile);
   }
 

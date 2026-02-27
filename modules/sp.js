@@ -27,6 +27,39 @@ function _cacheSet(k, v) {
   }
 }
 
+const SEARCH_CHAR_FOLD_MAP = Object.freeze({
+  I: "i",
+  İ: "i",
+  ı: "i",
+  Ş: "s",
+  ş: "s",
+  Ğ: "g",
+  ğ: "g",
+  Ü: "u",
+  ü: "u",
+  Ö: "o",
+  ö: "o",
+  Ç: "c",
+  ç: "c",
+  ß: "ss",
+  Æ: "ae",
+  æ: "ae",
+  Œ: "oe",
+  œ: "oe",
+});
+
+// Handles normalize matching text in core application logic.
+function _normMatch(s = "") {
+  return String(s)
+    .replace(/[IİıŞşĞğÜüÖöÇçßÆæŒœ]/g, (ch) => SEARCH_CHAR_FOLD_MAP[ch] || ch)
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Handles make map id in core application logic.
 export function makeMapId() {
   return crypto.randomBytes(8).toString("hex");
@@ -96,21 +129,50 @@ async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEA
 // Handles search ytm best id in core application logic.
 export async function searchYtmBestId(artist, title) {
   const q = `${artist} ${title}`.trim();
-  const qNorm = q.toLowerCase().replace(/\s+/g, " ").trim();
+  const qNorm = _normMatch(q);
   const cached = _cacheGet(qNorm);
   if (cached !== undefined) return cached;
 
   const data = await runYtJsonLite([`ytsearch${YT_SEARCH_RESULTS}:${q}`], "ytm-search-lite", YT_SEARCH_TIMEOUT_MS);
   const entries = Array.isArray(data?.entries) ? data.entries : [];
   if (!entries.length) { _cacheSet(qNorm, null); return null; }
-  const aLow = (artist || "").toLowerCase();
+
+  const aNorm = _normMatch(artist || "");
+  const tNorm = _normMatch(title || "");
+  let bestId = null;
+  let bestScore = -1;
+
   for (const e of entries) {
     const vid = e?.id;
-    const et = (e?.title || "").toLowerCase();
-    const ch = (e?.uploader || e?.channel || "").toLowerCase();
-    if (vid && (et.includes(aLow) || ch.includes(aLow))) { _cacheSet(qNorm, vid); return vid; }
+    if (!vid) continue;
+
+    const et = _normMatch(e?.title || "");
+    const ch = _normMatch(e?.uploader || e?.channel || "");
+    let score = 0;
+
+    if (tNorm) {
+      if (et === tNorm) score += 6;
+      else if (et.includes(tNorm) || tNorm.includes(et)) score += 4;
+    }
+
+    if (aNorm) {
+      if (ch === aNorm) score += 4;
+      else if (et.includes(aNorm) || ch.includes(aNorm)) score += 2;
+    }
+
+    if (aNorm && tNorm && et.includes(tNorm) && (et.includes(aNorm) || ch.includes(aNorm))) {
+      score += 2;
+    }
+
+    if (/\btopic\b/.test(ch)) score += 1;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = vid;
+    }
   }
-  const fallback = entries[0]?.id || null;
+
+  const fallback = bestScore > 0 ? bestId : (entries[0]?.id || null);
   _cacheSet(qNorm, fallback);
   return fallback;
 }

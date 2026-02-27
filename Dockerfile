@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM node:20-bookworm AS base
 
+ARG YTDLP_VERSION=2026.02.21
+
 WORKDIR /usr/src/app
 
 RUN set -eux; \
@@ -9,6 +11,7 @@ RUN set -eux; \
         curl \
         wget \
         python3 \
+        python3-pip \
         ca-certificates \
         tzdata \
         intel-media-va-driver \
@@ -19,9 +22,8 @@ RUN set -eux; \
         unzip \
         gnupg; \
     \
-    YTDLP_VERSION=2025.12.08; \
-    curl -L "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp" \
-      -o /usr/local/bin/yt-dlp; \
+    python3 -m pip install --no-cache-dir --break-system-packages \
+      "yt-dlp[curl-cffi]==${YTDLP_VERSION}"; \
     chmod a+rx /usr/local/bin/yt-dlp; \
     \
     FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"; \
@@ -43,7 +45,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends mkvtoolnix; \
     \
 
-    DENO_VERSION=2.6.0; \
+    DENO_VERSION=2.6.10; \
     cd /tmp; \
     curl -L "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" \
       -o deno.zip; \

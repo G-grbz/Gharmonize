@@ -1,18 +1,16 @@
-version: "3.9"
 services:
   web:
-    image: ggrbz/gharmonize:latest
+    image: ggrbz/gharmonize:testing
     container_name: Gharmonize
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       - NODE_ENV=production
       - PORT=${PORT:-5174}
-      - YT_FORCE_IPV4=1
-      - YT_APPLY_403_WORKAROUNDS=1
       - YTDLP_EXTRA=--force-ipv4
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - DATA_DIR=/usr/src/app
+      - OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs
     ports:
       - "${PORT:-5174}:${PORT:-5174}"
     volumes:

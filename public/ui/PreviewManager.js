@@ -29,6 +29,13 @@ export class PreviewManager {
         return s.trim();
     }
 
+    // Detects playlist platform from URL for the browser UI layer.
+    detectPlaylistPlatform(url = '') {
+        const s = String(url || '').trim();
+        if (/(?:dailymotion\.com|dai\.ly)/i.test(s)) return 'dailymotion';
+        return 'youtube';
+    }
+
     // Normalizes artist tokens for the browser UI layer.
     normalizeArtistTokens(value = '') {
         return String(value || '')
@@ -56,25 +63,60 @@ export class PreviewManager {
     }
 
     // Parses title artist pair for the browser UI layer.
-    parseTitleArtistPair(title = '') {
+    parseTitleArtistPair(title = '', uploader = '') {
         const raw = String(title || '').trim();
         if (!raw) return null;
+        const extractPrimary = (value = '') =>
+            String(value || '')
+                .split(/\s*(?:[-–—|｜·•])\s*|\s+\bl\b\s+/gi)
+                .map(p => p.trim())
+                .filter(Boolean)[0] || '';
+
+        const lParts = raw
+            .split(/\s+\bl\b\s+/i)
+            .map(p => p.trim())
+            .filter(Boolean);
+
+        if (lParts.length >= 2) {
+            const left = (lParts[0] || '').trim();
+            const right = this.cleanUploader((lParts[1] || '').trim());
+            if (!left || !right) return null;
+            return { artist: left, track: right };
+        }
+
         const m = raw.match(/^(.+?)\s*[-–—]\s+(.+)$/);
         if (!m) return null;
 
-        const artist = (m[1] || '').trim();
-        const track = (m[2] || '').trim();
-        if (!artist || !track) return null;
+        const left = (m[1] || '').trim();
+        const right = (m[2] || '').trim();
+        if (!left || !right) return null;
+        const rightHasExtraParts = /(?:\s+[-–—|｜·•]\s+|\s+\bl\b\s+)/i.test(right);
+        if (rightHasExtraParts) {
+            const rightPrimary = extractPrimary(right);
+            return { artist: left, track: rightPrimary || right };
+        }
 
-        return { artist, track };
+        const cleanedUploader = this.cleanUploader(uploader || '');
+        if (cleanedUploader) {
+            const leftLooksArtist = this.looksLikeArtist(left, cleanedUploader);
+            const rightLooksArtist = this.looksLikeArtist(right, cleanedUploader);
+            if (leftLooksArtist && !rightLooksArtist) {
+                return { artist: left, track: right };
+            }
+            if (rightLooksArtist && !leftLooksArtist) {
+                return { artist: right, track: left };
+            }
+        }
+
+        return { artist: left, track: right };
     }
 
     // Returns artist display used for the browser UI layer.
     getArtistDisplay(item) {
         const title = (item?.title || '').toString().trim();
-        const pair = this.parseTitleArtistPair(title);
+        const pair = this.parseTitleArtistPair(title, item?.uploader || '');
         if (pair?.artist && !pair.artist.startsWith('-')) {
-            return pair.artist;
+            return this.cleanUploader(pair.artist);
         }
 
         return this.cleanUploader(item?.uploader || '');
@@ -85,14 +127,18 @@ export class PreviewManager {
         const rawTitle = (item?.title || '').toString().trim();
         if (!rawTitle) return '';
 
-        const pair = this.parseTitleArtistPair(rawTitle);
+        const uploader = this.cleanUploader(item?.uploader || '');
+        const pair = this.parseTitleArtistPair(rawTitle, uploader);
         if (pair?.track) return pair.track;
 
-        const uploader = this.cleanUploader(item?.uploader || '');
         const parts = rawTitle
-            .split(/\s*(?:[-–—|｜·•])\s*/g)
+            .split(/\s*(?:[-–—|｜·•])\s*|\s+\bl\b\s+/gi)
             .map(p => p.trim())
             .filter(Boolean);
+
+        if (parts.length >= 3) {
+            return parts.slice(0, -1).join(' - ');
+        }
 
         if (parts.length < 2) return rawTitle;
 
@@ -558,6 +604,7 @@ export class PreviewManager {
             const selectedIdRaw = selected.map(i => this.currentPreview.indexToId.get(i) || null);
             const selectedIdsComplete = selectedIdRaw.every(Boolean);
             const selectedIds = selectedIdsComplete ? selectedIdRaw : null;
+            const plTitle = String(this.currentPreview.title || '').trim();
 
             const frozenEntries = selected.map(idx => ({
                 index: idx,
@@ -572,7 +619,11 @@ export class PreviewManager {
 
             if (sequential && selected.length > 1) {
                 const batchId = `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-                this.app.jobManager.ensureBatch(batchId, selected.length, { format, bitrate, source: this.app.t('ui.youtubePlaylist') });
+                this.app.jobManager.ensureBatch(batchId, selected.length, {
+                    format,
+                    bitrate,
+                    source: this.detectPlaylistPlatform(this.currentPreview.url)
+                });
                 for (const idx of selected) {
                     const idFromMap = this.currentPreview.indexToId.get(idx);
                     const itemId = idFromMap ? [idFromMap] : null;
@@ -582,6 +633,7 @@ export class PreviewManager {
                     await this.app.jobManager.submitJob({
                         url: this.currentPreview.url,
                         isPlaylist: true,
+                        plTitle,
                         selectedIndices: [idx],
                         selectedIds: itemId,
                         format,
@@ -600,6 +652,7 @@ export class PreviewManager {
                 await this.app.jobManager.submitJob({
                     url: this.currentPreview.url,
                     isPlaylist: true,
+                    plTitle,
                     selectedIndices: selected,
                     selectedIds,
                     format,
@@ -652,6 +705,7 @@ export class PreviewManager {
             const allIdsRaw = this.currentPreview.items.map(item => item.id || null);
             const allIdsComplete = allIdsRaw.length > 0 && allIdsRaw.every(Boolean);
             const allIds = allIdsComplete ? allIdsRaw : null;
+            const plTitle = String(this.currentPreview.title || '').trim();
 
             const frozenEntries = this.currentPreview.items.map(item => ({
                 index: item.index,
@@ -665,6 +719,7 @@ export class PreviewManager {
             await this.app.jobManager.submitJob({
                 url: this.currentPreview.url,
                 isPlaylist: true,
+                plTitle,
                 selectedIndices: 'all',
                 selectedIds: allIds,
                 format,

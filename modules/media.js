@@ -8,6 +8,7 @@ import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
 import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
 import { rewriteId3v11Tag } from "./id3.js";
+import { toDownloadPath, resolveDownloadPathToAbs } from "./outputPaths.js";
 import "dotenv/config";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 import { getFfmpegCaps } from "./ffmpegCaps.js";
@@ -2564,8 +2565,30 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     } catch {}
     let duration = null;
+    let lastElapsed = null;
+    let lastFps = null;
+    let elapsedBasedFps = null;
+    let measuredEncodeFps = null;
+    let lastFrame = null;
+    let lastFrameAt = null;
+    let sourceNominalFps =
+      Number.isFinite(targetFps) && targetFps > 0 ? targetFps : null;
+    let lastProgress = -1;
+    let lastProgressAt = 0;
     let stderrData = "";
+    let parseWindow = "";
     let canceledByFlag = false;
+    const ffmpegStartedAt = Date.now();
+
+    // Formats seconds to HH:MM:SS for conversion progress display.
+    const formatClock = (sec) => {
+      if (!Number.isFinite(sec) || sec < 0) return "--:--:--";
+      const total = Math.floor(sec);
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    };
 
     // Handles try cancel in the FFmpeg media conversion pipeline.
     const tryCancel = () => {
@@ -2577,12 +2600,84 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     };
 
+    // Returns smoothed encode fps (frame delta / real elapsed wall time).
+    const pickLiveFps = () => {
+      const n =
+        Number.isFinite(elapsedBasedFps) && elapsedBasedFps > 0
+          ? elapsedBasedFps
+          : Number.isFinite(measuredEncodeFps) && measuredEncodeFps > 0
+          ? measuredEncodeFps
+          : Number.isFinite(lastFps) && lastFps > 0
+          ? lastFps
+          : null;
+      return Number.isFinite(n) && n > 0 ? Number(n.toFixed(2)) : null;
+    };
+
+    // Tries to extract source fps from ffmpeg stream info text once.
+    const tryCaptureSourceFps = () => {
+      if (Number.isFinite(sourceNominalFps) && sourceNominalFps > 0) return;
+      const matches = [...parseWindow.matchAll(/,\s*([0-9]+(?:\.[0-9]+)?)\s*fps(?:\s*,|\s)/gi)];
+      if (!matches.length) return;
+      for (const m of matches) {
+        const n = Number(m?.[1]);
+        if (Number.isFinite(n) && n >= 10 && n <= 120) {
+          sourceNominalFps = n;
+          break;
+        }
+      }
+    };
+
+    // Updates fps estimate based on encoded media time / wall elapsed.
+    const updateElapsedBasedFps = () => {
+      if (!Number.isFinite(lastElapsed) || lastElapsed <= 0) return;
+      const wallElapsed = (Date.now() - ffmpegStartedAt) / 1000;
+      if (!Number.isFinite(wallElapsed) || wallElapsed < 0.5) return;
+
+      let nominalFps =
+        Number.isFinite(sourceNominalFps) && sourceNominalFps > 0
+          ? sourceNominalFps
+          : null;
+
+      if (!nominalFps && Number.isFinite(lastFrame) && lastFrame > 0 && lastElapsed >= 1) {
+        const inferred = lastFrame / lastElapsed;
+        if (Number.isFinite(inferred) && inferred >= 10 && inferred <= 120) {
+          nominalFps = inferred;
+          sourceNominalFps = inferred;
+        }
+      }
+
+      if (!nominalFps) return;
+      const speedRatio = lastElapsed / wallElapsed;
+      if (!Number.isFinite(speedRatio) || speedRatio <= 0) return;
+
+      const estimate = nominalFps * speedRatio;
+      if (!Number.isFinite(estimate) || estimate <= 0 || estimate > 5000) return;
+
+      elapsedBasedFps = Number.isFinite(elapsedBasedFps)
+        ? elapsedBasedFps * 0.75 + estimate * 0.25
+        : estimate;
+    };
+
+    // Returns smoothed encode fps (frame delta / real elapsed wall time).
+    const fallbackFrameBasedFps = () => {
+      const n =
+        Number.isFinite(measuredEncodeFps) && measuredEncodeFps > 0
+          ? measuredEncodeFps
+          : lastFps;
+      return Number.isFinite(n) && n > 0 ? Number(n.toFixed(2)) : null;
+    };
+
     ffmpeg.stderr.on("data", (d) => {
-      const line = d.toString();
-      stderrData += line;
+      const chunk = d.toString();
+      stderrData += chunk;
+      parseWindow += chunk;
+      if (parseWindow.length > 8192) {
+        parseWindow = parseWindow.slice(-8192);
+      }
+      tryCaptureSourceFps();
 
       if (!duration) {
-        const m = line.match(/Duration:\s+(\d+):(\d+):(\d+\.\d+)/);
+        const m = chunk.match(/Duration:\s+(\d+):(\d+):(\d+\.\d+)/);
         if (m) {
           const [, h, mn, s] = m;
           duration = +h * 3600 + +mn * 60 + +s;
@@ -2591,12 +2686,89 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       tryCancel();
 
-      const t = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-      if (t && duration) {
+      const timeMatches = [...parseWindow.matchAll(/time=(\d+):(\d+):(\d+\.\d+)/g)];
+      const fpsMatches = [...parseWindow.matchAll(/fps=\s*([0-9.]+)/g)];
+      const frameMatches = [...parseWindow.matchAll(/frame=\s*([0-9]+)/g)];
+      const t = timeMatches.length ? timeMatches[timeMatches.length - 1] : null;
+      const f = fpsMatches.length ? fpsMatches[fpsMatches.length - 1] : null;
+      const fr = frameMatches.length
+        ? frameMatches[frameMatches.length - 1]
+        : null;
+
+      if (f) {
+        const parsedFps = Number(f[1]);
+        if (Number.isFinite(parsedFps) && parsedFps > 0) {
+          lastFps = parsedFps;
+        }
+      }
+
+      if (fr) {
+        const parsedFrame = Number(fr[1]);
+        if (Number.isFinite(parsedFrame) && parsedFrame >= 0) {
+          const now = Date.now();
+
+          if (Number.isFinite(lastFrame) && Number.isFinite(lastFrameAt)) {
+            const deltaFrame = parsedFrame - lastFrame;
+            const deltaWall = (now - lastFrameAt) / 1000;
+            if (deltaFrame >= 0 && deltaWall >= 0.35) {
+              const instantEncodeFps = deltaFrame / deltaWall;
+              if (
+                Number.isFinite(instantEncodeFps) &&
+                instantEncodeFps > 0 &&
+                instantEncodeFps < 5000
+              ) {
+                measuredEncodeFps = Number.isFinite(measuredEncodeFps)
+                  ? measuredEncodeFps * 0.7 + instantEncodeFps * 0.3
+                  : instantEncodeFps;
+              }
+            }
+          }
+
+          const wallElapsed = (now - ffmpegStartedAt) / 1000;
+          if (parsedFrame > 0 && wallElapsed >= 1) {
+            const avgEncodeFps = parsedFrame / wallElapsed;
+            if (
+              Number.isFinite(avgEncodeFps) &&
+              avgEncodeFps > 0 &&
+              avgEncodeFps < 5000
+            ) {
+              measuredEncodeFps = Number.isFinite(measuredEncodeFps)
+                ? measuredEncodeFps * 0.85 + avgEncodeFps * 0.15
+                : avgEncodeFps;
+            }
+          }
+
+          lastFrame = parsedFrame;
+          lastFrameAt = now;
+        }
+      }
+
+      if (t) {
         const [, h, mn, s] = t;
         const cur = +h * 3600 + +mn * 60 + +s;
+        lastElapsed = cur;
+        updateElapsedBasedFps();
+      } else if (!Number.isFinite(elapsedBasedFps) || elapsedBasedFps <= 0) {
+        elapsedBasedFps = fallbackFrameBasedFps();
+      }
+
+      if (t && duration) {
+        const cur = Number(lastElapsed || 0);
         const p = Math.min(99, Math.floor((cur / duration) * 100));
-        progressCallback(p);
+        const now = Date.now();
+        const shouldEmit = p !== lastProgress || (now - lastProgressAt) >= 1200;
+        if (shouldEmit) {
+          lastProgress = p;
+          lastProgressAt = now;
+          progressCallback(p, {
+            percent: p,
+            elapsedSeconds: cur,
+            durationSeconds: duration,
+            elapsedText: formatClock(cur),
+            durationText: formatClock(duration),
+            fps: pickLiveFps()
+          });
+        }
         tryCancel();
       }
     });
@@ -2611,10 +2783,21 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
 
       if (code === 0 && fs.existsSync(outputPath)) {
-        progressCallback(100);
+        const finalElapsed = Number.isFinite(lastElapsed) ? lastElapsed : duration;
+        progressCallback(100, {
+          percent: 100,
+          elapsedSeconds: Number.isFinite(finalElapsed) ? finalElapsed : null,
+          durationSeconds: Number.isFinite(duration) ? duration : null,
+          elapsedText: formatClock(finalElapsed),
+          durationText: formatClock(duration),
+          fps: pickLiveFps()
+        });
         console.log(`✅ Conversion completed: ${outputPath}`);
+        const downloadPath =
+          toDownloadPath(outputPath) ||
+          `/download/${encodeURIComponent(path.basename(outputPath))}`;
         resolve({
-          outputPath: `/download/${encodeURIComponent(outputFileName)}`,
+          outputPath: downloadPath,
           fileSize: fs.statSync(outputPath).size
         });
       } else {
@@ -2678,10 +2861,11 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     if (shouldProcessLyrics && !isVideo && result && result.outputPath) {
       console.log("🎵 Adding lyrics...");
-      const actualOutputPath = path.join(
-        outputDir,
-        decodeURIComponent(result.outputPath.replace("/download/", ""))
-      );
+      const actualOutputPath = resolveDownloadPathToAbs(result.outputPath);
+      if (!actualOutputPath) {
+        console.warn("⚠️ Could not resolve output path for lyrics:", result.outputPath);
+        return result;
+      }
 
       if (isCanceled()) {
         return result;
@@ -2722,9 +2906,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
         if (lyricsPath) {
           console.log(`✅ lyrics added successfully: ${lyricsPath}`);
-          result.lyricsPath = `/download/${encodeURIComponent(
-            path.basename(lyricsPath)
-          )}`;
+          result.lyricsPath =
+            toDownloadPath(lyricsPath) ||
+            `/download/${encodeURIComponent(path.basename(lyricsPath))}`;
 
           const job = jobs.get(jobId.split("_")[0]);
           if (job) {
@@ -2765,14 +2949,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     if (!isVideo && String(format || "").toLowerCase() === "mp3" && shouldWriteId3v1() && result?.outputPath) {
-      const actualOutputPath = path.join(
-        outputDir,
-        decodeURIComponent(String(result.outputPath).replace("/download/", ""))
-      );
-      rewriteId3v11Tag(actualOutputPath, {
-        ...resolvedMeta,
-        comment: getCommentText()
-      });
+      const actualOutputPath = resolveDownloadPathToAbs(result.outputPath);
+      if (actualOutputPath) {
+        rewriteId3v11Tag(actualOutputPath, {
+          ...resolvedMeta,
+          comment: getCommentText()
+        });
+      }
     }
 
     return result;

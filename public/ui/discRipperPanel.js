@@ -553,6 +553,43 @@ function handleProgressUpdate(data) {
   }
 }
 
+// Handles choose disc source folder in the browser UI layer.
+async function chooseDiscSourceFolder() {
+  const input = document.getElementById('discSourcePath');
+  if (!input) return;
+
+  if (!window.electronAPI || typeof window.electronAPI.selectDirectory !== 'function') {
+    showDiscModal(
+      'info',
+      t('disc.alert.folderPickerUnavailable.title') || 'Bilgi',
+      t('disc.alert.folderPickerUnavailable.message') ||
+        'Klasör seçici yalnızca masaüstü uygulamada kullanılabilir.'
+    );
+    return;
+  }
+
+  try {
+    const selected = await window.electronAPI.selectDirectory(input.value.trim());
+    if (selected?.canceled) return;
+    if (!selected?.path) {
+      throw new Error(selected?.error || 'No path selected');
+    }
+
+    input.value = selected.path;
+    logDisc(
+      t('disc.log.sourceSelected', { path: selected.path }) ||
+        `Disk kaynağı seçildi: ${selected.path}`
+    );
+  } catch (e) {
+    showDiscModal(
+      'error',
+      t('disc.alert.folderPickerError.title') || 'Klasör Seçme Hatası',
+      t('disc.alert.folderPickerError.message', { message: e.message }) ||
+        `Klasör seçilirken hata oluştu: ${e.message}`
+    );
+  }
+}
+
 
 // Handles scan progress disc metadata in the browser UI layer.
 async function scanDisc() {
@@ -1027,6 +1064,7 @@ async function startRipProcess(titlesToRip) {
 // Initializes disc metadata ripper panel for the browser UI layer.
 export function initDiscRipperPanel() {
   const sourceInput = document.getElementById('discSourcePath');
+  const browseSourceBtn = document.getElementById('discBrowseSourceBtn');
   const scanBtn = document.getElementById('discScanBtn');
   const cancelScanBtn = document.getElementById('discCancelScanBtn');
   const ripBtn = document.getElementById('discRipBtn');
@@ -1047,6 +1085,12 @@ export function initDiscRipperPanel() {
   if (openBtn) {
     openBtn.addEventListener('click', () => {
       ensureDiscModalOpen();
+    });
+  }
+
+  if (browseSourceBtn) {
+    browseSourceBtn.addEventListener('click', () => {
+      chooseDiscSourceFolder();
     });
   }
 

@@ -84,15 +84,109 @@ export async function searchSpotifyBestTrack(artist, title, market) {
 }
 
 // Handles norm in Spotify mapping and metadata flow.
+const LOCALE_CHAR_FOLD_MAP = Object.freeze({
+  I: "i",
+  İ: "i",
+  ı: "i",
+  Ş: "s",
+  ş: "s",
+  Ğ: "g",
+  ğ: "g",
+  Ü: "u",
+  ü: "u",
+  Ö: "o",
+  ö: "o",
+  Ç: "c",
+  ç: "c",
+  ß: "ss",
+  Æ: "ae",
+  æ: "ae",
+  Œ: "oe",
+  œ: "oe"
+});
+
+function _foldLocaleChars(s = "") {
+  return String(s).replace(
+    /[IİıŞşĞğÜüÖöÇçßÆæŒœ]/g,
+    (ch) => LOCALE_CHAR_FOLD_MAP[ch] || ch
+  );
+}
+
 function _norm(s=""){
-  return String(s)
+  return _foldLocaleChars(String(s))
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g,"")
-    .replace(/[\[\](){}"'“”‘’·•.,!?]/g," ")
+    .replace(/&/g, " and ")
+    .replace(/[\[\](){}"'“”‘’`´·•.,!?]/g," ")
     .replace(/\b(feat|ft|with)\b.*$/i,"")
     .replace(/\s+/g," ")
     .trim();
+}
+
+function _buildSearchQueries(artist, title) {
+  const queries = [];
+  const seen = new Set();
+
+  const push = (q = "") => {
+    const v = String(q || "").trim();
+    if (!v) return;
+    const key = _norm(v);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    queries.push(v);
+  };
+
+  const main = [artist, title].filter(Boolean).join(" ").trim();
+  const cross = [title, artist].filter(Boolean).join(" ").trim();
+
+  push(main);
+  push(cross);
+
+  return queries;
+}
+
+function _stripTitleSearchNoise(s = "") {
+  return String(s || "")
+    .replace(
+      /\s*[–—-]\s*(cover|official\s*video|official\s*audio|audio|mv|hd|4k|lyrics?|lyric|visualizer|remaster(?:ed)?)\b.*$/i,
+      ""
+    )
+    .replace(/\s+(feat\.?|ft\.?|with)\s+.+$/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function _buildTitleOnlyQueries(title, titleRaw) {
+  const queries = [];
+  const seen = new Set();
+
+  const push = (q = "") => {
+    const v = String(q || "").trim();
+    if (!v) return;
+    const key = _norm(v);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    queries.push(v);
+  };
+
+  push(title);
+  push(_stripTitleSearchNoise(title));
+  push(_stripTitleSearchNoise(titleRaw));
+
+  return queries;
+}
+
+function _durationMatches(item, targetDurationSec) {
+  if (!Number.isFinite(targetDurationSec) || !item?.duration_ms) return false;
+  const spSec = Math.round(item.duration_ms / 1000);
+  const tol = Math.max(2, Math.round(targetDurationSec * 0.02));
+  return Math.abs(spSec - targetDurationSec) <= tol;
+}
+
+function _startsWithNormTitle(spTitleNorm = "", titleNorm = "") {
+  if (!spTitleNorm || !titleNorm) return false;
+  return spTitleNorm === titleNorm || spTitleNorm.startsWith(`${titleNorm} `);
 }
 
 // Handles search Spotify metadata best track strict in Spotify mapping and metadata flow.
@@ -105,20 +199,14 @@ export async function searchSpotifyBestTrackStrict(
   } = {}
 ) {
   const api = await makeSpotify();
-  const q = [artist, title].filter(Boolean).join(" ").trim();
+  const queries = _buildSearchQueries(artist, title);
+  if (!queries.length) return null;
 
   const mkt = resolveMarket(market);
-  const resp = await api.searchTracks(q, {
-    limit: 10,
-    ...(mkt ? { market: mkt } : {})
-  });
-
-  const items = resp?.body?.tracks?.items || [];
-  if (!items.length) return null;
-
   const aN = _norm(artist || "");
   const tN = _norm(title || "");
   const tRawN = _norm(titleRaw || title || "");
+  const tTokenCount = tN ? tN.split(/\s+/).filter(Boolean).length : 0;
 
   // Handles score in Spotify mapping and metadata flow.
   const score = (it) => {
@@ -132,24 +220,104 @@ export async function searchSpotifyBestTrackStrict(
       else if (spArtist.includes(aN) || aN.includes(spArtist)) s += 1;
     }
 
-    if (Number.isFinite(targetDurationSec) && it?.duration_ms) {
-      const spSec = Math.round(it.duration_ms / 1000);
-      const tol = Math.max(2, Math.round(targetDurationSec * 0.02));
-      if (Math.abs(spSec - targetDurationSec) <= tol) s += 2;
-    }
+    if (_durationMatches(it, targetDurationSec)) s += 2;
     return s;
   };
 
   let best = null,
     bestScore = -1;
-  for (const it of items) {
-    const s = score(it);
-    if (s > bestScore) {
-      best = it;
-      bestScore = s;
+  const seenIds = new Set();
+  for (const q of queries) {
+    const resp = await api.searchTracks(q, {
+      limit: 10,
+      ...(mkt ? { market: mkt } : {})
+    });
+    const items = resp?.body?.tracks?.items || [];
+
+    for (const it of items) {
+      const id = it?.id || null;
+      if (id && seenIds.has(id)) continue;
+      if (id) seenIds.add(id);
+
+      const s = score(it);
+      if (s > bestScore) {
+        best = it;
+        bestScore = s;
+      }
+    }
+
+    if (bestScore >= minScore) {
+      return best;
     }
   }
-  return bestScore >= minScore ? best : null;
+
+  if (!tN) return null;
+
+  const titleOnlyQueries = _buildTitleOnlyQueries(title, titleRaw);
+  if (!titleOnlyQueries.length) return null;
+
+  const seenRelaxedIds = new Set();
+  let relaxedBest = null;
+  let relaxedBestScore = -1;
+
+  for (const q of titleOnlyQueries) {
+    const resp = await api.searchTracks(q, {
+      limit: 12,
+      ...(mkt ? { market: mkt } : {})
+    });
+    const items = resp?.body?.tracks?.items || [];
+
+    for (const it of items) {
+      const id = it?.id || null;
+      if (id && seenRelaxedIds.has(id)) continue;
+      if (id) seenRelaxedIds.add(id);
+
+      const spTitle = _norm(it?.name || "");
+      const spArtist = _norm(it?.artists?.[0]?.name || "");
+      if (!spTitle) continue;
+
+      const titleExact = spTitle === tN || spTitle === tRawN;
+      const titleContains = spTitle.includes(tN) || tN.includes(spTitle);
+      if (!titleExact && !titleContains) continue;
+
+      const startsWithTitle = _startsWithNormTitle(spTitle, tN);
+      const artistExact = !!aN && spArtist === aN;
+      const artistPartial =
+        !!aN && !artistExact && (spArtist.includes(aN) || aN.includes(spArtist));
+      const durationMatch = _durationMatches(it, targetDurationSec);
+
+      let s = 0;
+      if (titleExact) s += 6;
+      else if (titleContains) s += 4;
+      if (startsWithTitle) s += 2;
+      if (artistExact) s += 3;
+      else if (artistPartial) s += 1;
+      if (durationMatch) s += 2;
+
+      if (/\b(karaoke|cover|instrumental|nightcore|slowed|sped)\b/.test(spTitle)) {
+        s -= 2;
+      }
+
+      const safeWithoutArtist = tTokenCount >= 5 && startsWithTitle;
+      const acceptable =
+        artistPartial || durationMatch || safeWithoutArtist;
+      if (!acceptable) continue;
+
+      if (s > relaxedBestScore) {
+        relaxedBest = it;
+        relaxedBestScore = s;
+      }
+    }
+  }
+
+  if (relaxedBest) {
+    const relaxedMinScore = Math.max(7, minScore);
+    if (relaxedBestScore >= relaxedMinScore) {
+      return relaxedBest;
+    }
+  }
+
+  return null;
 }
 
 // Handles track to ID3 metadata meta in Spotify mapping and metadata flow.
@@ -455,15 +623,20 @@ export async function resolveSpotifyUrl(url, { market } = {}) {
 
 // Finds Spotify metadata meta by query for Spotify mapping and metadata flow.
 export async function findSpotifyMetaByQuery(artist, title, market) {
-  const api = await makeSpotify();
-  const q = [artist, title].filter(Boolean).join(" ").trim();
-  const res = await withMarketFallback(async (mkt) => {
-    const r = await api.searchTracks(q, { limit: 1, ...(mkt ? { market: mkt } : {}) });
-    return r?.body || null;
-  }, resolveMarket(market));
+  const artistSafe = String(artist || "").trim();
+  const titleSafe = String(title || "").trim();
+  if (!titleSafe) return null;
 
-  const item = res?.tracks?.items?.[0];
+  let item = null;
+  try {
+    item = await searchSpotifyBestTrackStrict(artistSafe, titleSafe, market, {
+      titleRaw: titleSafe,
+      minScore: 7
+    });
+  } catch {}
   if (!item) return null;
+
+  const api = await makeSpotify();
   let album = null, leadArtist = null;
   try {
     if (item.album?.id) {

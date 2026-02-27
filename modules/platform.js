@@ -304,23 +304,37 @@ async function resolveVimeo(inputUrl) {
   throw new Error(`Vimeo media could not be resolved (${attemptErrors.join(" | ")})`);
 }
 
-// Extracts tik tok media URL for core application logic.
-function extractTikTokMediaUrl(html) {
+// Extracts tik tok media URLs for core application logic.
+function extractTikTokMediaUrls(html) {
+  const urls = new Set();
+
   const patterns = [
-    /"downloadAddr":"([^"]+)"/i,
-    /"playAddr":"([^"]+)"/i,
-    /"download_url":"([^"]+)"/i,
-    /"play_url":"([^"]+)"/i
+    /"(?:downloadAddr|playAddr|download_url|play_url)":"([^"]+)"/gi
   ];
 
+  // Handles push if http for core application logic.
+  const pushIfHttp = (raw) => {
+    const v = decodeEscaped(String(raw || ""));
+    if (/^https?:\/\//i.test(v)) {
+      urls.add(v);
+    }
+  };
+
   for (const re of patterns) {
-    const m = html.match(re);
-    if (m?.[1]) {
-      const v = decodeEscaped(m[1]);
-      if (/^https?:\/\//i.test(v)) return v;
+    const all = html.matchAll(re);
+    for (const m of all) {
+      if (m?.[1]) pushIfHttp(m[1]);
     }
   }
-  return "";
+
+  // Some pages expose escaped raw CDN urls outside JSON keys.
+  const rawEscapedUrls =
+    html.match(/https?:\\\/\\\/[^"'\\\s]+(?:video\/tos\/[^"'\\\s]*)?/gi) || [];
+  for (const raw of rawEscapedUrls) {
+    pushIfHttp(raw);
+  }
+
+  return Array.from(urls);
 }
 
 // Resolves tik tok for core application logic.
@@ -329,16 +343,18 @@ async function resolveTikTok(inputUrl) {
     referer: "https://www.tiktok.com/"
   });
 
-  const mediaUrl = extractTikTokMediaUrl(html);
-  if (!mediaUrl) {
+  const mediaUrls = extractTikTokMediaUrls(html);
+  if (!mediaUrls.length) {
     throw new Error("TikTok media URL could not be extracted");
   }
+  const mediaUrl = mediaUrls[0];
 
   const title = parseMetaTag(html, "og:title") || parseMetaTag(html, "twitter:title");
   const image = parseMetaTag(html, "og:image") || parseMetaTag(html, "twitter:image");
 
   return {
     mediaUrl,
+    mediaUrls,
     extHint: pickExtFromUrl(mediaUrl),
     metadata: {
       title: title || "TikTok",
@@ -349,6 +365,39 @@ async function resolveTikTok(inputUrl) {
       thumbnail: image || ""
     }
   };
+}
+
+// Builds media request header attempts for platform direct download.
+function buildMediaRequestHeaders(platformName, inputUrl) {
+  const base = {
+    "user-agent": DEFAULT_UA,
+    accept: "*/*"
+  };
+
+  if (platformName === "tiktok") {
+    return [
+      {
+        ...base,
+        referer: inputUrl
+      },
+      {
+        ...base,
+        referer: "https://www.tiktok.com/",
+        origin: "https://www.tiktok.com"
+      },
+      {
+        ...base,
+        referer: "https://www.tiktok.com/"
+      }
+    ];
+  }
+
+  return [
+    {
+      ...base,
+      referer: inputUrl
+    }
+  ];
 }
 
 // Resolves platform media for core application logic.
@@ -389,7 +438,7 @@ export async function downloadPlatformMedia(
     try {
       const fallbackPath = await downloadYouTubeVideo(
         inputUrl,
-        `${jobId}.${platformName}`,
+        jobId,
         false,
         null,
         false,
@@ -404,6 +453,7 @@ export async function downloadPlatformMedia(
             Number.isFinite(Number(opts?.maxHeight))
               ? Number(opts.maxHeight)
               : undefined,
+          preferTitleTemplate: true,
           forceCookies: true,
           requestHeaders:
             platformName === "vimeo"
@@ -472,26 +522,72 @@ export async function downloadPlatformMedia(
   const t = withTimeout(FETCH_TIMEOUT_MS * 2);
   const ac = t.controller;
   try {
-    const resp = await fetch(resolved.mediaUrl, {
-      headers: {
-        "user-agent": DEFAULT_UA,
-        referer: inputUrl
-      },
-      signal: t.signal,
-      redirect: "follow"
-    });
+    const mediaCandidates = Array.from(
+      new Set(
+        [
+          resolved.mediaUrl,
+          ...(Array.isArray(resolved.mediaUrls) ? resolved.mediaUrls : [])
+        ]
+          .map((u) => String(u || "").trim())
+          .filter((u) => /^https?:\/\//i.test(u))
+      )
+    );
+    if (!mediaCandidates.length) {
+      throw new Error("Resolved media URL is empty");
+    }
 
-    if (!resp.ok || !resp.body) {
-      const downloadErr = new Error(`Media download failed: HTTP ${resp.status}`);
+    const headerAttempts = buildMediaRequestHeaders(
+      resolved.platform || platform,
+      inputUrl
+    );
+
+    let resp = null;
+    let usedMediaUrl = mediaCandidates[0];
+    let lastDownloadErr = null;
+
+    for (const mediaUrl of mediaCandidates) {
+      usedMediaUrl = mediaUrl;
+      for (const headers of headerAttempts) {
+        if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
+          throw new Error("CANCELED");
+        }
+        try {
+          const attemptResp = await fetch(mediaUrl, {
+            headers,
+            signal: t.signal,
+            redirect: "follow"
+          });
+          if (attemptResp.ok && attemptResp.body) {
+            resp = attemptResp;
+            break;
+          }
+          lastDownloadErr = new Error(`Media download failed: HTTP ${attemptResp.status}`);
+          try {
+            attemptResp.body?.destroy?.();
+          } catch {}
+        } catch (e) {
+          lastDownloadErr = e;
+          if (String(e?.name || "").toLowerCase() === "aborterror") break;
+        }
+      }
+      if (resp) break;
+    }
+
+    if (!resp) {
+      const downloadErr =
+        lastDownloadErr || new Error("Media download failed: unknown error");
       if (YTDLP_FALLBACK_PLATFORMS.has(resolved.platform)) {
         return fallbackViaYtDlp(resolved.platform, resolved.metadata, downloadErr);
       }
       throw downloadErr;
     }
 
+    const extFallback = usedMediaUrl
+      ? pickExtFromUrl(usedMediaUrl)
+      : (resolved.extHint || "mp4");
     const ext = pickExtFromContentType(
       resp.headers.get("content-type"),
-      resolved.extHint || "mp4"
+      extFallback
     );
     const outputPath = path.join(tempDir, `${jobId}.${ext}`);
     const total = Number(resp.headers.get("content-length") || 0) || 0;

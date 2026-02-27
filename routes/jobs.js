@@ -15,6 +15,7 @@ import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modu
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
 import { getFfmpegCaps } from "../modules/ffmpegCaps.js";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "../modules/binaries.js";
+import { resolveDownloadPathToAbs } from "../modules/outputPaths.js";
 import "dotenv/config";
 import {
   isYouTubeUrl,
@@ -119,12 +120,7 @@ function jobHasAnyExistingOutput(job) {
   // Resolves download metadata path for Express API request handling.
   const resolveDownloadPath = (downloadPath) => {
     if (!downloadPath) return null;
-    const rel = decodeURIComponent(
-      String(downloadPath).replace(/^\/download\//, "")
-    );
-    if (!rel) return null;
-
-    return path.join(OUTPUT_DIR, rel);
+    return resolveDownloadPathToAbs(downloadPath, OUTPUT_DIR);
   };
 
   // Handles check file in Express API request handling.
@@ -147,13 +143,13 @@ function jobHasAnyExistingOutput(job) {
   if (Array.isArray(rp)) {
     return rp.some((r) => {
       if (!r) return false;
-      const p = typeof r === "string" ? r : r.outputPath;
+      const p = typeof r === "string" ? r : (r.outputPath || r.path);
       return checkFile(p);
     });
   }
 
   if (rp && typeof rp === "object") {
-    return checkFile(rp.outputPath);
+    return checkFile(rp.outputPath || rp.path);
   }
 
   if (typeof rp === "string") {
@@ -180,6 +176,22 @@ function cleanupCompletedJobsWithoutOutputs() {
   if (removed > 0) {
     console.log(`[jobs] ${removed} completed jobs without outputs were cleaned up.`);
   }
+}
+
+// Resolves media platform label for UI payloads.
+function resolveMediaPlatform(meta = {}) {
+  if (meta?.mediaPlatform) return String(meta.mediaPlatform).toLowerCase();
+
+  if (meta?.source === "youtube") {
+    const srcUrl =
+      meta?.url ||
+      meta?.originalUrl ||
+      meta?.extracted?.webpage_url ||
+      "";
+    return isDailymotionUrl(srcUrl) ? "dailymotion" : "youtube";
+  }
+
+  return null;
 }
 
 const router = express.Router();
@@ -891,6 +903,8 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     const body = req.body || {};
     console.log("📦 RAW req.body.youtubeConcurrency:", body.youtubeConcurrency, "typeof:", typeof body.youtubeConcurrency);
     const metadata = {};
+    const plTitleRaw = String(body.plTitle ?? body.playlistTitle ?? "").trim();
+    const plTitle = plTitleRaw || null;
     const autoCreateZip =
    body.autoCreateZip === undefined
      ? true
@@ -1140,6 +1154,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       const isYouTubeSource = isYouTubeUrl(url);
       const normalized = isYouTubeSource ? normalizeYouTubeUrl(url) : String(url).trim();
       metadata.source = "youtube";
+      metadata.mediaPlatform = isYouTubeSource ? "youtube" : "dailymotion";
       metadata.url = normalized;
       metadata.originalUrl = url;
 
@@ -1239,6 +1254,10 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       return sendError(res, ERR.URL_OR_FILE_REQUIRED, "A valid URL or file is required", 400);
     }
 
+    if (metadata.isPlaylist && plTitle) {
+      metadata.frozenTitle = plTitle;
+    }
+
     const job = createJob({
       status: "queued",
       progress: 0,
@@ -1287,6 +1306,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       bitrate,
       sampleRate: job.sampleRate,
       source: metadata.source,
+      mediaPlatform: metadata.mediaPlatform || null,
       isPlaylist: metadata.isPlaylist,
       isAutomix: metadata.isAutomix,
       selectedIndices: metadata.selectedIndices ?? null,
@@ -1326,12 +1346,14 @@ router.get("/api/jobs", requireAuth, (req, res) => {
       canceledBy: j.canceledBy || null,
       metadata: {
         source: j.metadata?.source,
+        mediaPlatform: resolveMediaPlatform(j.metadata),
         isPlaylist: !!j.metadata?.isPlaylist,
         isAutomix: !!j.metadata?.isAutomix,
         frozenTitle: j.metadata?.frozenTitle || null,
         extracted: j.metadata?.extracted || null,
         skipStats: j.metadata?.skipStats || { skippedCount: 0, errorsCount: 0 },
         spotifyTitle: j.metadata?.spotifyTitle || null,
+        outputSubdir: j.metadata?.outputSubdir || null,
         originalName: j.metadata?.originalName || null,
         includeLyrics: !!j.metadata?.includeLyrics,
         lyricsStats: j.metadata?.lyricsStats || null,
@@ -1345,7 +1367,6 @@ router.get("/api/jobs", requireAuth, (req, res) => {
         counters: j.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 }
       },
     });
-
     let items = all.map(pick);
     if (status === "active")      items = items.filter(j => j.status!=="completed" && j.status!=="error");
     else if (status === "error")  items = items.filter(j => j.status==="error");
@@ -1389,12 +1410,14 @@ router.get("/api/stream", requireAuth, (req, res) => {
       canceledBy: j.canceledBy || null,
       metadata: {
       source: j.metadata?.source,
+      mediaPlatform: resolveMediaPlatform(j.metadata),
       isPlaylist: !!j.metadata?.isPlaylist,
       isAutomix: !!j.metadata?.isAutomix,
       frozenTitle: j.metadata?.frozenTitle || null,
       extracted: j.metadata?.extracted || null,
       skipStats: j.metadata?.skipStats || { skippedCount: 0, errorsCount: 0 },
       spotifyTitle: j.metadata?.spotifyTitle || null,
+      outputSubdir: j.metadata?.outputSubdir || null,
       originalName: j.metadata?.originalName || null,
       includeLyrics: !!j.metadata?.includeLyrics,
       lyricsStats: j.metadata?.lyricsStats || null,

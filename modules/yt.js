@@ -39,6 +39,8 @@ const PLAYLIST_META_TIMEOUT =
 const PLAYLIST_META_FALLBACK_TIMEOUT =
   Number(process.env.PLAYLIST_META_FALLBACK_TIMEOUT_MS || 15000);
 
+const DM_IMPERSONATION_HINT =
+  "Dailymotion requires yt-dlp impersonation dependencies (curl_cffi). Rebuild/install yt-dlp with curl-cffi support.";
 
 // Checks whether benign sabr warning is valid for the yt-dlp YouTube download pipeline.
 function isBenignSabrWarning(line) {
@@ -48,6 +50,36 @@ function isBenignSabrWarning(line) {
     /SABR streaming for this client/i.test(s) &&
     /Some web(?:_safari)? client https formats have been skipped as they are missing a url/i.test(s)
   );
+}
+
+// Checks whether transient retry line is valid for the yt-dlp YouTube download pipeline.
+function isTransientRetryLine(line) {
+  if (!line) return false;
+  const s = String(line);
+  return (
+    /\bRetrying\s*\(\d+\/\d+\)/i.test(s) ||
+    /\[download\]\s+Got error:/i.test(s)
+  );
+}
+
+// Checks whether impersonation target error is valid for the yt-dlp YouTube download pipeline.
+function isImpersonationUnavailableError(message = "") {
+  const s = String(message || "");
+  if (!s) return false;
+  return (
+    /attempting impersonation/i.test(s) &&
+    /none of these impersonate targets are available|no impersonate target is available/i.test(s)
+  );
+}
+
+// Adds dailymotion impersonation hint for the yt-dlp YouTube download pipeline.
+function withDailymotionImpersonationHint(error, sourceUrl = "") {
+  const msg = String(error?.message || error || "");
+  if (!isDailymotionUrl(sourceUrl) || !isImpersonationUnavailableError(msg)) {
+    return error instanceof Error ? error : new Error(msg);
+  }
+
+  return new Error(`${msg}\n${DM_IMPERSONATION_HINT}`);
 }
 
 // Normalizes concurrency for the yt-dlp YouTube download pipeline.
@@ -172,6 +204,50 @@ export const isDailymotionUrl = (url) => {
     return /(?:^|\/\/)(?:www\.)?(?:dailymotion\.com|dai\.ly)\//i.test(s);
   }
 };
+
+const DM_NO_IMPERSONATION_EXTRACTOR_ARGS = [
+  "generic:impersonate=false",
+  "dailymotion:impersonate=false"
+];
+
+// Strips impersonation args for the yt-dlp YouTube download pipeline.
+function stripImpersonationArgs(args = []) {
+  const out = [];
+  const input = Array.isArray(args) ? args : [];
+
+  for (let i = 0; i < input.length; i++) {
+    const current = input[i];
+    if (current === "--impersonate") {
+      i += 1;
+      continue;
+    }
+
+    if (current === "--extractor-args") {
+      const value = String(input[i + 1] || "");
+      if (/impersonate\s*=/i.test(value)) {
+        i += 1;
+        continue;
+      }
+    }
+
+    out.push(current);
+  }
+
+  return out;
+}
+
+// Applies dailymotion no-impersonation args for the yt-dlp YouTube download pipeline.
+function withDailymotionNoImpersonation(args = [], sourceUrl = "") {
+  if (!isDailymotionUrl(sourceUrl)) {
+    return Array.isArray(args) ? [...args] : [];
+  }
+
+  const out = stripImpersonationArgs(args);
+  DM_NO_IMPERSONATION_EXTRACTOR_ARGS.forEach((value) => {
+    out.push("--extractor-args", value);
+  });
+  return out;
+}
 
 // Builds video format selector for the yt-dlp YouTube download pipeline.
 function buildVideoFormatSelector(sourceUrl, maxHeight = 1080) {
@@ -316,7 +392,8 @@ function shouldUseFlatPlaylist(url) {
 // Determines whether attach cookies should run for the yt-dlp YouTube download pipeline.
 function shouldAttachCookies(sourceUrl = "", forceCookies = false) {
   if (forceCookies) return true;
-  return isYouTubeUrl(String(sourceUrl || ""));
+  const src = String(sourceUrl || "");
+  return isYouTubeUrl(src) || isDailymotionUrl(src);
 }
 
 // Builds base args for the yt-dlp YouTube download pipeline.
@@ -351,7 +428,10 @@ function buildBaseArgs(additionalArgs = [], { sourceUrl = "" } = {}) {
   }
   args.push(...getJsRuntimeArgs());
 
-  return [...args, ...additionalArgs];
+  return withDailymotionNoImpersonation(
+    [...args, ...additionalArgs],
+    sourceUrl
+  );
 }
 
 // Determines whether strip cookies should run for the yt-dlp YouTube download pipeline.
@@ -758,6 +838,10 @@ for (const attempt of attempts) {
   } catch (error) {
     lastError = error;
     const msg = String(error.message || "");
+    if (isDailymotionUrl(url) && isImpersonationUnavailableError(msg)) {
+      console.warn("[yt-meta] dailymotion metadata skipped (impersonation dependency unavailable)");
+      return null;
+    }
     if (/Sign in to confirm your age/i.test(msg) ||
         /may be inappropriate for some users/i.test(msg) ||
         /age[-\s]?restricted/i.test(msg)) {
@@ -767,7 +851,10 @@ for (const attempt of attempts) {
   }
 }
 
-throw new Error(`All metadata attempts failed. Last error: ${lastError?.message}`);
+throw withDailymotionImpersonationHint(
+  new Error(`All metadata attempts failed. Last error: ${lastError?.message}`),
+  url
+);
 }
 
 // Resolves playlist data selected ids for the yt-dlp YouTube download pipeline.
@@ -824,43 +911,47 @@ export async function downloadYouTubeVideo(
     Array.isArray(selectedIds) &&
     selectedIds.length > 0;
 
-  if (hasSelectedIds) {
-    const conc = normalizeConcurrency(opts.youtubeConcurrency);
-    if (conc > 1) {
-      return downloadSelectedIdsParallel(
+  try {
+    if (hasSelectedIds) {
+      const conc = normalizeConcurrency(opts.youtubeConcurrency);
+      if (conc > 1) {
+        return await downloadSelectedIdsParallel(
+          YTDLP_BIN,
+          selectedIds,
+          jobId,
+          TEMP_DIR,
+          progressCallback,
+          { ...opts, youtubeConcurrency: conc },
+          ctrl
+        );
+      }
+
+      return await downloadSelectedIds(
         YTDLP_BIN,
         selectedIds,
         jobId,
         TEMP_DIR,
         progressCallback,
-        { ...opts, youtubeConcurrency: conc },
+        opts,
         ctrl
       );
     }
 
-    return downloadSelectedIds(
+    return await downloadStandard(
       YTDLP_BIN,
-      selectedIds,
+      url,
       jobId,
+      isPlaylist,
+      isAutomix,
+      playlistItems,
       TEMP_DIR,
       progressCallback,
       opts,
       ctrl
     );
+  } catch (error) {
+    throw withDailymotionImpersonationHint(error, opts?.sourceUrl || url);
   }
-
-  return downloadStandard(
-    YTDLP_BIN,
-    url,
-    jobId,
-    isPlaylist,
-    isAutomix,
-    playlistItems,
-    TEMP_DIR,
-    progressCallback,
-    opts,
-    ctrl
-  );
 }
 
 // Downloads selected ids for the yt-dlp YouTube download pipeline.
@@ -908,6 +999,7 @@ async function downloadSelectedIds(
   // Handles bump skip in the yt-dlp YouTube download pipeline.
   const bumpSkip = (line) => {
     if (isBenignSabrWarning(line)) return;
+    if (isTransientRetryLine(line)) return;
     if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
     const key = line.replace(/\s+/g, " ").trim();
     if (seenSkip.has(key)) return;
@@ -936,7 +1028,12 @@ let args;
 
 if (opts.video) {
     const h = (opts.maxHeight && Number.isFinite(opts.maxHeight)) ? opts.maxHeight : 1080;
+    const videoHeaders = headersToArgs(opts?.requestHeaders || sourceHeaders);
     args = [
+      "--ignore-config", "--no-warnings",
+      "--socket-timeout", "15",
+      "--user-agent", DEFAULT_USER_AGENT,
+      ...videoHeaders,
       "--force-ipv4",
       "--no-playlist",
       "--ignore-errors", "--no-abort-on-error",
@@ -978,6 +1075,7 @@ if (opts.video) {
     addCookieArgs(args, { ui: !!opts?.forceCookies });
   }
   args.push(...getJsRuntimeArgs());
+  args = withDailymotionNoImpersonation(args, cookieSourceUrl);
 
   return new Promise((resolve, reject) => {
     let stderrBuf = "";
@@ -1061,15 +1159,19 @@ if (opts.video) {
     });
 
     child.on("close", (code, signal) => {
-      try { process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`); } catch {}
-      updateSkipStats();
-      emitEvent(progressCallback, opts, {
-        type: "summary",
-        skippedCount,
-        errorsCount,
-        lastLogKey: "log.skipSummary",
-        lastLogVars: { skipped: skippedCount, errors: errorsCount }
-      });
+      const emitSummary = () => {
+        try {
+          process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`);
+        } catch {}
+        updateSkipStats();
+        emitEvent(progressCallback, opts, {
+          type: "summary",
+          skippedCount,
+          errorsCount,
+          lastLogKey: "log.skipSummary",
+          lastLogVars: { skipped: skippedCount, errors: errorsCount }
+        });
+      };
 
       if (signal === "SIGTERM" || signal === "SIGKILL") {
         return reject(new Error("CANCELED"));
@@ -1085,10 +1187,12 @@ if (opts.video) {
           skippedCount = finalSkipped;
           updateSkipStats();
         }
+        emitSummary();
         if (progressCallback) progressCallback(100);
         return resolve(files);
       }
 
+      emitSummary();
       const errorTail = String(stderrBuf).split("\n").slice(-20).join("\n");
       return reject(new Error(`yt-dlp error (selected-ids): ${code}\n${errorTail}`));
     });
@@ -1140,6 +1244,7 @@ async function downloadSelectedIdsParallel(
   // Handles bump skip in the yt-dlp YouTube download pipeline.
   const bumpSkip = (line) => {
     if (isBenignSabrWarning(line)) return;
+    if (isTransientRetryLine(line)) return;
     if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
     const key = line.replace(/\s+/g, " ").trim();
     if (seenSkip.has(key)) return;
@@ -1228,6 +1333,7 @@ async function downloadSelectedIdsParallel(
       addCookieArgs(args, { ui: !!opts?.forceCookies });
     }
     args.push(...getJsRuntimeArgs());
+    args = withDailymotionNoImpersonation(args, url);
 
     return new Promise((resolve, reject) => {
       let stderrBuf = "";
@@ -1355,6 +1461,13 @@ async function downloadSelectedIdsParallel(
 
   await runWithConcurrency(conc, tasks);
 
+  const files = getDownloadedFiles(playlistDir, true);
+  const finalSkipped = Math.max(0, totalCount - files.length);
+  if (finalSkipped !== skippedCount) {
+    skippedCount = finalSkipped;
+    updateSkipStats();
+  }
+
   try {
     process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`);
   } catch {}
@@ -1367,7 +1480,6 @@ async function downloadSelectedIdsParallel(
     lastLogVars: { skipped: skippedCount, errors: errorsCount }
   });
 
-  const files = getDownloadedFiles(playlistDir, true);
   if (files.length > 0) {
     if (progressCallback) progressCallback(100);
     return files;
@@ -1398,7 +1510,11 @@ async function downloadStandard(
     tempDir,
     isPlaylist || isAutomix
       ? `${jobId}/%(playlist_index)s.%(ext)s`
-      : `${jobId}.%(ext)s`
+      : (
+          opts.preferTitleTemplate === false
+            ? `${jobId}.%(ext)s`
+            : `${jobId} - %(title).180B.%(ext)s`
+        )
   );
 
   if (isPlaylist || isAutomix) {
@@ -1418,7 +1534,14 @@ async function downloadStandard(
 
   if (opts.video) {
     const h = H || 1080;
+    const videoHeaders = headersToArgs(
+      opts?.requestHeaders || (isYouTubeUrl(String(url || "")) ? DEFAULT_HEADERS : null)
+    );
     args = [
+      "--ignore-config", "--no-warnings",
+      "--socket-timeout", "15",
+      "--user-agent", DEFAULT_USER_AGENT,
+      ...videoHeaders,
       "--force-ipv4",
       "--progress", "--newline",
       "-f",
@@ -1517,7 +1640,7 @@ async function downloadStandard(
     args.push(url);
   }
 
-  const finalArgs = args;
+  const finalArgs = withDailymotionNoImpersonation(args, opts?.sourceUrl || url);
   return new Promise((resolve, reject) => {
     const child = spawn(ytDlpBin, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
     try { registerJobProcess(jobId, child); } catch {}
@@ -1553,6 +1676,7 @@ async function downloadStandard(
     // Handles bump skip std in the yt-dlp YouTube download pipeline.
     const bumpSkipStd = (line) => {
       if (isBenignSabrWarning(line)) return;
+      if (isTransientRetryLine(line)) return;
       if (/^\s*SKIP_(SUMMARY|HINT):/i.test(line)) return;
       const key = line.replace(/\s+/g, " ").trim();
       if (seenSkip.has(key)) return;
@@ -1672,15 +1796,17 @@ async function downloadStandard(
 
     child.on("close", (code, signal) => {
       clearInterval(cancelTick);
-      try { process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`); } catch {}
-      updateSkipStats();
-      emitEvent(progressCallback, opts, {
-        type: "summary",
-        skippedCount,
-        errorsCount,
-        lastLogKey: "log.skipSummary",
-        lastLogVars: { skipped: skippedCount, errors: errorsCount }
-      });
+      const emitSummary = () => {
+        try { process.stderr.write(`\nSKIP_SUMMARY: skipped=${skippedCount} errors=${errorsCount}\n`); } catch {}
+        updateSkipStats();
+        emitEvent(progressCallback, opts, {
+          type: "summary",
+          skippedCount,
+          errorsCount,
+          lastLogKey: "log.skipSummary",
+          lastLogVars: { skipped: skippedCount, errors: errorsCount }
+        });
+      };
 
       if (signal === "SIGTERM" || signal === "SIGKILL") {
         return reject(new Error("CANCELED"));
@@ -1702,16 +1828,19 @@ async function downloadStandard(
             skippedCount = finalSkipped;
             updateSkipStats();
           }
+          emitSummary();
           if (progressCallback) progressCallback(100);
           return resolve(files);
         }
 
+        emitSummary();
         if (code !== 0) {
           const tail = stderrBuf.split("\n").slice(-20).join("\n");
           return reject(new Error(`yt-dlp error: ${code}\n${tail}`));
         }
         return reject(new Error("Download appears successful but output file was not found"));
       } else {
+        emitSummary();
         const files = getDownloadedFiles(tempDir, false, jobId);
         if (files.length > 0) {
           if (progressCallback) progressCallback(100);

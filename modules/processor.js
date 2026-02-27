@@ -10,6 +10,7 @@ import {
   isYouTubeAutomix,
   fetchYtMetadata,
   downloadYouTubeVideo,
+  isDailymotionUrl,
   buildEntriesMap,
   parsePlaylistIndexFromPath
 } from "./yt.js";
@@ -18,6 +19,11 @@ import { buildId3FromYouTube } from "./tags.js";
 import { probeYoutubeMusicMeta } from "./yt.js";
 import { findSpotifyMetaByQuery } from "./spotify.js";
 import { downloadPlatformMedia } from "./platform.js";
+import {
+  resolveJobOutputDir,
+  toDownloadPath,
+  resolveDownloadPathToAbs
+} from "./outputPaths.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
@@ -25,6 +31,14 @@ const TEMP_DIR = path.resolve(BASE_DIR, "temp");
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+// Converts absolute output path to public download path with safe fallback.
+function toDownloadPathSafe(absPath) {
+  return (
+    toDownloadPath(absPath, OUTPUT_DIR) ||
+    `/download/${encodeURIComponent(path.basename(absPath || ""))}`
+  );
+}
 
 // Handles clamp int in core application logic.
 function clampInt(v, min, max) {
@@ -414,6 +428,19 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
   // Handles handle lyrics metadata log in core application logic.
   const handleLyricsLog = (_payload) => {};
+  // Builds live conversion log with elapsed/duration and real fps.
+  const buildLiveVideoConvertLog = (progress, details = {}, label = "") => {
+    const pct = Math.max(0, Math.min(100, Math.floor(Number(progress) || 0)));
+    const elapsed = details?.elapsedText || "--:--:--";
+    const duration = details?.durationText || "--:--:--";
+    const fpsNum = Number(details?.fps);
+    const fpsText =
+      Number.isFinite(fpsNum) && fpsNum > 0
+        ? fpsNum.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")
+        : "--";
+    const suffix = label ? `: ${label}` : "";
+    return `⚙️ Dönüştürülüyor ${pct}% (${elapsed}/${duration} • ${fpsText} FPS)${suffix}`;
+  };
   // Handles handle lyrics metadata stats in core application logic.
   const handleLyricsStats = (delta) => {
     if (!delta) return;
@@ -439,10 +466,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       cvTotal: 0,
       cvDone: 0
     };
+    const outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
     const isVideoFormatFlag = isVideoFormat(format);
 
     if (isVideoFormatFlag && job.metadata?.source === "youtube") {
-      await processYouTubeVideoJob(job, { OUTPUT_DIR, TEMP_DIR });
+      await processYouTubeVideoJob(job, { OUTPUT_DIR: outputDir, TEMP_DIR });
 
       try {
         if (
@@ -460,7 +488,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             jobId,
             job.resultPath,
             titleHint || "playlist",
-            job.metadata?.includeLyrics
+            job.metadata?.includeLyrics,
+            outputDir
           );
         }
       } catch {}
@@ -621,14 +650,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           const existingOut = findExistingOutput(
             `${jobId}_${i}`,
             format,
-            OUTPUT_DIR
+            outputDir
           );
           let r;
           if (existingOut) {
             r = {
-              outputPath: `/download/${encodeURIComponent(
-                path.basename(existingOut)
-              )}`
+              outputPath: toDownloadPathSafe(existingOut)
             };
             const fileProgress = (i / sorted.length) * 100;
             job.convertProgress = Math.floor(
@@ -643,7 +670,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               format,
               bitrate,
               `${jobId}_${i}`,
-              (progress) => {
+              (progress, details) => {
                 const baseProgress = (i / sorted.length) * 100;
                 const currentFileProgress =
                   (progress / 100) * (100 / sorted.length);
@@ -657,11 +684,21 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 job.progress = Math.floor(
                   (job.downloadProgress + job.convertProgress) / 2
                 );
+
+                if (String(format || "").toLowerCase() === "mp4") {
+                  const label = [entry?.uploader || entry?.artist || "", title]
+                    .map((s) => String(s || "").trim())
+                    .filter(Boolean)
+                    .join(" - ");
+                  job.lastLog = buildLiveVideoConvertLog(progress, details, label);
+                  job.lastLogKey = null;
+                  job.lastLogVars = null;
+                }
               },
               fileMeta,
               itemCover,
               isVideoFormat(format),
-              OUTPUT_DIR,
+              outputDir,
               TEMP_DIR,
               {
                 onProcess: (child) => {
@@ -721,7 +758,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               jobId,
               finalResults,
               zipTitle,
-              job.metadata.includeLyrics
+              job.metadata.includeLyrics,
+              outputDir
             );
           } catch (e) {}
         }
@@ -1111,14 +1149,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           const existingOut = findExistingOutput(
             `${jobId}_${stableIndex}`,
             format,
-            OUTPUT_DIR
+            outputDir
           );
           let r;
           if (existingOut) {
             r = {
-              outputPath: `/download/${encodeURIComponent(
-                path.basename(existingOut)
-              )}`
+              outputPath: toDownloadPathSafe(existingOut)
             };
             const fileProgress = (stableIndex / totalTracks) * 100;
             job.convertProgress = Math.floor(
@@ -1135,7 +1171,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 format,
                 bitrate,
                 `${jobId}_${stableIndex}`,
-                (progress) => {
+                (progress, details) => {
                   const baseProgress = (stableIndex / totalTracks) * 100
                   const currentFileProgress =
                     (progress / 100) * (100 / totalTracks);
@@ -1148,11 +1184,24 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                   job.progress = Math.floor(
                     (job.downloadProgress + job.convertProgress) / 2
                   );
+
+                  if (String(format || "").toLowerCase() === "mp4") {
+                    const label = [
+                      fileMeta?.artist || fileMeta?.uploader || "",
+                      fileMeta?.track || fileMeta?.title || ""
+                    ]
+                      .map((s) => String(s || "").trim())
+                      .filter(Boolean)
+                      .join(" - ");
+                    job.lastLog = buildLiveVideoConvertLog(progress, details, label);
+                    job.lastLogKey = null;
+                    job.lastLogVars = null;
+                  }
                 },
                 fileMeta,
                 itemCover,
                 isVideoFormat(format),
-                OUTPUT_DIR,
+                outputDir,
                 TEMP_DIR,
                 {
                   onProcess: (child) => {
@@ -1408,7 +1457,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 jobId,
                 finalResults,
                 zipTitle,
-                job.metadata.includeLyrics
+                job.metadata.includeLyrics,
+                outputDir
               );
             } catch (e) {}
           }
@@ -1656,7 +1706,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         const existingOut = findExistingOutput(
           perJobId,
           format,
-          OUTPUT_DIR
+          outputDir
         );
         // Handles progress for stream payload in core application logic.
         const progressForStream = (p) => {
@@ -1671,9 +1721,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         let r;
         if (existingOut) {
           r = {
-            outputPath: `/download/${encodeURIComponent(
-              path.basename(existingOut)
-            )}`
+            outputPath: toDownloadPathSafe(existingOut)
           };
           progressForStream(100);
         } else {
@@ -1689,7 +1737,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             },
             coverPath,
             false,
-            OUTPUT_DIR,
+            outputDir,
             TEMP_DIR,
             {
               onProcess: (child) => {
@@ -1749,12 +1797,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       actualInputPath.startsWith(TEMP_DIR + path.sep) &&
       fs.existsSync(actualInputPath);
 
-    const existingSingle = findExistingOutput(jobId, format, OUTPUT_DIR);
+    const existingSingle = findExistingOutput(jobId, format, outputDir);
     const r = existingSingle
       ? {
-          outputPath: `/download/${encodeURIComponent(
-            path.basename(existingSingle)
-          )}`
+          outputPath: toDownloadPathSafe(existingSingle)
         }
       : canDirectMovePlatformMp4
       ? (() => {
@@ -1762,7 +1808,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           const ext = extRaw ? extRaw.toLowerCase() : ".mp4";
           const baseRaw = path.basename(actualInputPath, extRaw);
           const base = sanitizeFilename(baseRaw) || jobId;
-          const targetAbs = buildUniqueOutputPath(OUTPUT_DIR, `${base}${ext}`);
+          const targetAbs = buildUniqueOutputPath(outputDir, `${base}${ext}`);
 
           console.log(
             `🎬 Platform MP4 transcode disabled - direct move: ${actualInputPath} -> ${targetAbs}`
@@ -1775,7 +1821,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           );
 
           return {
-            outputPath: `/download/${encodeURIComponent(path.basename(targetAbs))}`,
+            outputPath: toDownloadPathSafe(targetAbs),
             fileSize: fs.statSync(targetAbs).size
           };
         })()
@@ -1784,11 +1830,24 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           format,
           bitrate,
           jobId,
-          (p) => {
+          (p, details) => {
             job.convertProgress = Math.floor(p);
             job.progress = Math.floor(
               (job.downloadProgress + job.convertProgress) / 2
             );
+
+            if (String(format || "").toLowerCase() === "mp4") {
+              const label = [
+                singleMeta?.artist || singleMeta?.uploader || "",
+                singleMeta?.track || singleMeta?.title || ""
+              ]
+                .map((s) => String(s || "").trim())
+                .filter(Boolean)
+                .join(" - ");
+              job.lastLog = buildLiveVideoConvertLog(p, details, label);
+              job.lastLogKey = null;
+              job.lastLogVars = null;
+            }
           },
           {
             ...singleMeta,
@@ -1798,7 +1857,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           },
           coverPath,
           isVideoFormat(format),
-          OUTPUT_DIR,
+          outputDir,
           TEMP_DIR,
           {
             onProcess: (child) => {
@@ -1949,8 +2008,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         const safeBase = sanitizeFilename(toNFC(baseTitle)) || "output";
 
         let targetName = `${safeBase}${desiredExt}`;
-        const currentAbs = path.join(OUTPUT_DIR, currentRel);
-        let targetAbs = path.join(OUTPUT_DIR, targetName);
+        const currentAbs = resolveDownloadPathToAbs(r.outputPath, OUTPUT_DIR);
+        if (!currentAbs) {
+          throw new Error("Could not resolve current output path");
+        }
+        let targetAbs = path.join(outputDir, targetName);
         const sameAsCurrent =
           path.resolve(targetAbs) === path.resolve(currentAbs);
         if (fs.existsSync(targetAbs) && !sameAsCurrent) {
@@ -1963,7 +2025,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             i < 1000
           ) {
             targetName = `${stem} (${i})${ext}`;
-            targetAbs = path.join(OUTPUT_DIR, targetName);
+            targetAbs = path.join(outputDir, targetName);
             i++;
           }
         }
@@ -1971,7 +2033,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         if (fs.existsSync(currentAbs)) {
           fs.renameSync(currentAbs, targetAbs);
           job.resultPath = {
-            outputPath: `/download/${encodeURIComponent(targetName)}`
+            outputPath: toDownloadPathSafe(targetAbs)
           };
           const oldLrc = currentAbs.replace(/\.[^/.]+$/, "") + ".lrc";
           if (fs.existsSync(oldLrc)) {
@@ -2049,32 +2111,30 @@ async function makeZipFromOutputs(
   jobId,
   outputs,
   titleHint = "playlist",
-  includeLyrics = false
+  includeLyrics = false,
+  outputDir = OUTPUT_DIR
 ) {
+  const outDir = path.resolve(outputDir || OUTPUT_DIR);
+  fs.mkdirSync(outDir, { recursive: true });
   const safeBase = sanitizeFilename(
     `${titleHint || "playlist"}_${jobId}`
   ).normalize("NFC");
   const zipName = `${safeBase}.zip`;
-  const zipAbs = path.join(OUTPUT_DIR, zipName);
+  const zipAbs = path.join(outDir, zipName);
 
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(zipAbs);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
-    output.on("close", () =>
-      resolve(`/download/${encodeURIComponent(zipName)}`)
-    );
+    output.on("close", () => resolve(toDownloadPathSafe(zipAbs)));
     archive.on("error", (err) => reject(err));
 
     archive.pipe(output);
 
     for (const r of outputs) {
       if (!r?.outputPath) continue;
-      const rel = decodeURIComponent(
-        r.outputPath.replace(/^\/download\//, "")
-      );
-      const abs = path.join(OUTPUT_DIR, rel);
-      if (fs.existsSync(abs)) {
+      const abs = resolveDownloadPathToAbs(r.outputPath, OUTPUT_DIR);
+      if (abs && fs.existsSync(abs)) {
         const nfcName = path.basename(abs).normalize("NFC");
         archive.file(abs, { name: nfcName });
         if (includeLyrics) {
