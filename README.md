@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/94f23b28-afae-4d42-ada4-783ecfb321dc
 
 ### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/EXE)
 
-Fast, modular media processing powered by **yt-dlp** and **ffmpeg**: YouTube downloads, Spotify-based metadata matching, disc ripping (DRM-free), and GPU-accelerated conversions — all driven by a reliable job engine.
+Fast, modular media processing powered by yt-dlp and ffmpeg: downloads from YouTube/YouTube Music and supported platforms (X, Facebook, Instagram, Vimeo, Dailymotion, TikTok), Spotify-based metadata matching, DRM-free disc ripping, and GPU-accelerated conversions — all driven by a reliable job engine.
 
 > **Spotify note:** Spotify is used for **metadata + matching** (track/playlist/album info). Gharmonize does **not** claim DRM bypass.
 
@@ -60,6 +60,7 @@ npm start
 ## ✅ What you get (at a glance)
 
 * **YouTube / YouTube Music** downloads (single, playlist, mixes) via **yt-dlp**
+* **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** support (download/convert flows)
 * **Spotify integration** for metadata + mapping to YouTube (track / playlist / album)
 * **Audio & video conversion** powered by **ffmpeg**, with reliability-first presets
 * **Fix A/V sync issues** using **FPS adjustment presets** for **AC3 / EAC3 / AAC**
@@ -101,34 +102,45 @@ License details are available in **Third-Party Licenses** and `LICENSES.md`.
 
 ## Features
 
-* **YouTube & YouTube Music**
+### *YouTube & YouTube Music*
 
-  * yt-dlp integration with SABR / 403 workarounds
-  * Support for single videos, playlists, and mixes
-  * Customizable yt-dlp arguments via environment variables
+* yt-dlp integration with SABR / 403 workarounds
+* Support for single videos, playlists, and mixes
+* Customizable yt-dlp arguments via environment variables
 
-* **Spotify Integration**
+### *Social Platforms*
 
-  * Spotify Web API support (track / playlist / album)
-  * Automatic mapping from Spotify items to YouTube
-  * Optional preference for Spotify metadata when tagging
+* Support for:
 
-* **Disc Ripping (DRM-free only)**
+  * **X (Twitter)**
+  * **Facebook**
+  * **Instagram**
+  * **Vimeo**
+  * **Dailymotion**
+  * **TikTok**
 
-  * Rip non-DRM optical discs (e.g., DVD/Blu-ray) into audio/video files
-  * Uses ffmpeg and MKVToolNix tools under the hood
-  * Disc analysis and stream selection via the web UI
+### *Spotify Integration*
 
-* **Audio & Video Conversion**
+* Spotify Web API support (track / playlist / album)
+* Automatic mapping from Spotify items to YouTube
+* Optional preference for Spotify metadata when tagging
 
-  * ffmpeg-based conversion with focus on reliability
-  * Convert to **mp3 / flac / wav / ogg**, or pass through **mp4** without re-encoding when possible
-  * Ready-made **FPS adjustment presets** for **AC3 / EAC3 / AAC** audio to fix or prevent sync issues
-  * Transcode arbitrary local video files with hardware acceleration:
+### *Disc Ripping (DRM-free only)*
 
-    * **NVIDIA NVENC**
-    * **VAAPI**
-    * **Intel Quick Sync (QSV)**
+* Rip non-DRM optical discs (e.g., DVD/Blu-ray) into audio/video files
+* Uses ffmpeg and MKVToolNix tools under the hood
+* Disc analysis and stream selection via the web UI
+
+### *Audio & Video Conversion*
+
+* ffmpeg-based conversion with focus on reliability
+* Convert to **mp3 / flac / wav / ogg**, or pass through **mp4** without re-encoding when possible
+* Ready-made **FPS adjustment presets** for **AC3 / EAC3 / AAC** audio to fix or prevent sync issues
+* Transcode arbitrary local video files with hardware acceleration:
+
+  * **NVIDIA NVENC**
+  * **VAAPI**
+  * **Intel Quick Sync (QSV)**
 
 * **Local & Uploaded Media**
 
