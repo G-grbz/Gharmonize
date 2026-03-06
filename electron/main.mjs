@@ -5,7 +5,14 @@ import net from 'node:net'
 import fs from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { FFMPEG_BIN, FFPROBE_BIN, MKVMERGE_BIN, YTDLP_BIN, DENO_BIN } from '../modules/binaries.js';
+import {
+  FFMPEG_BIN,
+  FFPROBE_BIN,
+  MKVMERGE_BIN,
+  YTDLP_BIN,
+  DENO_BIN,
+  initializeDynamicBinaries
+} from '../modules/binaries.js';
 
 const execFileAsync = promisify(execFile);
 const HOST = '127.0.0.1'
@@ -845,6 +852,11 @@ app.whenReady().then(async () => {
   await initializeLanguage();
   await applyAutoStartFromPrefs();
   await syncKeepAliveFlagFromPrefs();
+  try {
+    await initializeDynamicBinaries();
+  } catch (error) {
+    console.warn('[binaries] dynamic init failed, fallback active:', error?.message || error);
+  }
 
   app.setAppUserModelId('com.gharmonize.app');
 

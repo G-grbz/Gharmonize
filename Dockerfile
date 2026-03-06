@@ -78,6 +78,7 @@ COPY . .
 
 ENV NODE_ENV=production \
     PORT=5174 \
+    GHARMONIZE_WEB_BINARIES=0 \
     YTDLP_BIN=/usr/local/bin/yt-dlp \
     FFMPEG_BIN=/usr/local/bin/ffmpeg \
     FFPROBE_BIN=/usr/local/bin/ffprobe \

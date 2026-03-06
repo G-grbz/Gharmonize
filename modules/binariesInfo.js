@@ -14,6 +14,12 @@ let cache = null;
 let cacheTime = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Clears cached binaries metadata.
+export function clearBinariesInfoCache() {
+  cache = null;
+  cacheTime = 0;
+}
+
 // Parses version metadata from stdout for core application logic.
 function parseVersionFromStdout(stdout) {
   if (!stdout) return null;
@@ -47,9 +53,10 @@ async function getSingleVersion(binPath, args = ['-version']) {
 }
 
 // Returns binaries info used for core application logic.
-export async function getBinariesInfo() {
+export async function getBinariesInfo(options = {}) {
+  const force = !!options.force;
   const now = Date.now();
-  if (cache && (now - cacheTime) < CACHE_TTL_MS) {
+  if (!force && cache && (now - cacheTime) < CACHE_TTL_MS) {
     return cache;
   }
 

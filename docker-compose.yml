@@ -1,12 +1,13 @@
 services:
   web:
-    image: ggrbz/gharmonize:testing
+    image: ggrbz/gharmonize:latest
     container_name: Gharmonize
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       - NODE_ENV=production
       - PORT=${PORT:-5174}
       - YTDLP_EXTRA=--force-ipv4
+      - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - DATA_DIR=/usr/src/app
@@ -17,6 +18,7 @@ services:
       - /opt/gharmonize/uploads:/usr/src/app/uploads
       - /opt/gharmonize/outputs:/usr/src/app/outputs
       - /opt/gharmonize/temp:/usr/src/app/temp
+      - /opt/gharmonize/cache:/usr/src/app/cache
       - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
       - /opt/gharmonize/cookies:/usr/src/app/cookies
       - /opt/gharmonize/.env:/usr/src/app/.env

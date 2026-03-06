@@ -20,7 +20,8 @@ import {
   YTDLP_BIN,
   FFPROBE_BIN,
   MKVMERGE_BIN,
-  DENO_BIN
+  DENO_BIN,
+  initializeDynamicBinaries
 } from './modules/binaries.js'
 
 const defaultEnv = process.env.ENV_DEFAULT_PATH
@@ -39,6 +40,12 @@ if (userEnv && fs.existsSync(userEnv)) {
     dotenv.config({ path: localEnv, override: true })
     console.log('✅ Loaded local .env file:', localEnv)
   }
+}
+
+try {
+  await initializeDynamicBinaries()
+} catch (err) {
+  console.warn('⚠️ Dynamic binary init failed, fallback active:', err?.message || err)
 }
 
 const { default: settingsRoute } = await import('./modules/settings.js')

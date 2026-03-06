@@ -2,6 +2,8 @@ import express from 'express'
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
+import { initializeDynamicBinaries } from './binaries.js'
+import { getBinariesInfo, clearBinariesInfoCache } from './binariesInfo.js'
 
 const router = express.Router()
 const ENV_PATH =
@@ -277,6 +279,27 @@ router.post('/settings/homepage-widget-key', authMiddleware, express.json(), (re
   process.env.HOMEPAGE_WIDGET_KEY = next
 
   res.json({ ok: true, rotated: true, key: reveal ? next : undefined })
+})
+
+router.post('/settings/refresh-binaries', authMiddleware, async (req, res) => {
+  try {
+    const refresh = await initializeDynamicBinaries({ force: true })
+    clearBinariesInfoCache()
+    const binaries = await getBinariesInfo({ force: true })
+
+    return res.json({
+      ok: true,
+      refresh,
+      binaries
+    })
+  } catch (err) {
+    return res.status(500).json({
+      error: {
+        code: 'BINARY_REFRESH_FAILED',
+        message: err.message || 'Could not refresh binaries.'
+      }
+    })
+  }
 })
 
 

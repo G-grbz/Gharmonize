@@ -9,6 +9,7 @@ services:
       - NODE_ENV=production
       - PORT=${PORT:-5174}
       - YT_FORCE_IPV4=1
+      - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - DATA_DIR=/usr/src/app
@@ -19,6 +20,7 @@ services:
       - /opt/gharmonize/uploads:/usr/src/app/uploads
       - /opt/gharmonize/outputs:/usr/src/app/outputs
       - /opt/gharmonize/temp:/usr/src/app/temp
+      - /opt/gharmonize/cache:/usr/src/app/cache
       - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
       - /opt/gharmonize/cookies:/usr/src/app/cookies
       - /opt/gharmonize/.env:/usr/src/app/.env

@@ -471,6 +471,21 @@ export class SettingsManager {
                     </button>
                 </div>
                 </div>
+
+                <div class="form-group">
+                <span class="settings-field-label" data-i18n="settings.binaryRefreshTitle">
+                    ${this.t('settings.binaryRefreshTitle')}
+                </span>
+                <div class="settings-field-hint muted" data-i18n="settings.binaryRefreshHint">
+                    ${this.t('settings.binaryRefreshHint')}
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" id="refreshBinariesBtn" class="btn-outline" style="flex:1;" data-i18n="settings.binaryRefreshBtn">
+                    ${this.t('settings.binaryRefreshBtn')}
+                    </button>
+                </div>
+                <div id="refreshBinariesResult" class="settings-field-hint muted"></div>
+                </div>
             </section>
 
             <section class="settings-panel" id="tab-password" role="tabpanel">
@@ -530,6 +545,7 @@ export class SettingsManager {
             this.showNotification(this.t('version.systemUnavailable'), 'error');
         }
     };
+    document.getElementById('refreshBinariesBtn').onclick = () => this.refreshBinaries();
 
     document.getElementById('reloadBtn').onclick = () => this.loadSettings();
     document.getElementById('saveBtn').onclick = () => this.saveSettings();
@@ -558,6 +574,51 @@ export class SettingsManager {
         const t = this.t('settings.homepageWidgetKey.copyTitle');
         copyBtn.title = t;
         copyBtn.setAttribute('aria-label', t);
+        }
+    }
+
+    // Refreshes yt-dlp/deno binaries from settings panel.
+    async refreshBinaries() {
+        const token = localStorage.getItem(this.tokenKey) || "";
+        const btn = document.getElementById('refreshBinariesBtn');
+        const resultEl = document.getElementById('refreshBinariesResult');
+
+        try {
+            if (resultEl) resultEl.textContent = this.t('settings.binaryRefreshRunning');
+            btn?.classList.add('btn-loading');
+            if (btn) btn.disabled = true;
+
+            const r = await fetch('/api/settings/refresh-binaries', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (r.status === 401) {
+                this.showLogin();
+                return;
+            }
+
+            if (!r.ok) {
+                const e = await r.json().catch(() => ({}));
+                throw new Error(e?.error?.message || this.t('settings.binaryRefreshFailed'));
+            }
+
+            const data = await r.json();
+            const ytdlpVersion = data?.binaries?.ytdlp?.version || 'unknown';
+            const denoVersion = data?.binaries?.deno?.version || 'unknown';
+            const summary = this.t('settings.binaryRefreshResult', {
+                ytdlp: ytdlpVersion,
+                deno: denoVersion
+            });
+
+            if (resultEl) resultEl.textContent = summary;
+            this.showNotification(this.t('settings.binaryRefreshDone'), 'success');
+        } catch (e) {
+            if (resultEl) resultEl.textContent = this.t('settings.binaryRefreshFailed');
+            this.showNotification(`${this.t('settings.binaryRefreshFailed')}: ${e.message}`, 'error');
+        } finally {
+            btn?.classList.remove('btn-loading');
+            if (btn) btn.disabled = false;
         }
     }
 
