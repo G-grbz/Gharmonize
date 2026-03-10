@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import NodeID3 from "node-id3";
 
 const TURKISH_SPECIFIC_RE = /[ĞğİıŞş]/;
 
@@ -70,6 +71,207 @@ function encodeId3v1Field(text, maxLen, encoding) {
   }
 
   return out;
+}
+
+function trimMetaValue(value) {
+  if (value == null) return "";
+  return String(value).trim();
+}
+
+function toPositiveIntOrNull(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
+function formatCountPair(numberValue, totalValue) {
+  const numberPart = toPositiveIntOrNull(numberValue);
+  if (!numberPart) return "";
+  const totalPart = toPositiveIntOrNull(totalValue);
+  return totalPart ? `${numberPart}/${totalPart}` : String(numberPart);
+}
+
+function normalizeId3Language(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "und";
+  if (/^[a-z]{3}$/.test(raw)) return raw;
+
+  const shortCodeMap = {
+    ar: "ara",
+    de: "deu",
+    en: "eng",
+    es: "spa",
+    fr: "fra",
+    it: "ita",
+    ja: "jpn",
+    ko: "kor",
+    pt: "por",
+    ru: "rus",
+    tr: "tur"
+  };
+
+  const nameMap = {
+    arabic: "ara",
+    english: "eng",
+    french: "fra",
+    german: "deu",
+    italian: "ita",
+    japanese: "jpn",
+    korean: "kor",
+    portuguese: "por",
+    russian: "rus",
+    spanish: "spa",
+    turkish: "tur"
+  };
+
+  return shortCodeMap[raw] || nameMap[raw] || "und";
+}
+
+function pushUserDefinedText(items, description, value) {
+  if (!description) return;
+  const normalized =
+    typeof value === "boolean"
+      ? String(value)
+      : trimMetaValue(value);
+  if (!normalized) return;
+  if (items.some((item) => item.description === description && item.value === normalized)) {
+    return;
+  }
+  items.push({ description, value: normalized });
+}
+
+function pushUserDefinedUrl(items, description, value) {
+  if (!description) return;
+  const url = trimMetaValue(value);
+  if (!/^https?:\/\//i.test(url)) return;
+  if (items.some((item) => item.description === description && item.url === url)) {
+    return;
+  }
+  items.push({ description, url });
+}
+
+function pickComposer(meta = {}) {
+  return trimMetaValue(
+    meta.composer ||
+    meta.album_artist ||
+    meta.artist ||
+    meta.uploader
+  );
+}
+
+function pickSourceUrl(meta = {}) {
+  return trimMetaValue(
+    meta.webpage_url ||
+    meta.spotifyUrl ||
+    meta.spUrl
+  );
+}
+
+function pickReleaseDate(meta = {}) {
+  return trimMetaValue(
+    meta.release_date ||
+    meta.release_year ||
+    meta.upload_date ||
+    meta.upload_year
+  );
+}
+
+export function buildRichId3v2Tags(meta = {}) {
+  const title = trimMetaValue(meta.track || meta.title);
+  const artist = trimMetaValue(meta.artist || meta.uploader);
+  const album = trimMetaValue(meta.album || meta.playlist_title);
+  const albumArtist = trimMetaValue(meta.album_artist || artist);
+  const publisher = trimMetaValue(meta.publisher || meta.label);
+  const composer = pickComposer(meta);
+  const genre = trimMetaValue(meta.genre);
+  const copyright = trimMetaValue(meta.copyright);
+  const isrc = trimMetaValue(meta.isrc);
+  const sourceUrl = pickSourceUrl(meta);
+  const releaseDate = pickReleaseDate(meta);
+  const year = trimMetaValue(meta.release_year || meta.upload_year || releaseDate.slice(0, 4));
+  const trackNumber = formatCountPair(meta.track_number, meta.track_total);
+  const partOfSet = formatCountPair(meta.disc_number, meta.disc_total);
+  const language = normalizeId3Language(meta.language || meta.lyrics_language || meta.comment_language);
+  const commentText = trimMetaValue(meta.comment);
+  const lyricsText = trimMetaValue(meta.lyrics || meta.unsynchronisedLyrics?.text);
+
+  const tags = {};
+  if (title) tags.title = title;
+  if (artist) tags.artist = artist;
+  if (album) tags.album = album;
+  if (albumArtist) tags.performerInfo = albumArtist;
+  if (composer) tags.composer = composer;
+  if (genre) tags.genre = genre;
+  if (publisher) tags.publisher = publisher;
+  if (copyright) tags.copyright = copyright;
+  if (isrc) tags.ISRC = isrc;
+  if (trackNumber) tags.trackNumber = trackNumber;
+  if (partOfSet) tags.partOfSet = partOfSet;
+  if (year) tags.year = year;
+  if (releaseDate) {
+    tags.date = releaseDate;
+    tags.originalReleaseTime = releaseDate;
+    tags.recordingTime = releaseDate;
+    tags.releaseTime = releaseDate;
+  }
+  if (commentText) {
+    tags.comment = {
+      language,
+      text: commentText
+    };
+  }
+  if (lyricsText) {
+    tags.unsynchronisedLyrics = {
+      language,
+      text: lyricsText
+    };
+  }
+  if (sourceUrl) tags.audioSourceUrl = sourceUrl;
+  if (trimMetaValue(meta.apple_artist_url)) tags.artistUrl = trimMetaValue(meta.apple_artist_url);
+
+  const userDefinedText = [];
+  pushUserDefinedText(userDefinedText, "SOURCE_PROVIDER", meta.source_provider || meta.source);
+  pushUserDefinedText(userDefinedText, "SOURCE_STORE", meta.source_store);
+  pushUserDefinedText(userDefinedText, "ADVISORY_RATING", meta.advisory_rating);
+  if (meta.explicit != null) pushUserDefinedText(userDefinedText, "EXPLICIT", Boolean(meta.explicit));
+  pushUserDefinedText(userDefinedText, "DURATION_MS", meta.duration_ms);
+  pushUserDefinedText(userDefinedText, "APPLE_TRACK_ID", meta.apple_track_id);
+  pushUserDefinedText(userDefinedText, "APPLE_COLLECTION_ID", meta.apple_collection_id);
+  pushUserDefinedText(userDefinedText, "APPLE_ARTIST_ID", meta.apple_artist_id);
+  pushUserDefinedText(userDefinedText, "APPLE_COLLECTION_TYPE", meta.apple_collection_type);
+  pushUserDefinedText(userDefinedText, "APPLE_COUNTRY", meta.apple_country);
+  pushUserDefinedText(userDefinedText, "APPLE_CURRENCY", meta.apple_currency);
+  pushUserDefinedText(userDefinedText, "APPLE_KIND", meta.apple_kind);
+  pushUserDefinedText(userDefinedText, "ALBUM_ID", meta.album_id);
+  if (userDefinedText.length) tags.userDefinedText = userDefinedText;
+
+  const userDefinedUrl = [];
+  pushUserDefinedUrl(userDefinedUrl, "SOURCE_URL", sourceUrl);
+  pushUserDefinedUrl(userDefinedUrl, "APPLE_TRACK_URL", meta.apple_track_url);
+  pushUserDefinedUrl(userDefinedUrl, "APPLE_COLLECTION_URL", meta.apple_collection_url);
+  pushUserDefinedUrl(userDefinedUrl, "APPLE_ARTIST_URL", meta.apple_artist_url);
+  pushUserDefinedUrl(userDefinedUrl, "PREVIEW_URL", meta.preview_url);
+  pushUserDefinedUrl(userDefinedUrl, "COVER_URL", meta.coverUrl);
+  pushUserDefinedUrl(userDefinedUrl, "SPOTIFY_URL", meta.spotifyUrl || meta.spUrl);
+  if (userDefinedUrl.length) tags.userDefinedUrl = userDefinedUrl;
+
+  return tags;
+}
+
+export function writeRichId3v2Tag(filePath, meta = {}) {
+  try {
+    if (String(path.extname(filePath) || "").toLowerCase() !== ".mp3") return false;
+    if (!fs.existsSync(filePath)) return false;
+
+    const tags = buildRichId3v2Tags(meta);
+    if (!Object.keys(tags).length) return false;
+
+    const result = NodeID3.update(tags, filePath);
+    if (result instanceof Error) return false;
+    return Boolean(result);
+  } catch {
+    return false;
+  }
 }
 
 // Handles rewrite id3v11 tag in core application logic.

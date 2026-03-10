@@ -1,12 +1,21 @@
 import 'dotenv/config';
 import SpotifyWebApi from "spotify-web-api-node";
 import { resolveMarket, withMarketFallback } from "./market.js";
-import assert from "node:assert";
+import fetch from "node-fetch";
+import { findAppleTrackMetaByQuery } from "./apple.js";
 
 let _spotifyApiSingleton = null;
 let _spotifyAccessToken = null;
 let _spotifyTokenExpiresAtMs = 0;
 const _SPOTIFY_TOKEN_SAFETY_WINDOW_MS = 60_000;
+const _SPOTIFY_PUBLIC_FETCH_HEADERS = Object.freeze({
+  "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "accept-language": "en-US,en;q=0.8"
+});
+const _spotifyPublicHtmlCache = new Map();
+const _spotifyPublicEmbedCache = new Map();
+const _spotifyPublicTrackMetaCache = new Map();
 
 // Checks whether Spotify metadata URL is valid for Spotify mapping and metadata flow.
 export function isSpotifyUrl(url) {
@@ -76,6 +85,350 @@ export async function makeSpotify() {
 export function pickBestImage(images=[]) {
   if (!Array.isArray(images) || !images.length) return null;
   return images.slice().sort((a,b)=> (b.width||0) - (a.width||0))[0]?.url || null;
+}
+
+function _cacheGet(cache, key) {
+  return cache.has(key) ? cache.get(key) : undefined;
+}
+
+function _cacheSet(cache, key, value, max = 400) {
+  cache.set(key, value);
+  if (cache.size > max) {
+    const first = cache.keys().next().value;
+    cache.delete(first);
+  }
+}
+
+function _pickBestPublicImage(entity) {
+  const visualImages = Array.isArray(entity?.visualIdentity?.image)
+    ? entity.visualIdentity.image.map((img) => ({
+        url: img?.url || "",
+        width: img?.maxWidth || 0,
+        height: img?.maxHeight || 0
+      }))
+    : [];
+  const coverSources = Array.isArray(entity?.coverArt?.sources)
+    ? entity.coverArt.sources.map((img) => ({
+        url: img?.url || "",
+        width: img?.width || 0,
+        height: img?.height || 0
+      }))
+    : [];
+  return pickBestImage([...visualImages, ...coverSources]);
+}
+
+function _spotifyPageUrl(type, id) {
+  return `https://open.spotify.com/${type}/${id}`;
+}
+
+function _spotifyEmbedUrl(type, id) {
+  return `https://open.spotify.com/embed/${type}/${id}?utm_source=oembed`;
+}
+
+async function _fetchSpotifyHtml(url, cache) {
+  const cached = _cacheGet(cache, url);
+  if (cached !== undefined) return cached;
+
+  const res = await fetch(url, {
+    headers: _SPOTIFY_PUBLIC_FETCH_HEADERS
+  });
+  if (!res.ok) {
+    throw new Error(`Spotify public fetch failed (${res.status})`);
+  }
+
+  const html = await res.text();
+  _cacheSet(cache, url, html);
+  return html;
+}
+
+function _extractNextData(html = "") {
+  const match = String(html || "").match(
+    /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/i
+  );
+  if (!match?.[1]) return null;
+  return JSON.parse(match[1]);
+}
+
+function _parseMetaContent(html = "", attr = "property", key = "") {
+  const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const attrRe = new RegExp(`${attr}="${safeKey}"`, "i");
+  for (const match of String(html || "").matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match?.[0] || "";
+    if (!attrRe.test(tag)) continue;
+    return tag.match(/\bcontent="([^"]*)"/i)?.[1] || "";
+  }
+  return "";
+}
+
+function _parseAllMetaContents(html = "", attr = "name", key = "") {
+  const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const attrRe = new RegExp(`${attr}="${safeKey}"`, "i");
+  const out = [];
+  for (const match of String(html || "").matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match?.[0] || "";
+    if (!attrRe.test(tag)) continue;
+    const content = tag.match(/\bcontent="([^"]*)"/i)?.[1] || "";
+    if (content) out.push(content);
+  }
+  return out;
+}
+
+function _parseSpotifyUriId(value = "", expectedType = "") {
+  const raw = String(value || "").trim();
+  let match = raw.match(/^spotify:(track|album|playlist|artist):([A-Za-z0-9]+)$/i);
+  if (match) {
+    if (expectedType && match[1].toLowerCase() !== expectedType.toLowerCase()) {
+      return null;
+    }
+    return match[2];
+  }
+
+  match = raw.match(
+    /^https?:\/\/open\.spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?(track|album|playlist|artist)\/([A-Za-z0-9]+)(?:[/?].*)?$/i
+  );
+  if (match) {
+    if (expectedType && match[1].toLowerCase() !== expectedType.toLowerCase()) {
+      return null;
+    }
+    return match[2];
+  }
+
+  return null;
+}
+
+async function _fetchSpotifyEmbedEntity(type, id) {
+  const cacheKey = `${type}:${id}`;
+  const cached = _cacheGet(_spotifyPublicEmbedCache, cacheKey);
+  if (cached !== undefined) return cached;
+
+  const html = await _fetchSpotifyHtml(_spotifyEmbedUrl(type, id), _spotifyPublicEmbedCache);
+  const nextData = _extractNextData(html);
+  const entity = nextData?.props?.pageProps?.state?.data?.entity || null;
+  _cacheSet(_spotifyPublicEmbedCache, cacheKey, entity);
+  return entity;
+}
+
+async function _fetchSpotifyPageHtml(type, id) {
+  return _fetchSpotifyHtml(_spotifyPageUrl(type, id), _spotifyPublicHtmlCache);
+}
+
+function _normalizeArtistList(value = "") {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function _buildPublicTrackItem(
+  track,
+  {
+    albumTitle = "",
+    albumArtist = "",
+    trackTotal = null,
+    discNumbers = [],
+    albumCoverUrl = "",
+    releaseDate = "",
+    sourceType = ""
+  } = {}
+) {
+  const uri = String(track?.uri || "");
+  const spId = _parseSpotifyUriId(uri, "track");
+  const trackNumber =
+    Number.isFinite(track?.trackNumber) && track.trackNumber > 0
+      ? Number(track.trackNumber)
+      : Number.isFinite(track?.position) && track.position > 0
+      ? Number(track.position)
+      : null;
+  const discNumber =
+    trackNumber && Array.isArray(discNumbers) && Number.isFinite(discNumbers[trackNumber - 1])
+      ? Number(discNumbers[trackNumber - 1])
+      : null;
+
+  return {
+    title: track?.title || "",
+    artist: _normalizeArtistList(
+      track?.subtitle ||
+        (Array.isArray(track?.artists)
+          ? track.artists.map((artist) => artist?.name).filter(Boolean).join(", ")
+          : "")
+    ),
+    album: albumTitle || "",
+    year: String(releaseDate || "").slice(0, 4) || "",
+    date: releaseDate || "",
+    track_number: trackNumber,
+    disc_number: discNumber,
+    track_total: trackTotal,
+    disc_total:
+      Array.isArray(discNumbers) && discNumbers.length
+        ? Math.max(...discNumbers.filter((n) => Number.isFinite(n)))
+        : null,
+    isrc: "",
+    coverUrl: sourceType === "playlist" ? "" : albumCoverUrl || "",
+    spUrl: spId ? _spotifyPageUrl("track", spId) : "",
+    album_artist: albumArtist || _normalizeArtistList(track?.subtitle || ""),
+    label: "",
+    copyright: "",
+    genre: "",
+    duration_ms: Number(track?.duration || 0) || null,
+    spId
+  };
+}
+
+async function _resolveSpotifyUrlPublic(url) {
+  const { type, id } = parseSpotifyUrl(url);
+  if (!id || type === "unknown") {
+    throw new Error("Unsupported Spotify URL");
+  }
+
+  if (type === "track") {
+    const [entity, pageHtml] = await Promise.all([
+      _fetchSpotifyEmbedEntity("track", id),
+      _fetchSpotifyPageHtml("track", id)
+    ]);
+
+    const albumId = _parseSpotifyUriId(
+      _parseMetaContent(pageHtml, "name", "music:album"),
+      "album"
+    );
+    let albumEntity = null;
+    if (albumId) {
+      try {
+        albumEntity = await _fetchSpotifyEmbedEntity("album", albumId);
+      } catch {}
+    }
+
+    const releaseDate =
+      _parseMetaContent(pageHtml, "name", "music:release_date") ||
+      entity?.releaseDate?.isoString ||
+      albumEntity?.releaseDate?.isoString ||
+      "";
+    const trackNumberRaw = Number(
+      _parseMetaContent(pageHtml, "name", "music:album:track") || 0
+    );
+    const albumTrackList = Array.isArray(albumEntity?.trackList) ? albumEntity.trackList : [];
+    const trackTotal = albumTrackList.length || null;
+    const trackNumber =
+      Number.isFinite(trackNumberRaw) && trackNumberRaw > 0
+        ? trackNumberRaw
+        : (() => {
+            const pos = albumTrackList.findIndex(
+              (track) => _parseSpotifyUriId(track?.uri, "track") === id
+            );
+            return pos >= 0 ? pos + 1 : null;
+          })();
+
+    const albumCoverUrl = _pickBestPublicImage(entity) || _pickBestPublicImage(albumEntity) || "";
+    const item = {
+      title: entity?.title || entity?.name || "",
+      artist: _normalizeArtistList(
+        Array.isArray(entity?.artists)
+          ? entity.artists.map((artist) => artist?.name).filter(Boolean).join(", ")
+          : ""
+      ),
+      album: albumEntity?.title || albumEntity?.name || "",
+      year: String(releaseDate || "").slice(0, 4) || "",
+      date: releaseDate || "",
+      track_number: trackNumber,
+      disc_number: null,
+      track_total: trackTotal,
+      disc_total: null,
+      isrc: "",
+      coverUrl: albumCoverUrl,
+      spUrl: _spotifyPageUrl("track", id),
+      album_artist: albumEntity?.subtitle || "",
+      label: "",
+      copyright: "",
+      genre: "",
+      duration_ms: Number(entity?.duration || 0) || null,
+      spId: id,
+      album_id: albumId || null
+    };
+    const richTrack = await findSpotifyMetaById(id);
+    const mergedItem = { ...item };
+    for (const [key, value] of Object.entries(richTrack || {})) {
+      if (value == null) continue;
+      if (typeof value === "string" && !value.trim()) continue;
+      mergedItem[key] = value;
+    }
+
+    return {
+      kind: "track",
+      title: `${mergedItem.artist} - ${mergedItem.title}`.trim(),
+      items: [mergedItem]
+    };
+  }
+
+  if (type === "playlist") {
+    if (isPersonalizedMixId(id)) {
+      throw new Error("SPOTIFY_MIX_UNSUPPORTED: This URL is a personalized Spotify Mix. The Spotify Web API does not provide this content (404). Please copy the tracks from the mix into a new playlist in the Spotify app and use that playlist URL instead.");
+    }
+
+    const entity = await _fetchSpotifyEmbedEntity("playlist", id);
+    const trackList = Array.isArray(entity?.trackList) ? entity.trackList : [];
+    const items = trackList.map((track, index) =>
+      _buildPublicTrackItem(
+        { ...track, position: index + 1 },
+        {
+          albumTitle: "",
+          albumArtist: "",
+          trackTotal: null,
+          discNumbers: [],
+          albumCoverUrl: "",
+          releaseDate: "",
+          sourceType: "playlist"
+        }
+      )
+    );
+
+    return {
+      kind: "playlist",
+      title: entity?.title || entity?.name || "Spotify Playlist",
+      items
+    };
+  }
+
+  if (type === "album") {
+    const [entity, pageHtml] = await Promise.all([
+      _fetchSpotifyEmbedEntity("album", id),
+      _fetchSpotifyPageHtml("album", id)
+    ]);
+    const trackList = Array.isArray(entity?.trackList) ? entity.trackList : [];
+    const discNumbers = _parseAllMetaContents(pageHtml, "name", "music:song:disc")
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const releaseDate =
+      _parseMetaContent(pageHtml, "name", "music:release_date") ||
+      entity?.releaseDate?.isoString ||
+      "";
+    const albumCoverUrl =
+      _pickBestPublicImage(entity) ||
+      _parseMetaContent(pageHtml, "property", "og:image") ||
+      "";
+    const items = trackList.map((track, index) =>
+      _buildPublicTrackItem(
+        { ...track, trackNumber: index + 1 },
+        {
+          albumTitle: entity?.title || entity?.name || "",
+          albumArtist: entity?.subtitle || "",
+          trackTotal: trackList.length || null,
+          discNumbers,
+          albumCoverUrl,
+          releaseDate,
+          sourceType: "album"
+        }
+      )
+    );
+
+    const albumTitle = entity?.title || entity?.name || "Spotify Album";
+    const albumArtist = entity?.subtitle || "";
+    return {
+      kind: "playlist",
+      title: albumArtist ? `${albumArtist} - ${albumTitle}` : albumTitle,
+      items
+    };
+  }
+
+  throw new Error("This type of Spotify URL is not supported yet");
 }
 
 // Handles search Spotify metadata best track in Spotify mapping and metadata flow.
@@ -198,124 +551,126 @@ export async function searchSpotifyBestTrackStrict(
     titleRaw = null
   } = {}
 ) {
-  const api = await makeSpotify();
-  const queries = _buildSearchQueries(artist, title);
-  if (!queries.length) return null;
+  try {
+    const api = await makeSpotify();
+    const queries = _buildSearchQueries(artist, title);
+    if (!queries.length) return null;
 
-  const mkt = resolveMarket(market);
-  const aN = _norm(artist || "");
-  const tN = _norm(title || "");
-  const tRawN = _norm(titleRaw || title || "");
-  const tTokenCount = tN ? tN.split(/\s+/).filter(Boolean).length : 0;
+    const mkt = resolveMarket(market);
+    const aN = _norm(artist || "");
+    const tN = _norm(title || "");
+    const tRawN = _norm(titleRaw || title || "");
+    const tTokenCount = tN ? tN.split(/\s+/).filter(Boolean).length : 0;
 
-  // Handles score in Spotify mapping and metadata flow.
-  const score = (it) => {
-    const spTitle = _norm(it?.name || "");
-    const spArtist = _norm(it?.artists?.[0]?.name || "");
-    let s = 0;
-    if (spTitle === tN || spTitle === tRawN) s += 4;
-    else if (spTitle.includes(tN) || tN.includes(spTitle)) s += 2;
-    if (aN) {
-      if (spArtist === aN) s += 3;
-      else if (spArtist.includes(aN) || aN.includes(spArtist)) s += 1;
-    }
-
-    if (_durationMatches(it, targetDurationSec)) s += 2;
-    return s;
-  };
-
-  let best = null,
-    bestScore = -1;
-  const seenIds = new Set();
-  for (const q of queries) {
-    const resp = await api.searchTracks(q, {
-      limit: 10,
-      ...(mkt ? { market: mkt } : {})
-    });
-    const items = resp?.body?.tracks?.items || [];
-
-    for (const it of items) {
-      const id = it?.id || null;
-      if (id && seenIds.has(id)) continue;
-      if (id) seenIds.add(id);
-
-      const s = score(it);
-      if (s > bestScore) {
-        best = it;
-        bestScore = s;
-      }
-    }
-
-    if (bestScore >= minScore) {
-      return best;
-    }
-  }
-
-  if (!tN) return null;
-
-  const titleOnlyQueries = _buildTitleOnlyQueries(title, titleRaw);
-  if (!titleOnlyQueries.length) return null;
-
-  const seenRelaxedIds = new Set();
-  let relaxedBest = null;
-  let relaxedBestScore = -1;
-
-  for (const q of titleOnlyQueries) {
-    const resp = await api.searchTracks(q, {
-      limit: 12,
-      ...(mkt ? { market: mkt } : {})
-    });
-    const items = resp?.body?.tracks?.items || [];
-
-    for (const it of items) {
-      const id = it?.id || null;
-      if (id && seenRelaxedIds.has(id)) continue;
-      if (id) seenRelaxedIds.add(id);
-
+    // Handles score in Spotify mapping and metadata flow.
+    const score = (it) => {
       const spTitle = _norm(it?.name || "");
       const spArtist = _norm(it?.artists?.[0]?.name || "");
-      if (!spTitle) continue;
-
-      const titleExact = spTitle === tN || spTitle === tRawN;
-      const titleContains = spTitle.includes(tN) || tN.includes(spTitle);
-      if (!titleExact && !titleContains) continue;
-
-      const startsWithTitle = _startsWithNormTitle(spTitle, tN);
-      const artistExact = !!aN && spArtist === aN;
-      const artistPartial =
-        !!aN && !artistExact && (spArtist.includes(aN) || aN.includes(spArtist));
-      const durationMatch = _durationMatches(it, targetDurationSec);
-
       let s = 0;
-      if (titleExact) s += 6;
-      else if (titleContains) s += 4;
-      if (startsWithTitle) s += 2;
-      if (artistExact) s += 3;
-      else if (artistPartial) s += 1;
-      if (durationMatch) s += 2;
-
-      if (/\b(karaoke|cover|instrumental|nightcore|slowed|sped)\b/.test(spTitle)) {
-        s -= 2;
+      if (spTitle === tN || spTitle === tRawN) s += 4;
+      else if (spTitle.includes(tN) || tN.includes(spTitle)) s += 2;
+      if (aN) {
+        if (spArtist === aN) s += 3;
+        else if (spArtist.includes(aN) || aN.includes(spArtist)) s += 1;
       }
 
-      const safeWithoutArtist = tTokenCount >= 5 && startsWithTitle;
-      const acceptable =
-        artistPartial || durationMatch || safeWithoutArtist;
-      if (!acceptable) continue;
+      if (_durationMatches(it, targetDurationSec)) s += 2;
+      return s;
+    };
 
-      if (s > relaxedBestScore) {
-        relaxedBest = it;
-        relaxedBestScore = s;
+    let best = null,
+      bestScore = -1;
+    const seenIds = new Set();
+    for (const q of queries) {
+      const resp = await api.searchTracks(q, {
+        limit: 10,
+        ...(mkt ? { market: mkt } : {})
+      });
+      const items = resp?.body?.tracks?.items || [];
+
+      for (const it of items) {
+        const id = it?.id || null;
+        if (id && seenIds.has(id)) continue;
+        if (id) seenIds.add(id);
+
+        const s = score(it);
+        if (s > bestScore) {
+          best = it;
+          bestScore = s;
+        }
+      }
+
+      if (bestScore >= minScore) {
+        return best;
       }
     }
-  }
 
-  if (relaxedBest) {
-    const relaxedMinScore = Math.max(7, minScore);
-    if (relaxedBestScore >= relaxedMinScore) {
-      return relaxedBest;
+    if (!tN) return null;
+
+    const titleOnlyQueries = _buildTitleOnlyQueries(title, titleRaw);
+    if (!titleOnlyQueries.length) return null;
+
+    const seenRelaxedIds = new Set();
+    let relaxedBest = null;
+    let relaxedBestScore = -1;
+
+    for (const q of titleOnlyQueries) {
+      const resp = await api.searchTracks(q, {
+        limit: 12,
+        ...(mkt ? { market: mkt } : {})
+      });
+      const items = resp?.body?.tracks?.items || [];
+
+      for (const it of items) {
+        const id = it?.id || null;
+        if (id && seenRelaxedIds.has(id)) continue;
+        if (id) seenRelaxedIds.add(id);
+
+        const spTitle = _norm(it?.name || "");
+        const spArtist = _norm(it?.artists?.[0]?.name || "");
+        if (!spTitle) continue;
+
+        const titleExact = spTitle === tN || spTitle === tRawN;
+        const titleContains = spTitle.includes(tN) || tN.includes(spTitle);
+        if (!titleExact && !titleContains) continue;
+
+        const startsWithTitle = _startsWithNormTitle(spTitle, tN);
+        const artistExact = !!aN && spArtist === aN;
+        const artistPartial =
+          !!aN && !artistExact && (spArtist.includes(aN) || aN.includes(spArtist));
+        const durationMatch = _durationMatches(it, targetDurationSec);
+
+        let s = 0;
+        if (titleExact) s += 6;
+        else if (titleContains) s += 4;
+        if (startsWithTitle) s += 2;
+        if (artistExact) s += 3;
+        else if (artistPartial) s += 1;
+        if (durationMatch) s += 2;
+
+        if (/\b(karaoke|cover|instrumental|nightcore|slowed|sped)\b/.test(spTitle)) {
+          s -= 2;
+        }
+
+        const safeWithoutArtist = tTokenCount >= 5 && startsWithTitle;
+        const acceptable =
+          artistPartial || durationMatch || safeWithoutArtist;
+        if (!acceptable) continue;
+
+        if (s > relaxedBestScore) {
+          relaxedBest = it;
+          relaxedBestScore = s;
+        }
+      }
     }
-  }
+
+    if (relaxedBest) {
+      const relaxedMinScore = Math.max(7, minScore);
+      if (relaxedBestScore >= relaxedMinScore) {
+        return relaxedBest;
+      }
+    }
+  } catch {}
 
   return null;
 }
@@ -353,6 +708,128 @@ export function trackToId3Meta(track) {
     label: label,
     publisher: label
   };
+}
+
+export async function findSpotifyMetaById(id) {
+  const trackId = String(id || "").trim();
+  if (!trackId) return null;
+
+  const cached = _cacheGet(_spotifyPublicTrackMetaCache, trackId);
+  if (cached !== undefined) return cached;
+
+  try {
+    const [trackEntity, trackPageHtml] = await Promise.all([
+      _fetchSpotifyEmbedEntity("track", trackId),
+      _fetchSpotifyPageHtml("track", trackId)
+    ]);
+
+    if (!trackEntity) {
+      _cacheSet(_spotifyPublicTrackMetaCache, trackId, null);
+      return null;
+    }
+
+    const albumId = _parseSpotifyUriId(
+      _parseMetaContent(trackPageHtml, "name", "music:album"),
+      "album"
+    );
+
+    let albumEntity = null;
+    let albumPageHtml = "";
+    if (albumId) {
+      try {
+        [albumEntity, albumPageHtml] = await Promise.all([
+          _fetchSpotifyEmbedEntity("album", albumId),
+          _fetchSpotifyPageHtml("album", albumId)
+        ]);
+      } catch {}
+    }
+
+    const albumTrackList = Array.isArray(albumEntity?.trackList)
+      ? albumEntity.trackList
+      : [];
+    const releaseDate =
+      _parseMetaContent(trackPageHtml, "name", "music:release_date") ||
+      trackEntity?.releaseDate?.isoString ||
+      albumEntity?.releaseDate?.isoString ||
+      "";
+    const trackNumberMeta = Number(
+      _parseMetaContent(trackPageHtml, "name", "music:album:track") || 0
+    );
+    const trackIndex = albumTrackList.findIndex(
+      (track) => _parseSpotifyUriId(track?.uri, "track") === trackId
+    );
+    const trackNumber =
+      Number.isFinite(trackNumberMeta) && trackNumberMeta > 0
+        ? trackNumberMeta
+        : trackIndex >= 0
+        ? trackIndex + 1
+        : null;
+    const discNumbers = _parseAllMetaContents(
+      albumPageHtml,
+      "name",
+      "music:song:disc"
+    )
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const discNumber =
+      trackNumber && Number.isFinite(discNumbers[trackNumber - 1])
+        ? Number(discNumbers[trackNumber - 1])
+        : null;
+    const coverUrl =
+      _pickBestPublicImage(trackEntity) ||
+      _pickBestPublicImage(albumEntity) ||
+      _parseMetaContent(trackPageHtml, "property", "og:image") ||
+      _parseMetaContent(albumPageHtml, "property", "og:image") ||
+      "";
+    const artist = _normalizeArtistList(
+      Array.isArray(trackEntity?.artists)
+        ? trackEntity.artists.map((item) => item?.name).filter(Boolean).join(", ")
+        : ""
+    );
+    const meta = {
+      title: trackEntity?.title || trackEntity?.name || "",
+      track: trackEntity?.title || trackEntity?.name || "",
+      artist,
+      album: albumEntity?.title || albumEntity?.name || "",
+      album_artist: albumEntity?.subtitle || artist || "",
+      release_year: String(releaseDate || "").slice(0, 4) || "",
+      release_date: releaseDate || "",
+      isrc: "",
+      coverUrl,
+      webpage_url: _spotifyPageUrl("track", trackId),
+      genre: "",
+      label: "",
+      publisher: "",
+      copyright: "",
+      track_number: trackNumber,
+      disc_number: discNumber,
+      track_total: albumTrackList.length || null,
+      disc_total:
+        discNumbers.length > 0 ? Math.max(...discNumbers) : null,
+      duration_ms: Number(trackEntity?.duration || 0) || null,
+      spId: trackId,
+      album_id: albumId || null
+    };
+
+    const appleMeta = await findAppleTrackMetaByQuery(artist, meta.title, {
+      album: meta.album || "",
+      targetDurationMs: meta.duration_ms || null
+    });
+    const merged = { ...meta };
+    for (const [key, value] of Object.entries(appleMeta || {})) {
+      if (value == null) continue;
+      if (typeof value === "string" && !value.trim()) continue;
+      if (merged[key] == null || merged[key] === "") {
+        merged[key] = value;
+      }
+    }
+
+    _cacheSet(_spotifyPublicTrackMetaCache, trackId, merged);
+    return merged;
+  } catch {
+    _cacheSet(_spotifyPublicTrackMetaCache, trackId, null);
+    return null;
+  }
 }
 
 // Loads track for Spotify mapping and metadata flow.
@@ -558,8 +1035,8 @@ async function fetchAlbumItems(api, id, market) {
   return out;
 }
 
-// Resolves Spotify metadata URL for Spotify mapping and metadata flow.
-export async function resolveSpotifyUrl(url, { market } = {}) {
+// Resolves Spotify metadata URL via Spotify Web API for Spotify mapping and metadata flow.
+async function _resolveSpotifyUrlViaApi(url, { market } = {}) {
   const { type, id } = parseSpotifyUrl(url);
   if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
 
@@ -621,11 +1098,32 @@ export async function resolveSpotifyUrl(url, { market } = {}) {
   throw new Error("This type of Spotify URL is not supported yet");
 }
 
+export async function resolveSpotifyUrlLite(url, { market } = {}) {
+  try {
+    return await _resolveSpotifyUrlPublic(url);
+  } catch (publicError) {
+    try {
+      return await _resolveSpotifyUrlViaApi(url, { market });
+    } catch {
+      throw publicError;
+    }
+  }
+}
+
+// Resolves Spotify metadata URL for Spotify mapping and metadata flow.
+export async function resolveSpotifyUrl(url, { market } = {}) {
+  return resolveSpotifyUrlLite(url, { market });
+}
+
 // Finds Spotify metadata meta by query for Spotify mapping and metadata flow.
 export async function findSpotifyMetaByQuery(artist, title, market) {
   const artistSafe = String(artist || "").trim();
   const titleSafe = String(title || "").trim();
   if (!titleSafe) return null;
+
+  const fromApple = async () => findAppleTrackMetaByQuery(artistSafe, titleSafe, {
+    market
+  });
 
   let item = null;
   try {
@@ -634,9 +1132,41 @@ export async function findSpotifyMetaByQuery(artist, title, market) {
       minScore: 7
     });
   } catch {}
-  if (!item) return null;
 
-  const api = await makeSpotify();
+  if (!item) {
+    return fromApple();
+  }
+
+  const publicTrackId = String(item?.id || "").trim();
+  if (publicTrackId) {
+    const publicMeta = await findSpotifyMetaById(publicTrackId);
+    if (publicMeta) {
+      const appleMeta = await fromApple();
+      return {
+        ...appleMeta,
+        ...publicMeta,
+        genre: publicMeta.genre || appleMeta?.genre || "",
+        label: publicMeta.label || appleMeta?.label || "",
+        publisher: publicMeta.publisher || appleMeta?.publisher || appleMeta?.label || "",
+        copyright: publicMeta.copyright || appleMeta?.copyright || "",
+        album: publicMeta.album || appleMeta?.album || "",
+        album_artist: publicMeta.album_artist || appleMeta?.album_artist || publicMeta.artist || "",
+        track_number: publicMeta.track_number ?? appleMeta?.track_number ?? null,
+        disc_number: publicMeta.disc_number ?? appleMeta?.disc_number ?? null,
+        track_total: publicMeta.track_total ?? appleMeta?.track_total ?? null,
+        disc_total: publicMeta.disc_total ?? appleMeta?.disc_total ?? null,
+        coverUrl: publicMeta.coverUrl || appleMeta?.coverUrl || "",
+        webpage_url: publicMeta.webpage_url || appleMeta?.webpage_url || ""
+      };
+    }
+  }
+
+  let api = null;
+  try {
+    api = await makeSpotify();
+  } catch {
+    return fromApple();
+  }
   let album = null, leadArtist = null;
   try {
     if (item.album?.id) {
@@ -651,21 +1181,26 @@ export async function findSpotifyMetaByQuery(artist, title, market) {
 
   const genres = (album?.genres?.length ? album.genres : (leadArtist?.genres || [])) || [];
   const copyrightText = (album?.copyrights && album.copyrights[0]?.text) || "";
+  const appleMeta = await fromApple();
 
   return {
-    title: item.name || "",
-    track: item.name || "",
-    artist: (item.artists || []).map(a => a?.name).filter(Boolean).join(", "),
-    album: item.album?.name || "",
-    album_artist: item.album?.artists?.[0]?.name || item.artists?.[0]?.name || "",
-    release_year: (item.album?.release_date || "").slice(0, 4),
-    release_date: item.album?.release_date || "",
-    isrc: item.external_ids?.isrc || "",
-    coverUrl: pickBestImage(album?.images || []),
-    webpage_url: item.external_urls?.spotify || "",
-    genre: genres[0] || "",
-    label: album?.label || "",
-    publisher: album?.label || "",
-    copyright: copyrightText
+    title: item.name || appleMeta?.title || "",
+    track: item.name || appleMeta?.track || "",
+    artist: (item.artists || []).map(a => a?.name).filter(Boolean).join(", ") || appleMeta?.artist || "",
+    album: item.album?.name || appleMeta?.album || "",
+    album_artist: item.album?.artists?.[0]?.name || item.artists?.[0]?.name || appleMeta?.album_artist || "",
+    release_year: (item.album?.release_date || "").slice(0, 4) || appleMeta?.release_year || "",
+    release_date: item.album?.release_date || appleMeta?.release_date || "",
+    isrc: item.external_ids?.isrc || appleMeta?.isrc || "",
+    coverUrl: pickBestImage(album?.images || []) || appleMeta?.coverUrl || "",
+    webpage_url: item.external_urls?.spotify || appleMeta?.webpage_url || "",
+    genre: genres[0] || appleMeta?.genre || "",
+    label: album?.label || appleMeta?.label || "",
+    publisher: album?.label || appleMeta?.publisher || appleMeta?.label || "",
+    copyright: copyrightText || appleMeta?.copyright || "",
+    track_number: appleMeta?.track_number ?? null,
+    disc_number: appleMeta?.disc_number ?? null,
+    track_total: appleMeta?.track_total ?? null,
+    disc_total: appleMeta?.disc_total ?? null
   };
 }

@@ -7,7 +7,7 @@ import fetch from "node-fetch";
 import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
 import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
-import { rewriteId3v11Tag } from "./id3.js";
+import { rewriteId3v11Tag, writeRichId3v2Tag } from "./id3.js";
 import { toDownloadPath, resolveDownloadPathToAbs } from "./outputPaths.js";
 import "dotenv/config";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
@@ -639,11 +639,17 @@ export async function retagMediaFile(
       try { fs.unlinkSync(tmpOut); } catch {}
     }
 
-    if (f === "mp3" && shouldWriteId3v1()) {
-      rewriteId3v11Tag(absOutputPath, {
+    if (f === "mp3") {
+      writeRichId3v2Tag(absOutputPath, {
         ...resolvedMeta,
         comment: getCommentText()
       });
+      if (shouldWriteId3v1()) {
+        rewriteId3v11Tag(absOutputPath, {
+          ...resolvedMeta,
+          comment: getCommentText()
+        });
+      }
     }
 
     console.log(`✅ retag ok: ${path.basename(absOutputPath)}`);
@@ -2948,13 +2954,19 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       );
     }
 
-    if (!isVideo && String(format || "").toLowerCase() === "mp3" && shouldWriteId3v1() && result?.outputPath) {
+    if (!isVideo && String(format || "").toLowerCase() === "mp3" && result?.outputPath) {
       const actualOutputPath = resolveDownloadPathToAbs(result.outputPath);
       if (actualOutputPath) {
-        rewriteId3v11Tag(actualOutputPath, {
+        writeRichId3v2Tag(actualOutputPath, {
           ...resolvedMeta,
           comment: getCommentText()
         });
+        if (shouldWriteId3v1()) {
+          rewriteId3v11Tag(actualOutputPath, {
+            ...resolvedMeta,
+            comment: getCommentText()
+          });
+        }
       }
     }
 

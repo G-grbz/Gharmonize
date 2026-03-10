@@ -1,17 +1,22 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import os from "os";
 import crypto from "crypto";
 import { sendOk, sendError, uniqueId } from "../modules/utils.js";
-import { idsToMusicUrls, mapSpotifyToYtm, downloadMatchedSpotifyTracks, createDownloadQueue } from "../modules/sp.js";
-import { isSpotifyUrl, resolveSpotifyUrl, makeSpotify, parseSpotifyUrl, findSpotifyMetaByQuery } from "../modules/spotify.js";
-import { spotifyMapTasks, spotifyDownloadTasks, jobs, killJobProcesses, createJob, registerJobProcess } from "../modules/store.js";
-import { processJob } from "../modules/processor.js";
+import { idsToMusicUrls, mapSpotifyToYtm, createDownloadQueue } from "../modules/sp.js";
+import {
+  isSpotifyUrl,
+  resolveSpotifyUrl,
+  resolveSpotifyUrlLite,
+  findSpotifyMetaById,
+  findSpotifyMetaByQuery
+} from "../modules/spotify.js";
+import { spotifyMapTasks, jobs, killJobProcesses, createJob, registerJobProcess } from "../modules/store.js";
 import { convertMedia, downloadThumbnail, retagMediaFile } from "../modules/media.js";
 import archiver from "archiver";
 import { resolveMarket } from "../modules/market.js";
 import { isVideoFormat, processYouTubeVideoJob } from "../modules/video.js";
+import { findAppleTrackMetaByQuery } from "../modules/apple.js";
 import {
   resolveJobOutputDir,
   toDownloadPath,
@@ -100,118 +105,36 @@ function buildLiveConvertLog(progress, details = {}, label = "") {
   return `⚙️ Converting ${pct}% (${elapsed}/${duration} • ${fps} FPS)${suffix}`;
 }
 
-// Handles lite track to item in Spotify mapping and metadata flow.
-function _liteTrackToItem(t) {
-  if (!t) return null;
-  const artist = (t.artists || []).map(a => a?.name).filter(Boolean).join(", ");
-  const title = t.name || "";
-  const album = t.album?.name || "";
-  const releaseDate = t.album?.release_date || "";
-  const year = releaseDate ? String(releaseDate).slice(0, 4) : "";
-  const coverUrl = (t.album?.images || []).slice().sort((a,b)=> (b.width||0)-(a.width||0))[0]?.url || "";
-  const spUrl = t.external_urls?.spotify || "";
-  const isrc = t.external_ids?.isrc || "";
-  return {
-    title,
-    artist,
-    album,
-    year,
-    date: releaseDate,
-    track_number: t.track_number || null,
-    disc_number: t.disc_number || null,
-    track_total: t.album?.total_tracks || null,
-    disc_total: null,
-    isrc,
-    coverUrl,
-    spUrl,
-    album_artist: (t.album?.artists?.[0]?.name || artist || ""),
-    label: "",
-    copyright: "",
-    genre: ""
-  };
+function mergeMissingMeta(base, extra) {
+  if (!extra) return base;
+  const out = { ...base };
+  for (const [key, value] of Object.entries(extra)) {
+    if (value == null) continue;
+    if (typeof value === "string" && !value.trim()) continue;
+    if (out[key] == null || out[key] === "") {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
-// Resolves Spotify metadata URL lite for Spotify mapping and metadata flow.
-async function resolveSpotifyUrlLite(url, { market } = {}) {
-  const { type, id } = parseSpotifyUrl(url);
-  if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
-  const api = await makeSpotify();
-  const mkt = resolveMarket(market);
+async function enrichMetaWithApple(meta, { fallbackArtist = "", fallbackTitle = "", market = "" } = {}) {
+  if (process.env.APPLE_TAG_FALLBACK === "0") return meta;
 
-  if (type === "track") {
-    const r = await api.getTrack(id, { ...(mkt ? { market: mkt } : {}) });
-    const item = _liteTrackToItem(r?.body);
-    if (!item) throw new Error("Track could not be fetched");
-    return { kind: "track", title: `${item.artist} - ${item.title}`, items: [item] };
-  }
+  const artist = String(meta?.artist || meta?.album_artist || fallbackArtist || "").trim();
+  const title = String(meta?.track || meta?.title || fallbackTitle || "").trim();
+  if (!title) return meta;
 
-  if (type === "playlist") {
-    let plTitle = "Spotify Playlist";
-    try {
-      const pl = (await api.getPlaylist(id, { fields: "name" }))?.body;
-      plTitle = pl?.name || plTitle;
-    } catch {}
-
-    const items = [];
-    let page = await api.getPlaylistTracks(id, {
-      limit: 100,
-      ...(mkt ? { market: mkt } : {})
+  try {
+    const appleMeta = await findAppleTrackMetaByQuery(artist, title, {
+      album: meta?.album || "",
+      market,
+      targetDurationMs: Number(meta?.duration_ms || 0) || null
     });
-    while (page) {
-      for (const it of (page.body?.items || [])) {
-        const t = it?.track;
-        const item = _liteTrackToItem(t);
-        if (item?.title && item?.artist) items.push(item);
-      }
-      const next = page.body?.next;
-      if (!next) break;
-      const u = new URL(next);
-      const offset = Number(u.searchParams.get("offset") || 0);
-      page = await api.getPlaylistTracks(id, {
-        limit: 100,
-        offset,
-        ...(mkt ? { market: mkt } : {})
-      });
-    }
-    return { kind: "playlist", title: plTitle, items };
+    return mergeMissingMeta(meta, appleMeta);
+  } catch {
+    return meta;
   }
-
-  if (type === "album") {
-    const alb = (await api.getAlbum(id, { ...(mkt ? { market: mkt } : {}) }))?.body || null;
-    const albumTitle = alb?.name || "Spotify Album";
-    const albumArtist = alb?.artists?.[0]?.name || "";
-    const coverUrl = (alb?.images || []).slice().sort((a,b)=> (b.width||0)-(a.width||0))[0]?.url || "";
-    const releaseDate = alb?.release_date || "";
-    const year = releaseDate ? String(releaseDate).slice(0,4) : "";
-    const totalTracks = alb?.total_tracks || null;
-
-    const items = [];
-    let page = await api.getAlbumTracks(id, { limit: 50, ...(mkt ? { market: mkt } : {}) });
-    while (page) {
-      for (const t of (page.body?.items || [])) {
-        const item = _liteTrackToItem({
-          ...t,
-          album: {
-            name: albumTitle,
-            artists: [{ name: albumArtist }],
-            images: coverUrl ? [{ url: coverUrl, width: 9999, height: 9999 }] : [],
-            release_date: releaseDate,
-            total_tracks: totalTracks
-          }
-        });
-        if (item?.title && item?.artist) items.push(item);
-      }
-      const next = page.body?.next;
-      if (!next) break;
-      const u = new URL(next);
-      const offset = Number(u.searchParams.get("offset") || 0);
-      page = await api.getAlbumTracks(id, { limit: 50, offset, ...(mkt ? { market: mkt } : {}) });
-    }
-    const title = albumArtist ? `${albumArtist} - ${albumTitle}` : albumTitle;
-    return { kind: "playlist", title, items };
-  }
-
-  throw new Error("This type of Spotify URL is not supported yet");
 }
 
 router.post("/api/spotify/process/start", async (req, res) => {
@@ -457,11 +380,10 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             if (shouldCancel()) return;
             let rich = null;
             try {
-              rich = await findSpotifyMetaByQuery(itemLite.artist, itemLite.title, mktResolved);
+              rich = itemLite?.spId
+                ? await findSpotifyMetaById(itemLite.spId)
+                : await findSpotifyMetaByQuery(itemLite.artist, itemLite.title, mktResolved);
             } catch {}
-            if (!rich) return;
-
-            richMetaByIndex.set(logicalIndex, rich);
 
             const baseMeta = {
               title: itemLite.title,
@@ -481,15 +403,24 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
               genre: itemLite.genre || "",
               label: itemLite.label || "",
               publisher: itemLite.label || "",
-              copyright: itemLite.copyright || ""
+              copyright: itemLite.copyright || "",
+              coverUrl: itemLite.coverUrl || "",
+              duration_ms: itemLite.duration_ms ?? null
             };
 
-            const merged = { ...baseMeta };
+            let merged = { ...baseMeta };
             for (const [k, v] of Object.entries(rich || {})) {
               if (v == null) continue;
               if (typeof v === "string" && !v.trim()) continue;
               merged[k] = v;
             }
+            merged = await enrichMetaWithApple(merged, {
+              fallbackArtist: itemLite.artist,
+              fallbackTitle: itemLite.title,
+              market: mktResolved
+            });
+
+            richMetaByIndex.set(logicalIndex, merged);
 
             if (merged.coverUrl) coverUrlByIndex.set(logicalIndex, merged.coverUrl);
 
@@ -507,7 +438,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
                {
                   ...merged,
                   playlist_title: job.metadata.spotifyTitle,
-                  webpage_url: merged.webpage_url || rich.webpage_url || itemLite.spUrl || ""
+                  webpage_url: merged.webpage_url || rich?.webpage_url || itemLite.spUrl || ""
                 },
                 coverPath,
                 { jobId, tempDir: TEMP_DIR }
@@ -529,17 +460,17 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       const entry = dlResult.item;
       const logicalIndex = (dlResult.index != null ? dlResult.index - 1 : idxZeroBased);
 
-      let spInfo = null;
-      if (Array.isArray(sp.items) && sp.items.length) {
-        spInfo = sp.items.find(x =>
-          x.title?.toLowerCase() === entry.title?.toLowerCase() &&
-          (x.artist || "").toLowerCase().includes((entry.uploader || "").toLowerCase())
+      let spInfo = Array.isArray(sp.items) ? (sp.items[logicalIndex] || null) : null;
+      if (!spInfo && Array.isArray(sp.items) && sp.items.length) {
+        spInfo = sp.items.find((item) =>
+          item.title?.toLowerCase() === entry.title?.toLowerCase() &&
+          (item.artist || "").toLowerCase().includes((entry.uploader || "").toLowerCase())
         ) || null;
       }
 
       const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
       const richNow = richMetaByIndex.get(logicalIndex) || null;
-      const fileMeta = (preferSpotify && (richNow || spInfo)) ? {
+      let fileMeta = (preferSpotify && (richNow || spInfo)) ? {
         title: (richNow?.title || spInfo?.title || entry.title),
         track: (richNow?.title || spInfo?.title || entry.title),
         artist: (richNow?.artist || spInfo?.artist || entry.uploader),
@@ -558,7 +489,9 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         genre:        (richNow?.genre || spInfo?.genre || ""),
         label:        (richNow?.label || spInfo?.label || ""),
         publisher:    (richNow?.publisher || richNow?.label || spInfo?.label || ""),
-        copyright:    (richNow?.copyright || spInfo?.copyright || "")
+        copyright:    (richNow?.copyright || spInfo?.copyright || ""),
+        coverUrl:     (richNow?.coverUrl || spInfo?.coverUrl || ""),
+        duration_ms:  (richNow?.duration_ms ?? spInfo?.duration_ms ?? null)
       } : {
         title: entry.title,
         track: entry.title,
@@ -566,12 +499,24 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         artist: entry.uploader,
         album: job.metadata.spotifyTitle,
         playlist_title: job.metadata.spotifyTitle,
-        webpage_url: entry.webpage_url
+        webpage_url: entry.webpage_url,
+        duration_ms: null
       };
 
+      fileMeta = await enrichMetaWithApple(fileMeta, {
+        fallbackArtist: spInfo?.artist || entry.uploader,
+        fallbackTitle: spInfo?.title || entry.title,
+        market: mktResolved
+      });
+
+      const preferredCoverUrl =
+        richNow?.coverUrl ||
+        spInfo?.coverUrl ||
+        fileMeta?.coverUrl ||
+        null;
+
       if (preferSpotify) {
-        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
-        if (spCoverUrl) fileMeta.coverUrl = spCoverUrl;
+        if (preferredCoverUrl) fileMeta.coverUrl = preferredCoverUrl;
         fileMeta.thumbnailUrl = undefined;
         fileMeta.imageUrl = undefined;
       }
@@ -579,14 +524,11 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       let itemCover = null;
       const baseNoExt = filePath.replace(/\.[^.]+$/, "");
 
-      if (preferSpotify) {
-        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
-        if (spCoverUrl) {
+      if (preferSpotify && preferredCoverUrl) {
           try {
-            const dl = await downloadThumbnail(spCoverUrl, `${baseNoExt}.spotify_cover`);
+            const dl = await downloadThumbnail(preferredCoverUrl, `${baseNoExt}.spotify_cover`);
             if (dl && fs.existsSync(dl)) itemCover = dl;
           } catch {}
-        }
       }
 
       if (!itemCover) {
@@ -1049,8 +991,14 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     const filePath = successfulDownload.filePath;
     const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
     const spInfo = sp.items[0];
+    let richNow = null;
+    try {
+      richNow = spInfo?.spId
+        ? await findSpotifyMetaById(spInfo.spId)
+        : await findSpotifyMetaByQuery(spInfo?.artist, spInfo?.title, resolveMarket(job.metadata?.market));
+    } catch {}
 
-    const fileMeta = preferSpotify ? {
+    let fileMeta = preferSpotify ? {
       title: spInfo.title,
       track: spInfo.title,
       artist: spInfo.artist,
@@ -1068,18 +1016,33 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       genre:        spInfo.genre || "",
       label:        spInfo.label || "",
       publisher:    spInfo.label || "",
-      copyright:    spInfo.copyright || ""
+      copyright:    spInfo.copyright || "",
+      coverUrl:     richNow?.coverUrl || spInfo.coverUrl || "",
+      duration_ms:  richNow?.duration_ms ?? spInfo?.duration_ms ?? null
     } : {
       title: matchedItem.title,
       track: matchedItem.title,
       uploader: matchedItem.uploader,
       artist: matchedItem.uploader,
-      webpage_url: matchedItem.webpage_url
+      webpage_url: matchedItem.webpage_url,
+      duration_ms: null
     };
 
+    fileMeta = mergeMissingMeta(fileMeta, richNow);
+    fileMeta = await enrichMetaWithApple(fileMeta, {
+      fallbackArtist: spInfo?.artist || matchedItem.uploader,
+      fallbackTitle: spInfo?.title || matchedItem.title,
+      market: resolveMarket(job.metadata?.market)
+    });
+
+      const preferredCoverUrl =
+        richNow?.coverUrl ||
+        spInfo?.coverUrl ||
+        fileMeta?.coverUrl ||
+        null;
+
       if (preferSpotify) {
-        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
-        if (spCoverUrl) fileMeta.coverUrl = spCoverUrl;
+        if (preferredCoverUrl) fileMeta.coverUrl = preferredCoverUrl;
         fileMeta.thumbnailUrl = undefined;
         fileMeta.imageUrl = undefined;
       }
@@ -1087,14 +1050,11 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       let itemCover = null;
       const baseNoExt = filePath.replace(/\.[^.]+$/, "");
 
-      if (preferSpotify) {
-        const spCoverUrl = richNow?.coverUrl || spInfo?.coverUrl || null;
-        if (spCoverUrl) {
+      if (preferSpotify && preferredCoverUrl) {
           try {
-            const dl = await downloadThumbnail(spCoverUrl, `${baseNoExt}.spotify_cover`);
+            const dl = await downloadThumbnail(preferredCoverUrl, `${baseNoExt}.spotify_cover`);
             if (dl && fs.existsSync(dl)) itemCover = dl;
           } catch {}
-        }
       }
 
       if (!itemCover) {

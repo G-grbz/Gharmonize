@@ -18,6 +18,7 @@ import { downloadThumbnail, convertMedia, maybeCleanTitle } from "./media.js";
 import { buildId3FromYouTube } from "./tags.js";
 import { probeYoutubeMusicMeta } from "./yt.js";
 import { findSpotifyMetaByQuery } from "./spotify.js";
+import { findAppleTrackMetaByQuery } from "./apple.js";
 import { downloadPlatformMedia } from "./platform.js";
 import {
   resolveJobOutputDir,
@@ -272,6 +273,25 @@ function mergeMeta(base, extra) {
     if (base[k] == null || base[k] === "") base[k] = v;
   }
   return base;
+}
+
+async function enrichMetaFromApple(base, { artist = "", title = "", market = "" } = {}) {
+  if (process.env.APPLE_TAG_FALLBACK === "0") return base;
+
+  const artistSafe = String(base?.artist || base?.album_artist || artist || "").trim();
+  const titleSafe = String(base?.track || base?.title || title || "").trim();
+  if (!titleSafe) return base;
+
+  try {
+    const appleMeta = await findAppleTrackMetaByQuery(artistSafe, titleSafe, {
+      album: base?.album || "",
+      market,
+      targetDurationMs: Number(base?.duration_ms || 0) || null
+    });
+    return mergeMeta(base, appleMeta);
+  } catch {
+    return base;
+  }
 }
 
 // Checks whether video format is valid for core application logic.
@@ -617,7 +637,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             .basename(filePath, path.extname(filePath))
             .replace(/^\d+\s*-\s*/, "");
           const title = toNFC(entry.title || fallbackTitle);
-          const fileMeta = {
+          let fileMeta = {
             title,
             track: title,
             uploader: entry.uploader || "",
@@ -641,11 +661,25 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           };
 
           fileMeta = applyGlobalMetaCleaning(fileMeta);
+          fileMeta = await enrichMetaFromApple(fileMeta, {
+            artist: fileMeta.artist || fileMeta.uploader,
+            title: fileMeta.track || fileMeta.title,
+            market: job?.metadata?.market
+          });
 
           let itemCover = null;
           const baseNoExt = filePath.replace(/\.[^.]+$/, "");
           const sidecarJpg = `${baseNoExt}.jpg`;
           if (fs.existsSync(sidecarJpg)) itemCover = sidecarJpg;
+          else if (fileMeta?.coverUrl) {
+            try {
+              const dl = await downloadThumbnail(
+                fileMeta.coverUrl,
+                `${baseNoExt}.cover`
+              );
+              if (dl) itemCover = dl;
+            } catch {}
+          }
 
           const existingOut = findExistingOutput(
             `${jobId}_${i}`,
@@ -1062,6 +1096,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               );
             }
           }
+
+          fileMeta = await enrichMetaFromApple(fileMeta, {
+            artist: fileMeta.artist || fileMeta.uploader,
+            title: fileMeta.track || fileMeta.title,
+            market: job?.metadata?.market
+          });
 
           let itemCover = null;
           const baseNoExt = filePath.replace(/\.[^.]+$/, "");
@@ -1629,6 +1669,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           singleMeta.publisher = spSingle.label;
       } catch {}
     }
+
+    singleMeta = await enrichMetaFromApple(singleMeta, {
+      artist: singleMeta.artist || singleMeta.album_artist || singleMeta.uploader,
+      title: singleMeta.track || singleMeta.title,
+      market: job?.metadata?.market
+    });
+
     singleMeta.album_artist =
     singleMeta.album_artist || singleMeta.artist || "";
     singleMeta = applyGlobalMetaCleaning(singleMeta);
