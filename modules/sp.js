@@ -16,6 +16,14 @@ const YT_SEARCH_TIMEOUT_MS = Math.max(3000, Number(process.env.YT_SEARCH_TIMEOUT
 const YT_SEARCH_STAGGER_MS = Math.max(0, Number(process.env.YT_SEARCH_STAGGER_MS || 140));
 const _searchCache = new Map();
 const _SEARCH_CACHE_MAX = 800;
+
+// Derives the parent job id from indexed file ids for core application logic.
+function deriveJobIdFromFileId(fileId = "") {
+  const raw = String(fileId || "").trim();
+  if (!raw) return "";
+  const cut = raw.lastIndexOf("_");
+  return cut > 0 ? raw.slice(0, cut) : raw;
+}
 // Handles cached data get in core application logic.
 function _cacheGet(k) { return _searchCache.has(k) ? _searchCache.get(k) : undefined; }
 // Handles cached data set in core application logic.
@@ -543,7 +551,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
             }
           );
           try {
-            registerJobProcess(String(fileId).split("_")[0], child2);
+            registerJobProcess(deriveJobIdFromFileId(fileId), child2);
           } catch {}
         }
 
@@ -552,7 +560,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
       }
     );
     try {
-      registerJobProcess(String(fileId).split("_")[0], child);
+      registerJobProcess(deriveJobIdFromFileId(fileId), child);
     } catch {}
   });
 }

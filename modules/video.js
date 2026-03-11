@@ -14,6 +14,25 @@ import { spawn as spawnChild } from "child_process";
 import { jobs, registerJobProcess } from "./store.js";
 import { toDownloadPath } from "./outputPaths.js";
 
+function isMappedMusicSource(source = "") {
+  const value = String(source || "").toLowerCase();
+  return value === "spotify" || value === "apple_music";
+}
+
+function mappedMusicLabel(source = "") {
+  return String(source || "").toLowerCase() === "apple_music"
+    ? "Apple Music"
+    : "Spotify";
+}
+
+function mappedMusicPlaylistTitle(job) {
+  const source = job?.metadata?.source || "";
+  const fallback = String(source).toLowerCase() === "apple_music"
+    ? "Apple Music Playlist"
+    : "Spotify Playlist";
+  return job?.metadata?.spotifyTitle || fallback;
+}
+
 // Handles safe rm in core application logic.
 function safeRm(pathLike) {
   try {
@@ -168,8 +187,8 @@ export async function processYouTubeVideoJob(job, {
    source: job.metadata?.source
  });
 
-  if (job.metadata?.source === "spotify") {
-    console.log(`🎬 Spotify video processing: ${job.metadata.spotifyTitle}`);
+  if (isMappedMusicSource(job.metadata?.source)) {
+    console.log(`🎬 ${mappedMusicLabel(job.metadata?.source)} video processing: ${job.metadata.spotifyTitle}`);
     await processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings });
     return;
   }
@@ -415,7 +434,7 @@ export async function processYouTubeVideoJob(job, {
         : titleRaw;
 
       const cleanTitle = sanitizeFilename(baseTitle) || "video";
-      console.log("🎧 Spotify cleanTitle:", { cleanTitle, artistRaw, titleRaw });
+      console.log(`🎧 ${sourceLabel} cleanTitle:`, { cleanTitle, artistRaw, titleRaw });
 
       if (!transcodeEnabled) {
         const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
@@ -553,7 +572,7 @@ export async function processYouTubeVideoJob(job, {
     : titleRaw;
 
   const cleanTitle = sanitizeFilename(baseTitle) || "video";
-  console.log("🎧 Spotify cleanTitle:", { cleanTitle, artistRaw, titleRaw });
+  console.log("🎧 Video cleanTitle:", { cleanTitle, artistRaw, titleRaw });
 
   if (!transcodeEnabled) {
     const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
@@ -642,7 +661,10 @@ export async function processYouTubeVideoJob(job, {
 
 // Processes Spotify metadata video job state in core application logic.
 async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings }) {
-  console.log(`🎬 Starting Spotify video processing: ${job.metadata.spotifyTitle}`);
+  const sourceLabel = mappedMusicLabel(job.metadata?.source);
+  const playlistTitle = mappedMusicPlaylistTitle(job);
+
+  console.log(`🎬 Starting ${sourceLabel} video processing: ${job.metadata.spotifyTitle}`);
 
   job.counters = job.counters || { dlTotal: 0, dlDone: 0, cvTotal: 0, cvDone: 0 };
   job.currentPhase = "downloading";
@@ -650,17 +672,17 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
 
   const selectedIds = Array.isArray(job.metadata.selectedIds) ? job.metadata.selectedIds : [];
   if (!selectedIds.length) {
-    throw new Error("Spotify URL list is empty");
+    throw new Error(`${sourceLabel} URL list is empty`);
   }
 
   const transcodeEnabled = videoSettings.transcodeEnabled === true;
 
   job.lastLogKey = 'log.spotify.videoProcessingStart';
   job.lastLogVars = {
-    title: job.metadata.spotifyTitle || "Spotify Playlist",
+    title: playlistTitle,
     count: selectedIds.length
   };
-  job.lastLog = `🎬 Starting Spotify video processing: ${job.metadata.spotifyTitle} (${selectedIds.length} tracks)`;
+  job.lastLog = `🎬 Starting ${sourceLabel} video processing: ${playlistTitle} (${selectedIds.length} tracks)`;
 
   // Handles on progress in core application logic.
   const onProgress = (p) => {
@@ -685,7 +707,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         if (p.item && p.item.title) {
           job.lastLogKey = 'log.spotify.videoDownloaded';
           job.lastLogVars = {
-            artist: p.item.uploader || "Spotify Artist",
+            artist: p.item.uploader || `${sourceLabel} Artist`,
             title: p.item.title,
             done: done,
             total: total
@@ -712,7 +734,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
   };
 
   const files = await downloadYouTubeVideo(
-    job.metadata.spotifyTitle || "Spotify Playlist",
+    playlistTitle,
     job.id,
     true,
     null,
@@ -734,7 +756,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         if (item && progress > 0) {
           job.lastLogKey = 'log.spotify.videoDownloading';
           job.lastLogVars = {
-            artist: item.uploader || "Spotify Artist",
+            artist: item.uploader || `${sourceLabel} Artist`,
             title: item.title,
             progress: Math.floor(progress)
           };
@@ -750,7 +772,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
   );
 
   if (!Array.isArray(mediaFiles) || !mediaFiles.length) {
-    throw new Error("Spotify video files not found.");
+    throw new Error(`${sourceLabel} video files not found.`);
   }
 
   job.downloadProgress = 100;
@@ -769,7 +791,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
       const title = frozenEntry.title ||
                    path.basename(filePath, path.extname(filePath)).replace(/^\d+\s*-\s*/, "") ||
                    `Track ${i + 1}`;
-      const uploader = frozenEntry.uploader || "Spotify Artist";
+      const uploader = frozenEntry.uploader || `${sourceLabel} Artist`;
 
       fe.push({
         index: Number.isFinite(idxFromName) ? idxFromName : (i + 1),
@@ -781,7 +803,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
     }
 
   job.metadata.frozenEntries = fe;
-  job.metadata.frozenTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+  job.metadata.frozenTitle = playlistTitle;
 }
 
   const frozenEntries = Array.isArray(job.metadata.frozenEntries)
@@ -838,7 +860,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
     const ext = path.extname(filePath);
     const rawBase = path.basename(filePath);
     const cleaned = stripLeadingPrefix(rawBase, job.id).replace(ext, "").trim();
-    const artistRaw = feEntry?.uploader || "Spotify Artist";
+    const artistRaw = feEntry?.uploader || `${sourceLabel} Artist`;
     const titleRaw  =
       feEntry?.title ||
       cleaned ||
@@ -859,11 +881,11 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
     };
     job.lastLog = `⚙️ Converting (${i + 1}/${sorted.length}): ${artistRaw} - ${titleRaw}`;
 
-    console.log("🎧 Spotify cleanTitle:", { cleanTitle, artistRaw, titleRaw });
+    console.log(`🎧 ${sourceLabel} cleanTitle:`, { cleanTitle, artistRaw, titleRaw });
 
     if (!transcodeEnabled) {
       const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
-      console.log(`🎬 Spotify transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
+      console.log(`🎬 ${sourceLabel} transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
       safeMoveSync(filePath, targetAbs);
       const downloadPath =
         toDownloadPath(targetAbs) ||
@@ -895,7 +917,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         title: cleanTitle,
         track: cleanTitle,
         artist: artistRaw,
-        album: job.metadata.spotifyTitle || "Spotify Playlist",
+        album: playlistTitle,
         album_artist: artistRaw,
         webpage_url: feEntry?.webpage_url || "",
         __maxHeight: TARGET_H,
@@ -904,7 +926,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
 
       const convJobId = `${job.id}_v${i + 1}`;
 
-      console.log(`🎬 Spotify ConvertMedia called:`, {
+      console.log(`🎬 ${sourceLabel} ConvertMedia called:`, {
         inputPath: filePath,
         format: format,
         bitrate: job.bitrate || "auto",
@@ -986,10 +1008,10 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
   job.currentPhase = "completed";
   job.lastLogKey = 'log.spotify.videoCompleted';
   job.lastLogVars = {
-    title: job.metadata.spotifyTitle || "Spotify Playlist",
+    title: playlistTitle,
     count: sorted.length
   };
-  job.lastLog = `🎉 Spotify video processing completed: ${job.metadata.spotifyTitle} (${sorted.length} tracks)`;
+  job.lastLog = `🎉 ${sourceLabel} video processing completed: ${playlistTitle} (${sorted.length} tracks)`;
 
   cleanupTempForJob(TEMP_DIR, job.id);
 }

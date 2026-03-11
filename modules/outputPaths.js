@@ -123,7 +123,13 @@ export function pickPlaylistOutputName(job) {
     meta.originalName
   ];
   const first = candidates.find((v) => typeof v === "string" && v.trim());
-  const baseTitle = first || (meta.source === "spotify" ? "Spotify Playlist" : "Playlist");
+  const baseTitle =
+    first ||
+    (meta.source === "spotify"
+      ? "Spotify Playlist"
+      : meta.source === "apple_music"
+      ? "Apple Music Playlist"
+      : "Playlist");
 
   const fmt = String(job?.format || "")
     .trim()

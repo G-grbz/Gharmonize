@@ -2779,9 +2779,14 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     });
 
-    ffmpeg.on("close", (code) => {
+    ffmpeg.on("close", (code, signal) => {
       const actualOut = outputPath;
-      if (canceledByFlag || isCanceled()) {
+      const signalTerminated =
+        signal === "SIGTERM" ||
+        signal === "SIGKILL" ||
+        (Number(code) === 255 && /received signal 15|sigterm|sigkill/i.test(String(stderrData || "")));
+
+      if (canceledByFlag || isCanceled() || signalTerminated) {
         try {
           if (actualOut && fs.existsSync(actualOut)) fs.unlinkSync(actualOut);
         } catch {}

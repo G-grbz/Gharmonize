@@ -4,10 +4,21 @@ import fs from "fs";
 import crypto from "crypto";
 import multer from "multer";
 import { sendOk, sendError, ERR, isDirectMediaUrl } from "../modules/utils.js";
-import { jobs, spotifyMapTasks, killJobProcesses, createJob } from "../modules/store.js";
+import {
+  jobs,
+  spotifyMapTasks,
+  killJobProcesses,
+  createJob,
+  cleanupCompletedJobsWithoutOutputs,
+  getJobProcessCount,
+} from "../modules/store.js";
 import { processJob } from "../modules/processor.js";
 import { enqueueJob } from "../modules/queue.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
+import {
+  isAppleMusicUrl,
+  resolveAppleMusicUrl
+} from "../modules/apple.js";
 import { idsToMusicUrls, searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js";
@@ -15,7 +26,6 @@ import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modu
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
 import { getFfmpegCaps } from "../modules/ffmpegCaps.js";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "../modules/binaries.js";
-import { resolveDownloadPathToAbs } from "../modules/outputPaths.js";
 import "dotenv/config";
 import {
   isYouTubeUrl,
@@ -36,14 +46,76 @@ const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
 const UPLOAD_DIR = path.resolve(BASE_DIR, "uploads");
 const LOCAL_INPUT_DIR = path.resolve(BASE_DIR, process.env.LOCAL_INPUT_DIR || "local-inputs");
+const TEMP_DIR = path.resolve(BASE_DIR, "temp");
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(LOCAL_INPUT_DIR, { recursive: true });
+fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 console.log('[jobs] BASE_DIR:', BASE_DIR);
 console.log('[jobs] UPLOAD_DIR:', UPLOAD_DIR);
 console.log('[jobs] LOCAL_INPUT_DIR:', LOCAL_INPUT_DIR);
+
+function safeRmTempTarget(targetPath) {
+  try {
+    if (!targetPath || !fs.existsSync(targetPath)) return;
+    const stat = fs.statSync(targetPath);
+    if (stat.isDirectory()) {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(targetPath);
+    }
+  } catch {}
+}
+
+function cleanupCanceledJobTempFiles(jobId) {
+  const id = String(jobId || "").trim();
+  if (!id) return;
+
+  safeRmTempTarget(path.join(TEMP_DIR, id));
+  safeRmTempTarget(path.join(TEMP_DIR, `${id}.urls.txt`));
+
+  try {
+    for (const name of fs.readdirSync(TEMP_DIR)) {
+      if (!name) continue;
+      const isJobArtifact =
+        name === `${id}.urls.txt` ||
+        name.startsWith(id) ||
+        name.startsWith(`.cover_${id}_`) ||
+        name.startsWith(`.${id}_`);
+      if (!isJobArtifact) continue;
+      safeRmTempTarget(path.join(TEMP_DIR, name));
+    }
+  } catch {}
+}
+
+function scheduleCanceledJobTempCleanup(jobId) {
+  let attemptsLeft = 15;
+  let finalized = false;
+  const tick = () => {
+    const activeCount = Number(getJobProcessCount(jobId) || 0) || 0;
+    attemptsLeft -= 1;
+    if (activeCount <= 0) {
+      try { cleanupCanceledJobTempFiles(jobId); } catch {}
+      if (!finalized) {
+        finalized = true;
+        const finalTimer = setTimeout(() => {
+          try { cleanupCanceledJobTempFiles(jobId); } catch {}
+        }, 350);
+        finalTimer.unref?.();
+      }
+      return;
+    }
+    if (attemptsLeft <= 0) return;
+
+    const timer = setTimeout(tick, 1000);
+    timer.unref?.();
+  };
+
+  const timer = setTimeout(tick, 0);
+  timer.unref?.();
+}
 
 const DEFAULT_UPLOAD_MAX_BYTES = 1000 * 1024 * 1024;
 // Uploads max bytes for Express API request handling.
@@ -115,69 +187,6 @@ const upload = multer({
   limits: { fileSize: UPLOAD_MAX_BYTES }
 });
 
-// Handles job state has any existing output in Express API request handling.
-function jobHasAnyExistingOutput(job) {
-  // Resolves download metadata path for Express API request handling.
-  const resolveDownloadPath = (downloadPath) => {
-    if (!downloadPath) return null;
-    return resolveDownloadPathToAbs(downloadPath, OUTPUT_DIR);
-  };
-
-  // Handles check file in Express API request handling.
-  const checkFile = (downloadPath) => {
-    const abs = resolveDownloadPath(downloadPath);
-    if (!abs) return false;
-    try {
-      return fs.existsSync(abs);
-    } catch {
-      return false;
-    }
-  };
-
-  if (job.zipPath && checkFile(job.zipPath)) {
-    return true;
-  }
-
-  const rp = job.resultPath;
-
-  if (Array.isArray(rp)) {
-    return rp.some((r) => {
-      if (!r) return false;
-      const p = typeof r === "string" ? r : (r.outputPath || r.path);
-      return checkFile(p);
-    });
-  }
-
-  if (rp && typeof rp === "object") {
-    return checkFile(rp.outputPath || rp.path);
-  }
-
-  if (typeof rp === "string") {
-    return checkFile(rp);
-  }
-
-  return false;
-}
-
-// Cleans up completed job state without outputs for Express API request handling.
-function cleanupCompletedJobsWithoutOutputs() {
-  let removed = 0;
-
-  for (const [id, job] of jobs.entries()) {
-    if (job.status === "completed") {
-      const hasOutput = jobHasAnyExistingOutput(job);
-      if (!hasOutput) {
-        jobs.delete(id);
-        removed++;
-      }
-    }
-  }
-
-  if (removed > 0) {
-    console.log(`[jobs] ${removed} completed jobs without outputs were cleaned up.`);
-  }
-}
-
 // Resolves media platform label for UI payloads.
 function resolveMediaPlatform(meta = {}) {
   if (meta?.mediaPlatform) return String(meta.mediaPlatform).toLowerCase();
@@ -192,6 +201,26 @@ function resolveMediaPlatform(meta = {}) {
   }
 
   return null;
+}
+
+function isMappedMusicUrl(url = "") {
+  return isSpotifyUrl(url) || isAppleMusicUrl(url);
+}
+
+function mappedMusicSource(url = "") {
+  return isAppleMusicUrl(url) ? "apple_music" : "spotify";
+}
+
+function mappedMusicLabel(source = "") {
+  return String(source || "").toLowerCase() === "apple_music"
+    ? "Apple Music"
+    : "Spotify";
+}
+
+async function resolveMappedMusicUrl(url, { market } = {}) {
+  return isAppleMusicUrl(url)
+    ? resolveAppleMusicUrl(url, { market })
+    : resolveSpotifyUrl(url, { market });
 }
 
 const router = express.Router();
@@ -686,12 +715,7 @@ router.post("/api/jobs/:id/cancel", (req, res) => {
   job.error = null;
   job.canceledBy = "user";
   try { killJobProcesses(id); } catch {}
-
-  try {
-   const TEMP_DIR = path.resolve(process.cwd(), "temp");
-   const jobDir = path.join(TEMP_DIR, id);
-   if (fs.existsSync(jobDir)) fs.rmSync(jobDir, { recursive: true, force: true });
- } catch {}
+  scheduleCanceledJobTempCleanup(id);
 
   return sendOk(res, { id, status: "canceled" });
 });
@@ -905,11 +929,6 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     const metadata = {};
     const plTitleRaw = String(body.plTitle ?? body.playlistTitle ?? "").trim();
     const plTitle = plTitleRaw || null;
-    const autoCreateZip =
-   body.autoCreateZip === undefined
-     ? true
-     : (body.autoCreateZip === true || body.autoCreateZip === 'true');
-    metadata.autoCreateZip = autoCreateZip;
 
     const finalUploadPath = body.finalUploadPath;
     const localPath = body.localPath;
@@ -963,6 +982,14 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       youtubeConcurrency,
       frozenEntries: rawFrozenEntries
     } = body;
+    const isVideoOutput = format === "mp4" || format === "mkv";
+    const autoCreateZip =
+      !isVideoOutput && (
+        body.autoCreateZip === undefined
+          ? true
+          : (body.autoCreateZip === true || body.autoCreateZip === "true")
+      );
+    metadata.autoCreateZip = autoCreateZip;
     const includeLyricsFlag =
       includeLyrics === true || includeLyrics === "true" || includeLyrics === "1";
     const embedLyricsFlag =
@@ -1076,8 +1103,10 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
   }
 
     if (!inputPath && url) {
-      if (isSpotifyUrl(url)) {
-        metadata.source = "spotify";
+      if (isMappedMusicUrl(url)) {
+        const musicSource = mappedMusicSource(url);
+        const musicLabel = mappedMusicLabel(musicSource);
+        metadata.source = musicSource;
         metadata.isPlaylist = true;
         metadata.isAutomix = false;
 
@@ -1092,14 +1121,14 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
             metadata.selectedIndices = selectedIndices || "all";
             metadata.selectedIds = validItems.map(i => i.id);
             metadata.frozenEntries = validItems;
-            metadata.frozenTitle = task.title || "Spotify";
+            metadata.frozenTitle = task.title || musicLabel;
           } else {
-            return sendError(res, ERR.PREVIEW_FAILED, "Please complete Spotify mapping first", 400);
+            return sendError(res, ERR.PREVIEW_FAILED, "Please complete music matching first", 400);
         }
         } else {
           let sp;
           try {
-            sp = await resolveSpotifyUrl(url, { market: resolveMarket(req.body?.market) });
+            sp = await resolveMappedMusicUrl(url, { market: resolveMarket(req.body?.market) });
           } catch (e) {
             const msg = String(e?.message || "");
             if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
@@ -1141,12 +1170,12 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
             });
           }
 
-          if (!ids.length) return sendError(res, ERR.PREVIEW_FAILED, "No Spotify matches found", 400);
+          if (!ids.length) return sendError(res, ERR.PREVIEW_FAILED, "No music matches found", 400);
 
           metadata.selectedIndices = sel || "all";
           metadata.selectedIds = ids;
           metadata.frozenEntries = frozen;
-          metadata.frozenTitle = sp.title || "Spotify";
+          metadata.frozenTitle = sp.title || musicLabel;
         }
       }
 

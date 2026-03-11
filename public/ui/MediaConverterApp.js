@@ -79,7 +79,7 @@ export class MediaConverterApp {
         }
     }
 
-    // Parses Spotify metadata type for the browser UI layer.
+    // Parses mapped music source type for the browser UI layer.
     parseSpotifyType(u) {
         if (!u) return null;
         const s = String(u).trim();
@@ -93,6 +93,19 @@ export class MediaConverterApp {
             host.includes('spotify.com') ||
             host.includes('spotify.link') ||
             host.includes('spotify.app.link');
+            const isAppleHost =
+            host === 'music.apple.com' ||
+            host === 'embed.music.apple.com';
+
+            if (isAppleHost) {
+                const parts = url.pathname.split('/').filter(Boolean);
+                const t = (parts[1] || '').toLowerCase();
+                if (url.searchParams.has('i')) return 'track';
+                if (['song', 'album', 'playlist'].includes(t)) {
+                    return t === 'song' ? 'track' : t;
+                }
+                return null;
+            }
 
             if (!isSpotifyHost) return null;
 
@@ -693,10 +706,10 @@ export class MediaConverterApp {
         this.onPlaylistToggle(true);
     }
 
-    // Checks whether Spotify metadata URL is valid for the browser UI layer.
+    // Checks whether mapped music source URL is valid for the browser UI layer.
     isSpotifyUrl(u) {
         const s = String(u || "").trim();
-        return /^(spotify:|https?:\/\/(open\.spotify\.com|spotify\.link|spotify\.app\.link))/i.test(s);
+        return /^(spotify:|https?:\/\/(open\.spotify\.com|spotify\.link|spotify\.app\.link|(?:embed\.)?music\.apple\.com))/i.test(s);
     }
 
     // Checks whether youtube playlist data URL is valid for the browser UI layer.
@@ -735,10 +748,36 @@ export class MediaConverterApp {
         return false;
     }
 
+    // Checks whether youtube shorts URL is valid for the browser UI layer.
+    isYouTubeShortsUrl(u) {
+        const s = String(u || '').trim();
+        if (!s) return false;
+
+        try {
+            const url = new URL(s, window.location.origin);
+            const host = url.hostname.toLowerCase();
+            const isYoutubeHost =
+                host.includes('youtube.com') ||
+                host.includes('youtube-nocookie.com') ||
+                host === 'youtu.be' ||
+                host.endsWith('.youtu.be');
+
+            if (isYoutubeHost && /^\/shorts(?:\/|$)/i.test(url.pathname || '')) {
+                return true;
+            }
+        } catch {}
+
+        return /(?:youtube(?:-nocookie)?\.com\/shorts(?:\/|[?#])|m\.youtube\.com\/shorts(?:\/|[?#])|www\.youtube\.com\/shorts(?:\/|[?#]))/i.test(s);
+    }
+
     // Checks whether URL should default to mp4 for social video platforms in the browser UI layer.
     isMp4DefaultSocialUrl(u) {
         const s = String(u || '').trim();
         if (!s) return false;
+
+        if (this.isYouTubeShortsUrl(s)) {
+            return true;
+        }
 
         try {
             const parsed = new URL(s, window.location.origin);

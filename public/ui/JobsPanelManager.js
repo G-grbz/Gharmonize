@@ -427,6 +427,7 @@ export class JobsPanelManager {
            youtube: `▶️ ${this.t('jobsPanel.sourceYouTube')}`,
             dailymotion: `🎬 ${this.t('jobsPanel.sourceDailymotion')}`,
             spotify: `🎵 ${this.t('jobsPanel.sourceSpotify')}`,
+            apple_music: `🎵 ${this.t('jobsPanel.sourceAppleMusic')}`,
             direct_url: `🌐 ${this.t('jobsPanel.sourceURL')}`,
             file: `💾 ${this.t('jobsPanel.sourceFile')}`,
             local: `💻 ${this.t('jobsPanel.sourceLocal')}`

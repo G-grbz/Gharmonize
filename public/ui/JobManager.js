@@ -247,6 +247,7 @@ export class JobManager {
 
         const source = String(job?.metadata?.source || '').toLowerCase();
         if (source === 'spotify') return 'spotify';
+        if (source === 'apple_music') return 'apple_music';
 
         const urlCandidate =
             job?.metadata?.url ||
@@ -261,6 +262,7 @@ export class JobManager {
     playlistSourceTitle(job) {
         const platform = this.detectPlaylistPlatform(job);
         if (platform === 'spotify') return this.app.t('ui.spotifyPlaylist');
+        if (platform === 'apple_music') return this.app.t('ui.appleMusicPlaylist');
         if (platform === 'dailymotion') return this.app.t('ui.dailymotionPlaylist');
         return this.app.t('ui.youtubePlaylist');
     }
@@ -269,6 +271,7 @@ export class JobManager {
     formatBatchSource(meta = {}) {
         const src = String(meta?.source || '').toLowerCase();
         if (src === 'spotify') return this.app.t('ui.spotifyPlaylist');
+        if (src === 'apple_music') return this.app.t('ui.appleMusicPlaylist');
         if (src === 'dailymotion') return this.app.t('ui.dailymotionPlaylist');
         if (src === 'youtube') return this.app.t('ui.youtubePlaylist');
         if (meta?.source) return String(meta.source);
@@ -764,24 +767,30 @@ updateJobUI(job, batchId = null) {
         }
     }
 
-    let phaseInfo = '';
-    if (job.metadata?.source === 'spotify' && job.phase) {
-        const phaseText = {
-            mapping: this.app.t('phase.mapping'),
-            downloading: this.app.t('phase.downloading'),
-            converting: this.app.t('phase.converting'),
-            completed: this.app.t('phase.completed')
-        };
+	    const isMusicMatchJob =
+	        job.metadata?.source === 'spotify' ||
+	        job.metadata?.source === 'apple_music';
+
+	    let phaseInfo = '';
+	    if (isMusicMatchJob && job.phase) {
+	        const phaseText = {
+	            preparing: this.app.t('phase.preparing'),
+	            mapping: this.app.t('phase.mapping'),
+	            downloading: this.app.t('phase.downloading'),
+	            converting: this.app.t('phase.converting'),
+	            completed: this.app.t('phase.completed')
+	        };
         phaseInfo = ` • ${phaseText[job.phase] || job.phase}`;
     }
 
     let phaseDetails = '';
-if (job.currentPhase) {
-    const phaseTexts = {
-        preparing: this.app.t('phase.preparing'),
-        downloading: this.app.t('phase.downloading'),
-        converting: this.app.t('phase.converting'),
-        completed: this.app.t('phase.completed'),
+	if (job.currentPhase) {
+	    const phaseTexts = {
+	        preparing: this.app.t('phase.preparing'),
+	        mapping: this.app.t('phase.mapping'),
+	        downloading: this.app.t('phase.downloading'),
+	        converting: this.app.t('phase.converting'),
+	        completed: this.app.t('phase.completed'),
         canceled: this.app.t('status.canceled'),
         cancelled: this.app.t('status.canceled'),
         error: this.app.t('phase.error')
@@ -807,58 +816,80 @@ if (job.currentPhase) {
                 </div>
             </div>
         `;
-    } else if (job.playlist && job.playlist.total) {
-            if (job.metadata?.source === 'spotify') {
-            const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
-            const parsed = this.parseXofY(job.lastLog) || null;
+	    } else if (job.playlist && job.playlist.total) {
+	            if (isMusicMatchJob) {
+	            const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
+	            const parsed = this.parseXofY(job.lastLog) || null;
+	            const matchedCount = Array.isArray(job.metadata?.frozenEntries)
+	                ? job.metadata.frozenEntries.length
+	                : 0;
 
-            const { dlDone, cvDone, dlTotal, cvTotal } = this.getDlCvCounts(job, parsed);
-            const total = this.safeNum(dlTotal || cvTotal || job.playlist?.total || parsed?.total || 0, 0);
+	            const { dlDone, cvDone, dlTotal, cvTotal } = this.getDlCvCounts(job, parsed);
+	            const total = this.safeNum(dlTotal || cvTotal || job.playlist?.total || parsed?.total || 0, 0);
 
-            let downloaded = dlDone;
-            let converted  = cvDone;
+	            let downloaded = dlDone;
+	            let converted  = cvDone;
 
-            if (phaseNorm === 'downloading') {
-                converted = 0;
-            } else if (phaseNorm === 'converting') {
-            } else if (phaseNorm === 'completed') {
-                downloaded = dlTotal || total;
-                converted  = cvTotal || total;
-            }
+	            if (phaseNorm === 'mapping') {
+	                const totalTxt = (dlTotal || total) ? (dlTotal || total) : '?';
+	                phaseDetails = `
+	                    <div class="phase-details">
+	                        <div class="phase-details__title">${currentPhaseText}</div>
+	                        <div class="phase-details__grid">
+	                            <span class="phase-details__item">
+	                                ✅ ${String(this.app.t('chip.matched') || 'Matched').replace(/[:：]\s*$/, '')}:
+	                                <span class="phase-details__value">${matchedCount}/${totalTxt}</span>
+	                            </span>
+	                            <span class="phase-details__item">
+	                                🎵 ${String(this.app.t('chip.total') || 'Total').replace(/[:：]\s*$/, '')}:
+	                                <span class="phase-details__value">${totalTxt}</span>
+	                            </span>
+	                        </div>
+	                    </div>
+	                `;
+	            } else if (phaseNorm === 'downloading') {
+	                converted = 0;
+	            } else if (phaseNorm === 'converting') {
+	            } else if (phaseNorm === 'completed') {
+	                downloaded = dlTotal || total;
+	                converted  = cvTotal || total;
+	            }
 
-            const totalTxt = (dlTotal || total) ? (dlTotal || total) : '?';
+	            if (phaseNorm !== 'mapping') {
+	                const totalTxt = (dlTotal || total) ? (dlTotal || total) : '?';
 
-            let currentTrack;
-            if (Number.isFinite(job.playlist?.current)) {
-                currentTrack = job.playlist.current + 1;
-            } else {
-                const base = phaseNorm === 'downloading' ? downloaded : converted;
-                const limit = (dlTotal || total) > 0 ? (dlTotal || total) : null;
-                currentTrack = limit
-                    ? Math.min(limit, Math.max(1, base + 1))
-                    : Math.max(1, base + 1);
-            }
+	                let currentTrack;
+	                if (Number.isFinite(job.playlist?.current)) {
+	                    currentTrack = job.playlist.current + 1;
+	                } else {
+	                    const base = phaseNorm === 'downloading' ? downloaded : converted;
+	                    const limit = (dlTotal || total) > 0 ? (dlTotal || total) : null;
+	                    currentTrack = limit
+	                        ? Math.min(limit, Math.max(1, base + 1))
+	                        : Math.max(1, base + 1);
+	                }
 
-            phaseDetails = `
-                <div class="phase-details">
-                    <div class="phase-details__title">${currentPhaseText}</div>
-                    <div class="phase-details__grid">
-                        <span class="phase-details__item">
-                            🎵 ${this.app.t('ui.current')}:
-                            <span class="phase-details__value">${currentTrack}</span>
-                        </span>
-                        <span class="phase-details__item">
-                            📥 ${this.app.t('ui.downloading')}:
-                            <span class="phase-details__value">${downloaded}/${totalTxt}</span>
-                        </span>
-                        <span class="phase-details__item">
-                            ⚡ ${this.app.t('ui.converting')}:
-                            <span class="phase-details__value">${converted}/${totalTxt}</span>
-                        </span>
-                    </div>
-                </div>
-            `;
-        } else {
+	                phaseDetails = `
+	                    <div class="phase-details">
+	                        <div class="phase-details__title">${currentPhaseText}</div>
+	                        <div class="phase-details__grid">
+	                            <span class="phase-details__item">
+	                                🎵 ${this.app.t('ui.current')}:
+	                                <span class="phase-details__value">${currentTrack}</span>
+	                            </span>
+	                            <span class="phase-details__item">
+	                                📥 ${this.app.t('ui.downloading')}:
+	                                <span class="phase-details__value">${downloaded}/${totalTxt}</span>
+	                            </span>
+	                            <span class="phase-details__item">
+	                                ⚡ ${this.app.t('ui.converting')}:
+	                                <span class="phase-details__value">${converted}/${totalTxt}</span>
+	                            </span>
+	                        </div>
+	                    </div>
+	                `;
+	            }
+	        } else {
                 const total = Number(job.playlist.total || 0) || 0;
                 let downloaded = Number(job.counters?.dlDone ?? job.playlist.done ?? 0) || 0;
                 let converted  = Number(job.counters?.cvDone ?? job.playlist.done ?? 0) || 0;
@@ -1275,6 +1306,9 @@ if (job.currentPhase) {
     if (job.metadata?.source === 'spotify') {
         jobTitle = `🎵 ${job.metadata.spotifyTitle || this.app.t('ui.spotifyPlaylist')}`;
     }
+    if (job.metadata?.source === 'apple_music') {
+        jobTitle = `🎵 ${job.metadata.spotifyTitle || this.app.t('ui.appleMusicPlaylist')}`;
+    }
     {
         const nowTrack = this.uiNowTitle(job);
         if (job.metadata?.isPlaylist && nowTrack) {
@@ -1282,6 +1316,8 @@ if (job.currentPhase) {
                 job.metadata?.frozenTitle
                 || (job.metadata?.source === 'spotify'
                     ? (job.metadata?.spotifyTitle || this.app.t('ui.spotifyPlaylist'))
+                    : job.metadata?.source === 'apple_music'
+                    ? (job.metadata?.spotifyTitle || this.app.t('ui.appleMusicPlaylist'))
                     : this.playlistSourceTitle(job));
             jobTitle = `${this.app.escapeHtml(listName)} — ${this.app.escapeHtml(nowTrack)}`;
         }
@@ -2063,6 +2099,17 @@ if (job.currentPhase) {
             const format = String(
                 (!isFormData && payload?.format) ? payload.format : (document.getElementById('formatSelect')?.value)
             ).toLowerCase();
+            const disableAutoZip = format === 'mp4' || format === 'mkv';
+
+            if (disableAutoZip) {
+                if (!isFormData) {
+                    payload.autoCreateZip = false;
+                } else if (typeof payload?.set === 'function') {
+                    payload.set('autoCreateZip', 'false');
+                } else if (typeof payload?.append === 'function') {
+                    payload.append('autoCreateZip', 'false');
+                }
+            }
 
             if (!isFormData && payload.youtubeConcurrency != null) {
             payload.youtubeConcurrency = Number(payload.youtubeConcurrency) || 4;

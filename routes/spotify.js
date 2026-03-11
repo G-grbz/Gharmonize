@@ -11,12 +11,18 @@ import {
   findSpotifyMetaById,
   findSpotifyMetaByQuery
 } from "../modules/spotify.js";
-import { spotifyMapTasks, jobs, killJobProcesses, createJob, registerJobProcess } from "../modules/store.js";
+import { spotifyMapTasks, jobs, killJobProcesses, createJob, registerJobProcess, getJobProcessCount } from "../modules/store.js";
 import { convertMedia, downloadThumbnail, retagMediaFile } from "../modules/media.js";
 import archiver from "archiver";
 import { resolveMarket } from "../modules/market.js";
 import { isVideoFormat, processYouTubeVideoJob } from "../modules/video.js";
-import { findAppleTrackMetaByQuery } from "../modules/apple.js";
+import {
+  findAppleTrackMetaById,
+  findAppleTrackMetaByQuery,
+  isAppleMusicUrl,
+  resolveAppleMusicUrl,
+  resolveAppleMusicUrlLite
+} from "../modules/apple.js";
 import {
   resolveJobOutputDir,
   toDownloadPath,
@@ -46,6 +52,19 @@ function toDownloadPathSafe(absPath) {
 
 // Handles make map id in Spotify mapping and metadata flow.
 function makeMapId() { return uniqueId("map"); }
+
+// Removes Spotify temp files or directories with safe existence checks.
+function safeRmTempPath(targetPath) {
+  try {
+    if (!targetPath || !fs.existsSync(targetPath)) return;
+    const stat = fs.statSync(targetPath);
+    if (stat.isDirectory()) {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(targetPath);
+    }
+  } catch {}
+}
 
 // Resolves cover for retag for Spotify mapping and metadata flow.
 async function resolveCoverForRetag({
@@ -105,6 +124,7 @@ function buildLiveConvertLog(progress, details = {}, label = "") {
   return `⚙️ Converting ${pct}% (${elapsed}/${duration} • ${fps} FPS)${suffix}`;
 }
 
+// Fills missing metadata fields from a secondary metadata payload.
 function mergeMissingMeta(base, extra) {
   if (!extra) return base;
   const out = { ...base };
@@ -118,6 +138,7 @@ function mergeMissingMeta(base, extra) {
   return out;
 }
 
+// Enriches mapped metadata with Apple Music fallback data when available.
 async function enrichMetaWithApple(meta, { fallbackArtist = "", fallbackTitle = "", market = "" } = {}) {
   if (process.env.APPLE_TAG_FALLBACK === "0") return meta;
 
@@ -135,6 +156,62 @@ async function enrichMetaWithApple(meta, { fallbackArtist = "", fallbackTitle = 
   } catch {
     return meta;
   }
+}
+
+// Checks whether the URL belongs to Spotify or Apple Music mapped sources.
+function isMappedMusicUrl(url) {
+  return isSpotifyUrl(url) || isAppleMusicUrl(url);
+}
+
+// Resolves the mapped music source from Spotify or Apple Music URLs.
+function musicSourceFromUrl(url) {
+  return isAppleMusicUrl(url) ? "apple_music" : "spotify";
+}
+
+// Returns the mapped music source label for Spotify mapping and metadata flow.
+function musicSourceLabel(source = "") {
+  return String(source || "").toLowerCase() === "apple_music"
+    ? "Apple Music"
+    : "Spotify";
+}
+
+// Builds the default playlist title for mapped Spotify or Apple Music sources.
+function musicPlaylistFallback(source = "") {
+  return `${musicSourceLabel(source)} Playlist`;
+}
+
+// Resolves mapped music URLs with the lightweight Spotify or Apple Music resolver.
+async function resolveMappedMusicUrlLite(url, { market } = {}) {
+  return isAppleMusicUrl(url)
+    ? resolveAppleMusicUrlLite(url, { market })
+    : resolveSpotifyUrlLite(url, { market });
+}
+
+// Resolves mapped music URLs with the full Spotify or Apple Music resolver.
+async function resolveMappedMusicUrl(url, { market } = {}) {
+  return isAppleMusicUrl(url)
+    ? resolveAppleMusicUrl(url, { market })
+    : resolveSpotifyUrl(url, { market });
+}
+
+// Finds track metadata from the active mapped source for Spotify mapping and metadata flow.
+async function findMappedTrackMeta(itemLite, source, market) {
+  if (source === "apple_music") {
+    if (itemLite?.apple_track_id) {
+      return findAppleTrackMetaById(itemLite.apple_track_id, { market });
+    }
+    return findAppleTrackMetaByQuery(itemLite?.artist, itemLite?.title, {
+      album: itemLite?.album || "",
+      market,
+      targetDurationMs: Number(itemLite?.duration_ms || 0) || null
+    });
+  }
+
+  if (itemLite?.spId) {
+    return findSpotifyMetaById(itemLite.spId);
+  }
+
+  return findSpotifyMetaByQuery(itemLite?.artist, itemLite?.title, market);
 }
 
 router.post("/api/spotify/process/start", async (req, res) => {
@@ -158,45 +235,53 @@ router.post("/api/spotify/process/start", async (req, res) => {
       includeLyrics === true || includeLyrics === "true" || includeLyrics === "1";
     const embedLyricsFlag =
       embedLyrics === true || embedLyrics === "true" || embedLyrics === "1";
+    const isVideoOutput = isVideoFormat(format);
 
-   const autoCreateZipFlag =
-     autoCreateZip === undefined
-       ? true
-       : (autoCreateZip === true || autoCreateZip === "true");
+    const autoCreateZipFlag =
+      !isVideoOutput && (
+        autoCreateZip === undefined
+          ? true
+          : (autoCreateZip === true || autoCreateZip === "true")
+      );
 
-    console.log('[Spotify] UI sent spotifyConcurrency =', spotifyConcurrency);
+    console.log('[music-match] UI sent spotifyConcurrency =', spotifyConcurrency);
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
-    if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL is required", 400);
+    if (!url || !isMappedMusicUrl(url)) {
+      return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify or Apple Music URL is required", 400);
+    }
+
+    const source = musicSourceFromUrl(url);
+    const sourceLabel = musicSourceLabel(source);
 
     const effectiveSpotifyConcurrency = parseConcurrency(
       spotifyConcurrency,
       parseConcurrency(process.env.SPOTIFY_CONCURRENCY || 4, 4)
     );
 
-    console.log('[Spotify] effectiveSpotifyConcurrency =', {
+    console.log('[music-match] effectiveSpotifyConcurrency =', {
       effectiveSpotifyConcurrency
     });
 
-    const bgToken = makeBgToken();
-    const job = createJob({
-    status: "queued",
-    progress: 0,
+	    const bgToken = makeBgToken();
+	    const job = createJob({
+	    status: "queued",
+	    progress: 0,
     format,
     bitrate,
     sampleRate: parseInt(sampleRate) || 48000,
     volumeGain: volumeGainNum,
     compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
     bitDepth: bitDepth || null,
-    videoSettings: (format === "mp4" || format === "mkv") ? videoSettings : null,
-    metadata: {
-      source: "spotify",
-      spotifyUrl: url,
-      spotifyKind: null,
-      spotifyTitle: null,
-      isPlaylist: true,
-      isAlbum: false,
-      isAutomix: false,
+    videoSettings: isVideoOutput ? videoSettings : null,
+	    metadata: {
+	      source,
+	      spotifyUrl: url,
+	      spotifyKind: null,
+	      spotifyTitle: null,
+	      isPlaylist: false,
+	      isAlbum: false,
+	      isAutomix: false,
       includeLyrics: includeLyricsFlag,
       embedLyrics: embedLyricsFlag,
       volumeGain: volumeGainNum,
@@ -206,14 +291,14 @@ router.post("/api/spotify/process/start", async (req, res) => {
       spotifyConcurrency: effectiveSpotifyConcurrency,
       bgToken
     },
-        resultPath: null,
-        error: null,
-        playlist: { total: 0, done: 0 },
-        phase: "mapping",
-        currentPhase: "mapping",
-        lastLogKey: "log.starting",
-        lastLogVars: {},
-        lastLog: "⏳ Starting Spotify job..."
+	        resultPath: null,
+	        error: null,
+	        playlist: { total: 0, done: 0 },
+	        phase: "preparing",
+	        currentPhase: "preparing",
+	        lastLogKey: "log.starting",
+	        lastLogVars: {},
+	        lastLog: `⏳ Starting ${sourceLabel} job...`
       });
       const jobId = job.id;
 
@@ -222,7 +307,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
         id: jobId,
         title: "-",
         total: 0,
-        message: "Spotify processing started"
+        message: `${sourceLabel} processing started`
       });
 
       setImmediate(async () => {
@@ -233,7 +318,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
         try {
           let sp;
           try {
-            sp = await resolveSpotifyUrlLite(url, { market: resolveMarket(marketIn) });
+            sp = await resolveMappedMusicUrlLite(url, { market: resolveMarket(marketIn) });
           } catch (e) {
             const msg = String(e?.message || "");
             if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
@@ -248,10 +333,12 @@ router.post("/api/spotify/process/start", async (req, res) => {
             throw e;
           }
 
-          j.status = "processing";
-          j.metadata.spotifyKind  = sp.kind;
-          j.metadata.spotifyTitle = sp.title;
-          j.metadata.isPlaylist   = sp.kind === "playlist";
+	          j.status = "processing";
+	          j.phase = "mapping";
+	          j.currentPhase = "mapping";
+	          j.metadata.spotifyKind  = sp.kind;
+	          j.metadata.spotifyTitle = sp.title;
+	          j.metadata.isPlaylist   = sp.kind === "playlist";
           j.metadata.isAlbum      = sp.kind === "album";
           j.playlist.total = sp.items?.length || 0;
           j.lastLogKey = "status.mappingStarted";
@@ -268,12 +355,12 @@ router.post("/api/spotify/process/start", async (req, res) => {
           jj.lastLogKey = "log.error";
           jj.lastLogVars = { err: jj.error };
           jj.lastLog = `❌ Error: ${jj.error}`;
-          console.error("[spotify/process/start bg] error:", err);
+          console.error("[music-match/process/start bg] error:", err);
         }
       });
 
     } catch (e) {
-      return sendError(res, 'PROCESS_FAILED', e.message || "Spotify processing error", 400);
+      return sendError(res, 'PROCESS_FAILED', e.message || "Music matching processing error", 400);
     }
 });
 
@@ -312,8 +399,12 @@ function createLimiter(max) {
 async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } = {}) {
   const job = jobs.get(jobId);
   if (!job) return;
+  const allFiles = [];
 
   try {
+    const source = String(job.metadata?.source || "spotify").toLowerCase();
+    const sourceLabel = musicSourceLabel(source);
+    const playlistFallback = musicPlaylistFallback(source);
     const outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
     const effectiveVolumeGain =
       job.metadata?.volumeGain != null
@@ -358,10 +449,9 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       )
     );
 
-    console.log(`[Spotify ${jobId}] download/convert parallel =`, parallel);
+    console.log(`[music-match ${jobId}] download/convert parallel =`, parallel);
 
     const results = new Array(totalItems);
-    const allFiles = [];
     const convertPromises = [];
     const runLimitedConvert = createLimiter(parallel);
     const richMetaByIndex = new Map();
@@ -380,9 +470,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             if (shouldCancel()) return;
             let rich = null;
             try {
-              rich = itemLite?.spId
-                ? await findSpotifyMetaById(itemLite.spId)
-                : await findSpotifyMetaByQuery(itemLite.artist, itemLite.title, mktResolved);
+              rich = await findMappedTrackMeta(itemLite, source, mktResolved);
             } catch {}
 
             const baseMeta = {
@@ -399,7 +487,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
               isrc: itemLite.isrc || "",
               release_year: itemLite.year || "",
               release_date: itemLite.date || "",
-              webpage_url: itemLite.spUrl || "",
+              webpage_url: itemLite.spUrl || itemLite.amUrl || itemLite.webpage_url || "",
               genre: itemLite.genre || "",
               label: itemLite.label || "",
               publisher: itemLite.label || "",
@@ -438,7 +526,13 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
                {
                   ...merged,
                   playlist_title: job.metadata.spotifyTitle,
-                  webpage_url: merged.webpage_url || rich?.webpage_url || itemLite.spUrl || ""
+                  webpage_url:
+                    merged.webpage_url ||
+                    rich?.webpage_url ||
+                    itemLite.spUrl ||
+                    itemLite.amUrl ||
+                    itemLite.webpage_url ||
+                    ""
                 },
                 coverPath,
                 { jobId, tempDir: TEMP_DIR }
@@ -452,7 +546,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     // Converts downloaded item for Spotify mapping and metadata flow.
     const convertDownloadedItem = async (dlResult, idxZeroBased) => {
       if (shouldCancel()) {
-        console.log(`[Spotify ${jobId}] convertDownloadedItem → canceled before start, skipping`);
+        console.log(`[music-match ${jobId}] convertDownloadedItem → canceled before start, skipping`);
         return;
       }
 
@@ -477,7 +571,15 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         uploader: (richNow?.artist || spInfo?.artist || entry.uploader),
         album: (richNow?.album || spInfo?.album || ""),
         playlist_title: job.metadata.spotifyTitle,
-        webpage_url: (richNow?.webpage_url || richNow?.spUrl || spInfo?.spUrl || entry.webpage_url),
+        webpage_url: (
+          richNow?.webpage_url ||
+          richNow?.spUrl ||
+          richNow?.amUrl ||
+          spInfo?.spUrl ||
+          spInfo?.amUrl ||
+          spInfo?.webpage_url ||
+          entry.webpage_url
+        ),
         release_year: (richNow?.release_year || spInfo?.year || ""),
         release_date: (richNow?.release_date || spInfo?.date || ""),
         track_number: (richNow?.track_number ?? spInfo?.track_number),
@@ -645,7 +747,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         job.lastLog = `✅ Converted: ${entry.title}`;
       } catch (convertError) {
         if (isCanceledError(convertError)) {
-          console.log(`[Spotify ${jobId}] Conversion canceled for: ${entry.title}`);
+          console.log(`[music-match ${jobId}] Conversion canceled for: ${entry.title}`);
           return;
         }
 
@@ -683,13 +785,13 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             job.lastLogKey  = logKey || null;
             job.lastLogVars = logVars || null;
             job.lastLog     = fallback || '';
-            console.log(`[Spotify ${jobId}] ${fallback || job.lastLogKey || ''}`);
+            console.log(`[music-match ${jobId}] ${fallback || job.lastLogKey || ''}`);
           },
           shouldCancel,
           onItemDone: (dlResult, idx) => {
             if (!dlResult || !dlResult.filePath) return;
             if (shouldCancel()) {
-              console.log(`[Spotify ${jobId}] onItemDone → job canceled, skipping convert enqueue`);
+              console.log(`[music-match ${jobId}] onItemDone → job canceled, skipping convert enqueue`);
               return;
             }
 
@@ -698,7 +800,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             const p = runLimitedConvert(() => convertDownloadedItem(dlResult, idx))
               .catch(err => {
                 if (!isCanceledError(err)) {
-                  console.error(`[Spotify ${jobId}] convert pipeline error:`, err);
+                  console.error(`[music-match ${jobId}] convert pipeline error:`, err);
                 }
               });
 
@@ -752,7 +854,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           job.lastLogKey  = logKey || null;
           job.lastLogVars = logVars || null;
           job.lastLog     = fallback || '';
-          console.log(`[Spotify ${jobId}] ${fallback || job.lastLogKey || ''}`);
+          console.log(`[music-match ${jobId}] ${fallback || job.lastLogKey || ''}`);
         }
       }
     );
@@ -766,33 +868,20 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     job.playlist.downloadTotal = matchedCount;
     job.playlist.convertTotal  = matchedCount;
 
-    if (isVideoFormatFlag && job.metadata?.source === "spotify") {
-      console.log(`🎬 Redirecting Spotify to video processing: ${matchedCount} track(s)`);
+    if (isVideoFormatFlag && (job.metadata?.source === "spotify" || job.metadata?.source === "apple_music")) {
+      console.log(`🎬 Redirecting ${sourceLabel} to video processing: ${matchedCount} track(s)`);
 
       const trackCount = matchedCount;
-      const playlistTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+      const playlistTitle = job.metadata.spotifyTitle || playlistFallback;
 
       job.lastLogKey = 'log.spotify.videoProcessing';
       job.lastLogVars = {
         title: playlistTitle,
         count: trackCount
       };
-      job.lastLog = `🎬 Starting Spotify video processing: ${playlistTitle} (${trackCount} track(s))`;
+      job.lastLog = `🎬 Starting ${sourceLabel} video processing: ${playlistTitle} (${trackCount} track(s))`;
 
       await processYouTubeVideoJob(job, { OUTPUT_DIR: outputDir, TEMP_DIR });
-
-      try {
-        if (Array.isArray(job.resultPath) && job.resultPath.length > 1 && !job.clientBatch) {
-          const titleHint = job.metadata?.spotifyTitle || "Spotify Playlist";
-          job.zipPath = await makeZipFromOutputs(
-            jobId,
-            job.resultPath,
-            titleHint || "playlist",
-            job.metadata?.includeLyrics,
-            outputDir
-          );
-        }
-      } catch {}
 
       cleanupSpotifyTempFiles(jobId, null, null);
       return;
@@ -825,7 +914,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 
     if (job.metadata?.autoCreateZip) {
       try {
-        const zipTitle = job.metadata.spotifyTitle || "Spotify Playlist";
+        const zipTitle = job.metadata.spotifyTitle || playlistFallback;
         job.lastLogKey = 'log.zip.creating';
         job.lastLogVars = {};
         job.lastLog = `📦 Creating ZIP file...`;
@@ -861,18 +950,18 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     cleanupSpotifyTempFiles(jobId, allFiles);
 
   } catch (error) {
-    if (String(error?.message || "").toUpperCase() === "CANCELED") {
-      job.status = "canceled";
-      job.error = null;
+	    if (String(error?.message || "").toUpperCase() === "CANCELED") {
+	      job.status = "canceled";
+	      job.error = null;
       job.phase = "canceled"; job.currentPhase = "canceled";
       job.downloadProgress = 0;
       job.convertProgress = 0;
-      job.lastLogKey = 'status.canceled';
-      job.lastLogVars = {};
-      job.lastLog = "⛔ Canceled";
-      try { killJobProcesses(jobId); } catch {}
-      try { cleanupSpotifyTempFiles(jobId); } catch {}
-    } else {
+	      job.lastLogKey = 'status.canceled';
+	      job.lastLogVars = {};
+	      job.lastLog = "⛔ Canceled";
+	      try { killJobProcesses(jobId); } catch {}
+	      scheduleSpotifyTempCleanup(jobId, allFiles);
+	    } else {
       job.status = "error";
       job.error = error.message;
       job.phase = "error"; job.currentPhase = "error";
@@ -890,6 +979,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 async function processSingleTrack(jobId, sp, format, bitrate) {
   const job = jobs.get(jobId);
   if (!job) return;
+  let filePath = null;
 
   try {
     const outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
@@ -988,7 +1078,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     job.lastLogVars = { title: matchedItem.title };
     job.lastLog = `⚙️ Converting: ${matchedItem.title}`;
 
-    const filePath = successfulDownload.filePath;
+    filePath = successfulDownload.filePath;
     const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
     const spInfo = sp.items[0];
     let richNow = null;
@@ -1113,16 +1203,16 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     cleanupSpotifyTempFiles(jobId, [filePath]);
 
   } catch (error) {
-    if (String(error?.message || "").toUpperCase() === "CANCELED") {
-      job.status = "canceled";
-      job.error = null;
+	    if (String(error?.message || "").toUpperCase() === "CANCELED") {
+	      job.status = "canceled";
+	      job.error = null;
       job.phase = "canceled"; job.currentPhase = "canceled";
-      job.lastLogKey = 'status.canceled';
-      job.lastLogVars = {};
-      job.lastLog = "⛔ Canceled";
-      try { killJobProcesses(jobId); } catch {}
-      try { cleanupSpotifyTempFiles(jobId); } catch {}
-    } else {
+	      job.lastLogKey = 'status.canceled';
+	      job.lastLogVars = {};
+	      job.lastLog = "⛔ Canceled";
+	      try { killJobProcesses(jobId); } catch {}
+	      scheduleSpotifyTempCleanup(jobId, [filePath]);
+	    } else {
       job.status = "error";
       job.error = error.message;
       job.phase = "error"; job.currentPhase = "error";
@@ -1189,30 +1279,69 @@ function cleanupSpotifyTempFiles(jobId, files) {
     }
 
     try {
-      const prefix = `.retag_cover_${jobId}_`;
+      const jobIdText = String(jobId || "").trim();
       for (const name of fs.readdirSync(TEMP_DIR)) {
-        if (!name || !name.startsWith(prefix)) continue;
-        try { fs.unlinkSync(path.join(TEMP_DIR, name)); } catch {}
+        if (!name) continue;
+        const isJobArtifact =
+          name === `${jobIdText}.urls.txt` ||
+          name.startsWith(jobIdText) ||
+          name.startsWith(`.cover_${jobIdText}_`) ||
+          name.startsWith(`.${jobIdText}_`);
+        if (!isJobArtifact) continue;
+        safeRmTempPath(path.join(TEMP_DIR, name));
       }
     } catch {}
 
     const jobDir = path.join(TEMP_DIR, jobId);
     if (fs.existsSync(jobDir)) {
-      try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch {}
+      safeRmTempPath(jobDir);
     }
   } catch (e) {
     console.warn("Cleanup error:", e);
   }
 }
 
+// Schedules Spotify temp cleanup after active job processes have fully exited.
+function scheduleSpotifyTempCleanup(jobId, files) {
+  let attemptsLeft = 15;
+  let finalized = false;
+  const tick = () => {
+    const activeCount = Number(getJobProcessCount(jobId) || 0) || 0;
+    attemptsLeft -= 1;
+    if (activeCount <= 0) {
+      try { cleanupSpotifyTempFiles(jobId, files); } catch {}
+      if (!finalized) {
+        finalized = true;
+        const finalTimer = setTimeout(() => {
+          try { cleanupSpotifyTempFiles(jobId, files); } catch {}
+        }, 350);
+        finalTimer.unref?.();
+      }
+      return;
+    }
+    if (attemptsLeft <= 0) return;
+
+    const timer = setTimeout(tick, 1000);
+    timer.unref?.();
+  };
+
+  const timer = setTimeout(tick, 0);
+  timer.unref?.();
+}
+
 router.post("/api/spotify/preview/start", async (req, res) => {
   try {
     const { url, market: marketIn } = req.body || {};
-    if (!url || !isSpotifyUrl(url)) return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify URL is required", 400);
+    if (!url || !isMappedMusicUrl(url)) {
+      return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify or Apple Music URL is required", 400);
+    }
+
+    const source = musicSourceFromUrl(url);
+    const sourceLabel = musicSourceLabel(source);
 
     let sp;
     try {
-      sp = await resolveSpotifyUrl(url, { market: resolveMarket(marketIn) });
+      sp = await resolveMappedMusicUrl(url, { market: resolveMarket(marketIn) });
     } catch (e) {
       const msg = String(e?.message || "");
       if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
@@ -1229,8 +1358,9 @@ router.post("/api/spotify/preview/start", async (req, res) => {
     const task = {
       id,
       url,
+      source,
       status: "running",
-      title: sp.title || (sp.kind === "track" ? "Spotify Track" : "Spotify Playlist"),
+      title: sp.title || (sp.kind === "track" ? `${sourceLabel} Track` : `${sourceLabel} Playlist`),
       total: (sp.items || []).length,
       done: 0,
       items: [],
@@ -1247,7 +1377,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
       if (item.id) task.validItems.push(item);
     }, {
       concurrency: Number(process.env.SPOTIFY_MAP_CONCURRENCY || 3),
-      onLog: (log) => { task.logs.push({ time: new Date(), message: log }); console.log(`[Spotify ${id}] ${log}`); }
+      onLog: (log) => { task.logs.push({ time: new Date(), message: log }); console.log(`[music-match ${id}] ${log}`); }
     }).then(() => {
       task.status = "completed";
       if (task.validItems.length > 0) {
@@ -1256,13 +1386,13 @@ router.post("/api/spotify/preview/start", async (req, res) => {
         const listFile = path.join(TEMP_DIR, `${task.id}.urls.txt`);
         fs.writeFileSync(listFile, urls.join("\n"), "utf8");
         task.urlListFile = listFile;
-        console.log(`✅ Spotify URL list created: ${listFile}`);
+        console.log(`✅ ${sourceLabel} URL list created: ${listFile}`);
       }
     }).catch((e) => { task.status = "error"; task.error = e.message; });
 
     return sendOk(res, { mapId: id, title: task.title, total: task.total });
   } catch (e) {
-    return sendError(res, 'PREVIEW_FAILED', e.message || "Spotify start error", 400);
+    return sendError(res, 'PREVIEW_FAILED', e.message || "Music matching start error", 400);
   }
 });
 

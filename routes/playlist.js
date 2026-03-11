@@ -15,6 +15,7 @@ import {
   extractAutomixPage
 } from "../modules/yt.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
+import { isAppleMusicUrl, resolveAppleMusicUrl } from "../modules/apple.js";
 import { searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 
@@ -24,9 +25,12 @@ router.post("/api/playlist/preview", async (req, res) => {
   try {
     const { url, page = 1, pageSize = 25 } = req.body || {};
 
-    if (url && isSpotifyUrl(url)) {
+    if (url && (isSpotifyUrl(url) || isAppleMusicUrl(url))) {
+      const sourceLabel = isAppleMusicUrl(url) ? "Apple Music" : "Spotify";
       try {
-        const sp = await resolveSpotifyUrl(url, { market: resolveMarket(req.body?.market) });
+        const sp = isAppleMusicUrl(url)
+          ? await resolveAppleMusicUrl(url, { market: resolveMarket(req.body?.market) })
+          : await resolveSpotifyUrl(url, { market: resolveMarket(req.body?.market) });
         const ps = Math.max(1, Math.min(100, Number(pageSize) || 25));
         const p  = Math.max(1, Number(page) || 1);
         const start = (p - 1) * ps; const slice = (sp.items || []).slice(start, start + ps);
@@ -35,8 +39,8 @@ router.post("/api/playlist/preview", async (req, res) => {
           const it = slice[i]; let vid = null; try { vid = await searchYtmBestId(it.artist, it.title); } catch {}
           items.push({ index: start + i + 1, id: vid || null, title: it.title, uploader: it.artist, duration: null, duration_string: null, webpage_url: vid ? (process.env.YT_USE_MUSIC !== "0" ? `https://music.youtube.com/watch?v=${vid}` : `https://www.youtube.com/watch?v=${vid}`) : "", thumbnail: null });
         }
-        return sendOk(res, { playlist: { title: sp.title || (sp.kind === "track" ? "Spotify Track" : "Spotify Playlist"), count: (sp.items || []).length, isAutomix: false, isSpotify: true }, page: p, pageSize: ps, items });
-      } catch (e) { return sendError(res, 'PREVIEW_FAILED', e.message || "Spotify önizleme hatası", 400); }
+        return sendOk(res, { playlist: { title: sp.title || (sp.kind === "track" ? `${sourceLabel} Track` : `${sourceLabel} Playlist`), count: (sp.items || []).length, isAutomix: false, isSpotify: true }, page: p, pageSize: ps, items });
+      } catch (e) { return sendError(res, 'PREVIEW_FAILED', e.message || "Music matching preview error", 400); }
     }
 
     const isYouTubeSource = isYouTubeUrl(url);

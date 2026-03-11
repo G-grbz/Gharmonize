@@ -253,6 +253,8 @@ export class SpotifyManager {
             }
         }
 
+        const autoCreateZip = !isVideoFormat && this.app.autoCreateZip;
+
         const body = {
             url,
             format,
@@ -261,7 +263,7 @@ export class SpotifyManager {
             includeLyrics,
             embedLyrics,
             volumeGain: this.app.currentVolumeGain || 1.0,
-            autoCreateZip: this.app.autoCreateZip,
+            autoCreateZip,
             ...(compressionLevel != null ? { compressionLevel } : {}),
             ...(bitDepth != null ? { bitDepth } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
@@ -303,10 +305,10 @@ export class SpotifyManager {
 }
 
     // Streams integrated logs in Spotify mapping and metadata flow.
-    streamIntegratedLogs(jobId) {
-        const eventSource = new EventSource(`/api/stream/${jobId}`);
-        const logsContainer = document.getElementById('spotifyLogs');
-        let finished = false;
+	    streamIntegratedLogs(jobId) {
+	        const eventSource = new EventSource(`/api/stream/${jobId}`);
+	        const logsContainer = document.getElementById('spotifyLogs');
+	        let finished = false;
 
         eventSource.onmessage = (event) => {
             const job = JSON.parse(event.data);
@@ -316,26 +318,35 @@ export class SpotifyManager {
                 try { eventSource.close(); } catch (_) {}
             }
 
-            try {
-                const titleEl = document.getElementById('spotifyTitle');
-                const totalEl = document.getElementById('spotifyTotal');
+	            try {
+	                const titleEl = document.getElementById('spotifyTitle');
+	                const totalEl = document.getElementById('spotifyTotal');
+	                const matchedEl = document.getElementById('spotifyMatched');
 
-                const spTitle = job?.metadata?.frozenTitle || job?.metadata?.spotifyTitle;
-                const spTotalRaw = job?.playlist?.total;
-                const spTotal = Number(spTotalRaw);
+	                const spTitle = job?.metadata?.frozenTitle || job?.metadata?.spotifyTitle;
+	                const spTotalRaw = job?.playlist?.total;
+	                const spTotal = Number(spTotalRaw);
+	                const matchedCount = Array.isArray(job?.metadata?.frozenEntries)
+	                    ? job.metadata.frozenEntries.length
+	                    : 0;
 
-                if (spTitle && titleEl && (titleEl.textContent === '-' || titleEl.textContent === this.app.t('status.starting') || !titleEl.textContent)) {
-                    titleEl.textContent = spTitle;
-                }
+	                if (spTitle && titleEl && (titleEl.textContent === '-' || titleEl.textContent === this.app.t('status.starting') || !titleEl.textContent)) {
+	                    titleEl.textContent = spTitle;
+	                }
 
-                if (Number.isFinite(spTotal) && totalEl && (totalEl.textContent === '0' || !totalEl.textContent)) {
-                    totalEl.textContent = String(spTotal);
-                }
-            } catch (_) {}
+	                if (Number.isFinite(spTotal) && spTotal >= 0 && totalEl) {
+	                    totalEl.textContent = String(spTotal);
+	                }
 
-                    if (job.progress) {
-                document.getElementById('spotifyProgress').textContent = `${job.progress}%`;
-            }
+	                if (matchedEl) {
+	                    matchedEl.textContent = String(matchedCount);
+	                }
+	            } catch (_) {}
+
+	            const progressValue = Number(job?.progress);
+	            if (Number.isFinite(progressValue) && progressValue >= 0) {
+	                document.getElementById('spotifyProgress').textContent = `${Math.floor(progressValue)}%`;
+	            }
 
             (() => {
                 try {
@@ -353,18 +364,16 @@ export class SpotifyManager {
                 } catch (_) { }
             })();
 
-            if (job.playlist) {
-                document.getElementById('spotifyMatched').textContent = `${job.playlist.done || 0}/${job.playlist.total || 0}`;
-            }
-
-            if (job.phase || job.lastLog || job.lastLogKey) {
-                const phaseText = {
-                    mapping: this.app.t('phase.mapping'),
-                    downloading: this.app.t('phase.downloading'),
-                    converting: this.app.t('phase.converting'),
-                    completed: this.app.t('phase.completed'),
-                    error: this.app.t('phase.error')
-                };
+	            if (job.phase || job.lastLog || job.lastLogKey) {
+	                const phaseText = {
+	                    preparing: this.app.t('phase.preparing'),
+	                    mapping: this.app.t('phase.mapping'),
+	                    downloading: this.app.t('phase.downloading'),
+	                    converting: this.app.t('phase.converting'),
+	                    completed: this.app.t('phase.completed'),
+	                    canceled: this.app.t('status.canceled'),
+	                    error: this.app.t('phase.error')
+	                };
 
                 if (typeof job.lastLog === 'string') {
                     job.lastLog = this.app.normalizeBackendLog(job.lastLog);
@@ -390,17 +399,14 @@ export class SpotifyManager {
                 logsContainer.scrollTop = logsContainer.scrollHeight;
             }
 
-            if (job?.metadata?.frozenEntries && Array.isArray(job.metadata.frozenEntries)) {
-                const arr = job.metadata.frozenEntries;
-                for (let i = this.integratedRenderedCount; i < arr.length; i++) {
-                    this.addSpotifyItem(arr[i]);
-                }
-                this.integratedRenderedCount = arr.length;
-                const matchedCount = document.getElementById('spotifyPreviewList')
-                    .querySelectorAll('.matched').length;
-                document.getElementById('spotifyMatched').textContent = matchedCount;
-            }
-        };
+	            if (job?.metadata?.frozenEntries && Array.isArray(job.metadata.frozenEntries)) {
+	                const arr = job.metadata.frozenEntries;
+	                for (let i = this.integratedRenderedCount; i < arr.length; i++) {
+	                    this.addSpotifyItem(arr[i]);
+	                }
+	                this.integratedRenderedCount = arr.length;
+	            }
+	        };
 
         eventSource.onerror = (error) => {
             if (finished) {
@@ -483,6 +489,8 @@ export class SpotifyManager {
             }
         }
 
+        const autoCreateZip = !isVideoFormat && this.app.autoCreateZip;
+
         const payload = {
             url: document.getElementById('urlInput').value.trim(),
             format,
@@ -492,7 +500,7 @@ export class SpotifyManager {
             embedLyrics,
             isPlaylist: true,
             volumeGain: this.app.currentVolumeGain || 1.0,
-            autoCreateZip: this.app.autoCreateZip,
+            autoCreateZip,
             ...(compressionLevel !== undefined ? { compressionLevel } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
             ...(spotifyConcurrency != null ? { spotifyConcurrency } : {}),

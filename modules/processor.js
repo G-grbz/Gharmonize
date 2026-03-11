@@ -33,6 +33,24 @@ const TEMP_DIR = path.resolve(BASE_DIR, "temp");
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
+function isMappedMusicSource(source = "") {
+  const value = String(source || "").toLowerCase();
+  return value === "spotify" || value === "apple_music";
+}
+
+function mappedMusicLabel(source = "") {
+  return String(source || "").toLowerCase() === "apple_music"
+    ? "Apple Music"
+    : "Spotify";
+}
+
+function mappedMusicPlaylistTitle(source = "", title = "") {
+  const fallback = String(source || "").toLowerCase() === "apple_music"
+    ? "Apple Music Playlist"
+    : "Spotify Playlist";
+  return toNFC(title || fallback);
+}
+
 // Converts absolute output path to public download path with safe fallback.
 function toDownloadPathSafe(absPath) {
   return (
@@ -275,7 +293,12 @@ function mergeMeta(base, extra) {
   return base;
 }
 
-async function enrichMetaFromApple(base, { artist = "", title = "", market = "" } = {}) {
+async function enrichMetaFromApple(base, {
+  artist = "",
+  title = "",
+  market = "",
+  preferCover = false
+} = {}) {
   if (process.env.APPLE_TAG_FALLBACK === "0") return base;
 
   const artistSafe = String(base?.artist || base?.album_artist || artist || "").trim();
@@ -288,10 +311,55 @@ async function enrichMetaFromApple(base, { artist = "", title = "", market = "" 
       market,
       targetDurationMs: Number(base?.duration_ms || 0) || null
     });
-    return mergeMeta(base, appleMeta);
+    const merged = mergeMeta(base, appleMeta);
+    const preferredAppleCoverUrl = String(
+      appleMeta?.coverUrl || appleMeta?.imageUrl || appleMeta?.thumbnailUrl || ""
+    ).trim();
+    if (preferCover && preferredAppleCoverUrl) {
+      merged.__applePreferredCoverUrl = preferredAppleCoverUrl;
+    }
+    return merged;
   } catch {
     return base;
   }
+}
+
+async function resolvePreferredCoverPath(meta, {
+  baseNoExt = "",
+  fallbackSidecarPath = null,
+  fallbackCoverPath = null
+} = {}) {
+  const appleCoverUrl = String(meta?.__applePreferredCoverUrl || "").trim();
+  if (appleCoverUrl && baseNoExt) {
+    try {
+      const dl = await downloadThumbnail(
+        appleCoverUrl,
+        `${baseNoExt}.apple_cover`
+      );
+      if (dl && fs.existsSync(dl)) return dl;
+    } catch {}
+  }
+
+  if (fallbackSidecarPath && fs.existsSync(fallbackSidecarPath)) {
+    return fallbackSidecarPath;
+  }
+
+  if (fallbackCoverPath && fs.existsSync(fallbackCoverPath)) {
+    return fallbackCoverPath;
+  }
+
+  const metaCoverUrl = String(meta?.coverUrl || "").trim();
+  if (metaCoverUrl && metaCoverUrl !== appleCoverUrl && baseNoExt) {
+    try {
+      const dl = await downloadThumbnail(
+        metaCoverUrl,
+        `${baseNoExt}.cover`
+      );
+      if (dl && fs.existsSync(dl)) return dl;
+    } catch {}
+  }
+
+  return null;
 }
 
 // Checks whether video format is valid for core application logic.
@@ -521,20 +589,21 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     let actualInputPath = inputPath;
     let coverPath = null;
 
-    if (job.metadata.source === "spotify") {
+    if (isMappedMusicSource(job.metadata.source)) {
+      const sourceLabel = mappedMusicLabel(job.metadata.source);
       job.currentPhase = "downloading";
       job.downloadProgress = 5;
       job.metadata.extracted = job.metadata.extracted || {
-        title: toNFC(job.metadata.spotifyTitle || "Spotify Playlist"),
-        uploader: "Spotify",
-        playlist_title: toNFC(job.metadata.spotifyTitle || "Spotify Playlist")
+        title: mappedMusicPlaylistTitle(job.metadata.source, job.metadata.spotifyTitle),
+        uploader: sourceLabel,
+        playlist_title: mappedMusicPlaylistTitle(job.metadata.source, job.metadata.spotifyTitle)
       };
 
       const selectedIds = Array.isArray(job.metadata.selectedIds)
         ? job.metadata.selectedIds
         : [];
       if (!selectedIds.length) {
-        throw new Error("Spotify URL list is empty");
+        throw new Error(`${sourceLabel} URL list is empty`);
       }
 
       job.counters = job.counters || {};
@@ -544,7 +613,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       job.counters.cvDone = job.counters.cvDone || 0;
 
       const files = await downloadYouTubeVideo(
-        job.metadata.spotifyTitle || "Spotify",
+        job.metadata.spotifyTitle || sourceLabel,
         jobId,
         true,
         null,
@@ -607,7 +676,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       job.convertProgress = 0;
 
       if (!Array.isArray(files) || !files.length) {
-        throw new Error("Spotify download completed but no files were found");
+        throw new Error(`${sourceLabel} download completed but no files were found`);
       }
 
       const frozen = Array.isArray(job.metadata.frozenEntries)
@@ -645,7 +714,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             album: entry.album || "",
             album_artist:
               entry.album_artist || entry.artist || entry.uploader || "",
-            playlist_title: job.metadata.spotifyTitle || "Spotify Playlist",
+            playlist_title: mappedMusicPlaylistTitle(job.metadata.source, job.metadata.spotifyTitle),
             webpage_url: entry.webpage_url || "",
             release_year: entry.year || "",
             release_date: entry.date || "",
@@ -787,7 +856,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         if (!job.clientBatch && job.metadata?.autoCreateZip !== false) {
           try {
             const zipTitle =
-              job.metadata.spotifyTitle || "Spotify Playlist";
+              mappedMusicPlaylistTitle(job.metadata.source, job.metadata.spotifyTitle);
             job.zipPath = await makeZipFromOutputs(
               jobId,
               finalResults,
@@ -1100,23 +1169,18 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           fileMeta = await enrichMetaFromApple(fileMeta, {
             artist: fileMeta.artist || fileMeta.uploader,
             title: fileMeta.track || fileMeta.title,
-            market: job?.metadata?.market
+            market: job?.metadata?.market,
+            preferCover: true
           });
 
           let itemCover = null;
           const baseNoExt = filePath.replace(/\.[^.]+$/, "");
           const sidecarJpg = `${baseNoExt}.jpg`;
-          if (fs.existsSync(sidecarJpg)) itemCover = sidecarJpg;
-          else if (coverPath && fs.existsSync(coverPath)) itemCover = coverPath;
-          else if (fileMeta?.coverUrl) {
-            try {
-              const dl = await downloadThumbnail(
-                fileMeta.coverUrl,
-                `${baseNoExt}.cover`
-              );
-              if (dl) itemCover = dl;
-            } catch {}
-          }
+          itemCover = await resolvePreferredCoverPath(fileMeta, {
+            baseNoExt,
+            fallbackSidecarPath: sidecarJpg,
+            fallbackCoverPath: coverPath
+          });
 
           try {
             const strictMeta = await resolveId3StrictForYouTube(
@@ -1617,7 +1681,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
     let singleMeta = { ...(job.metadata.extracted || {}) };
 
-    if (job.metadata.source === "youtube" || job.metadata.source === "spotify") {
+    if (job.metadata.source === "youtube" || isMappedMusicSource(job.metadata.source)) {
       try {
         const ytMusicSingle = await probeYoutubeMusicMeta(
           singleMeta.webpage_url || job.metadata.url
@@ -1657,7 +1721,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       }
     }
 
-    if (process.env.ENRICH_SPOTIFY_FOR_YT === "1") {
+    if (job.metadata.source === "youtube" && process.env.ENRICH_SPOTIFY_FOR_YT === "1") {
       try {
         const spSingle = await findSpotifyMetaByQuery(
           singleMeta.artist,
@@ -1673,7 +1737,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     singleMeta = await enrichMetaFromApple(singleMeta, {
       artist: singleMeta.artist || singleMeta.album_artist || singleMeta.uploader,
       title: singleMeta.track || singleMeta.title,
-      market: job?.metadata?.market
+      market: job?.metadata?.market,
+      preferCover: job.metadata.source === "youtube"
     });
 
     singleMeta.album_artist =
@@ -1713,15 +1778,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       }
     } catch {}
 
-    if (!coverPath && singleMeta?.coverUrl && typeof actualInputPath === "string") {
-      try {
-        const baseNoExt = actualInputPath.replace(/\.[^.]+$/, "");
-        const dl = await downloadThumbnail(
-          singleMeta.coverUrl,
-          `${baseNoExt}.cover`
-        );
-        if (dl) coverPath = dl;
-      } catch {}
+    if (typeof actualInputPath === "string") {
+      const baseNoExt = actualInputPath.replace(/\.[^.]+$/, "");
+      coverPath = await resolvePreferredCoverPath(singleMeta, {
+        baseNoExt,
+        fallbackCoverPath: coverPath
+      }) || coverPath;
     }
 
     job.counters = job.counters || {};
