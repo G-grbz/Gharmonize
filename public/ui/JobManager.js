@@ -483,24 +483,101 @@ computeProg(job) {
     }
 
     // Handles UI state current index in the browser UI layer.
-    uiCurrentIndex(job) {
-        const total = job.playlist?.total;
-        const done = job.playlist?.done;
-        const current = job.playlist?.current || done;
-        if (Number.isFinite(total) && Number.isFinite(done) && total > 0) {
-            return Math.min(Math.max(0, done || 0), Math.max(0, total - 1));
+    getPlaylistUiState(job) {
+        const entries = Array.isArray(job?.metadata?.frozenEntries) ? job.metadata.frozenEntries : [];
+        const { dlDone, cvDone, dlTotal, cvTotal } = this.getDlCvCounts(job);
+        const totalRaw = this.safeNum(
+            job?.playlist?.total ?? dlTotal ?? cvTotal ?? entries.length ?? 0,
+            0
+        );
+        const total = Math.max(totalRaw, entries.length);
+        const clampCount = (value) => {
+            const safe = Math.max(0, this.safeNum(value, 0));
+            return total > 0 ? Math.min(total, safe) : safe;
+        };
+
+        const downloaded = clampCount(dlDone);
+        const converted = clampCount(cvDone);
+        const phase = this.normalizeStatus(job?.currentPhase || job?.phase);
+        const playlistCurrent = Number(job?.playlist?.current);
+
+        let activeIndex = null;
+        if (total > 0) {
+            if (phase === 'downloading') {
+                const fallbackIndex = downloaded;
+                activeIndex = Number.isFinite(playlistCurrent) && playlistCurrent >= 0
+                    ? Math.max(playlistCurrent, fallbackIndex)
+                    : fallbackIndex;
+            } else if (phase === 'converting') {
+                activeIndex = Number.isFinite(playlistCurrent) && playlistCurrent >= 0
+                    ? playlistCurrent
+                    : converted;
+            } else if (phase === 'completed') {
+                activeIndex = total - 1;
+            } else if (Number.isFinite(playlistCurrent) && playlistCurrent >= 0) {
+                activeIndex = playlistCurrent;
+            } else {
+                activeIndex = Math.max(downloaded, converted);
+            }
         }
-        return null;
+
+        if (activeIndex !== null && total > 0) {
+            activeIndex = Math.min(Math.max(0, activeIndex), Math.max(0, total - 1));
+        }
+
+        let processed = downloaded;
+        if (phase === 'converting') {
+            processed = converted;
+        } else if (phase === 'completed') {
+            processed = total || Math.max(downloaded, converted);
+        }
+
+        return {
+            entries,
+            total,
+            downloaded,
+            converted,
+            processed: clampCount(processed),
+            activeIndex,
+            phase
+        };
+    }
+
+    // Handles UI state current index in the browser UI layer.
+    uiCurrentIndex(job) {
+        return this.getPlaylistUiState(job).activeIndex;
+    }
+
+    // Resolves playlist display name for the browser UI layer.
+    playlistDisplayName(job) {
+        return (
+            job.metadata?.frozenTitle ||
+            (job.metadata?.source === 'spotify'
+                ? (job.metadata?.spotifyTitle || this.app.t('ui.spotifyPlaylist'))
+                : job.metadata?.source === 'apple_music'
+                ? (job.metadata?.spotifyTitle || this.app.t('ui.appleMusicPlaylist'))
+                : this.playlistSourceTitle(job))
+        );
     }
 
     // Handles UI state now title in the browser UI layer.
     uiNowTitle(job) {
-        if (job.metadata?.isPlaylist && Array.isArray(job.metadata?.frozenEntries) && job.metadata.frozenEntries.length) {
-            const i0 = job.playlist?.current || this.uiCurrentIndex(job);
-            if (i0 !== null && job.metadata.frozenEntries[i0]) {
-                const e = job.metadata.frozenEntries[i0];
-                return `${e.index}. ${e.title}`;
-            }
+        if (job.metadata?.isPlaylist) {
+            const { entries, activeIndex } = this.getPlaylistUiState(job);
+            if (!entries.length) return null;
+
+            const i0 = activeIndex ?? 0;
+            const entry =
+                entries[i0] ||
+                entries.find((item) => Number(item?.index) === i0 + 1) ||
+                null;
+
+            if (!entry?.title) return null;
+
+            const labelIndex = Number.isFinite(Number(entry.index))
+                ? Number(entry.index)
+                : (i0 + 1);
+            return `${labelIndex}. ${entry.title}`;
         }
         const ex = job.metadata?.extracted || {};
         return ex.track || ex.title || job.metadata?.originalName || null;
@@ -858,16 +935,13 @@ updateJobUI(job, batchId = null) {
 	            if (phaseNorm !== 'mapping') {
 	                const totalTxt = (dlTotal || total) ? (dlTotal || total) : '?';
 
-	                let currentTrack;
-	                if (Number.isFinite(job.playlist?.current)) {
-	                    currentTrack = job.playlist.current + 1;
-	                } else {
-	                    const base = phaseNorm === 'downloading' ? downloaded : converted;
-	                    const limit = (dlTotal || total) > 0 ? (dlTotal || total) : null;
-	                    currentTrack = limit
-	                        ? Math.min(limit, Math.max(1, base + 1))
-	                        : Math.max(1, base + 1);
+	                let processedCount = downloaded;
+	                if (phaseNorm === 'converting') {
+	                    processedCount = converted;
+	                } else if (phaseNorm === 'completed') {
+	                    processedCount = converted || downloaded || total;
 	                }
+	                processedCount = Math.max(0, Math.min((dlTotal || total || 0), processedCount || 0));
 
 	                phaseDetails = `
 	                    <div class="phase-details">
@@ -875,7 +949,7 @@ updateJobUI(job, batchId = null) {
 	                        <div class="phase-details__grid">
 	                            <span class="phase-details__item">
 	                                🎵 ${this.app.t('ui.current')}:
-	                                <span class="phase-details__value">${currentTrack}</span>
+	                                <span class="phase-details__value">${processedCount}</span>
 	                            </span>
 	                            <span class="phase-details__item">
 	                                📥 ${this.app.t('ui.downloading')}:
@@ -890,24 +964,12 @@ updateJobUI(job, batchId = null) {
 	                `;
 	            }
 	        } else {
-                const total = Number(job.playlist.total || 0) || 0;
-                let downloaded = Number(job.counters?.dlDone ?? job.playlist.done ?? 0) || 0;
-                let converted  = Number(job.counters?.cvDone ?? job.playlist.done ?? 0) || 0;
-
-                if (!downloaded && total && job.downloadProgress) {
-                    downloaded = Math.max(
-                        0,
-                        Math.min(total, Math.floor((Number(job.downloadProgress) / 100) * total))
-                    );
-                }
-                if (!converted && total && job.convertProgress) {
-                    converted = Math.max(
-                        0,
-                        Math.min(total, Math.floor((Number(job.convertProgress) / 100) * total))
-                    );
-                }
-
-                const phase = this.normalizeStatus(job.currentPhase || job.phase);
+                const playlistUi = this.getPlaylistUiState(job);
+                const total = playlistUi.total;
+                const downloaded = playlistUi.downloaded;
+                const converted = playlistUi.converted;
+                const processed = playlistUi.processed;
+                const phase = playlistUi.phase;
 
                 const isVideoTranscode = job.format?.toLowerCase() === 'mp4' ||
                                        job.format?.toLowerCase() === 'mkv' ||
@@ -922,25 +984,13 @@ updateJobUI(job, batchId = null) {
                     `;
                 }
 
-                let currentTrack;
-                if (Number.isFinite(job.playlist.current)) {
-                    currentTrack = job.playlist.current + 1;
-                } else if (phase === 'downloading') {
-                    currentTrack = Math.min(total || 1, (downloaded || 0) + 1);
-                } else if (phase === 'converting') {
-                    currentTrack = Math.min(total || 1, (converted || 0) + 1);
-                } else {
-                    const base = converted || downloaded || 0;
-                    currentTrack = Math.min(total || 1, Math.max(1, base || 1));
-                }
-
                 phaseDetails = `
                     <div class="phase-details">
                         <div class="phase-details__title">${currentPhaseText}</div>
                         <div class="phase-details__grid">
                             <span class="phase-details__item">
                                 🎵 ${this.app.t('ui.current')}:
-                                <span class="phase-details__value">${currentTrack}</span>
+                                <span class="phase-details__value">${processed}</span>
                             </span>
                             <span class="phase-details__item">
                                 📥 ${this.app.t('ui.downloading')}:
@@ -955,23 +1005,18 @@ updateJobUI(job, batchId = null) {
                 `;
             }
         } else if (job.metadata?.isPlaylist) {
-            const dlDone = Number(job?.counters?.dlDone || 0);
-            const cvDone = Number(job?.counters?.cvDone || 0);
-            const total  = Number(
-                (job?.playlist && job.playlist.total) ||
-                (job?.counters && job.counters.dlTotal) || 0
-            );
+            const playlistUi = this.getPlaylistUiState(job);
+            const dlDone = playlistUi.downloaded;
+            const cvDone = playlistUi.converted;
+            const total  = playlistUi.total;
             const totalTxt = total > 0 ? total : '?';
-            const curIdx = (job.playlist && Number.isFinite(job.playlist.current))
-                ? (job.playlist.current + 1)
-                : (dlDone + 1);
             phaseDetails = `
                 <div class="phase-details">
                     <div class="phase-details__title">${currentPhaseText}</div>
                     <div class="phase-details__grid">
                         <span class="phase-details__item">
                             🎵 ${this.app.t('ui.current')}:
-                            <span class="phase-details__value">${curIdx}</span>
+                            <span class="phase-details__value">${playlistUi.processed}</span>
                         </span>
                         <span class="phase-details__item">
                             📥 ${this.app.t('ui.downloading')}:
@@ -1303,6 +1348,10 @@ updateJobUI(job, batchId = null) {
 
     let jobTitle = trackLabel || job.metadata?.originalName || job.metadata?.source || '';
 
+    if (job.metadata?.isPlaylist) {
+        jobTitle = this.playlistDisplayName(job);
+    }
+
     if (job.metadata?.source === 'spotify') {
         jobTitle = `🎵 ${job.metadata.spotifyTitle || this.app.t('ui.spotifyPlaylist')}`;
     }
@@ -1312,14 +1361,7 @@ updateJobUI(job, batchId = null) {
     {
         const nowTrack = this.uiNowTitle(job);
         if (job.metadata?.isPlaylist && nowTrack) {
-            const listName =
-                job.metadata?.frozenTitle
-                || (job.metadata?.source === 'spotify'
-                    ? (job.metadata?.spotifyTitle || this.app.t('ui.spotifyPlaylist'))
-                    : job.metadata?.source === 'apple_music'
-                    ? (job.metadata?.spotifyTitle || this.app.t('ui.appleMusicPlaylist'))
-                    : this.playlistSourceTitle(job));
-            jobTitle = `${this.app.escapeHtml(listName)} — ${this.app.escapeHtml(nowTrack)}`;
+            jobTitle = `${this.playlistDisplayName(job)} — ${nowTrack}`;
         }
     }
 
