@@ -921,19 +921,34 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       ),
       track: ytMeta?.track || "",
       album: toNFC(ytMeta?.album || ""),
-            release_year:
-              (ytMeta?.release_year && String(ytMeta.release_year)) ||
-              (ytMeta?.release_date &&
-                String(ytMeta.release_date).slice(0, 4)) ||
-              "",
-            upload_date: ytMeta?.upload_date || "",
-            webpage_url: ytMeta?.webpage_url || job.metadata.url,
-            thumbnail:
-              (ytMeta?.thumbnails && ytMeta.thumbnails.length
-                ? ytMeta.thumbnails[ytMeta.thumbnails.length - 1].url
-                : ytMeta?.thumbnail) || "",
-            playlist_title: toNFC(ytMeta?.playlist_title || "")
-          };
+      release_year:
+        (ytMeta?.release_year && String(ytMeta.release_year)) ||
+        (ytMeta?.release_date &&
+          String(ytMeta.release_date).slice(0, 4)) ||
+        "",
+      release_date: ytMeta?.release_date || "",
+      upload_year: ytMeta?.upload_date ? String(ytMeta.upload_date).slice(0, 4) : "",
+      upload_date: ytMeta?.upload_date || "",
+      track_number: Number(ytMeta?.track_number) || null,
+      disc_number: Number(ytMeta?.disc_number) || null,
+      track_total: Number(ytMeta?.track_total) || null,
+      disc_total: Number(ytMeta?.disc_total) || null,
+      genre:
+        ytMeta?.genre ||
+        (Array.isArray(ytMeta?.categories) ? ytMeta.categories[0] : "") ||
+        "",
+      copyright:
+        ytMeta?.copyright ||
+        ytMeta?.license ||
+        ytMeta?.license_name ||
+        "",
+      webpage_url: ytMeta?.webpage_url || job.metadata.url,
+      thumbnail:
+        (ytMeta?.thumbnails && ytMeta.thumbnails.length
+          ? ytMeta.thumbnails[ytMeta.thumbnails.length - 1].url
+          : ytMeta?.thumbnail) || "",
+      playlist_title: toNFC(ytMeta?.playlist_title || "")
+    };
       flat = applyGlobalMetaCleaning(flat);
       job.metadata.extracted = flat;
 
@@ -942,7 +957,18 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           title: flat.title,
           uploader: flat.uploader,
           thumbnail: flat.thumbnail,
-          webpage_url: flat.webpage_url
+          webpage_url: flat.webpage_url,
+          album: flat.album,
+          release_year: flat.release_year,
+          release_date: flat.release_date,
+          upload_year: flat.upload_year,
+          upload_date: flat.upload_date,
+          track_number: flat.track_number,
+          disc_number: flat.disc_number,
+          track_total: flat.track_total,
+          disc_total: flat.disc_total,
+          genre: flat.genre,
+          copyright: flat.copyright
         });
         if (id3Guess) {
           flat.artist = id3Guess.artist || flat.artist || "";
@@ -1094,6 +1120,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             .basename(filePath, path.extname(filePath))
             .replace(/^\d+\s*-\s*/, "");
           let title = toNFC(entry?.title || fallbackTitle);
+          const totalTracks = job.playlist?.total || totalGuess || 1;
 
           let fileMeta = {
             ...flat,
@@ -1112,11 +1139,46 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 ytMeta?.playlist_title ||
                 job.metadata.frozenTitle ||
                 ""),
+            release_year:
+              (entry?.release_year && String(entry.release_year)) ||
+              (entry?.release_date ? String(entry.release_date).slice(0, 4) : "") ||
+              flat.release_year ||
+              "",
+            release_date:
+              entry?.release_date ||
+              flat.release_date ||
+              entry?.upload_date ||
+              "",
+            upload_year:
+              (entry?.upload_date ? String(entry.upload_date).slice(0, 4) : "") ||
+              flat.upload_year ||
+              "",
+            upload_date: entry?.upload_date || flat.upload_date || "",
+            track_number:
+              Number(entry?.track_number) ||
+              (Number.isFinite(playlistIndex) ? Number(playlistIndex) : null),
+            disc_number: Number(entry?.disc_number) || null,
+            track_total:
+              Number(entry?.track_total) ||
+              (totalTracks > 0 ? Number(totalTracks) : null),
+            disc_total: Number(entry?.disc_total) || null,
+            playlist_index:
+              Number.isFinite(playlistIndex) ? Number(playlistIndex) : null,
+            playlist_total: totalTracks > 0 ? Number(totalTracks) : null,
             webpage_url: entry?.webpage_url || entry?.url || flat.webpage_url,
-            genre: "",
+            genre:
+              entry?.genre ||
+              (Array.isArray(entry?.categories) ? entry.categories[0] : "") ||
+              flat.genre ||
+              "",
             label: "",
             publisher: "",
-            copyright: "",
+            copyright:
+              entry?.copyright ||
+              entry?.license ||
+              entry?.license_name ||
+              flat.copyright ||
+              "",
             album_artist: ""
           };
           fileMeta = applyGlobalMetaCleaning(fileMeta);
@@ -1188,7 +1250,20 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 title: fileMeta.title,
                 uploader: fileMeta.artist || fileMeta.uploader,
                 thumbnail: itemCover ? null : flat.thumbnail,
-                webpage_url: fileMeta.webpage_url
+                webpage_url: fileMeta.webpage_url,
+                album: fileMeta.album,
+                release_year: fileMeta.release_year,
+                release_date: fileMeta.release_date,
+                upload_year: fileMeta.upload_year,
+                upload_date: fileMeta.upload_date,
+                track_number: fileMeta.track_number,
+                disc_number: fileMeta.disc_number,
+                track_total: fileMeta.track_total,
+                disc_total: fileMeta.disc_total,
+                playlist_index: fileMeta.playlist_index,
+                playlist_total: fileMeta.playlist_total,
+                genre: fileMeta.genre,
+                copyright: fileMeta.copyright
               },
               { market: resolveMarket(), isPlaylist: true }
             );
@@ -1216,7 +1291,20 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 title: fileMeta.title,
                 uploader: fileMeta.artist || fileMeta.uploader,
                 thumbnail: itemCover ? null : flat.thumbnail,
-                webpage_url: fileMeta.webpage_url
+                webpage_url: fileMeta.webpage_url,
+                album: fileMeta.album,
+                release_year: fileMeta.release_year,
+                release_date: fileMeta.release_date,
+                upload_year: fileMeta.upload_year,
+                upload_date: fileMeta.upload_date,
+                track_number: fileMeta.track_number,
+                disc_number: fileMeta.disc_number,
+                track_total: fileMeta.track_total,
+                disc_total: fileMeta.disc_total,
+                playlist_index: fileMeta.playlist_index,
+                playlist_total: fileMeta.playlist_total,
+                genre: fileMeta.genre,
+                copyright: fileMeta.copyright
               });
 
               if (guess) {
@@ -1249,7 +1337,6 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             if (automixAlbum) fileMeta.album = automixAlbum;
           }
 
-          const totalTracks = job.playlist?.total || totalGuess || 1;
           const existingOut = findExistingOutput(
             `${jobId}_${stableIndex}`,
             format,
@@ -1697,7 +1784,20 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             title: singleMeta.title || singleMeta.track || "",
             uploader: singleMeta.artist || singleMeta.uploader || "",
             thumbnail: singleMeta.thumbnail || null,
-            webpage_url: singleMeta.webpage_url || job.metadata.url
+            webpage_url: singleMeta.webpage_url || job.metadata.url,
+            album: singleMeta.album,
+            release_year: singleMeta.release_year,
+            release_date: singleMeta.release_date,
+            upload_year: singleMeta.upload_year,
+            upload_date: singleMeta.upload_date,
+            track_number: singleMeta.track_number,
+            disc_number: singleMeta.disc_number,
+            track_total: singleMeta.track_total,
+            disc_total: singleMeta.disc_total,
+            playlist_index: singleMeta.playlist_index,
+            playlist_total: singleMeta.playlist_total,
+            genre: singleMeta.genre,
+            copyright: singleMeta.copyright
           },
           { market: resolveMarket(), isPlaylist: false }
         );
@@ -1761,7 +1861,20 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         if (ytRawTitle) {
           const fromRaw = buildId3FromYouTube({
             title: ytRawTitle,
-            uploader: singleMeta?.artist || singleMeta?.uploader || ""
+            uploader: singleMeta?.artist || singleMeta?.uploader || "",
+            album: singleMeta?.album,
+            release_year: singleMeta?.release_year,
+            release_date: singleMeta?.release_date,
+            upload_year: singleMeta?.upload_year,
+            upload_date: singleMeta?.upload_date,
+            track_number: singleMeta?.track_number,
+            disc_number: singleMeta?.disc_number,
+            track_total: singleMeta?.track_total,
+            disc_total: singleMeta?.disc_total,
+            playlist_index: singleMeta?.playlist_index,
+            playlist_total: singleMeta?.playlist_total,
+            genre: singleMeta?.genre,
+            copyright: singleMeta?.copyright
           });
           const ytPreferredTitle = fromRaw?.title || "";
           if (ytPreferredTitle) {
