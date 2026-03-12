@@ -499,6 +499,16 @@ function buildCommonMetaPairs(resolvedMeta, format) {
     metaPairs.URL = resolvedMeta.webpage_url;
   }
 
+  if (resolvedMeta.playlist_index) {
+    metaPairs.playlist_index = String(resolvedMeta.playlist_index);
+    metaPairs.PLAYLIST_INDEX = String(resolvedMeta.playlist_index);
+  }
+
+  if (resolvedMeta.playlist_total) {
+    metaPairs.playlist_total = String(resolvedMeta.playlist_total);
+    metaPairs.PLAYLIST_TOTAL = String(resolvedMeta.playlist_total);
+  }
+
   return metaPairs;
 }
 
@@ -1211,6 +1221,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     if (labelLike) metaPairs.publisher = labelLike;
 
     if (resolvedMeta.copyright) metaPairs.copyright = resolvedMeta.copyright;
+    if (resolvedMeta.playlist_index) metaPairs.playlist_index = String(resolvedMeta.playlist_index);
+    if (resolvedMeta.playlist_total) metaPairs.playlist_total = String(resolvedMeta.playlist_total);
 
     args.push("-map_metadata", "-1");
 
