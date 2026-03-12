@@ -243,6 +243,8 @@ export function buildRichId3v2Tags(meta = {}) {
   pushUserDefinedText(userDefinedText, "APPLE_CURRENCY", meta.apple_currency);
   pushUserDefinedText(userDefinedText, "APPLE_KIND", meta.apple_kind);
   pushUserDefinedText(userDefinedText, "ALBUM_ID", meta.album_id);
+  pushUserDefinedText(userDefinedText, "PLAYLIST_INDEX", meta.playlist_index);
+  pushUserDefinedText(userDefinedText, "PLAYLIST_TOTAL", meta.playlist_total);
   if (userDefinedText.length) tags.userDefinedText = userDefinedText;
 
   const userDefinedUrl = [];
