@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { resolveDownloadPathToAbs } from "./outputPaths.js";
 import { uniqueId } from "./utils.js";
@@ -8,14 +9,66 @@ export const spotifyMapTasks = new Map();
 export const spotifyDownloadTasks = new Map();
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
-const CACHE_DIR = path.resolve(BASE_DIR, "cache");
-const JOBS_STATE_FILE = path.join(CACHE_DIR, "jobs-state.json");
+const DEFAULT_CACHE_DIR = path.resolve(BASE_DIR, "cache");
 const JOBS_STATE_VERSION = 1;
 const GC_INTERVAL_MS = 60 * 60 * 1000;
 const PERSIST_INTERVAL_MS = 5 * 1000;
 const JOB_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const procByJob = new Map();
 let lastPersistedSnapshot = "";
+
+// Ensures cache directory is writable for job state persistence.
+function ensureWritableDir(dirPath) {
+  const target = String(dirPath || "").trim();
+  if (!target) return false;
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    fs.accessSync(target, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Builds candidate cache paths for job state persistence.
+function buildJobsStateCandidates() {
+  const envDir = String(process.env.JOBS_STATE_DIR || process.env.CACHE_DIR || "").trim();
+  const dirs = [
+    envDir || null,
+    DEFAULT_CACHE_DIR,
+    path.join(os.tmpdir(), "gharmonize-cache")
+  ].filter(Boolean);
+
+  return Array.from(new Set(dirs)).map((dirPath) => ({
+    dir: dirPath,
+    file: path.join(dirPath, "jobs-state.json")
+  }));
+}
+
+// Resolves readable and writable job state persistence paths.
+function resolveJobsStatePaths() {
+  const candidates = buildJobsStateCandidates();
+  const writable = candidates.find((candidate) => ensureWritableDir(candidate.dir)) || null;
+
+  if (writable && writable.dir !== DEFAULT_CACHE_DIR) {
+    console.warn(
+      `[store] Cache dir "${DEFAULT_CACHE_DIR}" is not writable, using "${writable.dir}" for jobs state persistence.`
+    );
+  }
+
+  if (!writable) {
+    console.warn("[store] No writable cache dir found, completed jobs persistence is disabled.");
+  }
+
+  return {
+    readFiles: candidates.map((candidate) => candidate.file),
+    writeFile: writable ? writable.file : null,
+    writeDir: writable ? writable.dir : null
+  };
+}
+
+const JOBS_STATE_PATHS = resolveJobsStatePaths();
+const JOBS_STATE_FILE = JOBS_STATE_PATHS.writeFile;
 
 function safeJsonClone(value, fallback = null) {
   if (value == null) return fallback;
@@ -86,6 +139,7 @@ function pickPersistedMetadata(metadata = {}) {
   return out;
 }
 
+// Serializes completed job for persisted job state storage.
 function serializeCompletedJob(job) {
   if (!job || job.status !== "completed") return null;
   if (!job.completedAt) {
@@ -116,6 +170,7 @@ function serializeCompletedJob(job) {
   };
 }
 
+// Collects completed jobs that still have accessible outputs.
 function collectPersistedJobs() {
   const items = [];
   for (const job of jobs.values()) {
@@ -134,6 +189,7 @@ function collectPersistedJobs() {
   return items;
 }
 
+// Builds persisted jobs payload for disk storage.
 function buildPersistedJobsPayload() {
   const items = collectPersistedJobs();
   return {
@@ -143,7 +199,10 @@ function buildPersistedJobsPayload() {
   };
 }
 
+// Writes completed jobs state to disk storage.
 function writePersistedJobs(force = false) {
+  if (!JOBS_STATE_FILE) return;
+
   cleanupCompletedJobsWithoutOutputs();
   const payload = buildPersistedJobsPayload();
   const snapshot = JSON.stringify({
@@ -156,7 +215,7 @@ function writePersistedJobs(force = false) {
   }
 
   try {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    fs.mkdirSync(JOBS_STATE_PATHS.writeDir, { recursive: true });
 
     if (!payload.jobs.length) {
       if (fs.existsSync(JOBS_STATE_FILE)) {
@@ -175,9 +234,18 @@ function writePersistedJobs(force = false) {
   }
 }
 
+// Loads completed jobs state from disk storage.
 function loadPersistedJobs() {
   try {
-    if (!fs.existsSync(JOBS_STATE_FILE)) {
+    const sourceFile = JOBS_STATE_PATHS.readFiles.find((filePath) => {
+      try {
+        return filePath && fs.existsSync(filePath);
+      } catch {
+        return false;
+      }
+    });
+
+    if (!sourceFile) {
       lastPersistedSnapshot = JSON.stringify({
         version: JOBS_STATE_VERSION,
         jobs: collectPersistedJobs(),
@@ -185,7 +253,7 @@ function loadPersistedJobs() {
       return;
     }
 
-    const raw = fs.readFileSync(JOBS_STATE_FILE, "utf8");
+    const raw = fs.readFileSync(sourceFile, "utf8");
     const parsed = JSON.parse(raw);
     const items = Array.isArray(parsed?.jobs) ? parsed.jobs : [];
 
@@ -229,11 +297,13 @@ function loadPersistedJobs() {
   });
 }
 
+// Resolves absolute output path from stored download path.
 function resolveOutputPath(downloadPath) {
   if (!downloadPath) return null;
   return resolveDownloadPathToAbs(downloadPath);
 }
 
+// Checks whether stored output path still exists on disk.
 function outputExists(downloadPath) {
   const abs = resolveOutputPath(downloadPath);
   if (!abs) return false;
