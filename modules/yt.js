@@ -21,6 +21,7 @@ const DEFAULT_HEADERS = getYouTubeHeaders();
 const SKIP_RE = /(private|members\s*only|copyright|blocked|region|geo|not\s+available|unavailable|age[-\s]?restricted|signin|sign\s*in|skipp?ed|removed)/i;
 const ERROR_WORD = /\berror\b/i;
 const DEFAULT_FRAGMENT_CONCURRENCY = 4;
+const MEDIA_OUTPUT_EXT_RE = /\.(mp4|webm|m4a|mp3|opus|mkv|mka|flac|wav|aac|ogg)$/i;
 const AUTOMIX_ALL_TIMEOUT =
   Number(process.env.AUTOMIX_ALL_TIMEOUT_MS || 25000);
 
@@ -87,6 +88,13 @@ function normalizeConcurrency(n) {
   const num = Number(n);
   if (!Number.isFinite(num) || num <= 0) return 4;
   return Math.max(1, Math.min(16, Math.round(num)));
+}
+
+// Checks whether yt-dlp destination should count as a media item.
+function isCountableMediaDestination(dest = "") {
+  const target = String(dest || "").trim().split("?")[0];
+  if (!target) return false;
+  return MEDIA_OUTPUT_EXT_RE.test(target);
 }
 
 // Runs with concurrency for the yt-dlp YouTube download pipeline.
@@ -1080,6 +1088,7 @@ if (opts.video) {
   return new Promise((resolve, reject) => {
     let stderrBuf = "";
     let downloadedCount = 0;
+    let activeDestinationIsMedia = false;
 
     const child = spawn(ytDlpBin, args);
     try { registerJobProcess(jobId, child); } catch {}
@@ -1095,52 +1104,51 @@ if (opts.video) {
 
     // Handles handle line in the yt-dlp YouTube download pipeline.
     const handleLine = (line) => {
-    if (!line) return;
-    if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
-    if (line.includes("[download] Destination:")) {
-    const m = line.match(/Destination:\s*(.+)$/i);
-    const dest = m ? m[1].trim() : "";
+      if (!line) return;
+      if (ERROR_WORD.test(line) || SKIP_RE.test(line)) bumpSkip(line);
+      if (line.includes("[download] Destination:")) {
+        const m = line.match(/Destination:\s*(.+)$/i);
+        const dest = m ? m[1].trim() : "";
+        activeDestinationIsMedia = isCountableMediaDestination(dest);
 
-    const isThumb = /\.(jpe?g|png|webp)$/i.test(dest);
+        if (activeDestinationIsMedia) {
+          downloadedCount++;
+          const logicalDone = opts.video
+            ? Math.min(totalCount, Math.ceil(downloadedCount / 2))
+            : Math.min(totalCount, downloadedCount);
 
-    if (!isThumb) {
-      downloadedCount++;
-      const logicalDone = opts.video
-        ? Math.min(totalCount, Math.ceil(downloadedCount / 2))
-        : Math.min(totalCount, downloadedCount);
+          const progress = (logicalDone / totalCount) * 100;
+          if (typeof opts.onFileDone === "function") {
+            let absPath = dest;
+            if (!path.isAbsolute(absPath)) {
+              absPath = path.join(playlistDir, dest);
+            }
 
-      const progress = (logicalDone / totalCount) * 100;
-      if (typeof opts.onFileDone === "function") {
-        let absPath = dest;
-        if (!path.isAbsolute(absPath)) {
-          absPath = path.join(playlistDir, dest);
-        }
+            const fileId = parseIdFromPath(absPath);
+            const playlistIndex = (fileId && idToIndex.has(fileId)) ? idToIndex.get(fileId) : parsePlaylistIndexFromPath(absPath);
+            try {
+              opts.onFileDone({
+                filePath: absPath,
+                playlistIndex,
+                id: fileId || null
+              });
+            } catch {}
+          }
 
-        const fileId = parseIdFromPath(absPath);
-        const playlistIndex = (fileId && idToIndex.has(fileId)) ? idToIndex.get(fileId) : parsePlaylistIndexFromPath(absPath);
-        try {
-          opts.onFileDone({
-            filePath: absPath,
-            playlistIndex,
-            id: fileId || null
+          if (progressCallback) progressCallback(progress);
+          emitEvent(progressCallback, opts, {
+            type: "file-done",
+            downloaded: logicalDone,
+            total: totalCount,
+            jobId
           });
-        } catch {}
+        }
+        return;
       }
-
-      if (progressCallback) progressCallback(progress);
-      emitEvent(progressCallback, opts, {
-        type: "file-done",
-        downloaded: logicalDone,
-        total: totalCount,
-        jobId
-      });
-    }
-    return;
-  }
-    const pctMatch = line.match(/(\d+(?:\.\d+)?)%/);
-    if (pctMatch && progressCallback) {
-    const filePct = parseFloat(pctMatch[1]);
-    const overall = (downloadedCount / totalCount) * 100 + (filePct / totalCount);
+      const pctMatch = line.match(/(\d+(?:\.\d+)?)%/);
+      if (pctMatch && progressCallback && activeDestinationIsMedia) {
+        const filePct = parseFloat(pctMatch[1]);
+        const overall = (downloadedCount / totalCount) * 100 + (filePct / totalCount);
         progressCallback(Math.min(100, overall));
       }
     };
@@ -1357,9 +1365,7 @@ async function downloadSelectedIdsParallel(
         const fallbackId = selectedIds[index];
         if (!fallbackId) return null;
         try {
-          const all = fs
-            .readdirSync(playlistDir)
-            .map((f) => path.join(playlistDir, f))
+          const all = getDownloadedFiles(playlistDir, true)
             .filter((p) => parseIdFromPath(p) === fallbackId);
           return all[0] || null;
         } catch {
@@ -1412,7 +1418,7 @@ async function downloadSelectedIdsParallel(
         if (line.includes("[download] Destination:")) {
           const m = line.match(/Destination:\s*(.+)$/i);
           const dest = m ? m[1].trim() : "";
-          if (dest && !/\.(jpe?g|png|webp)$/i.test(dest)) {
+          if (isCountableMediaDestination(dest)) {
             mediaDestAbs = path.isAbsolute(dest) ? dest : path.join(playlistDir, dest);
           }
         }
@@ -1665,6 +1671,7 @@ async function downloadStandard(
     let seenTotal = null;
     let downloadedFiles = 0;
     let curFilePct = 0;
+    let activeDestinationIsMedia = false;
 
     // Updates skip stats for the yt-dlp YouTube download pipeline.
     const updateSkipStats = () => {
@@ -1723,64 +1730,65 @@ async function downloadStandard(
 
     // Handles handle line in the yt-dlp YouTube download pipeline.
     const handleLine = (line) => {
-    if (!line) return;
+      if (!line) return;
 
-    if (ERROR_WORD.test(line) || SKIP_RE.test(line)) {
-      bumpSkipStd(line);
-    }
+      if (ERROR_WORD.test(line) || SKIP_RE.test(line)) {
+        bumpSkipStd(line);
+      }
 
-    if (destinationRe.test(line)) {
-      const m = line.match(/Destination:\s*(.+)$/i);
-      const dest = (m?.[1] || "").trim();
+      if (destinationRe.test(line)) {
+        const m = line.match(/Destination:\s*(.+)$/i);
+        const dest = (m?.[1] || "").trim();
+        activeDestinationIsMedia = isCountableMediaDestination(dest);
 
-      if (isPlaylist || isAutomix) {
-        downloadedFiles++;
+        if (activeDestinationIsMedia && (isPlaylist || isAutomix)) {
+          downloadedFiles++;
 
-        const total = seenTotal || downloadedFiles;
-        if (progressCallback) {
-          const progress = (downloadedFiles / total) * 100;
-          progressCallback(progress);
-        }
-
-        emitEvent(progressCallback, opts, {
-          type: "file-done",
-          downloaded: downloadedFiles,
-          total: seenTotal || downloadedFiles,
-          jobId
-        });
-
-        if (typeof opts.onFileDone === "function" && dest) {
-          let absPath = dest;
-          if (!path.isAbsolute(absPath)) {
-            const playlistDir = path.join(tempDir, jobId);
-            absPath = path.join(playlistDir, dest);
+          const total = seenTotal || downloadedFiles;
+          if (progressCallback) {
+            const progress = (downloadedFiles / total) * 100;
+            progressCallback(progress);
           }
 
-          const playlistIndex = parsePlaylistIndexFromPath(absPath);
-          try {
-            opts.onFileDone({
-              filePath: absPath,
-              playlistIndex
-            });
-          } catch {}
+          emitEvent(progressCallback, opts, {
+            type: "file-done",
+            downloaded: downloadedFiles,
+            total: seenTotal || downloadedFiles,
+            jobId
+          });
+
+          if (typeof opts.onFileDone === "function" && dest) {
+            let absPath = dest;
+            if (!path.isAbsolute(absPath)) {
+              const playlistDir = path.join(tempDir, jobId);
+              absPath = path.join(playlistDir, dest);
+            }
+
+            const playlistIndex = parsePlaylistIndexFromPath(absPath);
+            try {
+              opts.onFileDone({
+                filePath: absPath,
+                playlistIndex
+              });
+            } catch {}
+          }
         }
+        return;
       }
-      return;
-    }
 
-    const pctMatch = line.match(pctRe);
-    if (pctMatch) {
-      curFilePct = parseFloat(pctMatch[1]) || 0;
-      bumpProgress();
-    }
+      const pctMatch = line.match(pctRe);
+      if (pctMatch && activeDestinationIsMedia) {
+        curFilePct = parseFloat(pctMatch[1]) || 0;
+        bumpProgress();
+      }
 
-    const mItem = line.match(itemRe);
-    if (mItem) {
-      const idx = parseInt(mItem[1], 10);
-      const tot = parseInt(mItem[2], 10);
-      if (Number.isFinite(tot) && tot > 0) seenTotal = tot;
-    }
-  };
+      const mItem = line.match(itemRe);
+      if (mItem) {
+        const idx = parseInt(mItem[1], 10);
+        const tot = parseInt(mItem[2], 10);
+        if (Number.isFinite(tot) && tot > 0) seenTotal = tot;
+      }
+    };
     child.stdout.on("data", (d) => {
       if (abortIfCanceled()) return;
       const s = d.toString();
@@ -1865,10 +1873,8 @@ async function downloadStandard(
 function getDownloadedFiles(directory, isPlaylist = false, jobId = null) {
   if (!fs.existsSync(directory)) return [];
 
-  const audioVideoExtensions = /\.(mp4|webm|m4a|mp3|opus|mkv|mka|flac|wav|aac|ogg)$/i;
-
   let files = fs.readdirSync(directory)
-    .filter(file => audioVideoExtensions.test(file))
+    .filter(file => MEDIA_OUTPUT_EXT_RE.test(file))
     .map(file => path.join(directory, file));
 
   if (isPlaylist) {
@@ -1877,12 +1883,12 @@ function getDownloadedFiles(directory, isPlaylist = false, jobId = null) {
       const bNum = parsePlaylistIndexFromPath(b) || 0;
       return aNum - bNum;
     });
-    } else if (jobId) {
-      const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const re = new RegExp(`^${escapeRe(jobId)}(?:\\.|\\s-\\s)`);
-      files = files.filter(file => re.test(path.basename(file)));
-    }
-    return files;
+  } else if (jobId) {
+    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`^${escapeRe(jobId)}(?:\\.|\\s-\\s)`);
+    files = files.filter(file => re.test(path.basename(file)));
+  }
+  return files;
 }
 
 // Parses playlist data index from path for the yt-dlp YouTube download pipeline.
@@ -1930,6 +1936,8 @@ export async function probeYoutubeMusicMeta(input) {
   const album  = toNFC(d.album  || "");
   const year   = (d.release_year && String(d.release_year)) || "";
   const date   = d.release_date || d.upload_date || "";
+  const genre  = d.genre || (Array.isArray(d.categories) ? d.categories[0] : "") || "";
+  const copyright = d.copyright || d.license || d.license_name || "";
   const cover  = (Array.isArray(d.thumbnails) && d.thumbnails.length
     ? d.thumbnails.at(-1).url : d.thumbnail || null);
 
@@ -1942,6 +1950,14 @@ export async function probeYoutubeMusicMeta(input) {
     album_artist: artist || "",
     release_year: year || (date ? String(date).slice(0,4) : ""),
     release_date: date || "",
+    upload_year: d.upload_date ? String(d.upload_date).slice(0, 4) : "",
+    upload_date: d.upload_date || "",
+    track_number: Number(d.track_number) || null,
+    disc_number: Number(d.disc_number) || null,
+    track_total: Number(d.track_total) || null,
+    disc_total: Number(d.disc_total) || null,
+    genre: genre || "",
+    copyright: copyright || "",
     isrc: d.isrc || "",
     coverUrl: cover || "",
     webpage_url: d.webpage_url || d.original_url || url
