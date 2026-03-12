@@ -94,26 +94,77 @@ function sanitizeYouTubeArtist(a = "") {
   return /^(youtube|youtube\s+mix)$/i.test(a.trim()) ? "" : a;
 }
 
+function trimMetaValue(value) {
+  if (value == null) return "";
+  return String(value).trim();
+}
+
+function toPositiveIntOrNull(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
 // Builds ID3 metadata from you tube for core application logic.
 export function buildId3FromYouTube(ytLikeMeta) {
   const spl = splitArtistTitle(ytLikeMeta?.title, ytLikeMeta?.uploader);
   const artist = sanitizeYouTubeArtist(spl.artist);
   const title  = stripTailAfterDelims(spl.title);
+  const releaseDate = trimMetaValue(
+    ytLikeMeta?.release_date ||
+    ytLikeMeta?.upload_date
+  );
+  const releaseYear = trimMetaValue(
+    ytLikeMeta?.release_year ||
+    ytLikeMeta?.upload_year ||
+    (releaseDate ? releaseDate.slice(0, 4) : "")
+  );
+  const genre = trimMetaValue(
+    ytLikeMeta?.genre ||
+    (Array.isArray(ytLikeMeta?.categories) ? ytLikeMeta.categories[0] : "") ||
+    (Array.isArray(ytLikeMeta?.tags) ? ytLikeMeta.tags[0] : "")
+  );
+  const copyright = trimMetaValue(
+    ytLikeMeta?.copyright ||
+    ytLikeMeta?.license ||
+    ytLikeMeta?.license_name
+  );
+  const playlistIndex = toPositiveIntOrNull(
+    ytLikeMeta?.playlist_index ??
+    ytLikeMeta?.index
+  );
+  const playlistTotal = toPositiveIntOrNull(
+    ytLikeMeta?.playlist_total ??
+    ytLikeMeta?.entry_count
+  );
+  const trackNumber =
+    toPositiveIntOrNull(ytLikeMeta?.track_number) ||
+    playlistIndex;
+  const trackTotal =
+    toPositiveIntOrNull(ytLikeMeta?.track_total) ||
+    playlistTotal;
+
   return {
     track: title || "",
     title: title || "",
     artist: artist || "",
     uploader: artist || "",
-    album: "",
-    release_year: "",
-    release_date: "",
-    track_number: null,
-    disc_number: null,
-    track_total: null,
-    disc_total: null,
-    isrc: "",
-    coverUrl: ytLikeMeta?.thumbnail || null,
-    spotifyUrl: "",
+    album: trimMetaValue(ytLikeMeta?.album),
+    release_year: releaseYear,
+    release_date: releaseDate,
+    upload_year: trimMetaValue(ytLikeMeta?.upload_year),
+    upload_date: trimMetaValue(ytLikeMeta?.upload_date),
+    track_number: trackNumber,
+    disc_number: toPositiveIntOrNull(ytLikeMeta?.disc_number),
+    track_total: trackTotal,
+    disc_total: toPositiveIntOrNull(ytLikeMeta?.disc_total),
+    playlist_index: playlistIndex,
+    playlist_total: playlistTotal,
+    genre,
+    copyright,
+    isrc: trimMetaValue(ytLikeMeta?.isrc),
+    coverUrl: ytLikeMeta?.coverUrl || ytLikeMeta?.thumbnail || null,
+    spotifyUrl: trimMetaValue(ytLikeMeta?.spotifyUrl || ytLikeMeta?.spUrl),
     webpage_url: ytLikeMeta?.webpage_url || ""
   };
 }
