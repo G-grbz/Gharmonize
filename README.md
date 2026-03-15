@@ -61,7 +61,7 @@ npm start
 
 * **YouTube / YouTube Music** downloads (single, playlist, mixes) via **yt-dlp**
 * **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** support (download/convert flows)
-* **Spotify integration** for metadata + mapping to YouTube (track / playlist / album)
+* **Spotify & Apple Music integration for metadata + mapping to YouTube (track / playlist / album)**
 * **Audio & video conversion** powered by **ffmpeg**, with reliability-first presets
 * **Fix A/V sync issues** using **FPS adjustment presets** for **AC3 / EAC3 / AAC**
 * **GPU acceleration** for local video transcoding: **NVENC**, **VAAPI**, **Intel QSV**
