@@ -11,6 +11,7 @@ const APPLE_COLLECTION_TRACKS_CACHE = new Map();
 const APPLE_COLLECTION_TRACKS_CACHE_MAX = 300;
 const APPLE_PAGE_CACHE = new Map();
 const APPLE_PAGE_CACHE_MAX = 150;
+const APPLE_TRACK_LOOKUP_BATCH_CONCURRENCY = 4;
 
 const APPLE_WEB_HEADERS = Object.freeze({
   "user-agent":
@@ -782,34 +783,47 @@ async function lookupAppleTracksByIds(trackIds, { market } = {}) {
     missing.push(id);
   }
 
+  const chunks = [];
   for (let i = 0; i < missing.length; i += 50) {
     const chunk = missing.slice(i, i + 50);
-    if (!chunk.length) continue;
+    if (chunk.length) chunks.push(chunk);
+  }
 
-    const params = new URLSearchParams({
-      id: chunk.join(",")
-    });
+  for (let i = 0; i < chunks.length; i += APPLE_TRACK_LOOKUP_BATCH_CONCURRENCY) {
+    const batch = chunks.slice(i, i + APPLE_TRACK_LOOKUP_BATCH_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (chunk) => {
+        const params = new URLSearchParams({
+          id: chunk.join(",")
+        });
 
-    if (mkt && /^[A-Z]{2}$/i.test(mkt)) {
-      params.set("country", mkt.toLowerCase());
-    }
+        if (mkt && /^[A-Z]{2}$/i.test(mkt)) {
+          params.set("country", mkt.toLowerCase());
+        }
 
-    const results = await fetchAppleLookup(params);
-    const byId = new Map(
-      results
-        .filter((item) => numberOrNull(item?.trackId))
-        .map((item) => [Math.round(numberOrNull(item.trackId)), item])
+        const results = await fetchAppleLookup(params);
+        return {
+          chunk,
+          byId: new Map(
+            results
+              .filter((item) => numberOrNull(item?.trackId))
+              .map((item) => [Math.round(numberOrNull(item.trackId)), item])
+          )
+        };
+      })
     );
 
-    for (const trackId of chunk) {
-      const hit = byId.get(trackId) || null;
-      cacheSet(
-        APPLE_TRACK_LOOKUP_CACHE,
-        buildTrackLookupKey(trackId, mkt),
-        hit,
-        APPLE_TRACK_LOOKUP_CACHE_MAX
-      );
-      if (hit) out.push(hit);
+    for (const { chunk, byId } of batchResults) {
+      for (const trackId of chunk) {
+        const hit = byId.get(trackId) || null;
+        cacheSet(
+          APPLE_TRACK_LOOKUP_CACHE,
+          buildTrackLookupKey(trackId, mkt),
+          hit,
+          APPLE_TRACK_LOOKUP_CACHE_MAX
+        );
+        if (hit) out.push(hit);
+      }
     }
   }
 
@@ -1115,29 +1129,12 @@ export async function resolveAppleMusicUrlLite(url, { market } = {}) {
         .map((track) => [Math.round(numberOrNull(track.trackId)), track])
     );
 
-    const collectionCache = new Map();
     const items = [];
 
     for (const entry of playlistTracks) {
       const trackId = appleTrackIdFromUrl(entry?.url || "");
       const track = trackId ? lookupById.get(trackId) || null : null;
-      let collection = null;
-
-      if (track?.collectionId) {
-        const collectionId = Math.round(numberOrNull(track.collectionId));
-        if (collectionCache.has(collectionId)) {
-          collection = collectionCache.get(collectionId);
-        } else {
-          try {
-            collection = await lookupAppleCollection(collectionId, {
-              market: effectiveMarket
-            });
-          } catch {}
-          collectionCache.set(collectionId, collection || null);
-        }
-      }
-
-      const meta = track ? appleTrackToMeta(track, collection) : null;
+      const meta = track ? appleTrackToMeta(track) : null;
       const fallback = {
         title: decodeHtmlEntities(entry?.name || ""),
         duration_ms: parseIsoDurationMs(entry?.duration || ""),
