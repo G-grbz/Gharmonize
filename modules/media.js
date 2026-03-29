@@ -885,6 +885,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
   const volumeGain =
     volumeGainRaw != null ? Number(volumeGainRaw) : null;
+  const hasExplicitAudioSelection = Array.isArray(selectedStreams?.audio);
   const selectedAudioStreams = Array.isArray(selectedStreams?.audio)
     ? selectedStreams.audio
     : [];
@@ -1188,6 +1189,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     if (!isVideo && !canEmbedCover) {
       if (selectedAudioStreams.length > 0) {
         args.push("-map", `0:${selectedAudioStreams[0]}`);
+      } else if (!hasExplicitAudioSelection) {
+        args.push("-map", "0:a:0");
       }
       args.push("-vn");
     }
@@ -1272,7 +1275,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     if (canEmbedCover) {
       if (selectedAudioStreams.length > 0) {
         args.push("-map", `0:${selectedAudioStreams[0]}`);
-      } else {
+      } else if (!hasExplicitAudioSelection) {
         args.push("-map", "0:a");
       }
 
@@ -1306,8 +1309,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         args.push("-map", `0:${aIdx}`);
       }
     });
-  } else {
+  } else if (!hasExplicitAudioSelection) {
     args.push("-map", "0:a:0");
+  } else {
+    args.push("-an");
   }
 
   if (selectedSubtitleStreams.length > 0) {

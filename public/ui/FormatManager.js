@@ -66,15 +66,15 @@ export class FormatManager {
         const sampleRateGroup = document.querySelector('.form-group:has(#sampleRateSelect)');
         const lyricsGroup = document.getElementById('lyricsCheckboxContainer');
         const embedLyricsGroup = document.getElementById('embedLyricsCheckboxContainer');
-        const isMp4 = format === 'mp4';
+        const isVideoOutput = format === 'mp4' || format === 'mkv';
         const isEac3Ac3 = format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts';
         const isFlacWav = format === 'flac' || format === 'wav';
         const isFlac = format === 'flac';
 
         const videoSettingsContainer = document.getElementById('videoSettingsContainer');
         if (videoSettingsContainer) {
-            videoSettingsContainer.style.display = isMp4 ? 'flex' : 'none';
-            if (isMp4) {
+            videoSettingsContainer.style.display = isVideoOutput ? 'flex' : 'none';
+            if (isVideoOutput) {
             const vsm = this.app.videoSettingsManager || this.app.videoManager;
             if (vsm?.modalOpen && typeof vsm.showEncoderSpecificSettings === 'function') {
                 vsm.showEncoderSpecificSettings(vsm.videoSettings?.hwaccel || 'off');
@@ -84,14 +84,14 @@ export class FormatManager {
         }
 
         if (sampleRateGroup) {
-            sampleRateGroup.style.display = (isMp4) ? 'none' : '';
+            sampleRateGroup.style.display = isVideoOutput ? 'none' : '';
         }
 
         if (lyricsGroup) {
-            lyricsGroup.style.display = (isMp4 || isEac3Ac3) ? 'none' : '';
+            lyricsGroup.style.display = (isVideoOutput || isEac3Ac3) ? 'none' : '';
         }
         if (embedLyricsGroup) {
-            const canShowLyrics = !(isMp4 || isEac3Ac3);
+            const canShowLyrics = !(isVideoOutput || isEac3Ac3);
             embedLyricsGroup.style.display = canShowLyrics ? 'flex' : 'none';
         }
         let bitDepthGroup = document.getElementById('bitDepthGroup');

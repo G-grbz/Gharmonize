@@ -45,6 +45,37 @@ export async function probeMediaFile(filePath) {
   });
 }
 
+// Parses ffprobe frame rate values like "24000/1001" or "24".
+function parseFrameRateValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  if (raw.includes("/")) {
+    const [numRaw, denRaw] = raw.split("/", 2);
+    const num = Number(numRaw);
+    const den = Number(denRaw);
+    if (Number.isFinite(num) && Number.isFinite(den) && den > 0) {
+      const fps = num / den;
+      return Number.isFinite(fps) && fps > 0 ? fps : null;
+    }
+    return null;
+  }
+
+  const fps = Number(raw);
+  return Number.isFinite(fps) && fps > 0 ? fps : null;
+}
+
+// Extracts a normalized fps value from ffprobe stream metadata.
+function pickStreamFps(stream) {
+  const fps =
+    parseFrameRateValue(stream?.avg_frame_rate) ??
+    parseFrameRateValue(stream?.r_frame_rate);
+
+  return Number.isFinite(fps) && fps > 0
+    ? Number(fps.toFixed(3))
+    : null;
+}
+
 // Parses streams for core application logic.
 export function parseStreams(probeData) {
   const streams = probeData.streams || [];
@@ -63,6 +94,7 @@ export function parseStreams(probeData) {
       sample_rate: stream.sample_rate,
       bit_rate: stream.bit_rate,
       duration: stream.duration,
+      fps: pickStreamFps(stream),
       default: stream.disposition?.default === 1,
       forced: stream.disposition?.forced === 1
     };

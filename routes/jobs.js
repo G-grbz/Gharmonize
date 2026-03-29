@@ -1373,6 +1373,7 @@ router.get("/api/jobs", requireAuth, (req, res) => {
       bitrate: j.bitrate,
       videoSettings: j.videoSettings || null,
       createdAt: j.createdAt,
+      completedAt: j.completedAt || null,
       resultPath: j.resultPath || null,
       zipPath: j.zipPath || null,
       playlist: j.playlist || null,
@@ -1393,6 +1394,7 @@ router.get("/api/jobs", requireAuth, (req, res) => {
         originalName: j.metadata?.originalName || null,
         includeLyrics: !!j.metadata?.includeLyrics,
         lyricsStats: j.metadata?.lyricsStats || null,
+        selectedStreams: j.metadata?.selectedStreams || null,
         frozenEntries: Array.isArray(j.metadata?.frozenEntries)
           ? j.metadata.frozenEntries.map(e => ({
               index: e.index,
@@ -1439,6 +1441,7 @@ router.get("/api/stream", requireAuth, (req, res) => {
       resultPath: j.resultPath || null,
       zipPath: j.zipPath || null,
       createdAt: j.createdAt,
+      completedAt: j.completedAt || null,
       skippedCount: j.skippedCount || 0,
       errorsCount: j.errorsCount || 0,
       playlist: j.playlist || null,
@@ -1457,6 +1460,7 @@ router.get("/api/stream", requireAuth, (req, res) => {
       originalName: j.metadata?.originalName || null,
       includeLyrics: !!j.metadata?.includeLyrics,
       lyricsStats: j.metadata?.lyricsStats || null,
+      selectedStreams: j.metadata?.selectedStreams || null,
       frozenEntries: Array.isArray(j.metadata?.frozenEntries)
         ? j.metadata.frozenEntries.map(e => ({
             index: e.index,

@@ -402,6 +402,16 @@ export function createJob(initial = {}) {
 // Returns job state used for core application logic.
 export function getJob(id) { return jobs.get(id); }
 
+// Marks a job as completed once and preserves the original completion time.
+export function markJobCompleted(job, completedAt = new Date().toISOString()) {
+  if (!job) return job;
+  job.status = "completed";
+  if (!job.completedAt) {
+    job.completedAt = completedAt;
+  }
+  return job;
+}
+
 // Handles register job state process in core application logic.
 export function registerJobProcess(jobId, child) {
   if (!jobId || !child) return;

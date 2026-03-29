@@ -418,6 +418,23 @@ export class JobsPanelManager {
         return texts[channels] || channels;
     }
 
+    // Formats fps text used for the browser UI layer.
+    formatFpsValue(fps) {
+        const n = Number(fps);
+        return Number.isFinite(n) && n > 0
+            ? n.toFixed(3).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1').replace(/\.$/, '')
+            : '';
+    }
+
+    // Returns selected or source fps for the browser UI layer.
+    getDisplayedVideoFps(job) {
+        const selectedFps = String(job?.videoSettings?.fps || '').trim();
+        if (selectedFps && selectedFps !== 'source') {
+            return this.formatFpsValue(selectedFps);
+        }
+        return this.formatFpsValue(job?.metadata?.selectedStreams?.sourceVideoFps);
+    }
+
     // Handles source pill in the browser UI layer.
     sourcePill(j) {
         const s = j.metadata?.source || 'file';
@@ -696,9 +713,11 @@ export class JobsPanelManager {
 
             if (status === 'completed') {
                 const knownTs = this.completedAtCache.get(job.id);
-                const ts = job.completedAt || knownTs || Date.now();
-                job.completedAt = ts;
-                this.completedAtCache.set(job.id, ts);
+                const ts = job.completedAt || knownTs || null;
+                if (ts) {
+                    job.completedAt = ts;
+                    this.completedAtCache.set(job.id, ts);
+                }
 
                 let keep = true;
 
@@ -1098,6 +1117,7 @@ export class JobsPanelManager {
         const sampleRateEmoji = '📡';
         const channelsEmoji = '🎚️';
         const bitrateEmoji = '📶';
+        const videoFpsText = this.getDisplayedVideoFps(j);
 
         const skippedCount = this.computeSkippedPanel(j);
         const skippedKeywords = /(private|izin|skipp?ed|unavailable|atlan(?:d|an)|blocked|copyright|region|geo)/i;
@@ -1154,8 +1174,8 @@ export class JobsPanelManager {
                             ${this.getHwaccelIcon(j.videoSettings.hwaccel)}
                         </span>
                     ` : ''}
-                    ${j.videoSettings?.fps && j.videoSettings.fps !== 'source' ?
-                        `<span class="pill" title="FPS">${fpsEmoji} ${j.videoSettings.fps} ${this.t('ui.fps') || 'FPS'}</span>` : ''}
+                    ${videoFpsText ?
+                        `<span class="pill" title="FPS">${fpsEmoji} ${videoFpsText} ${this.t('ui.fps') || 'FPS'}</span>` : ''}
                     ${j.videoSettings?.audioChannels && j.videoSettings.audioChannels !== 'original' ?
                         `<span class="pill" title="${this.t('label.stereoConvert')}">
                             ${channelsEmoji} ${this.getChannelsText(j.videoSettings.audioChannels)}

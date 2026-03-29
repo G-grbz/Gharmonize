@@ -11,7 +11,7 @@ import { sanitizeFilename, normalizeTitle, parseIdFromPath } from "./utils.js"
 import { convertMedia } from "./media.js";
 import "dotenv/config";
 import { spawn as spawnChild } from "child_process";
-import { jobs, registerJobProcess } from "./store.js";
+import { jobs, registerJobProcess, markJobCompleted } from "./store.js";
 import { toDownloadPath } from "./outputPaths.js";
 
 function isMappedMusicSource(source = "") {
@@ -497,7 +497,7 @@ export async function processYouTubeVideoJob(job, {
               (job.downloadProgress + (job.convertProgress || 0)) / 2
             );
 
-            if (String(format || "").toLowerCase() === "mp4") {
+            if (isVideoFormat(format)) {
               const label = [artistRaw, titleRaw]
                 .map((s) => String(s || "").trim())
                 .filter(Boolean)
@@ -533,7 +533,7 @@ export async function processYouTubeVideoJob(job, {
 
     job.counters.cvDone = sorted.length;
     job.resultPath = results;
-    job.status = "completed";
+    markJobCompleted(job);
     job.progress = 100;
     job.downloadProgress = 100;
     job.convertProgress = 100;
@@ -591,7 +591,7 @@ export async function processYouTubeVideoJob(job, {
     job.counters.cvTotal  = 1;
     job.counters.cvDone   = 1;
     job.resultPath        = downloadPath;
-    job.status            = "completed";
+    markJobCompleted(job);
     job.progress          = 100;
     job.downloadProgress  = 100;
     job.convertProgress   = 100;
@@ -622,7 +622,7 @@ export async function processYouTubeVideoJob(job, {
           (job.downloadProgress + (job.convertProgress || 0)) / 2
         );
 
-        if (String(format || "").toLowerCase() === "mp4") {
+        if (isVideoFormat(format)) {
           const label = [artistRaw, titleRaw]
             .map((s) => String(s || "").trim())
             .filter(Boolean)
@@ -654,7 +654,7 @@ export async function processYouTubeVideoJob(job, {
     job.counters.cvTotal  = 1;
     job.counters.cvDone   = 1;
     job.resultPath = convResult.outputPath;
-    job.status = "completed";
+    markJobCompleted(job);
     job.progress = 100;
     job.downloadProgress = 100;
     job.convertProgress = 100;
@@ -1005,7 +1005,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
 
   job.counters.cvDone = sorted.length;
   job.resultPath = results;
-  job.status = "completed";
+  markJobCompleted(job);
   job.progress = 100;
   job.downloadProgress = 100;
   job.convertProgress = 100;

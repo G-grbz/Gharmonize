@@ -3,7 +3,7 @@ import fs from "fs";
 import archiver from "archiver";
 import { resolveId3StrictForYouTube } from "./tags.js";
 import { resolveMarket } from "./market.js";
-import { jobs, registerJobProcess, killJobProcesses } from "./store.js";
+import { jobs, registerJobProcess, killJobProcesses, markJobCompleted } from "./store.js";
 import { sanitizeFilename, toNFC, normalizeTitle, parseIdFromPath } from "./utils.js";
 import { processYouTubeVideoJob, qualityToHeight } from "./video.js";
 import {
@@ -824,7 +824,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                   (job.downloadProgress + job.convertProgress) / 2
                 );
 
-                if (String(format || "").toLowerCase() === "mp4") {
+                if (isVideoFormat(format)) {
                   const label = [entry?.uploader || entry?.artist || "", title]
                     .map((s) => String(s || "").trim())
                     .filter(Boolean)
@@ -911,7 +911,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         );
       }
 
-      job.status = "completed";
+      markJobCompleted(job);
       job.progress = 100;
       job.downloadProgress = 100;
       job.convertProgress = 100;
@@ -1432,7 +1432,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                     (job.downloadProgress + job.convertProgress) / 2
                   );
 
-                  if (String(format || "").toLowerCase() === "mp4") {
+                  if (isVideoFormat(format)) {
                     const label = [
                       fileMeta?.artist || fileMeta?.uploader || "",
                       fileMeta?.track || fileMeta?.title || ""
@@ -1717,7 +1717,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           updateLyricsStatsLive(doneCount, totalCount);
         }
 
-        job.status = "completed";
+        markJobCompleted(job);
         job.progress = 100;
         job.downloadProgress = 100;
         job.convertProgress = 100;
@@ -2054,7 +2054,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
       job.resultPath = results.length === 1 ? results[0] : results;
 
-      job.status = "completed";
+      markJobCompleted(job);
       job.progress = 100;
       job.downloadProgress = 100;
       job.convertProgress = 100;
@@ -2114,7 +2114,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               (job.downloadProgress + job.convertProgress) / 2
             );
 
-            if (String(format || "").toLowerCase() === "mp4") {
+            if (isVideoFormat(format)) {
               const label = [
                 singleMeta?.artist || singleMeta?.uploader || "",
                 singleMeta?.track || singleMeta?.title || ""
@@ -2331,7 +2331,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       updateLyricsStatsLive(1, 1);
     }
 
-    job.status = "completed";
+    markJobCompleted(job);
     job.progress = 100;
     job.downloadProgress = 100;
     job.convertProgress = 100;

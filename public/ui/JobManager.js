@@ -598,6 +598,23 @@ computeProg(job) {
        return texts[channels] || channels;
    }
 
+   // Formats fps text used for the browser UI layer.
+   formatFpsValue(fps) {
+    const n = Number(fps);
+    return Number.isFinite(n) && n > 0
+        ? n.toFixed(3).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1').replace(/\.$/, '')
+        : '';
+   }
+
+   // Returns selected or source fps for the browser UI layer.
+   getDisplayedVideoFps(job) {
+    const selectedFps = String(job?.videoSettings?.fps || '').trim();
+    if (selectedFps && selectedFps !== 'source') {
+        return this.formatFpsValue(selectedFps);
+    }
+    return this.formatFpsValue(job?.metadata?.selectedStreams?.sourceVideoFps);
+   }
+
    // Returns hwaccel icon used for the browser UI layer.
    getHwaccelIcon(hwaccel) {
     const icons = {
@@ -697,7 +714,7 @@ updateJobUI(job, batchId = null) {
 
     if (statusNorm === 'completed') {
         if (!job.completedAt) {
-            job.completedAt = prev?.completedAt || Date.now();
+            job.completedAt = prev?.completedAt || null;
         }
     } else if (prev?.completedAt && !job.completedAt) {
         job.completedAt = prev.completedAt;
@@ -1103,6 +1120,7 @@ updateJobUI(job, batchId = null) {
     const sampleRateEmoji = '📡';
     const fpsEmoji = '🎯';
     const channelsEmoji = '🎚️';
+    const videoFpsText = this.getDisplayedVideoFps(job);
     const basicCards = [];
     const formatFeatures = [];
     const featureCards = [];
@@ -1216,8 +1234,8 @@ updateJobUI(job, batchId = null) {
             videoFeatures.push(`<span class="info-feature">📏 ${sizeText}</span>`);
         }
 
-        if (job.videoSettings.fps && job.videoSettings.fps !== 'source') {
-            videoFeatures.push(`<span class="info-feature">🎯 ${job.videoSettings.fps} FPS</span>`);
+        if (videoFpsText) {
+            videoFeatures.push(`<span class="info-feature">🎯 ${videoFpsText} FPS</span>`);
         }
     }
 

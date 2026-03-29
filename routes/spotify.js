@@ -11,7 +11,7 @@ import {
   findSpotifyMetaById,
   findSpotifyMetaByQuery
 } from "../modules/spotify.js";
-import { spotifyMapTasks, jobs, killJobProcesses, createJob, registerJobProcess, getJobProcessCount } from "../modules/store.js";
+import { spotifyMapTasks, jobs, killJobProcesses, createJob, registerJobProcess, getJobProcessCount, markJobCompleted } from "../modules/store.js";
 import { convertMedia, downloadThumbnail, retagMediaFile } from "../modules/media.js";
 import archiver from "archiver";
 import { resolveMarket } from "../modules/market.js";
@@ -700,7 +700,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             );
             job.progress = Math.floor((job.downloadProgress + job.convertProgress) / 2);
 
-            if (String(format || "").toLowerCase() === "mp4") {
+            if (isVideoFormat(format)) {
               const label = [entry?.uploader || entry?.artist || "", entry?.title || ""]
                 .map((s) => String(s || "").trim())
                 .filter(Boolean)
@@ -712,7 +712,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           },
           fileMeta,
           itemCover,
-          (format === "mp4"),
+          isVideoFormat(format),
           outputDir,
           TEMP_DIR,
           {
@@ -966,7 +966,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     } else {
     }
 
-    job.status = "completed";
+    markJobCompleted(job);
     job.progress = 100;
     job.downloadProgress = 100;
     job.convertProgress = 100;
@@ -1196,7 +1196,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       (progress, details) => {
         job.progress = 80 + Math.floor(progress * 0.2);
 
-        if (String(format || "").toLowerCase() === "mp4") {
+        if (isVideoFormat(format)) {
           const label = [matchedItem?.uploader || matchedItem?.artist || "", matchedItem?.title || ""]
             .map((s) => String(s || "").trim())
             .filter(Boolean)
@@ -1206,7 +1206,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
           job.lastLog = buildLiveConvertLog(progress, details, label);
         }
       },
-      fileMeta, itemCover, (format === "mp4"),
+      fileMeta, itemCover, isVideoFormat(format),
       outputDir,
       TEMP_DIR,
       {
@@ -1229,7 +1229,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     );
 
     job.resultPath = result;
-    job.status = "completed";
+    markJobCompleted(job);
     job.progress = 100;
     job.phase = "completed"; job.currentPhase = "completed";
     job.playlist.done = 1;

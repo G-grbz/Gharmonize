@@ -58,6 +58,11 @@ export class UploadManager {
       const audioStreams = streams.audio || [];
       const subtitleStreams = streams.subtitle || [];
       const videoStreams = streams.video || [];
+      const primaryVideoStream =
+        videoStreams.find(s => s?.default) ||
+        videoStreams[0] ||
+        null;
+      const sourceVideoFps = primaryVideoStream?.fps ?? null;
 
       const hasVideo = videoStreams.length > 0;
       const hasMultipleAudio = audioStreams.length > 1;
@@ -80,6 +85,7 @@ export class UploadManager {
             subtitles: [],
             hasVideo,
             outputContainer: null,
+            sourceVideoFps,
             audioLanguages,
             subtitleLanguages
           };
@@ -100,6 +106,10 @@ export class UploadManager {
         currentFormat,
         fileName
       );
+
+      if (result) {
+        result.sourceVideoFps = sourceVideoFps;
+      }
 
       if (!result) {
         if (probeResult.finalPath) {
@@ -156,6 +166,49 @@ export class UploadManager {
     const safeFileName = fileName
       ? (this.app.escapeHtml?.(fileName) || fileName)
       : '';
+    const formatFps = (fps) => {
+      const n = Number(fps);
+      return Number.isFinite(n) && n > 0
+        ? n.toFixed(3).replace(/\.00$/, '').replace(/(\.\d*[1-9])0+$/, '$1').replace(/\.$/, '')
+        : '';
+    };
+    const previewMinusTenLabel = this.app.t('streamSelection.previewMinusTenSec') || '-10 sec';
+    const previewPlusTenLabel = this.app.t('streamSelection.previewPlusTenSec') || '+10 sec';
+    const previewPlusMinuteLabel = this.app.t('streamSelection.previewPlusOneMin') || '+1 min';
+    const previewEndAutoLabel = this.app.t('streamSelection.previewEndAuto') || 'Start + 1 min';
+    const pad2 = (n) => String(Math.max(0, Number(n) || 0)).padStart(2, '0');
+    const parseTimecodeParts = (timecode) => {
+      const m = String(timecode || '').trim().match(/^(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?$/);
+      if (!m) return { hours: 0, minutes: 0, seconds: 0 };
+      return {
+        hours: Number(m[1]) || 0,
+        minutes: Number(m[2]) || 0,
+        seconds: Number(m[3]) || 0
+      };
+    };
+    const renderPreviewTimeEditor = (idPrefix, label, defaultValue, extraActions = '') => {
+      const parts = parseTimecodeParts(defaultValue);
+      return `
+        <div class="preview-time-editor">
+          <div class="preview-time-editor__title">${label}</div>
+          <div class="preview-time-editor__row">
+            <div class="preview-time-editor__inputs">
+              <input type="number" class="preview-time-editor__input" id="${idPrefix}Hours" min="0" max="99" step="1" inputmode="numeric" value="${parts.hours}" aria-label="${label} ${this.app.t('ui.hours') || 'hours'}">
+              <span>:</span>
+              <input type="number" class="preview-time-editor__input" id="${idPrefix}Minutes" min="0" max="59" step="1" inputmode="numeric" value="${parts.minutes}" aria-label="${label} ${this.app.t('ui.minutes') || 'minutes'}">
+              <span>:</span>
+              <input type="number" class="preview-time-editor__input" id="${idPrefix}Seconds" min="0" max="59" step="1" inputmode="numeric" value="${parts.seconds}" aria-label="${label} ${this.app.t('ui.seconds') || 'seconds'}">
+            </div>
+            <div class="preview-time-editor__buttons">
+              <button type="button" class="btn-outline stream-selection-action-btn" data-preview-shift="${idPrefix}:-10">${previewMinusTenLabel}</button>
+              <button type="button" class="btn-outline stream-selection-action-btn" data-preview-shift="${idPrefix}:10">${previewPlusTenLabel}</button>
+              <button type="button" class="btn-outline stream-selection-action-btn" data-preview-shift="${idPrefix}:60">${previewPlusMinuteLabel}</button>
+              ${extraActions}
+            </div>
+          </div>
+        </div>
+      `;
+    };
 
     return new Promise((resolve) => {
       const modal = document.createElement('div');
@@ -191,22 +244,25 @@ export class UploadManager {
 
               <div class="stream-selection-section">
                 <h4>${this.app.t('streamSelection.previewTitle') || 'Önizleme (Test Encode)'}</h4>
-                <label class="stream-item" style="display:flex; gap:10px; align-items:center;">
+                <label class="stream-item stream-selection-preview-toggle">
                   <input type="checkbox" id="previewClipEnabled">
                   <span class="stream-info">
                     ${this.app.t('streamSelection.previewEnable') || 'Sadece seçtiğim aralıktan 1 dakikalık önizleme kodla'}
                   </span>
                 </label>
-                <div id="previewClipFields" style="margin-top:10px; display:none;">
-                  <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                    <label style="display:flex; gap:6px; align-items:center;">
-                      <span>${this.app.t('streamSelection.previewStart') || 'Başlangıç'}</span>
-                      <input type="text" id="previewClipStart" value="00:15:00" placeholder="00:15:00" style="width:110px;">
-                    </label>
-                    <label style="display:flex; gap:6px; align-items:center;">
-                      <span>${this.app.t('streamSelection.previewEnd') || 'Bitiş'}</span>
-                      <input type="text" id="previewClipEnd" value="00:16:00" placeholder="00:16:00" style="width:110px;">
-                    </label>
+                <div id="previewClipFields" class="stream-selection-preview-fields">
+                  <div class="stream-selection-preview-grid">
+                    ${renderPreviewTimeEditor(
+                      'previewClipStart',
+                      this.app.t('streamSelection.previewStart') || 'Başlangıç',
+                      '00:15:00'
+                    )}
+                    ${renderPreviewTimeEditor(
+                      'previewClipEnd',
+                      this.app.t('streamSelection.previewEnd') || 'Bitiş',
+                      '00:16:00',
+                      `<button type="button" class="btn-outline stream-selection-action-btn" id="previewClipEndFromStart">${previewEndAutoLabel}</button>`
+                    )}
                     <small style="opacity:.8;">
                       ${this.app.t('streamSelection.previewHint') || 'Format: HH:MM:SS (örn 00:15:00)'}
                     </small>
@@ -217,6 +273,10 @@ export class UploadManager {
               <div class="stream-selection-modal">
                 <div class="stream-selection-section">
                   <h4>${this.app.t('streamSelection.audioStreams') || 'Ses Kanalları'}</h4>
+                  <div class="stream-selection-actions">
+                    <button type="button" class="btn-outline stream-selection-action-btn" id="clearAudioSelectionBtn">${this.app.t('streamSelection.clearAudio') || 'Sesi Kaldır'}</button>
+                    <button type="button" class="btn-outline stream-selection-action-btn" id="resetAudioSelectionBtn">${this.app.t('streamSelection.defaultAudio') || 'Varsayılanı Seç'}</button>
+                  </div>
                   <div class="stream-list" id="audioStreamsList">
                     ${audioStreams.map(stream => `
                       <label class="stream-item">
@@ -267,7 +327,7 @@ export class UploadManager {
                   <h4>${this.app.t('streamSelection.videoInfo') || 'Video Bilgisi'}</h4>
                   <div class="video-info">
                     ${videoStreams.map(video => `
-                      <div>${video.codec_long} - ${video.bit_rate ? (video.bit_rate / 1000).toFixed(0) + ' kbps' : ''}</div>
+                      <div>${video.codec_long}${video.fps ? ` • ${formatFps(video.fps)} FPS` : ''}${video.bit_rate ? ` • ${(video.bit_rate / 1000).toFixed(0)} kbps` : ''}</div>
                     `).join('')}
                   </div>
                 </div>
@@ -319,11 +379,26 @@ export class UploadManager {
         const containerEl = modal.querySelector('input[name="outputContainer"]:checked');
         const outputContainer = containerEl ? containerEl.value : null;
         const finalContainer = outputContainer || currentFormat;
+        const isVideoOutput = ['mp4', 'mkv', 'webm', 'mov', 'avi'].includes(String(finalContainer || '').toLowerCase());
         const previewEnabled = !!modal.querySelector('#previewClipEnabled')?.checked;
-        const previewStart = (modal.querySelector('#previewClipStart')?.value || '').trim();
-        const previewEnd   = (modal.querySelector('#previewClipEnd')?.value || '').trim();
+        const readPreviewTimecode = (idPrefix) => {
+          const hours = Math.max(0, Number(modal.querySelector(`#${idPrefix}Hours`)?.value) || 0);
+          const minutes = Math.min(59, Math.max(0, Number(modal.querySelector(`#${idPrefix}Minutes`)?.value) || 0));
+          const seconds = Math.min(59, Math.max(0, Number(modal.querySelector(`#${idPrefix}Seconds`)?.value) || 0));
+          return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+        };
+        const previewStart = readPreviewTimecode('previewClipStart');
+        const previewEnd   = readPreviewTimecode('previewClipEnd');
         const isTimecode = (s) => /^\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(String(s || '').trim());
         let previewClip = null;
+        if (!isVideoOutput && selectedAudio.length === 0) {
+          this.app.showNotification(
+            this.app.t('streamSelection.pickAudioRequired') || 'Bu çıktı türü için en az bir ses kanalı seçmelisin.',
+            'error',
+            'error'
+          );
+          return;
+        }
         if (previewEnabled) {
           if (!isTimecode(previewStart) || !isTimecode(previewEnd)) {
             this.app.showNotification(
@@ -462,14 +537,68 @@ export class UploadManager {
 
       modal.querySelector('.modal-btn-confirm').addEventListener('click', confirmHandler);
       modal.querySelector('.modal-btn-cancel').addEventListener('click', cancelHandler);
+      const audioCheckboxes = Array.from(modal.querySelectorAll('.audio-stream-checkbox'));
+      const resetAudioSelection = () => {
+        const defaults = new Set(defaultSelection.audio || []);
+        audioCheckboxes.forEach((cb, index) => {
+          const value = parseInt(cb.value, 10);
+          cb.checked = defaults.size > 0 ? defaults.has(value) : index === 0;
+        });
+      };
+      modal.querySelector('#clearAudioSelectionBtn')?.addEventListener('click', () => {
+        audioCheckboxes.forEach(cb => { cb.checked = false; });
+      });
+      modal.querySelector('#resetAudioSelectionBtn')?.addEventListener('click', resetAudioSelection);
 
       const previewToggle = modal.querySelector('#previewClipEnabled');
       const previewFields = modal.querySelector('#previewClipFields');
+      const clampPreviewField = (input) => {
+        if (!input) return;
+        const min = Number(input.min || 0) || 0;
+        const max = Number(input.max || 99) || 99;
+        const raw = String(input.value ?? '').replace(/[^\d]/g, '');
+        const next = raw === '' ? min : Math.min(max, Math.max(min, Number(raw)));
+        input.value = String(next);
+      };
+      const readPreviewSeconds = (idPrefix) => {
+        const hours = Math.max(0, Number(modal.querySelector(`#${idPrefix}Hours`)?.value) || 0);
+        const minutes = Math.min(59, Math.max(0, Number(modal.querySelector(`#${idPrefix}Minutes`)?.value) || 0));
+        const seconds = Math.min(59, Math.max(0, Number(modal.querySelector(`#${idPrefix}Seconds`)?.value) || 0));
+        return (hours * 3600) + (minutes * 60) + seconds;
+      };
+      const writePreviewSeconds = (idPrefix, totalSeconds) => {
+        const safe = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+        const hours = Math.floor(safe / 3600);
+        const minutes = Math.floor((safe % 3600) / 60);
+        const seconds = safe % 60;
+        const hoursEl = modal.querySelector(`#${idPrefix}Hours`);
+        const minutesEl = modal.querySelector(`#${idPrefix}Minutes`);
+        const secondsEl = modal.querySelector(`#${idPrefix}Seconds`);
+        if (hoursEl) hoursEl.value = String(hours);
+        if (minutesEl) minutesEl.value = String(minutes);
+        if (secondsEl) secondsEl.value = String(seconds);
+      };
       if (previewToggle && previewFields) {
         previewToggle.addEventListener('change', () => {
-          previewFields.style.display = previewToggle.checked ? 'block' : 'none';
+          previewFields.classList.toggle('is-open', previewToggle.checked);
         });
       }
+      modal.querySelectorAll('[id^="previewClip"][id$="Hours"], [id^="previewClip"][id$="Minutes"], [id^="previewClip"][id$="Seconds"]').forEach((input) => {
+        input.addEventListener('input', () => clampPreviewField(input));
+        input.addEventListener('blur', () => clampPreviewField(input));
+        input.addEventListener('focus', () => input.select?.());
+      });
+      modal.querySelectorAll('[data-preview-shift]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const [idPrefix, deltaRaw] = String(btn.dataset.previewShift || '').split(':');
+          const delta = Number(deltaRaw || 0) || 0;
+          if (!idPrefix) return;
+          writePreviewSeconds(idPrefix, readPreviewSeconds(idPrefix) + delta);
+        });
+      });
+      modal.querySelector('#previewClipEndFromStart')?.addEventListener('click', () => {
+        writePreviewSeconds('previewClipEnd', readPreviewSeconds('previewClipStart') + 60);
+      });
 
       document.addEventListener('keydown', escHandler);
       backdrop.addEventListener('click', backdropHandler);
@@ -561,6 +690,7 @@ export class UploadManager {
                   audio: streamSelection.audio,
                   subtitles: streamSelection.subtitles,
                   hasVideo: streamSelection.hasVideo,
+                  sourceVideoFps: streamSelection.sourceVideoFps ?? null,
                   volumeGain: this.app.currentVolumeGain,
                   audioLanguages: streamSelection.audioLanguages,
                   subtitleLanguages: streamSelection.subtitleLanguages,
@@ -679,6 +809,7 @@ export class UploadManager {
                 audio: streamSelection.audio,
                 subtitles: streamSelection.subtitles,
                 hasVideo: streamSelection.hasVideo,
+                sourceVideoFps: streamSelection.sourceVideoFps ?? null,
                 audioLanguages: streamSelection.audioLanguages,
                 subtitleLanguages: streamSelection.subtitleLanguages,
                 previewClip: streamSelection.previewClip || null
@@ -735,6 +866,7 @@ export class UploadManager {
                 audio: streamSelection.audio,
                 subtitles: streamSelection.subtitles,
                 hasVideo: streamSelection.hasVideo,
+                sourceVideoFps: streamSelection.sourceVideoFps ?? null,
                 audioLanguages: streamSelection.audioLanguages,
                 subtitleLanguages: streamSelection.subtitleLanguages,
                 previewClip: streamSelection.previewClip || null
