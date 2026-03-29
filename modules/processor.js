@@ -19,6 +19,7 @@ import { buildId3FromYouTube } from "./tags.js";
 import { probeYoutubeMusicMeta } from "./yt.js";
 import { findSpotifyMetaByQuery } from "./spotify.js";
 import { findAppleTrackMetaByQuery } from "./apple.js";
+import { findDeezerTrackMetaByQuery } from "./deezer.js";
 import { downloadPlatformMedia } from "./platform.js";
 import {
   resolveJobOutputDir,
@@ -33,20 +34,27 @@ const TEMP_DIR = path.resolve(BASE_DIR, "temp");
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
+// Checks whether the source is a mapped music provider in core application logic.
 function isMappedMusicSource(source = "") {
   const value = String(source || "").toLowerCase();
-  return value === "spotify" || value === "apple_music";
+  return value === "spotify" || value === "apple_music" || value === "deezer";
 }
 
+// Builds the display label for mapped music providers in core application logic.
 function mappedMusicLabel(source = "") {
-  return String(source || "").toLowerCase() === "apple_music"
-    ? "Apple Music"
-    : "Spotify";
+  const value = String(source || "").toLowerCase();
+  if (value === "apple_music") return "Apple Music";
+  if (value === "deezer") return "Deezer";
+  return "Spotify";
 }
 
+// Builds playlist fallback titles for mapped music providers in core application logic.
 function mappedMusicPlaylistTitle(source = "", title = "") {
-  const fallback = String(source || "").toLowerCase() === "apple_music"
+  const value = String(source || "").toLowerCase();
+  const fallback = value === "apple_music"
     ? "Apple Music Playlist"
+    : value === "deezer"
+    ? "Deezer Playlist"
     : "Spotify Playlist";
   return toNFC(title || fallback);
 }
@@ -293,11 +301,16 @@ function mergeMeta(base, extra) {
   return base;
 }
 
+// Enriches generic metadata from Apple Music with Deezer fallback in core application logic.
 async function enrichMetaFromApple(base, {
   artist = "",
   title = "",
   market = "",
-  preferCover = false
+  preferCover = false,
+  preferTrackNumber = false,
+  preferTrackTotal = false,
+  preferDiscNumber = false,
+  preferDiscTotal = false
 } = {}) {
   if (process.env.APPLE_TAG_FALLBACK === "0") return base;
 
@@ -311,9 +324,31 @@ async function enrichMetaFromApple(base, {
       market,
       targetDurationMs: Number(base?.duration_ms || 0) || null
     });
-    const merged = mergeMeta(base, appleMeta);
+    let fallbackMeta = appleMeta;
+    if (!fallbackMeta) {
+      try {
+        fallbackMeta = await findDeezerTrackMetaByQuery(artistSafe, titleSafe, {
+          album: base?.album || "",
+          targetDurationMs: Number(base?.duration_ms || 0) || null
+        });
+      } catch {}
+    }
+
+    const merged = mergeMeta(base, fallbackMeta);
+    if (preferTrackNumber && Number(fallbackMeta?.track_number) > 0) {
+      merged.track_number = Number(fallbackMeta.track_number);
+    }
+    if (preferTrackTotal && Number(fallbackMeta?.track_total) > 0) {
+      merged.track_total = Number(fallbackMeta.track_total);
+    }
+    if (preferDiscNumber && Number(fallbackMeta?.disc_number) > 0) {
+      merged.disc_number = Number(fallbackMeta.disc_number);
+    }
+    if (preferDiscTotal && Number(fallbackMeta?.disc_total) > 0) {
+      merged.disc_total = Number(fallbackMeta.disc_total);
+    }
     const preferredAppleCoverUrl = String(
-      appleMeta?.coverUrl || appleMeta?.imageUrl || appleMeta?.thumbnailUrl || ""
+      fallbackMeta?.coverUrl || fallbackMeta?.imageUrl || fallbackMeta?.thumbnailUrl || ""
     ).trim();
     if (preferCover && preferredAppleCoverUrl) {
       merged.__applePreferredCoverUrl = preferredAppleCoverUrl;
@@ -324,6 +359,7 @@ async function enrichMetaFromApple(base, {
   }
 }
 
+// Resolves the preferred cover art path from provider and fallback sources in core application logic.
 async function resolvePreferredCoverPath(meta, {
   baseNoExt = "",
   fallbackSidecarPath = null,
@@ -1121,6 +1157,22 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             .replace(/^\d+\s*-\s*/, "");
           let title = toNFC(entry?.title || fallbackTitle);
           const totalTracks = job.playlist?.total || totalGuess || 1;
+          const nativeTrackNumber =
+            Number(entry?.track_number) ||
+            Number(flat?.track_number) ||
+            null;
+          const nativeTrackTotal =
+            Number(entry?.track_total) ||
+            Number(flat?.track_total) ||
+            null;
+          const nativeDiscNumber =
+            Number(entry?.disc_number) ||
+            Number(flat?.disc_number) ||
+            null;
+          const nativeDiscTotal =
+            Number(entry?.disc_total) ||
+            Number(flat?.disc_total) ||
+            null;
 
           let fileMeta = {
             ...flat,
@@ -1155,13 +1207,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               "",
             upload_date: entry?.upload_date || flat.upload_date || "",
             track_number:
-              Number(entry?.track_number) ||
+              nativeTrackNumber ||
               (Number.isFinite(playlistIndex) ? Number(playlistIndex) : null),
-            disc_number: Number(entry?.disc_number) || null,
+            disc_number: nativeDiscNumber,
             track_total:
-              Number(entry?.track_total) ||
+              nativeTrackTotal ||
               (totalTracks > 0 ? Number(totalTracks) : null),
-            disc_total: Number(entry?.disc_total) || null,
+            disc_total: nativeDiscTotal,
             playlist_index:
               Number.isFinite(playlistIndex) ? Number(playlistIndex) : null,
             playlist_total: totalTracks > 0 ? Number(totalTracks) : null,
@@ -1232,7 +1284,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             artist: fileMeta.artist || fileMeta.uploader,
             title: fileMeta.track || fileMeta.title,
             market: job?.metadata?.market,
-            preferCover: true
+            preferCover: true,
+            preferTrackNumber: true,
+            preferTrackTotal: true,
+            preferDiscNumber: true,
+            preferDiscTotal: true
           });
 
           let itemCover = null;

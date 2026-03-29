@@ -248,6 +248,7 @@ export class JobManager {
         const source = String(job?.metadata?.source || '').toLowerCase();
         if (source === 'spotify') return 'spotify';
         if (source === 'apple_music') return 'apple_music';
+        if (source === 'deezer') return 'deezer';
 
         const urlCandidate =
             job?.metadata?.url ||
@@ -263,6 +264,7 @@ export class JobManager {
         const platform = this.detectPlaylistPlatform(job);
         if (platform === 'spotify') return this.app.t('ui.spotifyPlaylist');
         if (platform === 'apple_music') return this.app.t('ui.appleMusicPlaylist');
+        if (platform === 'deezer') return this.app.t('ui.deezerPlaylist');
         if (platform === 'dailymotion') return this.app.t('ui.dailymotionPlaylist');
         return this.app.t('ui.youtubePlaylist');
     }
@@ -272,6 +274,7 @@ export class JobManager {
         const src = String(meta?.source || '').toLowerCase();
         if (src === 'spotify') return this.app.t('ui.spotifyPlaylist');
         if (src === 'apple_music') return this.app.t('ui.appleMusicPlaylist');
+        if (src === 'deezer') return this.app.t('ui.deezerPlaylist');
         if (src === 'dailymotion') return this.app.t('ui.dailymotionPlaylist');
         if (src === 'youtube') return this.app.t('ui.youtubePlaylist');
         if (meta?.source) return String(meta.source);
@@ -556,6 +559,8 @@ computeProg(job) {
                 ? (job.metadata?.spotifyTitle || this.app.t('ui.spotifyPlaylist'))
                 : job.metadata?.source === 'apple_music'
                 ? (job.metadata?.spotifyTitle || this.app.t('ui.appleMusicPlaylist'))
+                : job.metadata?.source === 'deezer'
+                ? (job.metadata?.spotifyTitle || this.app.t('ui.deezerPlaylist'))
                 : this.playlistSourceTitle(job))
         );
     }
@@ -846,7 +851,8 @@ updateJobUI(job, batchId = null) {
 
 	    const isMusicMatchJob =
 	        job.metadata?.source === 'spotify' ||
-	        job.metadata?.source === 'apple_music';
+	        job.metadata?.source === 'apple_music' ||
+	        job.metadata?.source === 'deezer';
 
 	    let phaseInfo = '';
 	    if (isMusicMatchJob && job.phase) {
@@ -1357,6 +1363,9 @@ updateJobUI(job, batchId = null) {
     }
     if (job.metadata?.source === 'apple_music') {
         jobTitle = `🎵 ${job.metadata.spotifyTitle || this.app.t('ui.appleMusicPlaylist')}`;
+    }
+    if (job.metadata?.source === 'deezer') {
+        jobTitle = `🎵 ${job.metadata.spotifyTitle || this.app.t('ui.deezerPlaylist')}`;
     }
     {
         const nowTrack = this.uiNowTitle(job);

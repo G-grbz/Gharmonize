@@ -129,6 +129,8 @@ export function pickPlaylistOutputName(job) {
       ? "Spotify Playlist"
       : meta.source === "apple_music"
       ? "Apple Music Playlist"
+      : meta.source === "deezer"
+      ? "Deezer Playlist"
       : "Playlist");
 
   const fmt = String(job?.format || "")

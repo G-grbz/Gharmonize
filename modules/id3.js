@@ -163,7 +163,9 @@ function pickSourceUrl(meta = {}) {
   return trimMetaValue(
     meta.webpage_url ||
     meta.spotifyUrl ||
-    meta.spUrl
+    meta.spUrl ||
+    meta.deezerUrl ||
+    meta.dzUrl
   );
 }
 
@@ -242,6 +244,9 @@ export function buildRichId3v2Tags(meta = {}) {
   pushUserDefinedText(userDefinedText, "APPLE_COUNTRY", meta.apple_country);
   pushUserDefinedText(userDefinedText, "APPLE_CURRENCY", meta.apple_currency);
   pushUserDefinedText(userDefinedText, "APPLE_KIND", meta.apple_kind);
+  pushUserDefinedText(userDefinedText, "DEEZER_TRACK_ID", meta.deezer_track_id);
+  pushUserDefinedText(userDefinedText, "DEEZER_ALBUM_ID", meta.deezer_album_id);
+  pushUserDefinedText(userDefinedText, "DEEZER_ARTIST_ID", meta.deezer_artist_id);
   pushUserDefinedText(userDefinedText, "ALBUM_ID", meta.album_id);
   pushUserDefinedText(userDefinedText, "PLAYLIST_INDEX", meta.playlist_index);
   pushUserDefinedText(userDefinedText, "PLAYLIST_TOTAL", meta.playlist_total);
@@ -255,6 +260,10 @@ export function buildRichId3v2Tags(meta = {}) {
   pushUserDefinedUrl(userDefinedUrl, "PREVIEW_URL", meta.preview_url);
   pushUserDefinedUrl(userDefinedUrl, "COVER_URL", meta.coverUrl);
   pushUserDefinedUrl(userDefinedUrl, "SPOTIFY_URL", meta.spotifyUrl || meta.spUrl);
+  pushUserDefinedUrl(userDefinedUrl, "DEEZER_URL", meta.deezerUrl || meta.dzUrl);
+  pushUserDefinedUrl(userDefinedUrl, "DEEZER_TRACK_URL", meta.deezer_track_url);
+  pushUserDefinedUrl(userDefinedUrl, "DEEZER_ALBUM_URL", meta.deezer_album_url);
+  pushUserDefinedUrl(userDefinedUrl, "DEEZER_ARTIST_URL", meta.deezer_artist_url);
   if (userDefinedUrl.length) tags.userDefinedUrl = userDefinedUrl;
 
   return tags;

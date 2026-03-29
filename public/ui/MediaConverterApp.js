@@ -85,6 +85,8 @@ export class MediaConverterApp {
         const s = String(u).trim();
         const m1 = s.match(/^spotify:(track|album|playlist|artist|show|episode):/i);
         if (m1) return m1[1].toLowerCase();
+        const m2 = s.match(/^deezer:(track|album|playlist|artist):/i);
+        if (m2) return m2[1].toLowerCase();
 
         try {
             const url = new URL(s, window.location.origin);
@@ -96,6 +98,11 @@ export class MediaConverterApp {
             const isAppleHost =
             host === 'music.apple.com' ||
             host === 'embed.music.apple.com';
+            const isDeezerHost =
+            host === 'deezer.com' ||
+            host === 'www.deezer.com' ||
+            host.endsWith('.deezer.com') ||
+            host.endsWith('deezer.page.link');
 
             if (isAppleHost) {
                 const parts = url.pathname.split('/').filter(Boolean);
@@ -104,6 +111,17 @@ export class MediaConverterApp {
                 if (['song', 'album', 'playlist'].includes(t)) {
                     return t === 'song' ? 'track' : t;
                 }
+                return null;
+            }
+
+            if (isDeezerHost) {
+                const parts = url.pathname.split('/').filter(Boolean);
+                const first = (parts[0] || '').toLowerCase();
+                const second = (parts[1] || '').toLowerCase();
+                const typeIndex = ['track', 'album', 'playlist', 'artist'].includes(first) ? 0
+                    : ['track', 'album', 'playlist', 'artist'].includes(second) ? 1
+                    : -1;
+                if (typeIndex >= 0) return (parts[typeIndex] || '').toLowerCase();
                 return null;
             }
 
@@ -709,7 +727,7 @@ export class MediaConverterApp {
     // Checks whether mapped music source URL is valid for the browser UI layer.
     isSpotifyUrl(u) {
         const s = String(u || "").trim();
-        return /^(spotify:|https?:\/\/(open\.spotify\.com|spotify\.link|spotify\.app\.link|(?:embed\.)?music\.apple\.com))/i.test(s);
+        return /^(spotify:|deezer:(track|album|playlist|artist):|https?:\/\/(open\.spotify\.com|spotify\.link|spotify\.app\.link|(?:embed\.)?music\.apple\.com|(?:(?:www|link)\.)?deezer\.com|(?:[\w-]+\.)?deezer\.page\.link))/i.test(s);
     }
 
     // Checks whether youtube playlist data URL is valid for the browser UI layer.

@@ -82,6 +82,37 @@ function norm(s = "") {
     .trim();
 }
 
+// Builds safe Apple artist query variants for short-name matching.
+function buildArtistQueryVariants(artist = "") {
+  const out = [];
+  const seen = new Set();
+  const push = (value = "") => {
+    const raw = String(value || "").trim();
+    const key = norm(raw);
+    if (!raw || !key || seen.has(key)) return;
+    seen.add(key);
+    out.push(raw);
+  };
+
+  const rawArtist = String(artist || "").trim();
+  push(rawArtist);
+
+  const primaryArtist = rawArtist
+    .split(/\s*(?:,|&|\/|feat\.?|ft\.?|with)\s*/i)[0]
+    .trim();
+  push(primaryArtist);
+
+  const primaryTokens = primaryArtist.split(/\s+/).filter(Boolean);
+  if (primaryTokens.length >= 2) {
+    const firstToken = primaryTokens[0];
+    if (String(firstToken || "").length >= 3) {
+      push(firstToken);
+    }
+  }
+
+  return out;
+}
+
 // Expands Apple artwork URLs to the requested image size for Apple mapping and metadata flow.
 function buildArtworkUrl(url = "", size = 1200) {
   const s = String(url || "").trim();
@@ -99,6 +130,88 @@ function durationMatches(result, targetDurationMs) {
   if (!target || !duration) return false;
   const tol = Math.max(3_000, Math.round(target * 0.02));
   return Math.abs(duration - target) <= tol;
+}
+
+// Splits normalized Apple text into comparable tokens for fuzzy matching.
+function tokenizeNorm(value = "") {
+  return norm(value)
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+// Counts overlapping Apple text tokens for artist matching decisions.
+function countTokenOverlap(left = [], right = []) {
+  if (!left.length || !right.length) return 0;
+  const rightSet = new Set(right);
+  let overlap = 0;
+  for (const token of left) {
+    if (rightSet.has(token)) overlap += 1;
+  }
+  return overlap;
+}
+
+// Scores Apple artist similarity for query matching and metadata flow.
+function buildArtistMatchInfo(expected = "", candidate = "") {
+  const expectedNorm = norm(expected);
+  const candidateNorm = norm(candidate);
+
+  if (!expectedNorm) {
+    return {
+      exact: false,
+      partial: false,
+      overlap: 0,
+      acceptable: true
+    };
+  }
+
+  if (!candidateNorm) {
+    return {
+      exact: false,
+      partial: false,
+      overlap: 0,
+      acceptable: false
+    };
+  }
+
+  if (candidateNorm === expectedNorm) {
+    return {
+      exact: true,
+      partial: true,
+      overlap: tokenizeNorm(expectedNorm).length || 1,
+      acceptable: true
+    };
+  }
+
+  if (
+    candidateNorm.includes(expectedNorm) ||
+    expectedNorm.includes(candidateNorm)
+  ) {
+    return {
+      exact: false,
+      partial: true,
+      overlap: Math.min(
+        tokenizeNorm(expectedNorm).length || 1,
+        tokenizeNorm(candidateNorm).length || 1
+      ),
+      acceptable: true
+    };
+  }
+
+  const expectedTokens = tokenizeNorm(expectedNorm).filter((token) => token.length > 1);
+  const candidateTokens = tokenizeNorm(candidateNorm).filter((token) => token.length > 1);
+  const overlap = countTokenOverlap(expectedTokens, candidateTokens);
+  const expectedRatio = expectedTokens.length ? overlap / expectedTokens.length : 0;
+  const candidateRatio = candidateTokens.length ? overlap / candidateTokens.length : 0;
+  const partial =
+    overlap >= 1 &&
+    (expectedRatio >= 0.5 || candidateRatio >= 0.5);
+
+  return {
+    exact: false,
+    partial,
+    overlap,
+    acceptable: partial
+  };
 }
 
 // Builds Apple search cache keys from normalized query fields for Apple mapping and metadata flow.
@@ -519,16 +632,20 @@ function scoreResult(result, { artist = "", title = "", album = "", targetDurati
   const rTitle = norm(result?.trackName || "");
   const rArtist = norm(result?.artistName || "");
   const rAlbum = norm(result?.collectionName || "");
+  const titleExact = !!tN && rTitle === tN;
+  const titleContains =
+    !!tN &&
+    !titleExact &&
+    (rTitle.includes(tN) || tN.includes(rTitle));
+  const artistMatch = buildArtistMatchInfo(aN, rArtist);
   let score = 0;
 
-  if (tN) {
-    if (rTitle === tN) score += 6;
-    else if (rTitle.includes(tN) || tN.includes(rTitle)) score += 3;
-  }
+  if (titleExact) score += 6;
+  else if (titleContains) score += 3;
 
   if (aN) {
-    if (rArtist === aN) score += 5;
-    else if (rArtist.includes(aN) || aN.includes(rArtist)) score += 2;
+    if (artistMatch.exact) score += 5;
+    else if (artistMatch.partial) score += 2;
   }
 
   if (albN) {
@@ -542,7 +659,15 @@ function scoreResult(result, { artist = "", title = "", album = "", targetDurati
     score -= 3;
   }
 
-  return score;
+  return {
+    score,
+    acceptable:
+      (titleExact || titleContains) &&
+      (!aN || artistMatch.acceptable),
+    titleExact,
+    titleContains,
+    artistMatch
+  };
 }
 
 // Searches Apple tracks through the iTunes search API for Apple mapping and metadata flow.
@@ -1209,8 +1334,10 @@ export async function findAppleTrackMetaByQuery(
     queries.push(v);
   };
 
-  push(`${artistSafe} ${titleSafe}`);
-  push(`${titleSafe} ${artistSafe}`);
+  for (const artistVariant of buildArtistQueryVariants(artistSafe)) {
+    push(`${artistVariant} ${titleSafe}`);
+    push(`${titleSafe} ${artistVariant}`);
+  }
   push(titleSafe);
 
   let bestResult = null;
@@ -1225,15 +1352,16 @@ export async function findAppleTrackMetaByQuery(
     }
 
     for (const result of results) {
-      const score = scoreResult(result, {
+      const match = scoreResult(result, {
         artist: artistSafe,
         title: titleSafe,
         album,
         targetDurationMs: durationMs
       });
+      if (!match.acceptable) continue;
 
-      if (score > bestScore) {
-        bestScore = score;
+      if (match.score > bestScore) {
+        bestScore = match.score;
         bestResult = result;
       }
     }

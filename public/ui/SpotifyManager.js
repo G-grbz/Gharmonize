@@ -5,7 +5,8 @@ export class SpotifyManager {
         this.currentSpotifyTask = {
             id: null,
             jobId: null,
-            completed: false
+            completed: false,
+            source: 'spotify'
         };
         this.spotifyEventSource = null;
         this.integratedRenderedCount = 0;
@@ -39,6 +40,9 @@ export class SpotifyManager {
 
             const data = await response.json();
             this.currentSpotifyTask.id = data.mapId;
+            this.currentSpotifyTask.jobId = null;
+            this.currentSpotifyTask.completed = false;
+            this.currentSpotifyTask.source = data.source || 'spotify';
 
             document.getElementById('spotifyTitle').textContent = data.title || '-';
             document.getElementById('spotifyTotal').textContent = data.total || 0;
@@ -507,7 +511,7 @@ export class SpotifyManager {
             selectedIndices: validItems.map(item => item.index),
             spotifyMapId: this.currentSpotifyTask.id,
             metadata: {
-                source: "spotify",
+                source: this.currentSpotifyTask.source || "spotify",
                 spotifyTitle: document.getElementById('spotifyTitle').textContent,
                 ...(spotifyConcurrency != null ? { spotifyConcurrency } : {}),
                 selectedIds: validItems.map(item => item.id),

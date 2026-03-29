@@ -16,6 +16,7 @@ import {
 } from "../modules/yt.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import { isAppleMusicUrl, resolveAppleMusicUrl } from "../modules/apple.js";
+import { isDeezerUrl, resolveDeezerUrl } from "../modules/deezer.js";
 import { searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 
@@ -25,11 +26,17 @@ router.post("/api/playlist/preview", async (req, res) => {
   try {
     const { url, page = 1, pageSize = 25 } = req.body || {};
 
-    if (url && (isSpotifyUrl(url) || isAppleMusicUrl(url))) {
-      const sourceLabel = isAppleMusicUrl(url) ? "Apple Music" : "Spotify";
+    if (url && (isSpotifyUrl(url) || isAppleMusicUrl(url) || isDeezerUrl(url))) {
+      const sourceLabel = isAppleMusicUrl(url)
+        ? "Apple Music"
+        : isDeezerUrl(url)
+        ? "Deezer"
+        : "Spotify";
       try {
         const sp = isAppleMusicUrl(url)
           ? await resolveAppleMusicUrl(url, { market: resolveMarket(req.body?.market) })
+          : isDeezerUrl(url)
+          ? await resolveDeezerUrl(url, { market: resolveMarket(req.body?.market) })
           : await resolveSpotifyUrl(url, { market: resolveMarket(req.body?.market) });
         const ps = Math.max(1, Math.min(100, Number(pageSize) || 25));
         const p  = Math.max(1, Number(page) || 1);

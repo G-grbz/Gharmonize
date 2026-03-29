@@ -19,6 +19,10 @@ import {
   isAppleMusicUrl,
   resolveAppleMusicUrl
 } from "../modules/apple.js";
+import {
+  isDeezerUrl,
+  resolveDeezerUrl
+} from "../modules/deezer.js";
 import { idsToMusicUrls, searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js";
@@ -204,23 +208,26 @@ function resolveMediaPlatform(meta = {}) {
 }
 
 function isMappedMusicUrl(url = "") {
-  return isSpotifyUrl(url) || isAppleMusicUrl(url);
+  return isSpotifyUrl(url) || isAppleMusicUrl(url) || isDeezerUrl(url);
 }
 
 function mappedMusicSource(url = "") {
-  return isAppleMusicUrl(url) ? "apple_music" : "spotify";
+  if (isAppleMusicUrl(url)) return "apple_music";
+  if (isDeezerUrl(url)) return "deezer";
+  return "spotify";
 }
 
 function mappedMusicLabel(source = "") {
-  return String(source || "").toLowerCase() === "apple_music"
-    ? "Apple Music"
-    : "Spotify";
+  const value = String(source || "").toLowerCase();
+  if (value === "apple_music") return "Apple Music";
+  if (value === "deezer") return "Deezer";
+  return "Spotify";
 }
 
 async function resolveMappedMusicUrl(url, { market } = {}) {
-  return isAppleMusicUrl(url)
-    ? resolveAppleMusicUrl(url, { market })
-    : resolveSpotifyUrl(url, { market });
+  if (isAppleMusicUrl(url)) return resolveAppleMusicUrl(url, { market });
+  if (isDeezerUrl(url)) return resolveDeezerUrl(url, { market });
+  return resolveSpotifyUrl(url, { market });
 }
 
 const router = express.Router();

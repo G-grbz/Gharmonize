@@ -786,7 +786,8 @@ export class PreviewManager {
         this.app.spotifyManager.currentSpotifyTask = {
             id: null,
             jobId: null,
-            completed: false
+            completed: false,
+            source: 'spotify'
         };
 
         const logEl = document.getElementById('plStreamLog');

@@ -24,6 +24,13 @@ import {
   resolveAppleMusicUrlLite
 } from "../modules/apple.js";
 import {
+  findDeezerTrackMetaById,
+  findDeezerTrackMetaByQuery,
+  isDeezerUrl,
+  resolveDeezerUrl,
+  resolveDeezerUrlLite
+} from "../modules/deezer.js";
+import {
   resolveJobOutputDir,
   toDownloadPath,
   resolveDownloadPathToAbs
@@ -152,7 +159,16 @@ async function enrichMetaWithApple(meta, { fallbackArtist = "", fallbackTitle = 
       market,
       targetDurationMs: Number(meta?.duration_ms || 0) || null
     });
-    return mergeMissingMeta(meta, appleMeta);
+    let fallbackMeta = appleMeta;
+    if (!fallbackMeta) {
+      try {
+        fallbackMeta = await findDeezerTrackMetaByQuery(artist, title, {
+          album: meta?.album || "",
+          targetDurationMs: Number(meta?.duration_ms || 0) || null
+        });
+      } catch {}
+    }
+    return mergeMissingMeta(meta, fallbackMeta);
   } catch {
     return meta;
   }
@@ -160,19 +176,22 @@ async function enrichMetaWithApple(meta, { fallbackArtist = "", fallbackTitle = 
 
 // Checks whether the URL belongs to Spotify or Apple Music mapped sources.
 function isMappedMusicUrl(url) {
-  return isSpotifyUrl(url) || isAppleMusicUrl(url);
+  return isSpotifyUrl(url) || isAppleMusicUrl(url) || isDeezerUrl(url);
 }
 
 // Resolves the mapped music source from Spotify or Apple Music URLs.
 function musicSourceFromUrl(url) {
-  return isAppleMusicUrl(url) ? "apple_music" : "spotify";
+  if (isAppleMusicUrl(url)) return "apple_music";
+  if (isDeezerUrl(url)) return "deezer";
+  return "spotify";
 }
 
 // Returns the mapped music source label for Spotify mapping and metadata flow.
 function musicSourceLabel(source = "") {
-  return String(source || "").toLowerCase() === "apple_music"
-    ? "Apple Music"
-    : "Spotify";
+  const value = String(source || "").toLowerCase();
+  if (value === "apple_music") return "Apple Music";
+  if (value === "deezer") return "Deezer";
+  return "Spotify";
 }
 
 // Builds the default playlist title for mapped Spotify or Apple Music sources.
@@ -182,16 +201,16 @@ function musicPlaylistFallback(source = "") {
 
 // Resolves mapped music URLs with the lightweight Spotify or Apple Music resolver.
 async function resolveMappedMusicUrlLite(url, { market } = {}) {
-  return isAppleMusicUrl(url)
-    ? resolveAppleMusicUrlLite(url, { market })
-    : resolveSpotifyUrlLite(url, { market });
+  if (isAppleMusicUrl(url)) return resolveAppleMusicUrlLite(url, { market });
+  if (isDeezerUrl(url)) return resolveDeezerUrlLite(url, { market });
+  return resolveSpotifyUrlLite(url, { market });
 }
 
 // Resolves mapped music URLs with the full Spotify or Apple Music resolver.
 async function resolveMappedMusicUrl(url, { market } = {}) {
-  return isAppleMusicUrl(url)
-    ? resolveAppleMusicUrl(url, { market })
-    : resolveSpotifyUrl(url, { market });
+  if (isAppleMusicUrl(url)) return resolveAppleMusicUrl(url, { market });
+  if (isDeezerUrl(url)) return resolveDeezerUrl(url, { market });
+  return resolveSpotifyUrl(url, { market });
 }
 
 // Finds track metadata from the active mapped source for Spotify mapping and metadata flow.
@@ -203,6 +222,16 @@ async function findMappedTrackMeta(itemLite, source, market) {
     return findAppleTrackMetaByQuery(itemLite?.artist, itemLite?.title, {
       album: itemLite?.album || "",
       market,
+      targetDurationMs: Number(itemLite?.duration_ms || 0) || null
+    });
+  }
+
+  if (source === "deezer") {
+    if (itemLite?.deezer_track_id) {
+      return findDeezerTrackMetaById(itemLite.deezer_track_id);
+    }
+    return findDeezerTrackMetaByQuery(itemLite?.artist, itemLite?.title, {
+      album: itemLite?.album || "",
       targetDurationMs: Number(itemLite?.duration_ms || 0) || null
     });
   }
@@ -248,7 +277,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
     if (!url || !isMappedMusicUrl(url)) {
-      return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify or Apple Music URL is required", 400);
+      return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify, Apple Music, or Deezer URL is required", 400);
     }
 
     const source = musicSourceFromUrl(url);
@@ -868,7 +897,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     job.playlist.downloadTotal = matchedCount;
     job.playlist.convertTotal  = matchedCount;
 
-    if (isVideoFormatFlag && (job.metadata?.source === "spotify" || job.metadata?.source === "apple_music")) {
+    if (isVideoFormatFlag && (job.metadata?.source === "spotify" || job.metadata?.source === "apple_music" || job.metadata?.source === "deezer")) {
       console.log(`🎬 Redirecting ${sourceLabel} to video processing: ${matchedCount} track(s)`);
 
       const trackCount = matchedCount;
@@ -980,6 +1009,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
   const job = jobs.get(jobId);
   if (!job) return;
   let filePath = null;
+  const source = String(job.metadata?.source || "spotify").toLowerCase();
 
   try {
     const outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
@@ -1083,9 +1113,11 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     const spInfo = sp.items[0];
     let richNow = null;
     try {
-      richNow = spInfo?.spId
-        ? await findSpotifyMetaById(spInfo.spId)
-        : await findSpotifyMetaByQuery(spInfo?.artist, spInfo?.title, resolveMarket(job.metadata?.market));
+      richNow = await findMappedTrackMeta(
+        spInfo,
+        source,
+        resolveMarket(job.metadata?.market)
+      );
     } catch {}
 
     let fileMeta = preferSpotify ? {
@@ -1094,7 +1126,12 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       artist: spInfo.artist,
       uploader: spInfo.artist,
       album: spInfo.album || "",
-      webpage_url: spInfo.spUrl || matchedItem.webpage_url,
+      webpage_url:
+        spInfo.webpage_url ||
+        spInfo.spUrl ||
+        spInfo.amUrl ||
+        spInfo.dzUrl ||
+        matchedItem.webpage_url,
       release_year: spInfo.year || "",
       release_date: spInfo.date || "",
       track_number: spInfo.track_number,
@@ -1333,7 +1370,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
   try {
     const { url, market: marketIn } = req.body || {};
     if (!url || !isMappedMusicUrl(url)) {
-      return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify or Apple Music URL is required", 400);
+      return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify, Apple Music, or Deezer URL is required", 400);
     }
 
     const source = musicSourceFromUrl(url);
@@ -1390,7 +1427,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
       }
     }).catch((e) => { task.status = "error"; task.error = e.message; });
 
-    return sendOk(res, { mapId: id, title: task.title, total: task.total });
+    return sendOk(res, { mapId: id, title: task.title, total: task.total, source });
   } catch (e) {
     return sendError(res, 'PREVIEW_FAILED', e.message || "Music matching start error", 400);
   }

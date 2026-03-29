@@ -16,19 +16,23 @@ import { toDownloadPath } from "./outputPaths.js";
 
 function isMappedMusicSource(source = "") {
   const value = String(source || "").toLowerCase();
-  return value === "spotify" || value === "apple_music";
+  return value === "spotify" || value === "apple_music" || value === "deezer";
 }
 
 function mappedMusicLabel(source = "") {
-  return String(source || "").toLowerCase() === "apple_music"
-    ? "Apple Music"
-    : "Spotify";
+  const value = String(source || "").toLowerCase();
+  if (value === "apple_music") return "Apple Music";
+  if (value === "deezer") return "Deezer";
+  return "Spotify";
 }
 
 function mappedMusicPlaylistTitle(job) {
   const source = job?.metadata?.source || "";
-  const fallback = String(source).toLowerCase() === "apple_music"
+  const value = String(source).toLowerCase();
+  const fallback = value === "apple_music"
     ? "Apple Music Playlist"
+    : value === "deezer"
+    ? "Deezer Playlist"
     : "Spotify Playlist";
   return job?.metadata?.spotifyTitle || fallback;
 }
