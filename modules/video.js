@@ -179,6 +179,9 @@ export async function processYouTubeVideoJob(job, {
   const format = job.format || "mp4";
   const videoSettings = job.videoSettings || {};
   const transcodeEnabled = videoSettings.transcodeEnabled === true;
+  const sourceLabel = isMappedMusicSource(job.metadata?.source)
+    ? mappedMusicLabel(job.metadata?.source)
+    : "YouTube";
   const youtubeConcurrency =
     Number(job.metadata?.youtubeConcurrency) || undefined;
 
@@ -576,7 +579,7 @@ export async function processYouTubeVideoJob(job, {
     : titleRaw;
 
   const cleanTitle = sanitizeFilename(baseTitle) || "video";
-  console.log("🎧 Video cleanTitle:", { cleanTitle, artistRaw, titleRaw });
+  console.log(`🎧 ${sourceLabel} cleanTitle:`, { cleanTitle, artistRaw, titleRaw });
 
   if (!transcodeEnabled) {
     const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
