@@ -12,7 +12,8 @@ https://github.com/user-attachments/assets/94f23b28-afae-4d42-ada4-783ecfb321dc
 
 ### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/EXE)
 
-Fast, modular media processing powered by yt-dlp and ffmpeg: downloads from YouTube/YouTube Music and supported platforms (X, Facebook, Instagram, Vimeo, Dailymotion, TikTok), Spotify-based metadata matching, DRM-free disc ripping, and GPU-accelerated conversions — all driven by a reliable job engine.
+Next-generation media processing, powered by yt-dlp, FFmpeg and deno.
+Seamlessly download content from YouTube, YouTube Music, and major platforms like X, Facebook, Instagram, Vimeo, Dailymotion, and TikTok. Leverage Spotify, Apple Music, and Deezer for intelligent metadata matching and track discovery — then fetch high-quality media via yt-dlp. Includes DRM-free disc ripping and blazing-fast GPU-accelerated transcoding, all powered by a robust and reliable processing engine.
 
 > **Spotify note:** Spotify is used for **metadata + matching** (track/playlist/album info). Gharmonize does **not** claim DRM bypass.
 
@@ -61,7 +62,7 @@ npm start
 
 * **YouTube / YouTube Music** downloads (single, playlist, mixes) via **yt-dlp**
 * **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** support (download/convert flows)
-* **Spotify & Apple Music integration for metadata + mapping to YouTube (track / playlist / album)**
+* **Spotify, Apple Music  & Deezer integration for metadata + mapping to YouTube (track / playlist / album)**
 * **Audio & video conversion** powered by **ffmpeg**, with reliability-first presets
 * **Fix A/V sync issues** using **FPS adjustment presets** for **AC3 / EAC3 / AAC**
 * **GPU acceleration** for local video transcoding: **NVENC**, **VAAPI**, **Intel QSV**
