@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/94f23b28-afae-4d42-ada4-783ecfb321dc
 ### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/EXE)
 
 Next-generation media processing, powered by yt-dlp, FFmpeg and deno.
-Seamlessly download content from YouTube, YouTube Music, and major platforms like X, Facebook, Instagram, Vimeo, Dailymotion, and TikTok. Leverage Spotify, Apple Music, and Deezer for intelligent metadata matching and track discovery — then fetch high-quality media via yt-dlp. Includes DRM-free disc ripping and blazing-fast GPU-accelerated transcoding, all powered by a robust and reliable processing engine.
+Seamlessly download content from YouTube, YouTube Music, and major platforms like X, Facebook, Instagram, Vimeo, Dailymotion, and TikTok. Leverage Spotify, Apple Music, and Deezer for intelligent metadata matching and track discovery — then fetch high-quality media via yt-dlp. Includes DRM-free disc ripping, iPhone / Android ringtone output, and blazing-fast GPU-accelerated transcoding, all powered by a robust and reliable processing engine.
 
 > **Spotify note:** Spotify is used for **metadata + matching** (track/playlist/album info). Gharmonize does **not** claim DRM bypass.
 
@@ -23,62 +23,77 @@ Seamlessly download content from YouTube, YouTube Music, and major platforms lik
 
 ---
 
-## ⚡ Quick Start
+## Quick Start
 
-### Docker Compose (recommended)
+### Local / Desktop (recommended)
+
+For the most complete experience, prefer:
+
+* `npm start`
+* packaged **AppImage**
+* packaged **EXE**
+
+Docker is available as an **alternative deployment option**, but it does **not** currently provide full parity with local / desktop usage.
 
 ```bash
 git clone https://github.com/G-grbz/Gharmonize
 cd Gharmonize
 
-# prepare folders (default: /opt/gharmonize)
-sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies,local-inputs}
-sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
+BUILD_ELECTRON=1 npm i
+npm start
+```
+
+Gharmonize now checks runtime binaries at startup and downloads or refreshes them automatically when needed. `npm run download:binaries` is still available if you want to prefetch binaries manually or prepare offline / portable builds.
+
+### Docker Compose (alternative)
+
+```bash
+git clone https://github.com/G-grbz/Gharmonize
+cd Gharmonize
+
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cache,cookies,local-inputs}
+sudo touch /opt/gharmonize/.env
 sudo chmod -R a+rw /opt/gharmonize
 
-# set at least ADMIN_PASSWORD + APP_SECRET in /opt/gharmonize/.env
-# start
-docker compose up -d --build
+# set at least ADMIN_PASSWORD and APP_SECRET in /opt/gharmonize/.env
+docker compose pull
+docker compose up -d
 ```
 
 Open:
 
 * `http://localhost:5174`
 
-### Local (Node & npm)
-
-```bash
-git clone https://github.com/G-grbz/Gharmonize
-cd Gharmonize
-
-# Linux
-BUILD_ELECTRON=1 npm i
-npm start
-```
+> `docker-compose.yml` uses `ggrbz/gharmonize:latest` by default. Switch it to `ggrbz/gharmonize:testing` if you want the test-stage image.
 
 ---
 
-## ✅ What you get (at a glance)
+## What you get
 
-* **YouTube / YouTube Music** downloads (single, playlist, mixes) via **yt-dlp**
-* **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** support (download/convert flows)
-* **Spotify, Apple Music  & Deezer integration for metadata + mapping to YouTube (track / playlist / album)**
-* **Audio & video conversion** powered by **ffmpeg**, with reliability-first presets
-* **Fix A/V sync issues** using **FPS adjustment presets** for **AC3 / EAC3 / AAC**
-* **GPU acceleration** for local video transcoding: **NVENC**, **VAAPI**, **Intel QSV**
-* **Disc ripping (DRM-free only)** using ffmpeg + MKVToolNix, with stream selection in Web UI
+* **YouTube / YouTube Music** downloads for single items, playlists, and mixes
+* **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** download and conversion flows
+* **Spotify, Apple Music, and Deezer** mapping for **track / playlist / album** workflows
+* **Phone ringtone output** for **iPhone** and **Android** from supported download flows
+* **Audio and video conversion** powered by **ffmpeg**
+* **Fix A/V sync issues** using ready-made FPS presets for **AC3 / EAC3 / AAC**
+* **GPU acceleration** for local video transcoding with **NVENC**, **VAAPI**, and **Intel QSV**
+* **Disc ripping (DRM-free only)** with stream selection in the Web UI
+* **Runtime binary management** for ffmpeg, ffprobe, mkvmerge, yt-dlp, and deno
 * **Job engine** for batch processing, progress, and reliability
 
 ---
 
-## 📘 Table of Contents
+## Table of Contents
 
 * [Overview](#overview)
 * [Features](#features)
 * [Requirements](#requirements)
-* [Quick Start (Local – Node & npm)](#quick-start-local--node--npm)
+* [Quick Start (Local)](#quick-start-local)
 * [Quick Start (Docker Compose)](#quick-start-docker-compose)
-* [Docker vs Local Usage Notes](#docker-vs-local-usage-notes)
+* [Optional: NVIDIA / NVENC in Docker](#optional-nvidia--nvenc-in-docker)
+* [Alternative Installation Using Docker Run](#alternative-installation-using-docker-run)
+* [Binary Management](#binary-management)
+* [Cookie and Runtime Notes](#cookie-and-runtime-notes)
 * [Environment Variables (.env)](#environment-variables-env)
 * [Gharmonize Homepage Widget](#gharmonize-homepage-widget)
 * [Notes & Troubleshooting](#notes--troubleshooting)
@@ -90,12 +105,8 @@ npm start
 ## Overview
 
 **Gharmonize** is a media automation toolkit running as a Node.js server with an optional Electron desktop shell.
-It bundles multiple third‑party utilities (FFmpeg, MKVToolNix, yt-dlp, deno etc.) to provide:
 
-* High‑reliability downloading
-* Disc/media processing
-* Transcoding with GPU acceleration
-* Smart metadata extraction and automatic tagging
+It combines downloading, mapping, conversion, tagging, disc processing, and batch job management behind a single Web UI. On current builds, runtime tools such as **ffmpeg**, **ffprobe**, **mkvmerge**, **yt-dlp**, and **deno** can be checked, downloaded, and refreshed automatically at application startup, so manual setup is no longer required in the common case.
 
 License details are available in **Third-Party Licenses** and `LICENSES.md`.
 
@@ -103,92 +114,286 @@ License details are available in **Third-Party Licenses** and `LICENSES.md`.
 
 ## Features
 
-### *YouTube & YouTube Music*
+### Supported Sources
 
-* yt-dlp integration with SABR / 403 workarounds
-* Support for single videos, playlists, and mixes
-* Customizable yt-dlp arguments via environment variables
+* **YouTube / YouTube Music**
+* **Spotify**
+* **Apple Music**
+* **Deezer**
+* **X (Twitter)**
+* **Facebook**
+* **Instagram**
+* **Vimeo**
+* **Dailymotion**
+* **TikTok**
 
-### *Social Platforms*
+### Music Mapping and Collections
 
-* Support for:
+* Spotify, Apple Music, and Deezer support **track / playlist / album** workflows
+* Automatic mapping from supported music-service items to YouTube / YouTube Music sources
+* Optional preference for Spotify metadata during tagging
 
-  * **X (Twitter)**
-  * **Facebook**
-  * **Instagram**
-  * **Vimeo**
-  * **Dailymotion**
-  * **TikTok**
+### Phone Ringtone Output
 
-### *Spotify Integration*
+* Export ringtone-ready files for **iPhone** and **Android**
+* Works with supported download flows, including collection-based music links where available
+* **Automatic** mode picks the strongest section
+* **Manual** mode lets you choose the start point
+* iPhone output uses **`.m4r`** with up to **40 seconds**
+* Android output uses **`.mp3`** with up to **60 seconds**
 
-* Spotify Web API support (track / playlist / album)
-* Automatic mapping from Spotify items to YouTube
-* Optional preference for Spotify metadata when tagging
+### Audio and Video Processing
 
-### *Disc Ripping (DRM-free only)*
+* ffmpeg-based conversion with reliability-first defaults
+* Convert to **mp3 / flac / wav / ogg / opus / m4a / alac / mp4 / mkv**
+* Ready-made **FPS adjustment presets** for **AC3 / EAC3 / AAC** sync fixes
+* Hardware acceleration for local video transcoding with **NVIDIA NVENC**, **VAAPI**, and **Intel Quick Sync (QSV)**
 
-* Rip non-DRM optical discs (e.g., DVD/Blu-ray) into audio/video files
-* Uses ffmpeg and MKVToolNix tools under the hood
-* Disc analysis and stream selection via the web UI
+### Disc Ripping (DRM-free only)
 
-### *Audio & Video Conversion*
+* Rip non-DRM optical discs such as DVD / Blu-ray into audio or video files
+* Uses ffmpeg and MKVToolNix under the hood
+* Disc analysis and stream selection are available from the Web UI
 
-* ffmpeg-based conversion with focus on reliability
-* Convert to **mp3 / flac / wav / ogg**, or pass through **mp4** without re-encoding when possible
-* Ready-made **FPS adjustment presets** for **AC3 / EAC3 / AAC** audio to fix or prevent sync issues
-* Transcode arbitrary local video files with hardware acceleration:
+### Deployment and Runtime
 
-  * **NVIDIA NVENC**
-  * **VAAPI**
-  * **Intel Quick Sync (QSV)**
-
-* **Local & Uploaded Media**
-
-  * File uploads handled via **Multer**
-  * Optional local media directory (`LOCAL_INPUT_DIR`) for selecting files without uploading
-  * Admin-only access for local inputs
-
-* **Deployment & Config**
-
-  * Docker image & Docker Compose setup
-  * Settings API for runtime configuration from the UI
-  * Electron builds for Windows/Linux
-  * `.env`-driven configuration for server, YouTube, Spotify and processing behavior
+* Local Node.js and Electron desktop workflows are the primary full-featured usage path
+* Docker image deployment with published `latest` and `testing` tags as an alternative setup
+* Runtime settings panel and `.env` configuration
+* Automatic runtime binary download / refresh with fallback to existing binaries
 
 ---
 
 ## Requirements
 
-| Requirement      | Version  | Description              |
-| ---------------- | -------- | ------------------------ |
-| Node.js          | >= 20    | Required                 |
-| ffmpeg           | Any      | Included in Docker       |
-| yt-dlp           | Latest   | Included in Docker       |
-| Spotify API Keys | Optional | Enables Spotify metadata |
+| Requirement | Version / Notes | Description |
+| --- | --- | --- |
+| Node.js | >= 20 | Required for local / Electron usage |
+| Docker Engine + Docker Compose | Current | Required for Docker deployment |
+| Internet access on first launch | Recommended | Lets Gharmonize fetch or refresh runtime binaries automatically |
+| Spotify API Keys | Optional | Enables Spotify Web API based matching and metadata |
+
+> If you set custom binary paths such as `FFMPEG_BIN`, `FFPROBE_BIN`, `MKVMERGE_BIN`, `YTDLP_BIN`, or `DENO_BIN`, Gharmonize will use those instead of the auto-managed copies.
 
 ---
 
-## Quick Start (Local – Node & npm)
+## Quick Start (Docker Compose)
 
-#### 1. Clone the Repository and Enter the Directory
+Docker deployment is provided as an alternative setup. If you want the most complete feature set, prefer `npm start` or the packaged AppImage / EXE builds instead.
+
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/G-grbz/Gharmonize
 cd Gharmonize
 ```
 
-#### 2. Create the .env File
+### 2. Prepare folders and files
 
-To enable UI configuration, fill in `ADMIN_PASSWORD` and `APP_SECRET`. You can generate a secure `APP_SECRET` using the following command:
+The commands below use `/opt/gharmonize`. If you prefer another location, update both the shell commands and the bind mounts in `docker-compose.yml`.
+
+```bash
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cache,cookies,local-inputs}
+sudo touch /opt/gharmonize/.env
+sudo chmod -R a+rw /opt/gharmonize
+```
+
+### 3. Configure `.env`
+
+Set at least `ADMIN_PASSWORD` and `APP_SECRET` inside `/opt/gharmonize/.env`.
+
+Generate a random `APP_SECRET` with:
 
 ```bash
 openssl rand -hex 32
 ```
 
+### 4. Choose the Docker image tag
+
+The default compose file uses:
+
+```yaml
+image: ggrbz/gharmonize:latest
+```
+
+Available tags:
+
+* `ggrbz/gharmonize:latest` for the regular published image
+* `ggrbz/gharmonize:testing` for the test-stage image
+
+### 5. Start the stack
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### 6. Open the UI
+
+[http://localhost:5174](http://localhost:5174)
+
+### 7. Runtime binaries in Docker
+
+The provided `docker-compose.yml` enables runtime binary management inside the container:
+
+* Gharmonize checks binaries automatically when the app starts
+* Missing or outdated tools can be downloaded / refreshed automatically
+* Downloaded runtime binaries are cached under `/opt/gharmonize/cache`
+
+If a refresh fails, Gharmonize keeps the currently resolved binaries as fallback instead of hard-failing the whole app.
+
 ---
 
-### 3. Installation Commands
+## Optional: NVIDIA / NVENC in Docker
+
+If you want NVENC inside Docker, install the NVIDIA driver and NVIDIA Container Toolkit on the host first.
+
+Then update `docker-compose.yml`:
+
+* Comment out or remove `user: "${PUID:-1000}:${PGID:-1000}"`
+* Enable `user: "0:0"`
+* Enable `privileged: true`
+* Enable `runtime: nvidia`
+* Enable `NVIDIA_VISIBLE_DEVICES=all`
+* Enable `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`
+
+Relevant compose section:
+
+```yaml
+services:
+  web:
+    image: ggrbz/gharmonize:latest
+    container_name: Gharmonize
+    user: "0:0"
+    privileged: true
+    runtime: nvidia
+    group_add:
+      - "${RUN_MEDIA_GID:-65534}"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - NODE_ENV=production
+      - PORT=${PORT:-5174}
+      - YTDLP_EXTRA=--force-ipv4
+      - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
+      - GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DATA_DIR=/usr/src/app
+      - OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs
+```
+
+After the edit:
+
+```bash
+docker compose up -d
+```
+
+On some hosts, NVENC inside Docker only works reliably when the container runs with the root user plus the enabled `privileged` and `runtime: nvidia` settings above.
+
+---
+
+## Alternative Installation Using Docker Run
+
+### 1. Prepare folders and files
+
+```bash
+sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cache,cookies,local-inputs}
+sudo touch /opt/gharmonize/.env
+sudo chmod -R a+rw /opt/gharmonize
+```
+
+### 2. Run the container
+
+```bash
+docker run -d \
+  --name Gharmonize \
+  --restart unless-stopped \
+  --user 1000:1000 \
+  --group-add 65534 \
+  -p 5174:5174 \
+  -e NODE_ENV=production \
+  -e PORT=5174 \
+  -e YTDLP_EXTRA=--force-ipv4 \
+  -e GHARMONIZE_WEB_BINARIES_IN_DOCKER=1 \
+  -e GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -e DATA_DIR=/usr/src/app \
+  -e OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs \
+  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
+  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
+  -v /opt/gharmonize/temp:/usr/src/app/temp \
+  -v /opt/gharmonize/cache:/usr/src/app/cache \
+  -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
+  -v /opt/gharmonize/cookies:/usr/src/app/cookies \
+  -v /opt/gharmonize/.env:/usr/src/app/.env \
+  -v /home:/home:ro \
+  -v /run/media:/run/media:ro \
+  ggrbz/gharmonize:latest
+```
+
+To use the test-stage image, replace the final image reference with `ggrbz/gharmonize:testing`.
+
+### 3. NVIDIA / NVENC variant
+
+For NVIDIA, do **not** keep the non-root `--user 1000:1000` setting. Use the container as root and enable NVIDIA runtime access:
+
+```bash
+docker run -d \
+  --name Gharmonize \
+  --restart unless-stopped \
+  --user 0:0 \
+  --privileged \
+  --runtime=nvidia \
+  -p 5174:5174 \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
+  -e NODE_ENV=production \
+  -e PORT=5174 \
+  -e YTDLP_EXTRA=--force-ipv4 \
+  -e GHARMONIZE_WEB_BINARIES_IN_DOCKER=1 \
+  -e GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -e DATA_DIR=/usr/src/app \
+  -e OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs \
+  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
+  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
+  -v /opt/gharmonize/temp:/usr/src/app/temp \
+  -v /opt/gharmonize/cache:/usr/src/app/cache \
+  -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
+  -v /opt/gharmonize/cookies:/usr/src/app/cookies \
+  -v /opt/gharmonize/.env:/usr/src/app/.env \
+  -v /home:/home:ro \
+  -v /run/media:/run/media:ro \
+  ggrbz/gharmonize:latest
+```
+
+> Do not forget to set `ADMIN_PASSWORD` and `APP_SECRET` in `/opt/gharmonize/.env`.
+
+---
+
+## Quick Start (Local)
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/G-grbz/Gharmonize
+cd Gharmonize
+```
+
+### 2. Create or edit `.env`
+
+To use the UI configuration flow, set `ADMIN_PASSWORD` and `APP_SECRET`.
+
+Generate `APP_SECRET` with:
+
+```bash
+openssl rand -hex 32
+```
+
+### 3. Install dependencies
 
 **Linux**
 
@@ -203,347 +408,121 @@ set BUILD_ELECTRON=1
 npm i
 ```
 
----
-
-### Default .env Locations (AppImage or .exe only)
-
-These paths are **not** general application directories. They are created automatically only when running AppImage or Windows .exe builds, and store the default-generated `.env` file:
-
-* **Windows:** `%appdata%\Gharmonize`
-* **Linux:** `~/.config/Gharmonize/`
-* **Default Password:** `123456`
-
-You can edit environment variables in the Settings panel. Windows users should add the file paths for ffmpeg and yt-dlp to their environment variables.
-
----
-
-### Run Without Building
-
-To run the application without building:
-
-> **Optional:** If you do **not** want to use ffmpeg, ffprobe, yt-dlp, and mkvmerge tools from your host system — or if you prefer using the tested, verified versions — you can run:
->
-> ```bash
-> npm run download:binaries
-> ```
->
-> This command downloads the required third‑party binaries into the app directory so the application can use them internally.
->
-> **Note:** While this step is *optional* when using **Run Without Building** (`npm start`), it is **strongly recommended for AppImage and Windows .exe builds** to ensure consistent, validated binary versions.
->
-> **Important:** If you use `npm run download:binaries`, you must **remove or clear** any manually set binary paths in your `.env` file (`FFMPEG_PATH`, `FFPROBE_PATH`, `YTDLP_PATH`, etc.). Otherwise, the app will try to use the system tools instead of the downloaded ones.
+### 4. Start the application
 
 ```bash
 npm start
 ```
 
----
+On current builds, Gharmonize checks runtime binaries at startup and downloads or updates them automatically when needed.
 
-### Build Commands
+### Default `.env` locations for packaged desktop builds
 
-**Build AppImage (Linux only):**
+These paths are used only by AppImage / `.exe` builds when the app creates its default environment file:
+
+* **Windows:** `%appdata%\Gharmonize`
+* **Linux:** `~/.config/Gharmonize/`
+* **Default Password:** `123456`
+
+You can edit environment variables later from the Settings panel.
+
+### Build commands
+
+**AppImage (Linux only)**
 
 ```bash
 npm run desktop:build:appimage
 ```
 
-**Build NSIS (Windows Installer):**
+**NSIS installer (Windows)**
 
 ```bash
 npm run desktop:build:nsis
 ```
 
-> **Note:** If you choose *Install for all users* (which installs under *Program Files*), you must manually create the `temp`, `outputs`, and `uploads` folders inside the installation directory and grant read/write permissions.
->
-> Alternatively, install to a custom directory outside *Program Files* or *Program Files (x86)*.
-
-**Build Portable (Windows standalone):**
+**Portable Windows build**
 
 ```bash
 npm run desktop:build:portable
 ```
 
-**Build both Windows versions (NSIS + Portable):**
+**Build both Windows variants**
 
 ```bash
 npm run desktop:build:all
 ```
 
----
-
-## Quick Start (Docker Compose)
-
-### 1. Clone the Repository and Enter the Directory
-
-```bash
-git clone https://github.com/G-grbz/Gharmonize
-cd Gharmonize
-```
-
-### 2. Create Required Folders and Files
-
-The commands below assume the default directory `/opt/gharmonize`. If you want to use a different one, update the paths in the commands and under the `volumes:` section of your `docker-compose.yml` file. You can also switch the Docker image branch to either `latest` or `testing` if you prefer.
-
-```bash
-sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies}
-sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
-sudo chmod -R a+rw /opt/gharmonize
-```
-
-### 3. Configure Environment Variables
-
-In the `.env` file, you only need to set `ADMIN_PASSWORD` and `APP_SECRET`. All other settings can be adjusted later via the settings panel.
-
-To generate a random `APP_SECRET`:
-
-```bash
-openssl rand -hex 32
-```
-
-### ⚡ Optional: Enable NVIDIA NVENC (hardware-accelerated video encoding)
-
-If you have an NVIDIA GPU and want to use hardware-accelerated encoding (NVENC) inside the container:
-
-1. Install the proprietary NVIDIA driver on the host.
-2. Install the **NVIDIA Container Toolkit** so Docker can access your GPU.
-3. Update your `docker-compose.yml` service like this:
-
-```yaml
-version: "3.9"
-services:
-  web:
-    image: ggrbz/gharmonize:latest
-    container_name: Gharmonize
-    user: "${PUID:-1000}:${PGID:-1000}"
-    # Enable access to the NVIDIA GPU
-    gpus: all
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-      - NODE_ENV=production
-      - PORT=${PORT:-5174}
-      - YT_FORCE_IPV4=1
-      - YT_APPLY_403_WORKAROUNDS=1
-      - YTDLP_EXTRA=--force-ipv4
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DATA_DIR=/usr/src/app
-    ports:
-      - "${PORT:-5174}:${PORT:-5174}"
-    volumes:
-      - /opt/gharmonize/uploads:/usr/src/app/uploads
-      - /opt/gharmonize/outputs:/usr/src/app/outputs
-      - /opt/gharmonize/temp:/usr/src/app/temp
-      - /opt/gharmonize/local-inputs:/usr/src/app/local-inputs
-      - /opt/gharmonize/cookies:/usr/src/app/cookies
-      - /opt/gharmonize/.env:/usr/src/app/.env
-      - /home:/home:ro
-      - /run/media:/run/media:ro
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-5174}/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-```
-
-### 4. Start with Docker Compose
-
-```bash
-docker compose up -d --build
-```
-
-### 5. Open in Browser
-
-[http://localhost:5174](http://localhost:5174)
-
-### 6. If You Encounter Permission Errors
-
-Run the following command to reapply read/write permissions:
-
-```bash
-sudo chmod -R a+rw /opt/gharmonize
-```
+> If you install the Windows build under `Program Files`, you may need to create `temp`, `outputs`, and `uploads` directories manually and grant write permissions.
 
 ---
 
-## 🐳 Alternative Installation Using Docker Run
+## Binary Management
 
-### 1. Prepare Folders and Permissions
+Gharmonize now supports two binary workflows.
 
-```bash
-sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cookies,local-inputs}
-sudo touch /opt/gharmonize/.env /opt/gharmonize/cookies/cookies.txt
-sudo chmod -R a+rw /opt/gharmonize
-```
+### Automatic runtime management
 
-### 2. Run the Container
+* Default behavior outside Docker, unless you explicitly disable it
+* Enabled in the provided Docker deployment through `GHARMONIZE_WEB_BINARIES_IN_DOCKER=1`
+* Checks and refreshes **ffmpeg**, **ffprobe**, **mkvmerge**, **yt-dlp**, and **deno** at startup
+* Keeps the current resolved binaries as fallback if a refresh fails
 
-```bash
-docker run -d \
-  --name Gharmonize \
-  -p 5174:5174 \
-  -e NODE_ENV=production \
-  -e PORT=5174 \
-  -e YT_FORCE_IPV4=1 \
-  -e YT_APPLY_403_WORKAROUNDS=1 \
-  -e YTDLP_EXTRA="--force-ipv4" \
-  -e PUID=1000 \
-  -e PGID=1000 \
-  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
-  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
-  -v /opt/gharmonize/temp:/usr/src/app/temp \
-  -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
-  -v /opt/gharmonize/cookies/:/usr/src/app/cookies/cookies.txt:ro \
-  -v /opt/gharmonize/.env:/usr/src/app/.env \
-  -v /home:/home:ro \
-  -v /run/media:/run/media:ro \
-  ggrbz/gharmonize:latest
-```
+### Optional manual prefetch
 
-### With NVIDIA NVENC (optional)
-
-If you want to run the container with NVENC enabled:
-
-```bash
-docker run -d \
-  --name Gharmonize \
-  --gpus all \
-  -e NVIDIA_VISIBLE_DEVICES=all \
-  -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
-  -p 5174:5174 \
-  -e NODE_ENV=production \
-  -e PORT=5174 \
-  -e YT_FORCE_IPV4=1 \
-  -e YT_APPLY_403_WORKAROUNDS=1 \
-  -e YTDLP_EXTRA="--force-ipv4" \
-  -e PUID=1000 \
-  -e PGID=1000 \
-  -v /opt/gharmonize/uploads:/usr/src/app/uploads \
-  -v /opt/gharmonize/outputs:/usr/src/app/outputs \
-  -v /opt/gharmonize/temp:/usr/src/app/temp \
-  -v /opt/gharmonize/cookies:/usr/src/app/cookies/cookies.txt:ro \
-  -v /opt/gharmonize/.env:/usr/src/app/.env \
-  -v /home:/home:ro \
-  -v /run/media:/run/media:ro \
-  ggrbz/gharmonize:latest
-```
-
-> **Note:** Don’t forget to add `ADMIN_PASSWORD` and `APP_SECRET` values to the `.env` file located in `/opt/gharmonize/` directory.
-
----
-
-## Docker vs Local Usage Notes
-
-This section explains the differences between Docker and non-Docker setups.
-
----
-
-### 🍪 Cookie Usage Notes
-
-Cookie support improves YouTube–Gharmonize matching accuracy and allows downloading age-restricted or similar content.
-
-* **Docker users**: Only `cookies.txt` is supported.
-* **Windows users**:
-
-  * Chrome cannot provide cookies while the browser is running due to platform limitations.
-  * Sign in to YouTube using **Firefox or another supported browser**, then configure cookie access accordingly.
-  * Set the `YTDLP_COOKIES_FROM_BROWSER` environment variable via the environment configuration or the settings panel.
-* Outside of Docker (and when correctly configured on Windows as described above), a `cookies.txt` file is **not required**.
-
-## 🍪 Cookie & Browser Behavior
-
-### **Outside Docker**
-
-Setting:
-
-```dotenv
-YTDLP_COOKIES_FROM_BROWSER=chrome
-```
-
-allows Gharmonize to extract YouTube cookies **directly from your browser**, enabling:
-
-* Age-restricted content downloads
-* No need for `cookies.txt`
-
-You must be logged into YouTube on the same server/machine where Gharmonize is installed (in a supported browser profile).
-
-### **Inside Docker**
-
-Browser cookie extraction **cannot work** (Docker cannot access host browser profiles). Keep it empty:
-
-```dotenv
-YTDLP_COOKIES_FROM_BROWSER=
-```
-
----
-
-## 📦 Docker Usage
-
-When using Docker, leave all binary paths in `.env` **empty**:
-
-```dotenv
-YTDLP_BIN=
-FFMPEG_BIN=
-DATA_DIR=
-```
-
-Docker images include:
-
-* yt-dlp
-* ffmpeg
-* deno
-* mkvmerge suite
-
-**Docker is fully self‑contained.** No manual binary installation is required.
-
----
-
-## 🖥️ Local Usage (Node.js / AppImage / EXE / Electron)
-
-Outside Docker, install the required binaries:
+If you still want to download the toolchain into `build/bin/` manually, you can use:
 
 ```bash
 npm run download:binaries
 ```
 
-This installs into:
+This is useful if you want to:
 
+* prefill `build/bin/` yourself
+* prepare a more offline-friendly local / desktop setup
+* bundle a known toolset before creating a packaged desktop build
+
+If you want Gharmonize to use the auto-managed or manually downloaded copies, leave custom path variables empty:
+
+```dotenv
+FFMPEG_BIN=
+FFPROBE_BIN=
+MKVMERGE_BIN=
+MKVPROPEDIT_BIN=
+YTDLP_BIN=
+DENO_BIN=
 ```
-build/bin/
-```
 
-including:
-
-* yt-dlp
-* ffmpeg
-* deno (**required for age‑restricted YouTube content**)
-
-This step is **mandatory** for desktop builds.
+If you set those variables to explicit host paths, Gharmonize will prefer those paths instead.
 
 ---
 
-## 🔞 Age‑Restricted YouTube Content
+## Cookie and Runtime Notes
 
-To download age‑restricted content, you need:
+### Cookie behavior
 
-* Cookies (browser or cookies.txt), **AND**
-* `deno` in `build/bin/` (Linux → `deno`, Windows → `deno.exe`)
+Cookie support improves matching accuracy and helps with age-restricted or similar content.
 
-Cookies alone are **not** sufficient.
+* **Docker:** browser cookie extraction is not available inside the container; use `cookies.txt` if needed
+* **Local / desktop:** browser cookie extraction is available when supported on the host platform
+* **Windows:** Chrome cookie extraction may fail while the browser is running; Firefox or another supported browser is usually safer
 
-Docker already bundles **deno**, so no extra setup is needed.
+### Age-restricted YouTube content
 
----
+To download age-restricted content you need:
 
-## 📊 Environment Comparison Table
+* cookies (browser extraction or `cookies.txt`)
+* `deno`
 
-| Environment                   | cookies.txt Required? | Browser Extraction | Binaries Needed?  | Notes                               |
-| ----------------------------- | --------------------- | ------------------ | ----------------- | ----------------------------------- |
-| **Docker**                    | Optional              | ❌ Disabled         | ❌ Included        | Leave binary paths empty            |
-| **Local (Node.js)**           | Optional              | ✅ Yes              | ✅ Required        | Run `npm run download:binaries`     |
-| **AppImage / EXE / Electron** | Optional              | ✅ Yes              | ✅ Required        | Must bundle binaries; deno required |
-| **Age‑restricted videos**     | Not enough            | Helps              | **deno required** | Docker includes it                  |
+In current builds, `deno` is usually handled automatically by the runtime binary manager. If you disable auto-management or force custom binary paths, make sure `DENO_BIN` resolves correctly.
+
+### Environment comparison
+
+| Environment | Browser cookie extraction | `cookies.txt` | Binary management |
+| --- | --- | --- | --- |
+| Docker | No | Optional | Auto-managed in the provided compose / run setup |
+| Local (Node.js) | Yes | Optional | Auto-managed by default |
+| AppImage / EXE | Yes | Optional | Auto-managed by default |
+| Manual / custom binaries | Depends on your setup | Optional | Use `*_BIN` env vars or `npm run download:binaries` |
 
 ---
 
