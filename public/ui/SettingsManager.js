@@ -577,7 +577,7 @@ export class SettingsManager {
         }
     }
 
-    // Refreshes yt-dlp/deno binaries from settings panel.
+    // Refreshes runtime binaries from settings panel.
     async refreshBinaries() {
         const token = localStorage.getItem(this.tokenKey) || "";
         const btn = document.getElementById('refreshBinariesBtn');
@@ -587,6 +587,7 @@ export class SettingsManager {
             if (resultEl) resultEl.textContent = this.t('settings.binaryRefreshRunning');
             btn?.classList.add('btn-loading');
             if (btn) btn.disabled = true;
+            window.dispatchEvent(new CustomEvent('gharmonize:binaries-refresh-started'));
 
             const r = await fetch('/api/settings/refresh-binaries', {
                 method: 'POST',
@@ -604,11 +605,12 @@ export class SettingsManager {
             }
 
             const data = await r.json();
-            const ytdlpVersion = data?.binaries?.ytdlp?.version || 'unknown';
-            const denoVersion = data?.binaries?.deno?.version || 'unknown';
             const summary = this.t('settings.binaryRefreshResult', {
-                ytdlp: ytdlpVersion,
-                deno: denoVersion
+                ffmpeg: data?.binaries?.ffmpeg?.version || 'unknown',
+                ffprobe: data?.binaries?.ffprobe?.version || 'unknown',
+                mkvmerge: data?.binaries?.mkvmerge?.version || 'unknown',
+                ytdlp: data?.binaries?.ytdlp?.version || 'unknown',
+                deno: data?.binaries?.deno?.version || 'unknown'
             });
 
             if (resultEl) resultEl.textContent = summary;

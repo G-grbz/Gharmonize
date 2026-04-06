@@ -586,9 +586,10 @@ export class PreviewManager {
             convertBtn.disabled = true;
             convertBtn.textContent = this.app.t('ui.processing') || 'İşleniyor...';
 
-            const format = document.getElementById('formatSelect').value;
-            const bitrate = document.getElementById('bitrateSelect').value;
-            const sampleRate = document.getElementById('sampleRateSelect').value;
+            const outputSettings = this.app.resolveCurrentOutputSettings();
+            const format = outputSettings.format;
+            const bitrate = outputSettings.bitrate;
+            const sampleRate = outputSettings.sampleRate;
             const sequential = document.getElementById('sequentialChk')?.checked;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
             const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
@@ -645,6 +646,7 @@ export class PreviewManager {
                         autoCreateZip: this.app.autoCreateZip,
                         volumeGain,
                         youtubeConcurrency,
+                        ringtone: outputSettings.ringtone,
                         frozenEntries: frozenForIdx
                     });
                 }
@@ -663,6 +665,7 @@ export class PreviewManager {
                     autoCreateZip: this.app.autoCreateZip,
                     volumeGain,
                     youtubeConcurrency,
+                    ringtone: outputSettings.ringtone,
                     frozenEntries
                 });
             }
@@ -694,9 +697,10 @@ export class PreviewManager {
             convertAllBtn.disabled = true;
             convertAllBtn.textContent = this.app.t('ui.processing') || 'İşleniyor...';
 
-            const format = document.getElementById('formatSelect').value;
-            const bitrate = document.getElementById('bitrateSelect').value;
-            const sampleRate = document.getElementById('sampleRateSelect').value;
+            const outputSettings = this.app.resolveCurrentOutputSettings();
+            const format = outputSettings.format;
+            const bitrate = outputSettings.bitrate;
+            const sampleRate = outputSettings.sampleRate;
             const includeLyrics = document.getElementById('lyricsCheckbox').checked;
             const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
             const volumeGain = this.app.currentVolumeGain || 1.0;
@@ -730,6 +734,7 @@ export class PreviewManager {
                 autoCreateZip: this.app.autoCreateZip,
                 volumeGain,
                 youtubeConcurrency,
+                ringtone: outputSettings.ringtone,
                 frozenEntries
             });
 

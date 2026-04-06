@@ -225,7 +225,59 @@
 
       <div class="card">
         <h2 data-i18n="section.output">⚙️ Output Settings</h2>
-        <div class="form-group">
+        <div class="form-group" id="outputModeGroup">
+          <label for="outputModeSelect" data-i18n="label.outputMode">Output Type:</label>
+          <select id="outputModeSelect">
+            <option value="standard" data-i18n="option.output.normal">Standard file</option>
+            <option value="ringtone" data-i18n="option.output.ringtone">Phone ringtone</option>
+          </select>
+        </div>
+        <div id="ringtoneSettingsContainer" class="ringtone-settings" style="display:none;">
+          <div class="form-group">
+            <label for="ringtoneTargetSelect" data-i18n="label.ringtoneTarget">Device:</label>
+            <select id="ringtoneTargetSelect">
+              <option value="android" data-i18n="ringtone.target.android">Android</option>
+              <option value="iphone" data-i18n="ringtone.target.iphone">iPhone</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="ringtoneModeSelect" data-i18n="label.ringtoneMode">Segment Mode:</label>
+            <select id="ringtoneModeSelect">
+              <option value="auto" data-i18n="ringtone.mode.auto">Automatic best section</option>
+              <option value="manual" data-i18n="ringtone.mode.manual">Manual start point</option>
+            </select>
+          </div>
+          <div class="ringtone-grid">
+            <div class="form-group">
+              <label for="ringtoneDurationInput" data-i18n="label.ringtoneDuration">Duration (sec):</label>
+              <input type="number" id="ringtoneDurationInput" min="5" max="60" step="1" value="30" />
+            </div>
+            <div class="form-group">
+              <label for="ringtoneFadeInSelect" data-i18n="label.ringtoneFadeIn">Fade in:</label>
+              <select id="ringtoneFadeInSelect">
+                <option value="0.5" data-i18n="option.ringtoneFadeOut.0_5">0.5 sec</option>
+                <option value="1" data-i18n="option.ringtoneFadeOut.1_0">1 sec</option>
+                <option value="1.5" data-i18n="option.ringtoneFadeOut.1_5">1.5 sec</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="ringtoneFadeOutSelect" data-i18n="label.ringtoneFadeOut">Fade out:</label>
+              <select id="ringtoneFadeOutSelect">
+                <option value="0.5" data-i18n="option.ringtoneFadeOut.0_5">0.5 sec</option>
+                <option value="1" data-i18n="option.ringtoneFadeOut.1_0">1 sec</option>
+                <option value="1.5" data-i18n="option.ringtoneFadeOut.1_5">1.5 sec</option>
+              </select>
+            </div>
+            <div class="form-group" id="ringtoneManualStartGroup">
+              <label for="ringtoneStartInput" data-i18n="label.ringtoneStart">Start second:</label>
+              <input type="number" id="ringtoneStartInput" min="0" step="0.5" value="30" />
+            </div>
+          </div>
+          <small class="muted" id="ringtoneHint" data-i18n="ui.ringtoneHint">
+            Creates a ringtone file for the selected device. Automatic mode chooses the strongest section.
+          </small>
+        </div>
+        <div class="form-group" id="formatGroup">
           <label for="formatSelect" data-i18n="label.format">Format:</label>
           <select id="formatSelect"></select>
         </div>

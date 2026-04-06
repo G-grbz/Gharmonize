@@ -443,7 +443,7 @@ function checkDesktopBinaries() {
 
   if (missing.length > 0) {
     const list = missing.map(t => `${t.name}: ${t.bin}`).join('\n');
-    throw new Error(`Missing required binaries:\n${list}`);
+    console.warn(`[binaries] missing bundled binaries, continuing with PATH/web cache fallback:\n${list}`);
   }
 }
 
@@ -852,11 +852,9 @@ app.whenReady().then(async () => {
   await initializeLanguage();
   await applyAutoStartFromPrefs();
   await syncKeepAliveFlagFromPrefs();
-  try {
-    await initializeDynamicBinaries();
-  } catch (error) {
+  initializeDynamicBinaries().catch((error) => {
     console.warn('[binaries] dynamic init failed, fallback active:', error?.message || error);
-  }
+  });
 
   app.setAppUserModelId('com.gharmonize.app');
 

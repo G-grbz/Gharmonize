@@ -205,9 +205,10 @@ export class SpotifyManager {
     // Handles start integrated Spotify metadata process in Spotify mapping and metadata flow.
     async startIntegratedSpotifyProcess() {
     const url = document.getElementById('urlInput').value.trim();
-    const format = document.getElementById('formatSelect').value;
-    const bitrate = document.getElementById('bitrateSelect').value;
-    const sampleRate = document.getElementById('sampleRateSelect').value;
+    const outputSettings = this.app.resolveCurrentOutputSettings();
+    const format = outputSettings.format;
+    const bitrate = outputSettings.bitrate;
+    const sampleRate = outputSettings.sampleRate;
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
     const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
     const videoSettings = this.app.videoManager?.getSettings() || {};
@@ -268,6 +269,7 @@ export class SpotifyManager {
             embedLyrics,
             volumeGain: this.app.currentVolumeGain || 1.0,
             autoCreateZip,
+            ringtone: outputSettings.ringtone,
             ...(compressionLevel != null ? { compressionLevel } : {}),
             ...(bitDepth != null ? { bitDepth } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
@@ -466,9 +468,10 @@ export class SpotifyManager {
     }
 
     try {
-        const format = document.getElementById('formatSelect').value;
-        const bitrate = document.getElementById('bitrateSelect').value;
-        const sampleRate = document.getElementById('sampleRateSelect').value;
+        const outputSettings = this.app.resolveCurrentOutputSettings();
+        const format = outputSettings.format;
+        const bitrate = outputSettings.bitrate;
+        const sampleRate = outputSettings.sampleRate;
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
         const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
         const videoSettings = this.app.videoManager?.getSettings() || {};
@@ -505,6 +508,7 @@ export class SpotifyManager {
             isPlaylist: true,
             volumeGain: this.app.currentVolumeGain || 1.0,
             autoCreateZip,
+            ringtone: outputSettings.ringtone,
             ...(compressionLevel !== undefined ? { compressionLevel } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
             ...(spotifyConcurrency != null ? { spotifyConcurrency } : {}),
@@ -593,6 +597,7 @@ export class SpotifyManager {
     // Handles submit Spotify metadata job state in Spotify mapping and metadata flow.
     async submitSpotifyJob(payload) {
         try {
+            this.app.applyCurrentOutputProfile(payload, { isFormData: false });
             const response = await fetch('/api/jobs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

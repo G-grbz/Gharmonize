@@ -1,5 +1,6 @@
 import { exec as _exec } from "child_process";
 import { promisify } from "util";
+import { constants as fsConstants } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { FFPROBE_BIN, MKVMERGE_BIN } from "./binaries.js";
@@ -37,6 +38,70 @@ function t(key, vars = {}) {
     str = str.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
   }
   return str;
+}
+
+// Creates an i18n-aware error that can be serialized by the API layer.
+function createDiscError(key, vars = {}, options = {}) {
+  const error = new Error(key);
+  error.i18nKey = key;
+  error.i18nVars = vars;
+  if (options.code) {
+    error.code = options.code;
+  }
+  if (options.statusCode) {
+    error.statusCode = options.statusCode;
+  }
+  if (options.cause) {
+    error.cause = options.cause;
+  }
+  return error;
+}
+
+// Checks whether an fs error is permission-related.
+function isPermissionError(error) {
+  return error?.code === "EACCES" || error?.code === "EPERM";
+}
+
+// Returns a loggable/public error identifier.
+function getPublicErrorMessage(error) {
+  return error?.i18nKey || error?.message || String(error ?? "");
+}
+
+// Parses JSON from command output, tolerating wrapper/banner noise around it.
+function parseCommandJson(rawOutput, label = "command output") {
+  const text = String(rawOutput || "").trim();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+  }
+
+  const candidates = [];
+  const objectStart = text.indexOf("{");
+  const objectEnd = text.lastIndexOf("}");
+  if (objectStart !== -1 && objectEnd > objectStart) {
+    candidates.push(text.slice(objectStart, objectEnd + 1));
+  }
+
+  const arrayStart = text.indexOf("[");
+  const arrayEnd = text.lastIndexOf("]");
+  if (arrayStart !== -1 && arrayEnd > arrayStart) {
+    candidates.push(text.slice(arrayStart, arrayEnd + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+    }
+  }
+
+  const error = new Error(`Invalid JSON from ${label}`);
+  error.rawOutput = text.slice(0, 4000);
+  throw error;
 }
 
 // Reads blu ray meta for disc scanning and ripping.
@@ -143,9 +208,25 @@ async function scanDisc(sourcePath) {
   scanCancelled = false;
 
   try {
-    await fs.access(sourcePath);
+    await fs.access(sourcePath, fsConstants.R_OK | fsConstants.X_OK);
   } catch (error) {
-    throw new Error(t("disc.error.sourceNotFound", { path: sourcePath }));
+    if (isPermissionError(error)) {
+      throw createDiscError(
+        "disc.error.sourcePermissionDenied",
+        { path: sourcePath },
+        { code: error.code, statusCode: 403, cause: error }
+      );
+    }
+
+    throw createDiscError(
+      "disc.error.sourceNotFound",
+      { path: sourcePath },
+      {
+        code: error?.code,
+        statusCode: error?.code === "ENOENT" ? 404 : 400,
+        cause: error
+      }
+    );
   }
 
   const discInfo = await detectDiscType(sourcePath);
@@ -217,9 +298,19 @@ async function detectDiscType(sourcePath) {
     }
   } catch (error) {
     console.error("Disc type detection error:", error);
+    if (error?.i18nKey) {
+      throw error;
+    }
+    if (isPermissionError(error)) {
+      throw createDiscError(
+        "disc.error.sourcePermissionDenied",
+        { path: sourcePath },
+        { code: error.code, statusCode: 403, cause: error }
+      );
+    }
   }
 
-  throw new Error(t("disc.error.noValidStructure"));
+  throw createDiscError("disc.error.noValidStructure");
 }
 
 // Handles scan progress dvd in disc scanning and ripping.
@@ -238,11 +329,18 @@ async function scanDVD(sourcePath) {
       vobFiles = vobFiles.filter((f) => f.toUpperCase().endsWith(".VOB"));
       sendScanLogKey("disc.log.vobFilesFound", { count: vobFiles.length });
     } catch (error) {
-      throw new Error(t("disc.error.videoTsNotFound", { path: videoTsPath }));
+      if (isPermissionError(error)) {
+        throw createDiscError(
+          "disc.error.videoTsPermissionDenied",
+          { path: videoTsPath },
+          { code: error.code, statusCode: 403, cause: error }
+        );
+      }
+      throw createDiscError("disc.error.videoTsNotFound", { path: videoTsPath });
     }
 
     if (vobFiles.length === 0) {
-      throw new Error(t("disc.error.noVobFiles"));
+      throw createDiscError("disc.error.noVobFiles");
     }
 
     return await scanDVDManual(sourcePath);
@@ -251,8 +349,15 @@ async function scanDVD(sourcePath) {
       sendScanLogKey("disc.log.dvdScanCancelled");
       throw error;
     }
-    sendScanLogKey("disc.log.dvdScanError", { error: error.message });
-    throw new Error(t("disc.error.dvdScanFailed", { error: error.message }));
+    sendScanLogKey("disc.log.dvdScanError", {
+      error: getPublicErrorMessage(error)
+    });
+    if (error?.i18nKey) {
+      throw error;
+    }
+    throw createDiscError("disc.error.dvdScanFailed", {
+      error: getPublicErrorMessage(error)
+    });
   }
 }
 
@@ -268,13 +373,32 @@ async function scanBluRay(sourcePath) {
     const discMeta = await readBluRayMeta(sourcePath);
 
     try {
-      await fs.access(playlistPath);
+      await fs.access(playlistPath, fsConstants.R_OK | fsConstants.X_OK);
       sendScanLogKey("disc.log.playlistFolderFound");
-    } catch {
-      throw new Error(t("disc.error.noPlaylistFolder"));
+    } catch (error) {
+      if (isPermissionError(error)) {
+        throw createDiscError(
+          "disc.error.playlistPermissionDenied",
+          { path: playlistPath },
+          { code: error.code, statusCode: 403, cause: error }
+        );
+      }
+      throw createDiscError("disc.error.noPlaylistFolder");
     }
 
-    const files = await fs.readdir(playlistPath);
+    let files;
+    try {
+      files = await fs.readdir(playlistPath);
+    } catch (error) {
+      if (isPermissionError(error)) {
+        throw createDiscError(
+          "disc.error.playlistPermissionDenied",
+          { path: playlistPath },
+          { code: error.code, statusCode: 403, cause: error }
+        );
+      }
+      throw error;
+    }
     const mplsFiles = files.filter(
       (f) => f.endsWith(".mpls") && f !== "BU.backup"
     );
@@ -380,7 +504,7 @@ async function scanBluRay(sourcePath) {
     });
 
     if (titles.length === 0) {
-      throw new Error(t("disc.error.noValidTitles"));
+      throw createDiscError("disc.error.noValidTitles");
     }
 
     return {
@@ -399,8 +523,15 @@ async function scanBluRay(sourcePath) {
       sendScanLogKey("disc.log.blurayScanCancelled");
       throw error;
     }
-    sendScanLogKey("disc.log.blurayScanError", { error: error.message });
-    throw new Error(t("disc.error.blurayScanFailed", { error: error.message }));
+    sendScanLogKey("disc.log.blurayScanError", {
+      error: getPublicErrorMessage(error)
+    });
+    if (error?.i18nKey) {
+      throw error;
+    }
+    throw createDiscError("disc.error.blurayScanFailed", {
+      error: getPublicErrorMessage(error)
+    });
   }
 }
 
@@ -418,13 +549,13 @@ async function analyzeBluRayPlaylist(playlistPath) {
 
   try {
     const ffprobeCmd =
-      `"${FFPROBE_BIN}" -v error -show_entries format=duration -of json ` +
-      `"bluray:${discRoot}:playlist=${playlistNumber}"`;
+      `"${FFPROBE_BIN}" -v error -playlist ${playlistNumber} ` +
+      `-show_entries format=duration -of json "bluray:${discRoot}"`;
 
     sendScanLogKey("disc.log.runningFfprobe", { file: playlistFileName });
 
     const { stdout } = await runScanCommand(ffprobeCmd);
-    const probeData = JSON.parse(stdout || "{}");
+    const probeData = parseCommandJson(stdout, `ffprobe ${playlistFileName}`);
 
     if (probeData.format && probeData.format.duration) {
       duration = parseFloat(probeData.format.duration) || 0;
@@ -443,7 +574,7 @@ async function analyzeBluRayPlaylist(playlistPath) {
 
   try {
     const { stdout } = await runScanCommand(`"${MKVMERGE_BIN}" -J "${playlistPath}"`);
-    const info = JSON.parse(stdout);
+    const info = parseCommandJson(stdout, `mkvmerge ${playlistFileName}`);
     const props = info.container?.properties || {};
 
     if (!duration || duration === 0) {
@@ -592,7 +723,10 @@ async function analyzeWithMkvmerge(playlistPath) {
     };
 
     const { stdout } = await runScanCommand(`"${MKVMERGE_BIN}" -J "${playlistPath}"`);
-    const trackInfo = JSON.parse(stdout || "{}");
+    const trackInfo = parseCommandJson(
+      stdout,
+      `mkvmerge ${path.basename(playlistPath)}`
+    );
     const result = parseMkvmergeInfo(trackInfo);
 
     sendScanLogKey("disc.log.vobTrackAnalysisComplete", {
@@ -690,7 +824,10 @@ async function scanDVDManual(sourcePath) {
 
           const cmd = `"${FFPROBE_BIN}" -v quiet -print_format json -show_format "${vobPath}"`;
           const { stdout } = await runScanCommand(cmd);
-          const probeData = JSON.parse(stdout || "{}");
+          const probeData = parseCommandJson(
+            stdout,
+            `ffprobe ${path.basename(vobPath)}`
+          );
 
           const dur = parseFloat(probeData.format?.duration) || 0;
           totalDuration += dur;
@@ -723,7 +860,10 @@ async function scanDVDManual(sourcePath) {
           try {
             const cmdTracks = `"${FFPROBE_BIN}" -v quiet -print_format json -show_streams "${trackProbeVob}"`;
             const { stdout: s2 } = await runScanCommand(cmdTracks);
-            const data = JSON.parse(s2 || "{}");
+            const data = parseCommandJson(
+              s2,
+              `ffprobe ${path.basename(trackProbeVob)} streams`
+            );
 
             (data.streams || []).forEach((s) => {
               if (s.codec_type === "audio") {

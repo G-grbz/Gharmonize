@@ -9,9 +9,15 @@ import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
 import { rewriteId3v11Tag, writeRichId3v2Tag } from "./id3.js";
 import { toDownloadPath, resolveDownloadPathToAbs } from "./outputPaths.js";
+import { ensureOwnership } from "./fsOwnership.js";
 import "dotenv/config";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 import { getFfmpegCaps } from "./ffmpegCaps.js";
+import {
+  describeRingtone,
+  isRingtoneEnabled,
+  resolveRingtoneSegment
+} from "./ringtone.js";
 
 // Returns optimal encoder params used for the FFmpeg media conversion pipeline.
 function getOptimalEncoderParams(codec, hardware, quality = 'medium') {
@@ -90,6 +96,51 @@ function normalizeNvencProfileForEncoder(enc, rawProfile) {
   }
 
   return p || "high";
+}
+
+// Returns the FFmpeg caps key required for a specific NVENC-backed codec.
+function getRequiredNvencCapKey(encoder) {
+  const value = String(encoder || "").toLowerCase();
+
+  switch (value) {
+    case "h264":
+    case "x264":
+    case "libx264":
+      return "h264_nvenc";
+    case "h264_10bit":
+      return "h264_nvenc_10bit";
+    case "hevc":
+      return "hevc_nvenc";
+    case "hevc_10bit":
+      return "hevc_nvenc_10bit";
+    case "av1":
+      return "av1_nvenc";
+    case "av1_10bit":
+      return "av1_nvenc_10bit";
+    default:
+      return null;
+  }
+}
+
+// Checks whether FFmpeg failed while initializing a hardware encoder/device.
+function isRecoverableHardwareEncoderError(detail) {
+  const text = String(detail || "").toLowerCase();
+  if (!text) return false;
+
+  return [
+    "could not open encoder before eof",
+    "nothing was written into output file",
+    "conversion failed",
+    "openencodesessionex failed",
+    "no capable devices found",
+    "cannot load libcuda",
+    "device not found",
+    "device setup failed",
+    "failed to initialise encoder",
+    "failed to initialize encoder",
+    "error initializing output stream",
+    "operation not permitted"
+  ].some((needle) => text.includes(needle));
 }
 
 // Handles force8bit codec if tonemapping in the FFmpeg media conversion pipeline.
@@ -711,6 +762,17 @@ export async function convertMedia(
   opts = {}
 ) {
   const tempFilesToCleanup = [];
+  const ensureResultOwnership = async (mediaResult) => {
+    const actualOutputPath = resolveDownloadPathToAbs(mediaResult?.outputPath);
+    const actualLyricsPath = resolveDownloadPathToAbs(mediaResult?.lyricsPath);
+
+    if (actualOutputPath) {
+      await ensureOwnership(actualOutputPath);
+    }
+    if (actualLyricsPath) {
+      await ensureOwnership(actualLyricsPath);
+    }
+  };
   // Handles safe unlink in the FFmpeg media conversion pipeline.
   const safeUnlink = (p) => {
     try {
@@ -723,6 +785,9 @@ export async function convertMedia(
 
   const stereoConvert = opts?.stereoConvert || "auto";
   const preferSpotifyCover = shouldPreferSpotifyCover();
+  const ringtone = isRingtoneEnabled(opts?.ringtone)
+    ? { ...opts.ringtone }
+    : null;
   const atempoAdjustRaw =
     (opts?.videoSettings?.audioAtempoAdjust != null)
       ? String(opts.videoSettings.audioAtempoAdjust)
@@ -1017,8 +1082,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       const picked = pickNearest(sr, allowed);
       return { sr: picked, note: "mp3-legal" };
     }
-    if (f === "mp4") {
-      const picked = Math.min(48000, Math.max(8000, sr));
+    if (f === "mp4" || f === "m4r") {
+      const picked = pickNearest(sr, [22050, 32000, 44100, 48000]);
       return { sr: picked, note: "aac-clamped" };
     }
     return { sr: sr, note: "as-is" };
@@ -1074,7 +1139,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       inputPath
     )} | fmt=${format} | lyrics=${
       opts.includeLyrics !== false ? "yes" : "no"
-    } | embedLyrics=${opts.embedLyrics === true ? "yes" : "no"} | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}`
+    } | embedLyrics=${opts.embedLyrics === true ? "yes" : "no"} | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}${ringtone ? ` | ringtone=${describeRingtone(ringtone)}` : ""}`
   );
 
   const template = isVideo
@@ -1090,11 +1155,16 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const EFFECTIVE_H = 0;
   const VIDEO_PRESET = process.env.VIDEO_PRESET || "veryfast";
 
-    let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
-    basename = refineOutputBasename(basename);
-    basename = sanitizeFilename(basename);
-
-    basename = basename.replace(/\s*(?:_+\s*)+$/, '').replace(/\s{2,}/g, ' ').trim();
+  let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
+  basename = refineOutputBasename(basename);
+  basename = sanitizeFilename(basename);
+  basename = basename.replace(/\s*(?:_+\s*)+$/, '').replace(/\s{2,}/g, ' ').trim();
+  if (ringtone) {
+    basename = sanitizeFilename(`${basename} - ringtone`)
+      .replace(/\s*(?:_+\s*)+$/, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
 
   try {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -1111,12 +1181,12 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const metaLooksSpotify = looksLikeSpotifyCoverUrl(metaCoverUrl);
   let forcedSpotifyCover = false;
 
-  if (!isVideo && coverPath && preferSpotifyCover && metaLooksSpotify) {
+  if (!ringtone && !isVideo && coverPath && preferSpotifyCover && metaLooksSpotify) {
     forcedSpotifyCover = true;
     coverPath = null;
   }
 
-  if (!coverPath && !isVideo) {
+  if (!ringtone && !coverPath && !isVideo) {
     try {
       downloadedCoverPath = await resolveCoverPathFromMeta(metadata, jobId, outputDir, tempDir);
       if (downloadedCoverPath) {
@@ -1126,11 +1196,11 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     } catch {}
   }
 
-  if (!isVideo && forcedSpotifyCover && !coverPath && origCoverPath) {
+  if (!ringtone && !isVideo && forcedSpotifyCover && !coverPath && origCoverPath) {
     coverPath = origCoverPath;
   }
 
-  if (!isVideo && coverPath && ["mp3", "flac"].includes(format)) {
+  if (!ringtone && !isVideo && coverPath && ["mp3", "flac"].includes(format)) {
     try {
       coverToUse = await ensureJpegCover(coverPath, jobId, tempDir, ffmpegFromOpts);
     } catch (e) {
@@ -1144,10 +1214,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
   const ffmpegBin = ffmpegFromOpts || resolveFfmpegBin();
   console.log(`🧭 Using FFmpeg: ${ffmpegBin}`);
+  let effectiveHwMode = "off";
+  let result;
 
-  const result = await new Promise(async (resolve, reject) => {
+  try {
+    result = await new Promise(async (resolve, reject) => {
 
-  const previewClip = selectedStreams?.previewClip || null;
+  const previewClip = ringtone ? null : (selectedStreams?.previewClip || null);
   // Handles timecode to seconds in the FFmpeg media conversion pipeline.
   const timecodeToSeconds = (tc) => {
     if (!tc) return NaN;
@@ -1160,6 +1233,14 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
 
   const args = ["-hide_banner", "-nostdin", "-y"];
+  const ringtoneSegment = ringtone
+    ? await resolveRingtoneSegment(inputPath, ringtone, {
+        ffmpegBin,
+        onProcess: opts.onProcess,
+        isCanceled,
+        selectedStreams
+      })
+    : null;
 
   const orientationMode = String(videoSettings?.orientation || 'auto').toLowerCase();
     if (isVideo && orientationMode !== 'auto') {
@@ -1167,7 +1248,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   }
 
   let clipDuration = null;
-  if (isVideo && previewClip?.enabled) {
+  if (ringtoneSegment) {
+    clipDuration = clamp(Number(ringtoneSegment.durationSec || 0), 1, 600);
+    if (Number(ringtoneSegment.startSec || 0) > 0) {
+      args.push("-ss", String(ringtoneSegment.startSec));
+    }
+    console.log("🔔 Ringtone segment selected:", ringtoneSegment);
+  } else if (isVideo && previewClip?.enabled) {
     const startSec = timecodeToSeconds(previewClip.start);
     const endSec   = timecodeToSeconds(previewClip.end);
     if (Number.isFinite(startSec) && Number.isFinite(endSec) && endSec > startSec) {
@@ -1310,7 +1397,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     });
   } else if (!hasExplicitAudioSelection) {
-    args.push("-map", "0:a:0");
+    args.push("-map", "0:a:0?");
   } else {
     args.push("-an");
   }
@@ -1755,6 +1842,33 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     const capOk = (k) => !!(caps && caps[k] && caps[k].ok);
+    const summarizeRuntimeProbeDetail = (detail) => {
+      const lines = String(detail || "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (!lines.length) return "";
+
+      const preferredPatterns = [
+        /cuInit/i,
+        /CUDA_ERROR/i,
+        /Device creation failed/i,
+        /Error while opening encoder/i,
+        /Could not open encoder/i,
+        /No capable devices/i,
+        /Cannot load libcuda/i,
+        /Permission denied/i,
+        /Operation not permitted/i
+      ];
+
+      for (const pattern of preferredPatterns) {
+        const match = lines.find((line) => pattern.test(line));
+        if (match) return match;
+      }
+
+      return lines[lines.length - 1];
+    };
     const wantsAv1 = selectedCodec.encoder === "av1" || selectedCodec.encoder === "av1_10bit";
     const wants10  = selectedCodec.encoder.endsWith("_10bit");
 
@@ -1781,9 +1895,23 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       selectedCodec = codecConfig["h265"];
     }
 
+    const requiredNvencCapKey =
+      hwMode === "nvenc" ? getRequiredNvencCapKey(selectedCodec.encoder) : null;
+    if (requiredNvencCapKey && !capOk(requiredNvencCapKey)) {
+      const capDetail = summarizeRuntimeProbeDetail(caps?.[requiredNvencCapKey]?.detail);
+
+      console.log(
+        `⚠️ ${requiredNvencCapKey} runtime probe failed${
+          capDetail ? `: ${capDetail}` : ""
+        } → fallback: software encoder.`
+      );
+      hwMode = "off";
+    }
+
     const useNvenc = hwMode === "nvenc";
     const useQsv   = hwMode === "qsv";
     const useVaapi = hwMode === "vaapi";
+    effectiveHwMode = useNvenc ? "nvenc" : useQsv ? "qsv" : useVaapi ? "vaapi" : "off";
     const baseVf = buildBaseVf(selectedCodec);
 
     // Handles qsv pix fmt for in the FFmpeg media conversion pipeline.
@@ -2427,8 +2555,25 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
               FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
             );
           }
-          args.push("-write_xing", shouldWriteMp3Xing() ? "1" : "0");
+          args.push("-write_xing", (ringtone || shouldWriteMp3Xing()) ? "1" : "0");
           break;
+        case "m4r": {
+          const m4rBitrate =
+            !bitrate || bitrate === "auto" || bitrate === "0" || bitrate === "lossless"
+              ? "256k"
+              : bitrate;
+          args.push(
+            "-acodec",
+            "aac",
+            "-b:a",
+            m4rBitrate,
+            "-ar",
+            FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : "44100",
+            "-movflags",
+            "+faststart"
+          );
+          break;
+        }
         case "flac": {
           let cl = Number(opts?.compressionLevel);
           if (!Number.isFinite(cl)) cl = 5;
@@ -2565,6 +2710,27 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       afilters.push(`volume=${safeGain.toFixed(2)}`);
     }
 
+    if (ringtoneSegment) {
+      const clipLen = Number(ringtoneSegment.durationSec || 0) || 0;
+      const fadeIn = Math.max(
+        0,
+        Math.min(Number(ringtone?.fadeInSec ?? 0.5) || 0, Math.max(0, clipLen / 4))
+      );
+      const fadeOut = Math.max(
+        0,
+        Math.min(Number(ringtone?.fadeOutSec ?? 1.0) || 0, Math.max(0, clipLen / 4))
+      );
+
+      if (fadeIn > 0) {
+        afilters.push(`afade=t=in:st=0:d=${fadeIn.toFixed(3)}`);
+      }
+
+      if (fadeOut > 0 && clipLen > (fadeOut + 0.05)) {
+        const fadeOutStart = Math.max(0, clipLen - fadeOut);
+        afilters.push(`afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut.toFixed(3)}`);
+      }
+    }
+
     if (afilters.length > 0) {
       const filterStr = afilters.join(",");
       args.push("-af", filterStr);
@@ -2574,6 +2740,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       const built = buildUniqueOut(basename, format);
       outputFileName = built.fileName;
       outputPath = built.outPath;
+    }
+
+    if (format === "m4r") {
+      args.push("-f", "ipod");
     }
 
     args.push(outputPath);
@@ -2777,7 +2947,11 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       if (t && duration) {
         const cur = Number(lastElapsed || 0);
-        const p = Math.min(99, Math.floor((cur / duration) * 100));
+        const progressDuration =
+          (clipDuration != null && clipDuration > 0)
+            ? clipDuration
+            : duration;
+        const p = Math.min(99, Math.floor((cur / progressDuration) * 100));
         const now = Date.now();
         const shouldEmit = p !== lastProgress || (now - lastProgressAt) >= 1200;
         if (shouldEmit) {
@@ -2786,9 +2960,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
           progressCallback(p, {
             percent: p,
             elapsedSeconds: cur,
-            durationSeconds: duration,
+            durationSeconds: progressDuration,
             elapsedText: formatClock(cur),
-            durationText: formatClock(duration),
+            durationText: formatClock(progressDuration),
             fps: pickLiveFps()
           });
         }
@@ -2796,7 +2970,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     });
 
-    ffmpeg.on("close", (code, signal) => {
+    ffmpeg.on("close", async (code, signal) => {
       const actualOut = outputPath;
       const signalTerminated =
         signal === "SIGTERM" ||
@@ -2812,21 +2986,27 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       if (code === 0 && fs.existsSync(outputPath)) {
         const finalElapsed = Number.isFinite(lastElapsed) ? lastElapsed : duration;
+        const progressDuration =
+          (clipDuration != null && clipDuration > 0)
+            ? clipDuration
+            : duration;
         progressCallback(100, {
           percent: 100,
           elapsedSeconds: Number.isFinite(finalElapsed) ? finalElapsed : null,
-          durationSeconds: Number.isFinite(duration) ? duration : null,
+          durationSeconds: Number.isFinite(progressDuration) ? progressDuration : null,
           elapsedText: formatClock(finalElapsed),
-          durationText: formatClock(duration),
+          durationText: formatClock(progressDuration),
           fps: pickLiveFps()
         });
         console.log(`✅ Conversion completed: ${outputPath}`);
+        await ensureOwnership(outputPath);
         const downloadPath =
           toDownloadPath(outputPath) ||
           `/download/${encodeURIComponent(path.basename(outputPath))}`;
         resolve({
           outputPath: downloadPath,
-          fileSize: fs.statSync(outputPath).size
+          fileSize: fs.statSync(outputPath).size,
+          ringtone: ringtoneSegment || null
         });
       } else {
         try {
@@ -2866,7 +3046,47 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
       reject(new Error(`FFmpeg spawn error: ${e.message}`));
     });
-  });
+    });
+  } catch (transcodeError) {
+    const canRetryWithoutHardware =
+      isVideo &&
+      !opts?._hwFallbackAttempted &&
+      ["nvenc", "qsv", "vaapi"].includes(effectiveHwMode) &&
+      isRecoverableHardwareEncoderError(transcodeError?.message || "");
+
+    for (const p of tempFilesToCleanup) {
+      safeUnlink(p);
+    }
+    if (downloadedCoverPath) safeUnlink(downloadedCoverPath);
+
+    if (canRetryWithoutHardware) {
+      console.warn(
+        `⚠️ ${effectiveHwMode.toUpperCase()} encode init failed; retrying with software encoder.`
+      );
+      return await convertMedia(
+        inputPath,
+        format,
+        bitrate,
+        jobId,
+        progressCallback,
+        metadata,
+        origCoverPath,
+        isVideo,
+        outputDir,
+        tempDir,
+        {
+          ...opts,
+          _hwFallbackAttempted: true,
+          videoSettings: {
+            ...videoSettings,
+            hwaccel: "off"
+          }
+        }
+      );
+    }
+
+    throw transcodeError;
+  }
 
   try {
     if (isCanceled()) {
@@ -2992,9 +3212,11 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     }
 
+    await ensureResultOwnership(result);
     return result;
   } catch (error) {
     console.error("❌ Lyrics processing error:", error);
+    await ensureResultOwnership(result);
     return result;
     } finally {
     for (const p of tempFilesToCleanup) {

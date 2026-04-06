@@ -32,6 +32,10 @@ export class MediaConverterApp {
         this.lastPreviewedPlaylistUrl = null;
         this.qualityLabelElement = null;
         this.outputLocations = null;
+        this.ringtoneSettingsStorageKey = 'gharmonize_ringtone_settings';
+        this.standardAudioSettingsStorageKey = 'gharmonize_standard_audio_settings';
+        this.binaryFooterStatus = null;
+        this.binaryStatusPollTimeoutId = null;
     }
 
     // Initializes startup state for the browser UI layer.
@@ -41,6 +45,8 @@ export class MediaConverterApp {
         if (savedAutoZip !== null) {
             this.autoCreateZip = savedAutoZip === 'true';
         }
+        this.applySavedRingtoneSettingsToUI();
+        this.applySavedStandardAudioSettingsToUI();
 
         if (this.videoManager?.initialize) {
             await this.videoManager.initialize();
@@ -54,9 +60,12 @@ export class MediaConverterApp {
         await this.formatManager.loadFormats();
         this.ensureWarnStyles();
         this.loadLocalFiles();
+        this.renderBinaryFooterLabel();
+        this.scheduleBinaryStatusPoll(0);
         this.loadBinaryVersions().catch(err => {
             console.error('Failed to load binary versions:', err);
         });
+        this.scheduleBinaryVersionRefresh();
     }
 
     // Loads output locations for the browser UI layer.
@@ -165,7 +174,7 @@ export class MediaConverterApp {
 
     // Determines whether show auto zip for current UI state should run for the browser UI layer.
     shouldShowAutoZipForCurrentUI({ url, total = null } = {}) {
-        const format = document.getElementById('formatSelect')?.value || 'mp3';
+        const format = this.getEffectiveFormat(document.getElementById('formatSelect')?.value || 'mp3');
         const isVideo = (format === 'mp4' || format === 'mkv');
         if (isVideo) return false;
 
@@ -186,6 +195,331 @@ export class MediaConverterApp {
 
         return this.isYoutubePlaylistUrl(u);
         }
+
+    // Returns selected output mode for the browser UI layer.
+    getOutputMode() {
+        return document.getElementById('outputModeSelect')?.value || 'standard';
+    }
+
+    // Checks whether ringtone mode is active for the browser UI layer.
+    isRingtoneMode() {
+        return this.getOutputMode() === 'ringtone';
+    }
+
+    // Returns ringtone target for the browser UI layer.
+    getRingtoneTarget() {
+        const target = document.getElementById('ringtoneTargetSelect')?.value || 'android';
+        return target === 'iphone' ? 'iphone' : 'android';
+    }
+
+    // Returns ringtone duration limit for the browser UI layer.
+    getRingtoneDurationLimit(target = null) {
+        return (target || this.getRingtoneTarget()) === 'iphone' ? 40 : 60;
+    }
+
+    // Returns localized ringtone target label for the browser UI layer.
+    getRingtoneTargetLabel(target = null) {
+        const key = (target || this.getRingtoneTarget()) === 'iphone'
+            ? 'ringtone.target.iphone'
+            : 'ringtone.target.android';
+        return this.t(key);
+    }
+
+    // Returns ringtone UI defaults for the browser UI layer.
+    getDefaultRingtoneSettings() {
+        return {
+            target: 'android',
+            mode: 'auto',
+            durationSec: 30,
+            startSec: 30,
+            fadeInSec: 0.5,
+            fadeOutSec: 1
+        };
+    }
+
+    // Normalizes ringtone settings for the browser UI layer.
+    normalizeRingtoneSettings(raw = {}) {
+        const defaults = this.getDefaultRingtoneSettings();
+        const fadeAllowed = new Set([0.5, 1, 1.5]);
+        const target = raw?.target === 'iphone' ? 'iphone' : 'android';
+        const mode = raw?.mode === 'manual' ? 'manual' : 'auto';
+        const durationValue = Number(raw?.durationSec);
+        const startValue = Number(raw?.startSec);
+        const fadeInValue = Number(raw?.fadeInSec);
+        const fadeOutValue = Number(raw?.fadeOutSec);
+        const maxDuration = this.getRingtoneDurationLimit(target);
+
+        return {
+            target,
+            mode,
+            durationSec: Math.min(
+                maxDuration,
+                Math.max(5, Number.isFinite(durationValue) ? durationValue : defaults.durationSec)
+            ),
+            startSec: Math.max(0, Number.isFinite(startValue) ? startValue : defaults.startSec),
+            fadeInSec: fadeAllowed.has(fadeInValue) ? fadeInValue : defaults.fadeInSec,
+            fadeOutSec: fadeAllowed.has(fadeOutValue) ? fadeOutValue : defaults.fadeOutSec
+        };
+    }
+
+    // Loads saved ringtone settings for the browser UI layer.
+    loadSavedRingtoneSettings() {
+        const saved = localStorage.getItem(this.ringtoneSettingsStorageKey);
+        if (!saved) return this.getDefaultRingtoneSettings();
+
+        try {
+            return this.normalizeRingtoneSettings(JSON.parse(saved));
+        } catch (error) {
+            console.warn('Failed to load ringtone settings:', error);
+            return this.getDefaultRingtoneSettings();
+        }
+    }
+
+    // Applies saved ringtone settings to current UI controls for the browser UI layer.
+    applySavedRingtoneSettingsToUI() {
+        const settings = this.loadSavedRingtoneSettings();
+        const targetSelect = document.getElementById('ringtoneTargetSelect');
+        const modeSelect = document.getElementById('ringtoneModeSelect');
+        const durationInput = document.getElementById('ringtoneDurationInput');
+        const startInput = document.getElementById('ringtoneStartInput');
+        const fadeInSelect = document.getElementById('ringtoneFadeInSelect');
+        const fadeOutSelect = document.getElementById('ringtoneFadeOutSelect');
+
+        if (targetSelect) targetSelect.value = settings.target;
+        if (modeSelect) modeSelect.value = settings.mode;
+        if (durationInput) {
+            durationInput.max = String(this.getRingtoneDurationLimit(settings.target));
+            durationInput.value = String(settings.durationSec);
+        }
+        if (startInput) startInput.value = String(settings.startSec);
+        if (fadeInSelect) fadeInSelect.value = String(settings.fadeInSec);
+        if (fadeOutSelect) fadeOutSelect.value = String(settings.fadeOutSec);
+    }
+
+    // Persists ringtone settings to storage for the browser UI layer.
+    persistRingtoneSettingsToStorage() {
+        const settings = this.normalizeRingtoneSettings({
+            target: document.getElementById('ringtoneTargetSelect')?.value,
+            mode: document.getElementById('ringtoneModeSelect')?.value,
+            durationSec: document.getElementById('ringtoneDurationInput')?.value,
+            startSec: document.getElementById('ringtoneStartInput')?.value,
+            fadeInSec: document.getElementById('ringtoneFadeInSelect')?.value,
+            fadeOutSec: document.getElementById('ringtoneFadeOutSelect')?.value
+        });
+
+        localStorage.setItem(this.ringtoneSettingsStorageKey, JSON.stringify(settings));
+        return settings;
+    }
+
+    // Returns whether the given format should be treated as video in the browser UI layer.
+    isVideoFormat(format = null) {
+        const effectiveFormat = String(format || this.getEffectiveFormat()).toLowerCase();
+        return effectiveFormat === 'mp4' || effectiveFormat === 'mkv';
+    }
+
+    // Normalizes standard audio settings for the browser UI layer.
+    normalizeStandardAudioSettings(settings = null) {
+        const rawSampleRate = Number(settings?.sampleRate);
+        const bitrates = {};
+        const rawBitrates = settings?.bitrates;
+
+        if (rawBitrates && typeof rawBitrates === 'object') {
+            Object.entries(rawBitrates).forEach(([format, value]) => {
+                const normalizedFormat = String(format || '').trim().toLowerCase();
+                const normalizedValue = String(value || '').trim();
+                if (normalizedFormat && normalizedValue) {
+                    bitrates[normalizedFormat] = normalizedValue;
+                }
+            });
+        }
+
+        if (Object.keys(bitrates).length === 0) {
+            const legacyBitrate = String(settings?.bitrate || '').trim();
+            if (legacyBitrate) {
+                bitrates.mp3 = legacyBitrate;
+            }
+        }
+
+        return {
+            sampleRate: Number.isFinite(rawSampleRate) && rawSampleRate > 0
+                ? Math.round(rawSampleRate)
+                : 48000,
+            bitrates
+        };
+    }
+
+    // Loads saved standard audio settings from storage for the browser UI layer.
+    loadSavedStandardAudioSettingsFromStorage() {
+        try {
+            const saved = localStorage.getItem(this.standardAudioSettingsStorageKey);
+            if (!saved) {
+                return this.normalizeStandardAudioSettings();
+            }
+
+            return this.normalizeStandardAudioSettings(JSON.parse(saved));
+        } catch (error) {
+            console.warn('Failed to load standard audio settings:', error);
+            return this.normalizeStandardAudioSettings();
+        }
+    }
+
+    // Returns saved bitrate for the requested standard format in the browser UI layer.
+    getSavedStandardBitrate(format = null) {
+        const normalizedFormat = String(format || this.getEffectiveFormat()).trim().toLowerCase();
+        if (!normalizedFormat) return '';
+
+        const settings = this.loadSavedStandardAudioSettingsFromStorage();
+        return String(settings?.bitrates?.[normalizedFormat] || '').trim();
+    }
+
+    // Applies saved standard audio settings to current UI controls for the browser UI layer.
+    applySavedStandardAudioSettingsToUI() {
+        const settings = this.loadSavedStandardAudioSettingsFromStorage();
+        this.currentSampleRate = settings.sampleRate;
+
+        const sampleRateSelect = document.getElementById('sampleRateSelect');
+        if (!sampleRateSelect) return;
+
+        const sampleRateValue = String(settings.sampleRate);
+        const supportsSavedRate = Array.from(sampleRateSelect.options || []).some(
+            (option) => String(option.value) === sampleRateValue
+        );
+        if (supportsSavedRate) {
+            sampleRateSelect.value = sampleRateValue;
+        }
+    }
+
+    // Persists standard-mode audio settings to storage for the browser UI layer.
+    persistStandardAudioSettingsToStorage({ format = null, bitrate = null, sampleRate = null } = {}) {
+        const effectiveFormat = String(format || this.getEffectiveFormat()).trim().toLowerCase();
+        if (!effectiveFormat || this.isRingtoneMode() || this.isVideoFormat(effectiveFormat)) {
+            return;
+        }
+
+        const currentSettings = this.loadSavedStandardAudioSettingsFromStorage();
+        const nextSettings = {
+            ...currentSettings,
+            bitrates: {
+                ...(currentSettings.bitrates || {})
+            }
+        };
+
+        const normalizedSampleRate = Number(
+            sampleRate ?? document.getElementById('sampleRateSelect')?.value ?? this.currentSampleRate ?? 48000
+        );
+        nextSettings.sampleRate = Number.isFinite(normalizedSampleRate) && normalizedSampleRate > 0
+            ? Math.round(normalizedSampleRate)
+            : 48000;
+        this.currentSampleRate = nextSettings.sampleRate;
+
+        const normalizedBitrate = String(
+            bitrate ?? document.getElementById('bitrateSelect')?.value ?? ''
+        ).trim();
+        if (normalizedBitrate) {
+            nextSettings.bitrates[effectiveFormat] = normalizedBitrate;
+        }
+
+        localStorage.setItem(
+            this.standardAudioSettingsStorageKey,
+            JSON.stringify(this.normalizeStandardAudioSettings(nextSettings))
+        );
+    }
+
+    // Builds ringtone payload from current UI state for the browser UI layer.
+    buildCurrentRingtonePayload() {
+        if (!this.isRingtoneMode()) return null;
+
+        const target = this.getRingtoneTarget();
+        const maxDuration = this.getRingtoneDurationLimit(target);
+        const mode = document.getElementById('ringtoneModeSelect')?.value === 'manual'
+            ? 'manual'
+            : 'auto';
+        const durationInput = Number(document.getElementById('ringtoneDurationInput')?.value || 30);
+        const startInput = Number(document.getElementById('ringtoneStartInput')?.value || 0);
+        const fadeInRaw = Number(document.getElementById('ringtoneFadeInSelect')?.value || 0.5);
+        const fadeOutRaw = Number(document.getElementById('ringtoneFadeOutSelect')?.value || 1);
+        const fadeAllowed = new Set([0.5, 1, 1.5]);
+        const durationSec = Math.min(maxDuration, Math.max(5, Number.isFinite(durationInput) ? durationInput : 30));
+        const startSec = Math.max(0, Number.isFinite(startInput) ? startInput : 0);
+        const fadeInSec = fadeAllowed.has(fadeInRaw) ? fadeInRaw : 0.5;
+        const fadeOutSec = fadeAllowed.has(fadeOutRaw) ? fadeOutRaw : 1;
+
+        return {
+            enabled: true,
+            target,
+            mode,
+            durationSec,
+            fadeInSec,
+            fadeOutSec,
+            ...(mode === 'manual' ? { startSec } : {})
+        };
+    }
+
+    // Returns effective output format based on current UI state for the browser UI layer.
+    getEffectiveFormat(rawFormat = null) {
+        if (this.isRingtoneMode()) {
+            return this.getRingtoneTarget() === 'iphone' ? 'm4r' : 'mp3';
+        }
+        return rawFormat || document.getElementById('formatSelect')?.value || 'mp3';
+    }
+
+    // Resolves output settings from current UI state for the browser UI layer.
+    resolveCurrentOutputSettings({ format = null, sampleRate = null, bitrate = null } = {}) {
+        const ringtone = this.buildCurrentRingtonePayload();
+        const effectiveFormat = this.getEffectiveFormat(format);
+        const rawSampleRate = Number(sampleRate ?? document.getElementById('sampleRateSelect')?.value ?? 48000);
+        const effectiveSampleRate = ringtone
+            ? 44100
+            : (Number.isFinite(rawSampleRate) && rawSampleRate > 0 ? rawSampleRate : 48000);
+
+        return {
+            format: effectiveFormat,
+            sampleRate: effectiveSampleRate,
+            bitrate: bitrate ?? document.getElementById('bitrateSelect')?.value ?? 'auto',
+            ringtone
+        };
+    }
+
+    // Applies current output profile to a payload for the browser UI layer.
+    applyCurrentOutputProfile(payload, { isFormData = false } = {}) {
+        const readField = (name) => {
+            if (!isFormData) return payload?.[name];
+            if (payload instanceof FormData) return payload.get(name);
+            return null;
+        };
+
+        const resolved = this.resolveCurrentOutputSettings({
+            format: readField('format'),
+            sampleRate: readField('sampleRate'),
+            bitrate: readField('bitrate')
+        });
+
+        if (!isFormData) {
+            payload.format = resolved.format;
+            payload.sampleRate = resolved.sampleRate;
+            if (resolved.ringtone) payload.ringtone = resolved.ringtone;
+            else delete payload.ringtone;
+            return resolved;
+        }
+
+        if (!(payload instanceof FormData)) return resolved;
+
+        const setValue = (name, value) => {
+            try { payload.delete(name); } catch {}
+            payload.append(name, value);
+        };
+
+        setValue('format', resolved.format);
+        setValue('sampleRate', String(resolved.sampleRate));
+
+        if (resolved.ringtone) {
+            setValue('ringtone', JSON.stringify(resolved.ringtone));
+        } else {
+            try { payload.delete('ringtone'); } catch {}
+        }
+
+        return resolved;
+    }
 
     // Initializes theme for the browser UI layer.
     initializeTheme() {
@@ -222,7 +556,7 @@ export class MediaConverterApp {
     // Initializes event listeners for the browser UI layer.
     initializeEventListeners() {
         document.getElementById('formatSelect').addEventListener('change', async (e) => {
-            const format = e.target.value;
+            const format = this.getEffectiveFormat(e.target.value);
             this.updateQualityLabel(format);
             this.formatManager.toggleFormatSpecificOptions(format);
             const formats = await this.formatManager.getFormats();
@@ -244,6 +578,8 @@ export class MediaConverterApp {
             if (localGroup && localGroup.style.display !== 'none') {
                 this.loadLocalFiles();
             }
+            this.formatManager?.updateRingtoneHint?.();
+            this.renderBinaryFooterLabel();
         });
 
         const fileForm = document.getElementById('fileForm');
@@ -251,7 +587,7 @@ export class MediaConverterApp {
             fileForm.addEventListener('submit', (e) => this.uploadManager.handleFileSubmit(e));
         }
 
-        const initialFormat = document.getElementById('formatSelect')?.value || 'mp3';
+        const initialFormat = this.getEffectiveFormat(document.getElementById('formatSelect')?.value || 'mp3');
          this.updateQualityLabel(initialFormat);
 
         document.getElementById('previewBtn').addEventListener('click', () => this.previewManager.handlePreviewClick());
@@ -371,7 +707,16 @@ export class MediaConverterApp {
         this.syncEmbedLyricsCheckboxVisibility();
 
         document.getElementById('sampleRateSelect').addEventListener('change', (e) => {
-            this.currentSampleRate = parseInt(e.target.value);
+            this.currentSampleRate = parseInt(e.target.value, 10);
+            this.persistStandardAudioSettingsToStorage({
+                sampleRate: this.currentSampleRate
+            });
+        });
+
+        document.getElementById('bitrateSelect').addEventListener('change', (e) => {
+            this.persistStandardAudioSettingsToStorage({
+                bitrate: e.target.value
+            });
         });
 
         const volumeRange = document.getElementById('volumeGainRange');
@@ -444,6 +789,10 @@ export class MediaConverterApp {
                 binaryFooter.classList.toggle('collapsed');
             });
         }
+
+        window.addEventListener('gharmonize:binaries-refresh-started', () => {
+            this.scheduleBinaryStatusPoll(0);
+        });
 
     window.addEventListener('gharmonize:auth', (ev) => {
             const isLoggedIn = ev?.detail?.loggedIn ?? false;
@@ -823,6 +1172,7 @@ export class MediaConverterApp {
 
     // Applies URL-driven default format in the browser UI layer.
     applyUrlDrivenDefaultFormat(url) {
+        if (this.isRingtoneMode()) return;
         const formatSelect = document.getElementById('formatSelect');
         if (!formatSelect) return;
 
@@ -840,10 +1190,10 @@ export class MediaConverterApp {
     async handleUrlSubmit(e) {
     e.preventDefault();
     const url = document.getElementById('urlInput').value.trim();
-    const format = document.getElementById('formatSelect').value;
-    const bitrate = document.getElementById('bitrateSelect').value;
-    const sampleRateSelect = document.getElementById('sampleRateSelect');
-    const sampleRate = sampleRateSelect ? parseInt(sampleRateSelect.value) : 48000;
+    const outputSettings = this.resolveCurrentOutputSettings();
+    const format = outputSettings.format;
+    const bitrate = outputSettings.bitrate;
+    const sampleRate = outputSettings.sampleRate;
     const playlistCheckboxEl = document.getElementById('playlistCheckbox');
     const isPlaylist = playlistCheckboxEl?.checked;
     const sequential = document.getElementById('sequentialChk')?.checked;
@@ -901,7 +1251,8 @@ export class MediaConverterApp {
             includeLyrics,
             embedLyrics,
             volumeGain,
-            autoCreateZip
+            autoCreateZip,
+            ringtone: outputSettings.ringtone
         };
         await this.jobManager.submitJob(payload);
 
@@ -916,10 +1267,95 @@ export class MediaConverterApp {
         this.setAutoZipVisibility(false);
     }
 
+    // Returns localized runtime binary status text for the footer label.
+    getBinaryStatusDetail(status = this.binaryFooterStatus) {
+        if (!status) return '';
+
+        const tool = String(status.currentToolLabel || status.currentTool || '').trim();
+
+        if (status.active) {
+            if (status.phase === 'downloading' && tool) {
+                return this.t('ui.binaryStatusDownloading', { tool });
+            }
+
+            if (status.phase === 'checking' && tool) {
+                return this.t('ui.binaryStatusChecking', { tool });
+            }
+
+            return this.t('ui.binaryStatusUpdating');
+        }
+
+        if (
+            status.phase === 'error' &&
+            status.updatedAt &&
+            (Date.now() - Number(status.updatedAt)) < 15000
+        ) {
+            return this.t('ui.binaryStatusFailed');
+        }
+
+        return '';
+    }
+
+    // Renders runtime binary footer label for the browser UI layer.
+    renderBinaryFooterLabel() {
+        const labelEl = document.querySelector('.binary-footer-toggle-label');
+        if (!labelEl) return;
+
+        const baseLabel = this.t('ui.binaryVersionsLabel') || 'Tools in use';
+        const detail = this.getBinaryStatusDetail();
+        labelEl.textContent = detail ? `${baseLabel} • ${detail}` : baseLabel;
+    }
+
+    // Schedules runtime binary status polling for the browser UI layer.
+    scheduleBinaryStatusPoll(delay = 0) {
+        if (this.binaryStatusPollTimeoutId) {
+            window.clearTimeout(this.binaryStatusPollTimeoutId);
+        }
+
+        this.binaryStatusPollTimeoutId = window.setTimeout(() => {
+            this.loadBinaryStatus().catch((err) => {
+                console.error('Scheduled binary status refresh failed:', err);
+            });
+        }, Math.max(0, Number(delay) || 0));
+    }
+
+    // Loads runtime binary status for the browser UI layer.
+    async loadBinaryStatus() {
+        try {
+            const previousActive = !!this.binaryFooterStatus?.active;
+            const previousCompletedAt = this.binaryFooterStatus?.completedAt || null;
+            const res = await fetch('/api/binaries/status', { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+            const data = await res.json();
+            this.binaryFooterStatus = data;
+            this.renderBinaryFooterLabel();
+
+            const completedNow = (
+                previousActive &&
+                !data?.active &&
+                data?.completedAt &&
+                data.completedAt !== previousCompletedAt
+            );
+
+            if (completedNow) {
+                this.loadBinaryVersions().catch((err) => {
+                    console.error('Binary versions refresh after status completion failed:', err);
+                });
+            }
+
+            this.scheduleBinaryStatusPoll(data?.active ? 2000 : 15000);
+        } catch (e) {
+            console.error('loadBinaryStatus error:', e);
+            this.renderBinaryFooterLabel();
+            this.scheduleBinaryStatusPoll(15000);
+        }
+    }
+
     // Loads binary versions for the browser UI layer.
     async loadBinaryVersions() {
         try {
-            const res = await fetch('/api/binaries');
+            const res = await fetch('/api/binaries', { cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
 
@@ -928,8 +1364,7 @@ export class MediaConverterApp {
                 if (!v) return '';
                 const nightly = v.match(/^N-(\d+)-(?:g[0-9a-f]+-)?(\d{8})$/);
                 if (nightly) {
-                    const date = nightly[2];
-                    return date;
+                    return nightly[2];
                 }
 
                 if (v.length > 20) {
@@ -966,6 +1401,18 @@ export class MediaConverterApp {
             if (el) {
                 el.textContent = this.t('ui.binaryVersionsError') || 'Binary versiyonları okunamadı';
             }
+        }
+    }
+
+    // Schedules follow-up binary version refreshes for the browser UI layer.
+    scheduleBinaryVersionRefresh() {
+        const delays = [10000, 30000];
+        for (const delay of delays) {
+            window.setTimeout(() => {
+                this.loadBinaryVersions().catch((err) => {
+                    console.error('Scheduled binary version refresh failed:', err);
+                });
+            }, delay);
         }
     }
 

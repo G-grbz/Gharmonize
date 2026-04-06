@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { sanitizeFilename } from "./utils.js";
+import { MKVPROPEDIT_BIN } from "./binaries.js";
 
 // Generates metadata for disc scanning and ripping.
 export async function generateMetadata(titleInfo, outputPath) {
@@ -38,18 +39,22 @@ export async function generateMetadata(titleInfo, outputPath) {
 
 // Persists metadata to mkv for disc scanning and ripping.
 export async function writeMetadataToMKV(mkvPath, metadata) {
-  let command = `mkvpropedit "${mkvPath}" `;
+  const args = [];
 
   if (metadata.title) {
-    command += `--set title="${metadata.title}" `;
+    args.push("--edit", "info", "--set", `title=${metadata.title}`);
+  }
+
+  if (args.length === 0) {
+    return { success: true, skipped: true };
   }
 
   try {
-    const { exec } = await import("child_process");
+    const { execFile } = await import("child_process");
     const { promisify } = await import("util");
-    const execAsync = promisify(exec);
+    const execFileAsync = promisify(execFile);
 
-    await execAsync(command);
+    await execFileAsync(MKVPROPEDIT_BIN, [mkvPath, ...args]);
     return { success: true };
   } catch (error) {
     console.warn("Metadata write error:", error.message);

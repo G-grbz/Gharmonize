@@ -1298,6 +1298,30 @@ updateJobUI(job, batchId = null) {
     if (job.metadata?.includeLyrics) {
         extraFeatures.push(`<span class="info-feature">🎼 ${this.app.t('label.includeLyrics2') || 'Lyrics'}</span>`);
     }
+    if (job.metadata?.ringtone?.enabled) {
+        const ringtoneTarget = job.metadata.ringtone.target === 'iphone'
+            ? this.app.t('ringtone.target.iphone')
+            : this.app.t('ringtone.target.android');
+        const ringtoneMode = job.metadata.ringtone.mode === 'manual'
+            ? this.app.t('ringtone.mode.manual')
+            : this.app.t('ringtone.mode.auto');
+        const durationText = `${Math.round(Number(job.metadata.ringtone.durationSec || 0))}s`;
+        extraFeatures.push(`<span class="info-feature">🔔 ${ringtoneTarget} • ${durationText}</span>`);
+        extraFeatures.push(`<span class="info-feature">✂️ ${ringtoneMode}</span>`);
+        if (Number.isFinite(Number(job.metadata.ringtone.fadeInSec)) && Number(job.metadata.ringtone.fadeInSec) > 0) {
+            const fadeInSec = Number(job.metadata.ringtone.fadeInSec);
+            const fadeInText = Number.isInteger(fadeInSec) ? String(fadeInSec) : fadeInSec.toFixed(1);
+            extraFeatures.push(`<span class="info-feature">↗ ${fadeInText}s</span>`);
+        }
+        if (Number.isFinite(Number(job.metadata.ringtone.fadeOutSec)) && Number(job.metadata.ringtone.fadeOutSec) > 0) {
+            const fadeOutSec = Number(job.metadata.ringtone.fadeOutSec);
+            const fadeOutText = Number.isInteger(fadeOutSec) ? String(fadeOutSec) : fadeOutSec.toFixed(1);
+            extraFeatures.push(`<span class="info-feature">↘ ${fadeOutText}s</span>`);
+        }
+        if (job.metadata.ringtone.mode === 'manual' && Number.isFinite(Number(job.metadata.ringtone.startSec))) {
+            extraFeatures.push(`<span class="info-feature">⏱️ ${this.app.formatSeconds(Number(job.metadata.ringtone.startSec))}</span>`);
+        }
+    }
     if (job.metadata?.volumeGain && job.metadata.volumeGain !== 1.0) {
         extraFeatures.push(`<span class="info-feature">🔊 ${job.metadata.volumeGain}x</span>`);
     }
@@ -2165,9 +2189,8 @@ updateJobUI(job, batchId = null) {
         try {
             console.log("Sent payload:", payload);
 
-            const format = String(
-                (!isFormData && payload?.format) ? payload.format : (document.getElementById('formatSelect')?.value)
-            ).toLowerCase();
+            const outputProfile = this.app.applyCurrentOutputProfile(payload, { isFormData });
+            const format = String(outputProfile.format || '').toLowerCase();
             const disableAutoZip = format === 'mp4' || format === 'mkv';
 
             if (disableAutoZip) {

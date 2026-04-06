@@ -2,6 +2,7 @@ export class FormatManager {
     // Initializes class state and defaults for the browser UI layer.
     constructor(app) {
         this.app = app;
+        this.cachedFormats = [];
     }
 
     // Loads formats for the browser UI layer.
@@ -9,8 +10,10 @@ export class FormatManager {
         try {
             const response = await fetch('/api/formats');
             const data = await response.json();
+            this.cachedFormats = Array.isArray(data.formats) ? data.formats : [];
             this.updateFormatOptions(data.formats);
             this.handleFormatChange();
+            this.refreshFormatUI();
         } catch (error) {
             console.error('Failed to load formats:', error);
         }
@@ -19,57 +22,119 @@ export class FormatManager {
     // Handles handle format change in the browser UI layer.
     handleFormatChange() {
         const formatSelect = document.getElementById('formatSelect');
+        const refresh = async () => {
+            await this.refreshFormatUI();
+            this.app.persistRingtoneSettingsToStorage();
+        };
         formatSelect.addEventListener('change', async (e) => {
-            const format = e.target.value;
-            this.app.updateQualityLabel(format);
-            this.toggleFormatSpecificOptions(format);
+            await refresh(e.target.value);
+        });
 
-            const formats = await this.getFormats();
-            this.updateBitrateOptions(format, formats);
-
-            if (format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts') {
-             this.updateSampleRateOptionsForEac3Ac3();
+        ['outputModeSelect', 'ringtoneTargetSelect', 'ringtoneModeSelect'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('change', () => {
+                    refresh();
+                });
             }
         });
 
-        const currentFormat = formatSelect.value;
-        this.app.updateQualityLabel(currentFormat);
-        this.toggleFormatSpecificOptions(currentFormat);
+        const durationInput = document.getElementById('ringtoneDurationInput');
+        if (durationInput) {
+            durationInput.addEventListener('input', () => {
+                this.syncRingtoneDurationLimit();
+                this.app.persistRingtoneSettingsToStorage();
+            });
+            durationInput.addEventListener('change', () => {
+                this.syncRingtoneDurationLimit();
+                this.app.persistRingtoneSettingsToStorage();
+            });
+        }
 
-        if (currentFormat === 'eac3' || currentFormat === 'ac3' || currentFormat === 'aac' || currentFormat === 'dts') {
-         this.updateSampleRateOptionsForEac3Ac3();
-     }
+        ['ringtoneFadeInSelect', 'ringtoneFadeOutSelect'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('change', () => {
+                    this.app.persistRingtoneSettingsToStorage();
+                });
+            }
+        });
+
+        const startInput = document.getElementById('ringtoneStartInput');
+        if (startInput) {
+            const persistStart = () => this.app.persistRingtoneSettingsToStorage();
+            startInput.addEventListener('input', persistStart);
+            startInput.addEventListener('change', persistStart);
+        }
+
+        refresh();
+    }
+
+    // Builds a sample rate label for the browser UI layer.
+    getSampleRateOptionLabel(rate) {
+        const rateNumber = Number(rate);
+        const translatedLabels = {
+            44100: this.app.t('quality.44100') || '44.1 kHz (CD Quality)',
+            48000: this.app.t('quality.48000') || '48 kHz (Standard)',
+            96000: this.app.t('quality.96000') || '96 kHz (High Quality)',
+            192000: this.app.t('quality.192000') || '192 kHz (Studio Quality)'
+        };
+
+        return translatedLabels[rateNumber] || `${Math.round(rateNumber / 1000)} kHz`;
+    }
+
+    // Rebuilds sample rate options for the browser UI layer.
+    updateSampleRateOptions(rates, fallbackRate = null) {
+        const sampleRateSelect = document.getElementById('sampleRateSelect');
+        if (!sampleRateSelect) return;
+
+        const normalizedRates = rates
+            .map((rate) => Number(rate))
+            .filter((rate) => Number.isFinite(rate) && rate > 0);
+        if (!normalizedRates.length) return;
+
+        sampleRateSelect.innerHTML = '';
+        normalizedRates.forEach((rate) => {
+            const option = document.createElement('option');
+            option.value = String(rate);
+            option.textContent = this.getSampleRateOptionLabel(rate);
+            sampleRateSelect.appendChild(option);
+        });
+
+        const savedSampleRate = Number(
+            this.app.loadSavedStandardAudioSettingsFromStorage?.()?.sampleRate
+        );
+        const preferredRate = normalizedRates.includes(savedSampleRate)
+            ? savedSampleRate
+            : (normalizedRates.includes(this.app.currentSampleRate)
+                ? this.app.currentSampleRate
+                : (normalizedRates.includes(Number(fallbackRate)) ? Number(fallbackRate) : normalizedRates[0]));
+
+        sampleRateSelect.value = String(preferredRate);
+        this.app.currentSampleRate = preferredRate;
+    }
+
+    // Updates sample rate options for standard audio formats in the browser UI layer.
+    updateStandardSampleRateOptions() {
+        this.updateSampleRateOptions([44100, 48000, 96000, 192000], 48000);
     }
 
     // Updates sample rate options for eac3 ac3 for the browser UI layer.
     updateSampleRateOptionsForEac3Ac3() {
-     const sampleRateSelect = document.getElementById('sampleRateSelect');
-     if (!sampleRateSelect) return;
-     const supportedRates = [48000, 44100, 32000];
-
-     sampleRateSelect.innerHTML = '';
-     supportedRates.forEach(rate => {
-         const option = document.createElement('option');
-         option.value = rate;
-         option.textContent = `${Math.round(rate / 1000)} kHz`;
-         if (rate === 48000) option.selected = true;
-         sampleRateSelect.appendChild(option);
-     });
-
-     if (this.app.currentSampleRate && supportedRates.includes(this.app.currentSampleRate)) {
-         sampleRateSelect.value = this.app.currentSampleRate;
-     }
- }
+        this.updateSampleRateOptions([48000, 44100, 32000], 48000);
+    }
 
     // Handles toggle format specific options in the browser UI layer.
     toggleFormatSpecificOptions(format) {
+        const isRingtoneMode = this.app.isRingtoneMode();
         const sampleRateGroup = document.querySelector('.form-group:has(#sampleRateSelect)');
         const lyricsGroup = document.getElementById('lyricsCheckboxContainer');
         const embedLyricsGroup = document.getElementById('embedLyricsCheckboxContainer');
-        const isVideoOutput = format === 'mp4' || format === 'mkv';
-        const isEac3Ac3 = format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts';
-        const isFlacWav = format === 'flac' || format === 'wav';
-        const isFlac = format === 'flac';
+        const formatGroup = document.getElementById('formatGroup');
+        const isVideoOutput = !isRingtoneMode && (format === 'mp4' || format === 'mkv');
+        const isEac3Ac3 = !isRingtoneMode && (format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts');
+        const isFlacWav = !isRingtoneMode && (format === 'flac' || format === 'wav');
+        const isFlac = !isRingtoneMode && format === 'flac';
 
         const videoSettingsContainer = document.getElementById('videoSettingsContainer');
         if (videoSettingsContainer) {
@@ -84,15 +149,18 @@ export class FormatManager {
         }
 
         if (sampleRateGroup) {
-            sampleRateGroup.style.display = isVideoOutput ? 'none' : '';
+            sampleRateGroup.style.display = (isVideoOutput || isRingtoneMode) ? 'none' : '';
         }
 
         if (lyricsGroup) {
-            lyricsGroup.style.display = (isVideoOutput || isEac3Ac3) ? 'none' : '';
+            lyricsGroup.style.display = (isVideoOutput || isEac3Ac3 || isRingtoneMode) ? 'none' : '';
         }
         if (embedLyricsGroup) {
-            const canShowLyrics = !(isVideoOutput || isEac3Ac3);
+            const canShowLyrics = !(isVideoOutput || isEac3Ac3 || isRingtoneMode);
             embedLyricsGroup.style.display = canShowLyrics ? 'flex' : 'none';
+        }
+        if (formatGroup) {
+            formatGroup.style.display = isRingtoneMode ? 'none' : '';
         }
         let bitDepthGroup = document.getElementById('bitDepthGroup');
 
@@ -158,6 +226,68 @@ export class FormatManager {
         this.toggleEac3Ac3Options(isEac3Ac3);
         }
 
+        // Refreshes all format-dependent controls in the browser UI layer.
+        async refreshFormatUI() {
+        const rawFormat = document.getElementById('formatSelect')?.value || 'mp3';
+        const format = this.app.getEffectiveFormat(rawFormat);
+        this.toggleRingtoneControls();
+        this.app.updateQualityLabel(format);
+        this.toggleFormatSpecificOptions(format);
+
+        const formats = await this.getFormats();
+        this.updateBitrateOptions(format, formats);
+        this.app.setAutoZipVisibility(this.app.shouldShowAutoZipForCurrentUI());
+
+        if (format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts') {
+            this.updateSampleRateOptionsForEac3Ac3();
+        } else if (!this.app.isRingtoneMode() && !this.app.isVideoFormat(format)) {
+            this.updateStandardSampleRateOptions();
+        }
+    }
+
+        // Toggles ringtone-specific controls in the browser UI layer.
+        toggleRingtoneControls() {
+        const container = document.getElementById('ringtoneSettingsContainer');
+        const manualGroup = document.getElementById('ringtoneManualStartGroup');
+        const isRingtone = this.app.isRingtoneMode();
+        const mode = document.getElementById('ringtoneModeSelect')?.value || 'auto';
+
+        if (container) {
+            container.style.display = isRingtone ? '' : 'none';
+        }
+        if (manualGroup) {
+            manualGroup.style.display = (isRingtone && mode === 'manual') ? '' : 'none';
+        }
+
+        this.syncRingtoneDurationLimit();
+        this.updateRingtoneHint();
+    }
+
+        // Synchronizes ringtone duration limit and clamp in the browser UI layer.
+        syncRingtoneDurationLimit() {
+        const target = this.app.getRingtoneTarget();
+        const durationInput = document.getElementById('ringtoneDurationInput');
+        if (!durationInput) return;
+        const maxDuration = this.app.getRingtoneDurationLimit(target);
+        durationInput.max = String(maxDuration);
+
+        const rawValue = Number(durationInput.value || 30);
+        const nextValue = Math.min(maxDuration, Math.max(5, Number.isFinite(rawValue) ? rawValue : 30));
+        if (Number(durationInput.value) !== nextValue) {
+            durationInput.value = String(nextValue);
+        }
+    }
+
+        // Updates ringtone hint text in the browser UI layer.
+        updateRingtoneHint() {
+        const hint = document.getElementById('ringtoneHint');
+        if (!hint) return;
+        hint.textContent = this.app.t('ui.ringtoneHint', {
+            target: this.app.getRingtoneTargetLabel(),
+            max: this.app.getRingtoneDurationLimit()
+        });
+    }
+
         // Handles toggle eac3 ac3 options in the browser UI layer.
         toggleEac3Ac3Options(show) {
         let container = document.getElementById('eac3Ac3Options');
@@ -206,23 +336,27 @@ export class FormatManager {
     updateFormatOptions(formats) {
         const formatSelect = document.getElementById('formatSelect');
         formatSelect.innerHTML = '';
-        formats.forEach((format) => {
+        const visibleFormats = formats.filter((format) => !format.hidden);
+        visibleFormats.forEach((format) => {
             const option = document.createElement('option');
             option.value = format.format;
             option.textContent = format.format.toUpperCase();
             formatSelect.appendChild(option);
         });
-        this.updateBitrateOptions(formats[0].format, formats);
-        const currentFormat = formatSelect.value;
+        const firstFormat = visibleFormats[0]?.format || 'mp3';
+        this.updateBitrateOptions(this.app.getEffectiveFormat(firstFormat), formats);
+        const currentFormat = this.app.getEffectiveFormat(formatSelect.value);
         this.toggleFormatSpecificOptions(currentFormat);
     }
 
     // Returns formats used for the browser UI layer.
     async getFormats() {
+        if (this.cachedFormats.length) return this.cachedFormats;
         try {
             const response = await fetch('/api/formats');
             const data = await response.json();
-            return data.formats;
+            this.cachedFormats = Array.isArray(data.formats) ? data.formats : [];
+            return this.cachedFormats;
         } catch {
             return [];
         }
@@ -233,6 +367,7 @@ export class FormatManager {
         const bitrateSelect = document.getElementById('bitrateSelect');
         const formatData = formats.find((f) => f.format === format);
         if (!formatData) return;
+        const previousValue = bitrateSelect.value;
         bitrateSelect.innerHTML = '';
         formatData.bitrates.forEach((bitrate) => {
             const option = document.createElement('option');
@@ -240,6 +375,19 @@ export class FormatManager {
             option.textContent = bitrate === 'lossless' ? this.app.t('quality.lossless') : bitrate;
             bitrateSelect.appendChild(option);
         });
+        const availableBitrates = formatData.bitrates || [];
+        const defaultBitrate = formatData.defaultBitrate || availableBitrates[0];
+        const isStandardAudioSelection = !this.app.isRingtoneMode() && !this.app.isVideoFormat(format);
+        const savedBitrate = isStandardAudioSelection
+            ? this.app.getSavedStandardBitrate(format)
+            : '';
+        const fallbackBitrate = isStandardAudioSelection && availableBitrates.includes('auto')
+            ? 'auto'
+            : defaultBitrate;
+
+        bitrateSelect.value = availableBitrates.includes(previousValue)
+            ? previousValue
+            : (availableBitrates.includes(savedBitrate) ? savedBitrate : fallbackBitrate);
         this.app.updateQualityLabel(format);
         const bitDepthSelect = document.getElementById('bitDepthSelect');
         if (bitDepthSelect) {

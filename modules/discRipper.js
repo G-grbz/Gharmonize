@@ -6,6 +6,60 @@ import { MKVMERGE_BIN } from "./binaries.js";
 let currentRipProcess = null;
 let ripCancelled = false;
 
+// Removes noisy AppImage extraction lines from MKVToolNix output.
+function sanitizeMkvToolNixOutput(rawOutput) {
+  const text = String(rawOutput || "");
+  if (!text.trim()) {
+    return "";
+  }
+
+  const filtered = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^\/tmp\/appimage_extracted/i.test(line))
+    .filter((line) => !/^\/tmp\/\.mount_/i.test(line));
+
+  return filtered.join("\n").trim();
+}
+
+// Parses JSON from command output, tolerating wrapper/banner noise around it.
+function parseCommandJson(rawOutput, label = "command output") {
+  const text = String(rawOutput || "").trim();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+  }
+
+  const candidates = [];
+  const objectStart = text.indexOf("{");
+  const objectEnd = text.lastIndexOf("}");
+  if (objectStart !== -1 && objectEnd > objectStart) {
+    candidates.push(text.slice(objectStart, objectEnd + 1));
+  }
+
+  const arrayStart = text.indexOf("[");
+  const arrayEnd = text.lastIndexOf("]");
+  if (arrayStart !== -1 && arrayEnd > arrayStart) {
+    candidates.push(text.slice(arrayStart, arrayEnd + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+    }
+  }
+
+  const error = new Error(`Invalid JSON from ${label}`);
+  error.rawOutput = text.slice(0, 4000);
+  throw error;
+}
+
 // Handles exec json unlimited in disc scanning and ripping.
 function execJsonUnlimited(cmd, progressCallback = null) {
     if (progressCallback) {
@@ -430,7 +484,13 @@ async function ripDvdTitle(
       stdout = result.stdout;
       stderr = result.stderr;
 
-      if (progressCallback) progressCallback(100, "Completed successfully");
+      if (progressCallback) {
+        progressCallback(99, {
+          __i18n: true,
+          key: "disc.progress.finalizingOutput",
+          vars: {}
+        });
+      }
         } catch (execError) {
         if (execError.message === "RIP_CANCELLED") {
         throw execError;
@@ -444,7 +504,11 @@ async function ripDvdTitle(
         const stats = await fs.stat(outputPath);
         if (stats.size > 0) {
           if (progressCallback)
-            progressCallback(100, { __i18n: true, key: "disc.progress.completedWithWarnings", vars: {} });
+            progressCallback(99, {
+              __i18n: true,
+              key: "disc.progress.completedWithWarnings",
+              vars: {}
+            });
           return {
             success: true,
             outputPath,
@@ -458,7 +522,8 @@ async function ripDvdTitle(
       throw execError;
     }
 
-    if (stdout) console.log("mkvmerge stdout:", stdout);
+    const cleanStdout = sanitizeMkvToolNixOutput(stdout);
+    if (cleanStdout) console.log("mkvmerge stdout:", cleanStdout);
     if (stderr) console.log("mkvmerge stderr:", stderr);
 
     try {
@@ -529,7 +594,10 @@ async function ripBluRayTitle(
       const { stdout: tracksJson } = await execJsonUnlimited(
         `"${MKVMERGE_BIN}" -J "${playlistPath}"`, progressCallback
       );
-      const info = JSON.parse(tracksJson || "{}");
+      const info = parseCommandJson(
+        tracksJson,
+        `mkvmerge ${path.basename(playlistPath)}`
+      );
       mkvmergeInfo = info;
 
       (info.tracks || []).forEach((track) => {
@@ -596,15 +664,57 @@ async function ripBluRayTitle(
 
     if (progressCallback) progressCallback(25, { __i18n: true, key: "disc.progress.processingBluray", vars: {} });
 
-    const { stdout, stderr } = await runRipCommand(
-      args,
-      outputPath,
-      progressCallback,
-      expectedSizeBytes || null
-    );
+    let stdout;
+    let stderr;
+    try {
+      const result = await runRipCommand(
+        args,
+        outputPath,
+        progressCallback,
+        expectedSizeBytes || null
+      );
+      stdout = result.stdout;
+      stderr = result.stderr;
+    } catch (execError) {
+      if (execError.message === "RIP_CANCELLED") {
+        throw execError;
+      }
 
-    if (progressCallback) progressCallback(100, { __i18n: true, key: "disc.progress.successfullyCompleted", vars: {} });
-    if (stdout) console.log("mkvmerge stdout:", stdout);
+      stdout = execError.stdout;
+      stderr = execError.stderr;
+
+      try {
+        await fs.access(outputPath);
+        const stats = await fs.stat(outputPath);
+        if (stats.size > 0) {
+          if (progressCallback) {
+            progressCallback(99, {
+              __i18n: true,
+              key: "disc.progress.completedWithWarnings",
+              vars: {}
+            });
+          }
+          return {
+            success: true,
+            outputPath,
+            message: `Blu-ray title ${titleIndex} created as MKV - completed with warnings`
+          };
+        }
+      } catch {
+      }
+
+      throw execError;
+    }
+
+    if (progressCallback) {
+      progressCallback(99, {
+        __i18n: true,
+        key: "disc.progress.finalizingOutput",
+        vars: {}
+      });
+    }
+    const cleanStdout = sanitizeMkvToolNixOutput(stdout);
+    if (cleanStdout) console.log("mkvmerge stdout:", cleanStdout);
     if (stderr) console.log("mkvmerge stderr:", stderr);
 
     try {
@@ -746,7 +856,7 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
     const { stdout } = await execJsonUnlimited(
       `"${MKVMERGE_BIN}" -J "${sampleVob}"`, null
     );
-    const info = JSON.parse(stdout || "{}");
+    const info = parseCommandJson(stdout, `mkvmerge ${path.basename(sampleVob)}`);
     return parseTracks(info);
   } catch (error) {
     console.log(

@@ -1,0 +1,21 @@
+# NVIDIA/NVENC override for Docker deployments.
+# Usage:
+#   docker compose -f docker-compose.local.yml -f docker-compose-local-nvidia.yml up -d --build
+#
+# Why this override exists:
+# - On this host, FFmpeg NVENC inside Docker only initializes successfully when the
+#   container runs with GPU access, privileged device access, and as root.
+# - Without these overrides the app falls back to CPU with:
+#   cuInit(0) failed -> CUDA_ERROR_UNKNOWN
+#
+# Trade-off:
+# - Files written by the container may be owned by root on the host bind mounts.
+
+services:
+  web:
+    user: "0:0"
+    privileged: true
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility

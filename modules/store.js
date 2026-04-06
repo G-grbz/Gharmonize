@@ -111,6 +111,23 @@ function pickPersistedMetadata(metadata = {}) {
     selectedIndices: Array.isArray(metadata?.selectedIndices)
       ? metadata.selectedIndices.map((value) => Number(value)).filter(Number.isFinite)
       : null,
+    ringtone: metadata?.ringtone
+      ? {
+          enabled: !!metadata.ringtone.enabled,
+          target: metadata.ringtone.target || null,
+          mode: metadata.ringtone.mode || null,
+          durationSec: Number(metadata.ringtone.durationSec || 0) || null,
+          startSec: metadata.ringtone.startSec != null
+            ? Number(metadata.ringtone.startSec)
+            : null,
+          fadeInSec: metadata.ringtone.fadeInSec != null
+            ? Number(metadata.ringtone.fadeInSec)
+            : null,
+          fadeOutSec: metadata.ringtone.fadeOutSec != null
+            ? Number(metadata.ringtone.fadeOutSec)
+            : null,
+        }
+      : null,
     frozenEntries: Array.isArray(metadata?.frozenEntries)
       ? metadata.frozenEntries
           .map((entry) => ({

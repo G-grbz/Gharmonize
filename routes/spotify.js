@@ -35,6 +35,13 @@ import {
   toDownloadPath,
   resolveDownloadPathToAbs
 } from "../modules/outputPaths.js";
+import { queueOwnershipFix } from "../modules/fsOwnership.js";
+import {
+  normalizeRingtoneConfig,
+  resolveRingtoneBitrate,
+  resolveRingtoneOutputFormat,
+  resolveRingtoneSampleRate
+} from "../modules/ringtone.js";
 
 const router = express.Router();
 
@@ -247,9 +254,9 @@ router.post("/api/spotify/process/start", async (req, res) => {
   try {
     const {
       url,
-      format = "mp3",
-      bitrate = "192k",
-      sampleRate = "48000",
+      format: rawFormat = "mp3",
+      bitrate: rawBitrate = "192k",
+      sampleRate: rawSampleRate = "48000",
       market: marketIn,
       includeLyrics,
       embedLyrics,
@@ -260,10 +267,37 @@ router.post("/api/spotify/process/start", async (req, res) => {
       spotifyConcurrency,
       autoCreateZip
     } = req.body || {};
-    const includeLyricsFlag =
+    let format = rawFormat;
+    let bitrate = rawBitrate;
+    let sampleRate = rawSampleRate;
+    const ringtone = normalizeRingtoneConfig(
+      req.body?.ringtone || {
+        outputMode: req.body?.outputMode,
+        enabled: req.body?.outputMode === "ringtone",
+        target: req.body?.ringtoneTarget,
+        mode: req.body?.ringtoneMode,
+        durationSec: req.body?.ringtoneDurationSec,
+        startSec: req.body?.ringtoneStartSec,
+        endSec: req.body?.ringtoneEndSec,
+        fadeInSec: req.body?.ringtoneFadeInSec,
+        fadeOutSec: req.body?.ringtoneFadeOutSec
+      }
+    );
+
+    if (ringtone?.enabled) {
+      format = resolveRingtoneOutputFormat(ringtone, format);
+      bitrate = resolveRingtoneBitrate(ringtone, bitrate);
+      sampleRate = String(resolveRingtoneSampleRate(ringtone, sampleRate));
+    }
+
+    let includeLyricsFlag =
       includeLyrics === true || includeLyrics === "true" || includeLyrics === "1";
-    const embedLyricsFlag =
+    let embedLyricsFlag =
       embedLyrics === true || embedLyrics === "true" || embedLyrics === "1";
+    if (ringtone?.enabled) {
+      includeLyricsFlag = false;
+      embedLyricsFlag = false;
+    }
     const isVideoOutput = isVideoFormat(format);
 
     const autoCreateZipFlag =
@@ -316,6 +350,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
       volumeGain: volumeGainNum,
       compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
       bitDepth: bitDepth || null,
+      ringtone: ringtone || null,
       autoCreateZip: autoCreateZipFlag,
       spotifyConcurrency: effectiveSpotifyConcurrency,
       bgToken
@@ -723,6 +758,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
             compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
             bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
+            ringtone: job.metadata?.ringtone || null,
             onLyricsStats: (delta) => {
               if (!delta) return;
               const m = job.metadata || (job.metadata = {});
@@ -1217,6 +1253,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
         volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
         compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
         bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
+        ringtone: job.metadata?.ringtone || null,
         onLyricsStats: (delta) => {
           if (!delta) return;
           const m = job.metadata || (job.metadata = {});
@@ -1283,7 +1320,10 @@ async function makeZipFromOutputs(
     const output  = fs.createWriteStream(zipAbs);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
-    output.on("close", () => resolve(toDownloadPathSafe(zipAbs)));
+    output.on("close", async () => {
+      await queueOwnershipFix(zipAbs);
+      resolve(toDownloadPathSafe(zipAbs));
+    });
     output.on("error", reject);
     archive.on("error", reject);
 

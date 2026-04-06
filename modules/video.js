@@ -13,6 +13,7 @@ import "dotenv/config";
 import { spawn as spawnChild } from "child_process";
 import { jobs, registerJobProcess, markJobCompleted } from "./store.js";
 import { toDownloadPath } from "./outputPaths.js";
+import { ensureOwnership } from "./fsOwnership.js";
 
 function isMappedMusicSource(source = "") {
   const value = String(source || "").toLowerCase();
@@ -447,6 +448,7 @@ export async function processYouTubeVideoJob(job, {
         const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
         console.log(`🎬 Transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
         safeMoveSync(filePath, targetAbs);
+        await ensureOwnership(targetAbs);
         const downloadPath =
           toDownloadPath(targetAbs) ||
           `/download/${encodeURIComponent(path.basename(targetAbs))}`;
@@ -584,6 +586,7 @@ export async function processYouTubeVideoJob(job, {
   if (!transcodeEnabled) {
     const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
     safeMoveSync(filePath, targetAbs);
+    await ensureOwnership(targetAbs);
     const downloadPath =
       toDownloadPath(targetAbs) ||
       `/download/${encodeURIComponent(path.basename(targetAbs))}`;
@@ -894,6 +897,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
       const targetAbs = uniqueOutPath(OUTPUT_DIR, cleanTitle, ext);
       console.log(`🎬 ${sourceLabel} transcode DISABLED - direct move: ${filePath} -> ${targetAbs}`);
       safeMoveSync(filePath, targetAbs);
+      await ensureOwnership(targetAbs);
       const downloadPath =
         toDownloadPath(targetAbs) ||
         `/download/${encodeURIComponent(path.basename(targetAbs))}`;

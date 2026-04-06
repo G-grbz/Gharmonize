@@ -7,7 +7,16 @@ router.get("/api/formats", (req,res)=>{
     {
       format: "mp3",
       bitrates: ["auto","96k","128k","160k","192k","256k","320k"],
+      defaultBitrate: "192k",
       type: "audio"
+    },
+
+    {
+      format: "m4r",
+      bitrates: ["128k","160k","192k","256k"],
+      defaultBitrate: "256k",
+      type: "audio",
+      hidden: true
     },
 
     {

@@ -26,6 +26,7 @@ import {
   toDownloadPath,
   resolveDownloadPathToAbs
 } from "./outputPaths.js";
+import { queueOwnershipFix } from "./fsOwnership.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
@@ -854,6 +855,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 onLog: handleLyricsLog,
                 volumeGain: effectiveVolumeGain,
                 onLyricsStats: handleLyricsStats,
+                ringtone: job.metadata?.ringtone || null,
                 stereoConvert: job.metadata?.stereoConvert || "auto",
                 atempoAdjust: job.metadata?.atempoAdjust || "none",
                 selectedStreams: job.metadata.selectedStreams,
@@ -1088,9 +1090,59 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
         const youtubeConcurrency = job.metadata?.youtubeConcurrency || 4;
         console.log("⚡ Processing with youtubeConcurrency:", youtubeConcurrency);
-        const youtubeLimiter = createLimiter(youtubeConcurrency);
         const results = [];
+        const youtubeConvertLimiter = createLimiter(youtubeConcurrency);
         const convertPromisesYouTube = [];
+        const scheduledFilePaths = new Set();
+
+        // Resolves playlist item slot for core application logic.
+        function resolveYouTubePlaylistSlot(filePath, playlistIndex = null, fileId = null) {
+          if (fileId && selectedIdToPos.has(fileId)) {
+            return selectedIdToPos.get(fileId);
+          }
+          if (Number.isFinite(playlistIndex) && playlistIndex != null) {
+            return Math.max(0, Number(playlistIndex) - 1);
+          }
+
+          const indexFromPath = parsePlaylistIndexFromPath(filePath);
+          if (Number.isFinite(indexFromPath)) {
+            return Math.max(0, Number(indexFromPath) - 1);
+          }
+
+          return 0;
+        }
+
+        // Enqueues playlist item conversion for core application logic.
+        function enqueueYouTubeConversion(filePath, playlistIndex = null, fileId = null) {
+          const fileKey = path.resolve(filePath);
+          if (scheduledFilePaths.has(fileKey)) {
+            return null;
+          }
+          scheduledFilePaths.add(fileKey);
+
+          const stableIndex = resolveYouTubePlaylistSlot(
+            filePath,
+            playlistIndex,
+            fileId
+          );
+
+          if (job.currentPhase !== "converting") {
+            job.currentPhase = "converting";
+            job.convertProgress = job.convertProgress || 0;
+          }
+
+          const promise = youtubeConvertLimiter(() =>
+            convertPlaylistItem(
+              stableIndex,
+              filePath,
+              playlistIndex,
+              fileId
+            )
+          );
+
+          convertPromisesYouTube.push(promise);
+          return promise;
+        }
 
         // Converts playlist data item for core application logic.
         async function convertPlaylistItem(
@@ -1465,6 +1517,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                   onLog: handleLyricsLog,
                   volumeGain: effectiveVolumeGain,
                   onLyricsStats: handleLyricsStats,
+                  ringtone: job.metadata?.ringtone || null,
                   stereoConvert: job.metadata?.stereoConvert || "auto",
                   atempoAdjust: job.metadata?.atempoAdjust || "none"
                 }
@@ -1575,18 +1628,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               : [],
             onFileDone: ({ filePath, playlistIndex }) => {
               const fileId = parseIdFromPath(filePath);
-              let myIndex = null;
-              if (fileId && selectedIdToPos.has(fileId)) {
-                myIndex = selectedIdToPos.get(fileId);
-              } else if (Number.isFinite(playlistIndex) && playlistIndex != null) {
-                myIndex = Math.max(0, Number(playlistIndex) - 1);
-              } else {
-                myIndex = 0;
-              }
-              const p = youtubeLimiter(() =>
-                convertPlaylistItem(myIndex, filePath, playlistIndex, fileId)
+              enqueueYouTubeConversion(
+                filePath,
+                playlistIndex,
+                fileId
               );
-              convertPromisesYouTube.push(p);
             }
           },
           { isCanceled: () => !!job.canceled }
@@ -1596,11 +1642,34 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
         job.counters.dlDone = job.counters.dlTotal;
         job.downloadProgress = 100;
-        job.currentPhase = "converting";
+        if (!job.currentPhase || job.currentPhase === "downloading") {
+          job.currentPhase = "converting";
+        }
         job.convertProgress = job.convertProgress || 0;
 
         if (!Array.isArray(files) || !files.length) {
           throw new Error("Playlist/Automix media files not found");
+        }
+
+        for (const filePath of files) {
+          const fileId = parseIdFromPath(filePath);
+          const playlistIndex = parsePlaylistIndexFromPath(filePath);
+          const myIndex = resolveYouTubePlaylistSlot(
+            filePath,
+            playlistIndex,
+            fileId
+          );
+
+          if (results[myIndex]) {
+            scheduledFilePaths.add(path.resolve(filePath));
+            continue;
+          }
+
+          enqueueYouTubeConversion(
+            filePath,
+            playlistIndex,
+            fileId
+          );
         }
 
         const entryById = new Map();
@@ -2032,6 +2101,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               onLog: handleLyricsLog,
               onLyricsStats: handleLyricsStats,
               volumeGain: effectiveVolumeGain,
+              ringtone: job.metadata?.ringtone || null,
               stereoConvert: job.metadata?.stereoConvert || "auto",
               selectedStreams: perStreamSelected,
               atempoAdjust: job.metadata?.atempoAdjust || "none",
@@ -2092,6 +2162,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             `🎬 Platform MP4 transcode disabled - direct move: ${actualInputPath} -> ${targetAbs}`
           );
           safeMoveFileSync(actualInputPath, targetAbs);
+          queueOwnershipFix(targetAbs);
 
           job.convertProgress = 100;
           job.progress = Math.floor(
@@ -2152,6 +2223,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             onLog: handleLyricsLog,
             onLyricsStats: handleLyricsStats,
             volumeGain: effectiveVolumeGain,
+            ringtone: job.metadata?.ringtone || null,
             stereoConvert: job.metadata?.stereoConvert || "auto",
             selectedStreams: selectedStreams,
             atempoAdjust: job.metadata?.atempoAdjust || "none",
@@ -2310,6 +2382,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
         if (fs.existsSync(currentAbs)) {
           fs.renameSync(currentAbs, targetAbs);
+          await queueOwnershipFix(targetAbs);
           job.resultPath = {
             outputPath: toDownloadPathSafe(targetAbs)
           };
@@ -2318,6 +2391,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             const newLrc = targetAbs.replace(/\.[^/.]+$/, "") + ".lrc";
             try {
               fs.renameSync(oldLrc, newLrc);
+              await queueOwnershipFix(newLrc);
             } catch {}
           }
         }
@@ -2404,7 +2478,10 @@ async function makeZipFromOutputs(
     const output = fs.createWriteStream(zipAbs);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
-    output.on("close", () => resolve(toDownloadPathSafe(zipAbs)));
+    output.on("close", async () => {
+      await queueOwnershipFix(zipAbs);
+      resolve(toDownloadPathSafe(zipAbs));
+    });
     archive.on("error", (err) => reject(err));
 
     archive.pipe(output);

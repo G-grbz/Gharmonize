@@ -4,8 +4,10 @@ import {
   FFMPEG_BIN,
   FFPROBE_BIN,
   MKVMERGE_BIN,
+  MKVPROPEDIT_BIN,
   YTDLP_BIN,
-  DENO_BIN
+  DENO_BIN,
+  getDynamicBinaryMetadata
 } from './binaries.js';
 
 const execFileAsync = promisify(execFile);
@@ -20,28 +22,134 @@ export function clearBinariesInfoCache() {
   cacheTime = 0;
 }
 
-// Parses version metadata from stdout for core application logic.
-function parseVersionFromStdout(stdout) {
-  if (!stdout) return null;
-  const firstLine = String(stdout).split('\n')[0] || '';
-  let m = firstLine.match(/version\s+([^\s]+)/i);
-  if (m && m[1]) return m[1];
+// Normalizes a parsed version token for core application logic.
+function normalizeVersionToken(token) {
+  const value = String(token || '').trim().replace(/^[a-z]+@/i, '');
+  if (!value) return null;
+  if (/^v\d+\.\d+(\.\d+)?$/i.test(value)) {
+    return value.slice(1);
+  }
+  return value;
+}
 
-  m = firstLine.match(/\b(v?\d+\.\d+(\.\d+)?)/);
-  if (m && m[1]) return m[1];
+// Checks whether a line is only an AppImage temporary path.
+function isAppImageTempLine(line) {
+  const value = String(line || '').trim();
+  if (!value) return false;
+  return (
+    /^\/tmp\/\.mount_/i.test(value) ||
+    /^\/tmp\/appimage/i.test(value) ||
+    /^\/tmp\/appimage_extracted/i.test(value)
+  );
+}
 
-  return firstLine.trim() || null;
+// Checks whether a line looks like a long hash or digest.
+function isLongHashLine(line) {
+  return /^[a-f0-9]{16,}$/i.test(String(line || '').trim());
+}
+
+// Resolves version from cached dynamic binary metadata.
+function getVersionFromDynamicMetadata(toolName, binPath) {
+  const entry = getDynamicBinaryMetadata(toolName);
+  if (!entry || typeof entry !== 'object') return null;
+  const currentPath = String(binPath || '').trim();
+  const metaPath = String(entry.path || '').trim();
+  const backingPath = String(entry.backingPath || '').trim();
+  const tag = normalizeVersionToken(entry.tag);
+
+  if (!tag) return null;
+  if (!currentPath) return tag;
+  if (currentPath === metaPath || currentPath === backingPath) return tag;
+  return null;
+}
+
+// Checks whether a parsed version looks valid for a specific tool.
+function isLikelyVersionForTool(toolName, version) {
+  const tool = String(toolName || '').trim().toLowerCase();
+  const value = String(version || '').trim();
+  if (!value) return false;
+
+  if (tool === 'mkvmerge') {
+    return /^\d+\.\d+(?:\.\d+)?$/.test(value);
+  }
+  if (tool === 'yt-dlp' || tool === 'ytdlp') {
+    return /^\d{4}\.\d{2}\.\d{2}$/.test(value);
+  }
+  if (tool === 'deno') {
+    return /^\d+\.\d+(?:\.\d+)?$/.test(value);
+  }
+  if (tool === 'ffmpeg' || tool === 'ffprobe') {
+    return /^N-\d+(?:-g[0-9a-f]+)?-\d{8}$/i.test(value) || /^[a-z]?\d+\.\d+(?:\.\d+)?$/i.test(value);
+  }
+
+  return true;
+}
+
+// Parses version metadata from process output for core application logic.
+function parseVersionFromOutput(output, toolName = '') {
+  if (!output) return null;
+  const tool = String(toolName || '').trim().toLowerCase();
+
+  const lines = String(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !isAppImageTempLine(line))
+    .filter((line) => !isLongHashLine(line));
+
+  if (tool === 'mkvmerge') {
+    for (const line of lines) {
+      const match = line.match(/\bmkvmerge\s+v(\d+\.\d+(?:\.\d+)?)\b/i);
+      if (match?.[1]) return match[1];
+    }
+  }
+
+  if (tool === 'mkvpropedit') {
+    for (const line of lines) {
+      const match = line.match(/\bmkvpropedit\s+v(\d+\.\d+(?:\.\d+)?)\b/i);
+      if (match?.[1]) return match[1];
+    }
+  }
+
+  if (tool === 'yt-dlp' || tool === 'ytdlp') {
+    for (const line of lines) {
+      const match = line.match(/\b(\d{4}\.\d{2}\.\d{2})\b/);
+      if (match?.[1]) return match[1];
+    }
+  }
+
+  for (const line of lines) {
+    let m = line.match(/version[:\s]+([^\s]+)/i);
+    if (m && m[1]) return normalizeVersionToken(m[1]);
+
+    m = line.match(/\b(v?\d+\.\d+(?:\.\d+)?(?:\.\d+)?)\b/);
+    if (m && m[1]) return normalizeVersionToken(m[1]);
+
+    m = line.match(/\b(N-\d+(?:-g[0-9a-f]+)?-\d{8})\b/i);
+    if (m && m[1]) return normalizeVersionToken(m[1]);
+
+    if (/^(ffmpeg|ffprobe|mkvmerge|yt-dlp|deno)\b/i.test(line)) {
+      return line;
+    }
+  }
+
+  return lines[0] || null;
 }
 
 // Returns single version metadata used for core application logic.
-async function getSingleVersion(binPath, args = ['-version']) {
+async function getSingleVersion(binPath, args = ['-version'], toolName = '') {
   try {
-    const { stdout } = await execFileAsync(binPath, args, { timeout: 5000 });
-    const version = parseVersionFromStdout(stdout);
+    const { stdout, stderr } = await execFileAsync(binPath, args, { timeout: 5000 });
+    const combinedOutput = [stdout, stderr].filter(Boolean).join('\n');
+    const parsedVersion = parseVersionFromOutput(combinedOutput, toolName);
+    const metadataVersion = getVersionFromDynamicMetadata(toolName, binPath);
+    const version = isLikelyVersionForTool(toolName, parsedVersion)
+      ? parsedVersion
+      : (metadataVersion || parsedVersion);
     return {
       path: binPath,
       version: version || 'unknown',
-      raw: stdout.toString()
+      raw: combinedOutput.toString()
     };
   } catch (err) {
     return {
@@ -60,15 +168,16 @@ export async function getBinariesInfo(options = {}) {
     return cache;
   }
 
-  const [ffmpeg, ffprobe, mkvmerge, ytdlp, deno] = await Promise.all([
-    getSingleVersion(FFMPEG_BIN),
-    getSingleVersion(FFPROBE_BIN),
-    getSingleVersion(MKVMERGE_BIN, ['--version']),
-    getSingleVersion(YTDLP_BIN, ['--version']),
-    getSingleVersion(DENO_BIN, ['--version'])
+  const [ffmpeg, ffprobe, mkvmerge, mkvpropedit, ytdlp, deno] = await Promise.all([
+    getSingleVersion(FFMPEG_BIN, ['-version'], 'ffmpeg'),
+    getSingleVersion(FFPROBE_BIN, ['-version'], 'ffprobe'),
+    getSingleVersion(MKVMERGE_BIN, ['--version'], 'mkvmerge'),
+    getSingleVersion(MKVPROPEDIT_BIN, ['--version'], 'mkvpropedit'),
+    getSingleVersion(YTDLP_BIN, ['--version'], 'yt-dlp'),
+    getSingleVersion(DENO_BIN, ['--version'], 'deno')
   ]);
 
-  cache = { ffmpeg, ffprobe, mkvmerge, ytdlp, deno };
+  cache = { ffmpeg, ffprobe, mkvmerge, mkvpropedit, ytdlp, deno };
   cacheTime = now;
   return cache;
 }

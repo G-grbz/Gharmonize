@@ -1,13 +1,21 @@
 services:
   web:
-    image: ggrbz/gharmonize:latest
+    image: ggrbz/gharmonize:testing
     container_name: Gharmonize
+    # user: "0:0"
+    # privileged: true
+    # runtime: nvidia
     user: "${PUID:-1000}:${PGID:-1000}"
+    group_add:
+      - "${RUN_MEDIA_GID:-65534}"
     environment:
+      # - NVIDIA_VISIBLE_DEVICES=all
+      # - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - NODE_ENV=production
       - PORT=${PORT:-5174}
       - YTDLP_EXTRA=--force-ipv4
       - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
+      - GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - DATA_DIR=/usr/src/app
@@ -26,7 +34,7 @@ services:
       - /run/media:/run/media:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${PORT:-5174}/ || exit 1"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 5174) + '/').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5

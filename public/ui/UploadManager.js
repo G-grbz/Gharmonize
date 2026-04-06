@@ -619,16 +619,18 @@ export class UploadManager {
     e.preventDefault();
 
     const fileInput = document.getElementById('fileInput');
-    const format = document.getElementById('formatSelect').value;
-    const bitrate = document.getElementById('bitrateSelect').value;
-    const sampleRate = document.getElementById('sampleRateSelect').value;
+    const outputSettings = this.app.resolveCurrentOutputSettings();
+    const format = outputSettings.format;
+    const bitrate = outputSettings.bitrate;
+    const sampleRate = outputSettings.sampleRate;
+    const ringtone = outputSettings.ringtone;
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
     const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
     const sourceType = document.querySelector('input[name="fileSourceType"]:checked')?.value || 'upload';
 
     console.log('📋 Form data:', { format, bitrate, sampleRate, includeLyrics, embedLyrics, sourceType });
 
-    const audioOutputFormats = ['mp3','aac','ac3','eac3','ogg','opus','m4a','alac','flac','wav'];
+    const audioOutputFormats = ['mp3','m4r','aac','ac3','eac3','ogg','opus','m4a','alac','flac','wav'];
     const isVideoFormat = (format === 'mp4' || format === 'mkv');
     const isAudioFormat = audioOutputFormats.includes(format);
     const shouldProbeForStreams = isVideoFormat || isAudioFormat;
@@ -682,7 +684,8 @@ export class UploadManager {
                   includeLyrics,
                   embedLyrics,
                   localPath: fileName,
-                  volumeGain: this.app.currentVolumeGain
+                  volumeGain: this.app.currentVolumeGain,
+                  ...(ringtone ? { ringtone } : {})
                 };
 
                 if (streamSelection) {
@@ -805,6 +808,7 @@ export class UploadManager {
               includeLyrics,
               embedLyrics,
               volumeGain: this.app.currentVolumeGain,
+              ...(ringtone ? { ringtone } : {}),
               selectedStreams: {
                 audio: streamSelection.audio,
                 subtitles: streamSelection.subtitles,
@@ -831,7 +835,8 @@ export class UploadManager {
               sampleRate,
               includeLyrics,
               embedLyrics,
-              volumeGain: this.app.currentVolumeGain
+              volumeGain: this.app.currentVolumeGain,
+              ...(ringtone ? { ringtone } : {})
             };
             if (uploadBatchId) {
               payload.clientBatch = uploadBatchId;
@@ -862,6 +867,7 @@ export class UploadManager {
               includeLyrics,
               embedLyrics,
               volumeGain: this.app.currentVolumeGain,
+              ...(ringtone ? { ringtone } : {}),
               selectedStreams: {
                 audio: streamSelection.audio,
                 subtitles: streamSelection.subtitles,
@@ -889,6 +895,9 @@ export class UploadManager {
               formData.append('includeLyrics', includeLyrics);
               formData.append('embedLyrics', embedLyrics);
               formData.append('selectedStreams', JSON.stringify(payload.selectedStreams));
+              if (ringtone) {
+                formData.append('ringtone', JSON.stringify(ringtone));
+              }
 
               if (uploadBatchId) {
                 formData.append('clientBatch', uploadBatchId);
@@ -904,6 +913,9 @@ export class UploadManager {
             formData.append('sampleRate', sampleRate);
             formData.append('includeLyrics', includeLyrics);
             formData.append('embedLyrics', embedLyrics);
+            if (ringtone) {
+              formData.append('ringtone', JSON.stringify(ringtone));
+            }
 
             if (uploadBatchId) {
               formData.append('clientBatch', uploadBatchId);
@@ -982,6 +994,9 @@ export class UploadManager {
         chunkFormData.append('sampleRate', payload.sampleRate);
         chunkFormData.append('includeLyrics', payload.includeLyrics);
         chunkFormData.append('embedLyrics', payload.embedLyrics);
+        if (payload.ringtone) {
+          chunkFormData.append('ringtone', JSON.stringify(payload.ringtone));
+        }
         if (payload.selectedStreams) {
           chunkFormData.append('selectedStreams', JSON.stringify(payload.selectedStreams));
         }
@@ -1273,6 +1288,9 @@ export class UploadManager {
         effectiveFormat = payload.format || document.getElementById('formatSelect').value;
       }
 
+      const outputProfile = this.app.applyCurrentOutputProfile(payload, { isFormData });
+      effectiveFormat = outputProfile.format;
+
       if ((effectiveFormat === 'mp4' || effectiveFormat === 'mkv') &&
         this.app.videoManager.videoSettings.transcodeEnabled) {
         console.log('🎬 Adding video settings to payload:', this.app.videoManager.videoSettings);
@@ -1389,6 +1407,11 @@ export class UploadManager {
                     embedLyricsRaw === '1';
 
                   const clientBatch = payload.get('clientBatch') || null;
+                  const ringtoneRaw = payload.get('ringtone');
+                  let ringtone = null;
+                  try {
+                    ringtone = ringtoneRaw ? JSON.parse(ringtoneRaw) : null;
+                  } catch {}
 
                   const selectedStreamsRaw = payload.get('selectedStreams');
                   let selectedStreams = null;
@@ -1403,7 +1426,8 @@ export class UploadManager {
                     includeLyrics,
                     embedLyrics,
                     selectedStreams,
-                    volumeGain
+                    volumeGain,
+                    ...(ringtone ? { ringtone } : {})
                   };
                   if (clientBatch) {
                     fallbackPayload.clientBatch = clientBatch;

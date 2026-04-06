@@ -30,6 +30,13 @@ import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modu
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
 import { getFfmpegCaps } from "../modules/ffmpegCaps.js";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "../modules/binaries.js";
+import { queueOwnershipFix } from "../modules/fsOwnership.js";
+import {
+  normalizeRingtoneConfig,
+  resolveRingtoneBitrate,
+  resolveRingtoneOutputFormat,
+  resolveRingtoneSampleRate
+} from "../modules/ringtone.js";
 import "dotenv/config";
 import {
   isYouTubeUrl,
@@ -495,6 +502,7 @@ router.post("/api/probe/file", upload.single("file"), async (req, res) => {
     }
 
     const finalPath = req.file.path;
+    await queueOwnershipFix(finalPath);
     const probeData = await probeMediaFile(finalPath);
     const streams = parseStreams(probeData);
     const defaultSelection = getDefaultStreamSelection(streams);
@@ -858,6 +866,7 @@ router.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
       if (purpose === 'probe') {
         uploadData.writeStream.on('finish', async () => {
           console.log(`✅ All chunks merged (probe): ${uploadData.finalPath}`);
+          await queueOwnershipFix(uploadData.finalPath);
           try {
             const probeData = await probeMediaFile(uploadData.finalPath);
             const streams = parseStreams(probeData);
@@ -884,8 +893,9 @@ router.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
         return;
       }
 
-      uploadData.writeStream.on('finish', () => {
+      uploadData.writeStream.on('finish', async () => {
         console.log(`✅ All chunks merged: ${uploadData.finalPath}`);
+        await queueOwnershipFix(uploadData.finalPath);
       });
 
       return res.json({
@@ -943,10 +953,12 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
 
     if (finalUploadPath && fs.existsSync(finalUploadPath)) {
       inputPath = finalUploadPath;
+      queueOwnershipFix(finalUploadPath);
       metadata.source = metadata.source || "file";
       metadata.originalName = metadata.originalName || path.basename(finalUploadPath).replace(/^[^_]+_/, '');
     } else if (req.file) {
       inputPath = req.file.path;
+      queueOwnershipFix(req.file.path);
     }
 
     if (!inputPath && localPath) {
@@ -966,7 +978,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     metadata.localPath = abs;
   }
 
-    const {
+    let {
       url,
       format = "mp3",
       bitrate = "192k",
@@ -989,6 +1001,26 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       youtubeConcurrency,
       frozenEntries: rawFrozenEntries
     } = body;
+    const ringtone = normalizeRingtoneConfig(
+      body.ringtone || {
+        outputMode: body.outputMode,
+        enabled: body.outputMode === "ringtone",
+        target: body.ringtoneTarget,
+        mode: body.ringtoneMode,
+        durationSec: body.ringtoneDurationSec,
+        startSec: body.ringtoneStartSec,
+        endSec: body.ringtoneEndSec,
+        fadeInSec: body.ringtoneFadeInSec,
+        fadeOutSec: body.ringtoneFadeOutSec
+      }
+    );
+
+    if (ringtone?.enabled) {
+      format = resolveRingtoneOutputFormat(ringtone, format);
+      bitrate = resolveRingtoneBitrate(ringtone, bitrate);
+      sampleRate = String(resolveRingtoneSampleRate(ringtone, sampleRate));
+    }
+
     const isVideoOutput = format === "mp4" || format === "mkv";
     const autoCreateZip =
       !isVideoOutput && (
@@ -997,10 +1029,15 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
           : (body.autoCreateZip === true || body.autoCreateZip === "true")
       );
     metadata.autoCreateZip = autoCreateZip;
-    const includeLyricsFlag =
+    let includeLyricsFlag =
       includeLyrics === true || includeLyrics === "true" || includeLyrics === "1";
-    const embedLyricsFlag =
+    let embedLyricsFlag =
       embedLyrics === true || embedLyrics === "true" || embedLyrics === "1";
+
+    if (ringtone?.enabled) {
+      includeLyricsFlag = false;
+      embedLyricsFlag = false;
+    }
 
     let frozenEntriesParsed = null;
     if (rawFrozenEntries) {
@@ -1090,7 +1127,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         ? parsedVideoSettings
         : null;
 
-    const supported = ["mp3","flac","wav","ogg","mp4","mkv","eac3","ac3","aac","dts"];
+    const supported = ["mp3","m4r","flac","wav","ogg","mp4","mkv","eac3","ac3","aac","dts"];
     if (!supported.includes(format)) {
       return sendError(res, ERR.INVALID_FORMAT, "Unsupported format", 400);
     }
@@ -1315,6 +1352,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         compressionLevel: normalizedCompressionLevel,
         selectedStreams: selectedStreamsParsed,
         youtubeConcurrency: youtubeConcurrencyNormalized,
+        ringtone: ringtone || null,
         volumeGain:
           volumeGain != null
             ? Number(volumeGain)
@@ -1341,6 +1379,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       format,
       bitrate,
       sampleRate: job.sampleRate,
+      ringtone: job.metadata?.ringtone || null,
       source: metadata.source,
       mediaPlatform: metadata.mediaPlatform || null,
       isPlaylist: metadata.isPlaylist,

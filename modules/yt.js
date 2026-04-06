@@ -5,7 +5,7 @@ import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
 import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs, parseIdFromPath } from "./utils.js";
 import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
-import { YTDLP_BIN as BINARY_YTDLP_BIN, DENO_BIN } from "./binaries.js";
+import { YTDLP_BIN as BINARY_YTDLP_BIN, DENO_BIN, FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 
 // Checks whether music enabled is valid for the yt-dlp YouTube download pipeline.
 export function isMusicEnabled() {
@@ -339,6 +339,20 @@ export function resolveYtDlp() {
   }
 
   return null;
+}
+
+function resolveYtDlpFfmpegLocation() {
+  const fromEnv = String(process.env.FFMPEG_BIN || "").trim();
+  if (fromEnv && isExecutable(fromEnv)) return fromEnv;
+  if (BINARY_FFMPEG_BIN && isExecutable(BINARY_FFMPEG_BIN)) return BINARY_FFMPEG_BIN;
+  return null;
+}
+
+function addFfmpegLocationArgs(args = []) {
+  const ffmpegLocation = resolveYtDlpFfmpegLocation();
+  if (!ffmpegLocation || args.includes("--ffmpeg-location")) return args;
+  args.push("--ffmpeg-location", ffmpegLocation);
+  return args;
 }
 
 // Handles ids to music URLs in the yt-dlp YouTube download pipeline.
@@ -922,25 +936,13 @@ export async function downloadYouTubeVideo(
   try {
     if (hasSelectedIds) {
       const conc = normalizeConcurrency(opts.youtubeConcurrency);
-      if (conc > 1) {
-        return await downloadSelectedIdsParallel(
-          YTDLP_BIN,
-          selectedIds,
-          jobId,
-          TEMP_DIR,
-          progressCallback,
-          { ...opts, youtubeConcurrency: conc },
-          ctrl
-        );
-      }
-
-      return await downloadSelectedIds(
+      return await downloadSelectedIdsParallel(
         YTDLP_BIN,
         selectedIds,
         jobId,
         TEMP_DIR,
         progressCallback,
-        opts,
+        { ...opts, youtubeConcurrency: conc },
         ctrl
       );
     }
@@ -1082,6 +1084,7 @@ if (opts.video) {
   if (shouldAttachCookies(cookieSourceUrl, !!opts?.forceCookies)) {
     addCookieArgs(args, { ui: !!opts?.forceCookies });
   }
+  addFfmpegLocationArgs(args);
   args.push(...getJsRuntimeArgs());
   args = withDailymotionNoImpersonation(args, cookieSourceUrl);
 
@@ -1340,6 +1343,7 @@ async function downloadSelectedIdsParallel(
     if (shouldAttachCookies(url, !!opts?.forceCookies)) {
       addCookieArgs(args, { ui: !!opts?.forceCookies });
     }
+    addFfmpegLocationArgs(args);
     args.push(...getJsRuntimeArgs());
     args = withDailymotionNoImpersonation(args, url);
 
@@ -1584,6 +1588,7 @@ async function downloadStandard(
     if (shouldAttachCookies(opts?.sourceUrl || url, !!opts?.forceCookies)) {
       addCookieArgs(args, { ui: !!opts?.forceCookies });
     }
+    addFfmpegLocationArgs(args);
     args.push(...getJsRuntimeArgs());
 
     args.push(url);
@@ -1642,6 +1647,7 @@ async function downloadStandard(
     if (shouldAttachCookies(opts?.sourceUrl || url, !!opts?.forceCookies)) {
       addCookieArgs(args, { ui: !!opts?.forceCookies });
     }
+    addFfmpegLocationArgs(args);
     args.push(...getJsRuntimeArgs());
     args.push(url);
   }

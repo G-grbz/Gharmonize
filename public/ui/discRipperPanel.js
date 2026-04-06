@@ -6,6 +6,7 @@ let ripCancelled = false;
 let discModalOpened = false;
 let selectedAudioTracksByTitle = new Map();
 let selectedSubtitleTracksByTitle = new Map();
+let pendingRipResolvers = new Map();
 
 let currentProgress = {
   current: 0,
@@ -26,6 +27,95 @@ function t(key, vars = {}) {
     str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
   }
   return str;
+}
+
+// Resolves API errors into translated UI messages when possible.
+function resolveDiscApiError(data, fallback) {
+  if (data && typeof data === 'object' && typeof data.error === 'string') {
+    if (data.error.startsWith('disc.')) {
+      return t(data.error, data.vars || {});
+    }
+    return data.error;
+  }
+
+  return fallback;
+}
+
+// Extracts a readable error from HTML/text API responses.
+function extractApiErrorText(rawText, fallback = 'Unknown error') {
+  const text = String(rawText || '').trim();
+  if (!text) {
+    return fallback;
+  }
+
+  if (text.startsWith('<')) {
+    const titleMatch = text.match(/<title[^>]*>(.*?)<\/title>/is);
+    const h1Match = text.match(/<h1[^>]*>(.*?)<\/h1>/is);
+    const bodyText = (titleMatch?.[1] || h1Match?.[1] || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return bodyText || fallback;
+  }
+
+  return text;
+}
+
+// Parses API responses safely even when a proxy returns HTML.
+async function readApiResponse(res) {
+  const rawText = await res.text();
+  if (!rawText) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    return {
+      error: extractApiErrorText(rawText, `HTTP ${res.status}`)
+    };
+  }
+}
+
+// Waits for a title to emit a terminal SSE event.
+function waitForRipResult(titleIndex, timeoutMs = 12 * 60 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingRipResolvers.delete(titleIndex);
+      reject(new Error(`Title ${titleIndex} timed out`));
+    }, timeoutMs);
+
+    pendingRipResolvers.set(titleIndex, {
+      resolve(payload) {
+        clearTimeout(timer);
+        pendingRipResolvers.delete(titleIndex);
+        resolve(payload || {});
+      },
+      reject(error) {
+        clearTimeout(timer);
+        pendingRipResolvers.delete(titleIndex);
+        reject(error);
+      }
+    });
+  });
+}
+
+// Resolves a pending rip promise when SSE reports completion.
+function resolvePendingRipResult(titleIndex, payload) {
+  const entry = pendingRipResolvers.get(titleIndex);
+  if (!entry) return;
+  entry.resolve(payload);
+}
+
+// Rejects a pending rip promise when SSE reports failure.
+function rejectPendingRipResult(titleIndex, message, payload = null) {
+  const entry = pendingRipResolvers.get(titleIndex);
+  if (!entry) return;
+
+  const error = new Error(message || `Title ${titleIndex} failed`);
+  error.fromProgressEvent = true;
+  error.payload = payload || null;
+  entry.reject(error);
 }
 
 // Handles log disc metadata in the browser UI layer.
@@ -526,6 +616,7 @@ function handleProgressUpdate(data) {
       );
 
       updateProgressUI(overall, total, data.message || '');
+      resolvePendingRipResult(data.titleIndex, data);
       break;
     }
 
@@ -538,11 +629,23 @@ function handleProgressUpdate(data) {
         }) ||
         `Title ${idx} hatası: ${data.message || 'Bilinmeyen hata'}`
       );
+      rejectPendingRipResult(
+        data.titleIndex,
+        data.message || 'Bilinmeyen hata',
+        data
+      );
       break;
     }
 
     case 'rip_cancelled': {
       logDisc(t('disc.log.ripCancelled') || 'Ripleme iptal edildi.');
+      for (const [titleIndex, entry] of pendingRipResolvers.entries()) {
+        const error = new Error('Rip cancelled');
+        error.fromProgressEvent = true;
+        error.payload = { titleIndex, cancelled: true };
+        entry.reject(error);
+      }
+      pendingRipResolvers.clear();
       resetProgress();
       isRipping = false;
       break;
@@ -624,10 +727,10 @@ async function scanDisc() {
       body: JSON.stringify({ sourcePath })
     });
 
-    const data = await res.json();
+    const data = await readApiResponse(res);
 
     if (!res.ok) {
-      throw new Error(data?.error || 'Scan failed');
+      throw new Error(resolveDiscApiError(data, 'Scan failed'));
     }
 
     currentDiscInfo = data || {};
@@ -946,6 +1049,9 @@ async function startRipProcess(titlesToRip) {
       `${titlesToRip.length} title için ripleme başlatıldı.`
   );
 
+  let successCount = 0;
+  let failureCount = 0;
+
   for (const { title, listIndex } of titlesToRip) {
     if (ripCancelled) {
       logDisc(
@@ -984,6 +1090,7 @@ async function startRipProcess(titlesToRip) {
     logDisc(finalText);
 
     try {
+      const ripResultPromise = waitForRipResult(title.index);
       const res = await fetch(`${API_BASE}/api/disc/rip`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1004,9 +1111,18 @@ async function startRipProcess(titlesToRip) {
         })
       });
 
-      const result = await res.json();
+      const result = await readApiResponse(res);
 
-      if (res.status === 499 || result?.error === 'Rip cancelled') {
+      if (!res.ok) {
+        pendingRipResolvers.delete(title.index);
+        throw new Error(
+          resolveDiscApiError(result, `Rip failed (HTTP ${res.status})`)
+        );
+      }
+
+      const finalResult = await ripResultPromise;
+
+      if (finalResult?.cancelled) {
         logDisc(
           t('disc.log.ripCancelled') ||
           'Ripleme iptal edildi.'
@@ -1014,44 +1130,62 @@ async function startRipProcess(titlesToRip) {
         break;
       }
 
-      if (!res.ok) {
-        throw new Error(result?.error || `Rip failed (HTTP ${res.status})`);
-      }
-
       logDisc(
         t('disc.log.ripCompleted', {
-          path: result.downloadPath || '(indirilebilir dosya)'
+          path: finalResult.downloadPath || '(indirilebilir dosya)'
         }) ||
-          `Ripleme tamamlandı. İndirme yolu: ${result.downloadPath || '(bilinmiyor)'}`
+          `Ripleme tamamlandı. İndirme yolu: ${finalResult.downloadPath || '(bilinmiyor)'}`
       );
+      successCount++;
 
-      if (result.metadata) {
+      if (finalResult.metadata) {
         logDisc(
           t('disc.log.metadataWritten', {
-            path: (result.downloadPath || '').replace(/\.mkv$/, '.json')
+            path: (finalResult.downloadPath || '').replace(/\.mkv$/, '.json')
           }) ||
             'Metadata yazıldı.'
         );
       }
     } catch (e) {
-      logDisc(
-        t('disc.log.ripError', {
-          index: title.index ?? '?',
-          name,
-          message: e.message
-        }) ||
-          `Ripleme hatası (${name}): ${e.message}`
-      );
+      failureCount++;
+      if (!e?.fromProgressEvent) {
+        pendingRipResolvers.delete(title.index);
+      }
+      if (!e?.fromProgressEvent) {
+        logDisc(
+          t('disc.log.ripError', {
+            index: title.index ?? '?',
+            name,
+            message: e.message
+          }) ||
+            `Ripleme hatası (${name}): ${e.message}`
+        );
+      }
     }
   }
 
   if (!ripCancelled) {
-    updateProgressUI(100, titlesToRip.length, t('disc.progress.allCompleted') || 'Tüm işler tamamlandı.');
-    showDiscModal(
-      'info',
-      t('disc.alert.allDone.title') || 'Tamamlandı',
-      t('disc.alert.allDone.message') || 'Tüm seçili title\'lar başarıyla işlendi.'
-    );
+    if (failureCount === 0 && successCount === titlesToRip.length) {
+      updateProgressUI(100, titlesToRip.length, t('disc.progress.allCompleted') || 'Tüm işler tamamlandı.');
+      showDiscModal(
+        'info',
+        t('disc.alert.allDone.title') || 'Tamamlandı',
+        t('disc.alert.allDone.message') || 'Tüm seçili title\'lar başarıyla işlendi.'
+      );
+    } else if (successCount > 0) {
+      updateProgressUI(100, titlesToRip.length, t('disc.alert.partialDone.message', {
+        success: successCount,
+        failed: failureCount
+      }) || `${successCount} iş tamamlandı, ${failureCount} iş başarısız oldu.`);
+      showDiscModal(
+        'warning',
+        t('disc.alert.partialDone.title') || 'Kısmi Tamamlandı',
+        t('disc.alert.partialDone.message', {
+          success: successCount,
+          failed: failureCount
+        }) || `${successCount} iş tamamlandı, ${failureCount} iş başarısız oldu.`
+      );
+    }
   }
 
   isRipping = false;
