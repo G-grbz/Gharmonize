@@ -14,6 +14,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const YT_SEARCH_RESULTS = Math.max(1, Math.min(10, Number(process.env.YT_SEARCH_RESULTS || 3)));
 const YT_SEARCH_TIMEOUT_MS = Math.max(3000, Number(process.env.YT_SEARCH_TIMEOUT_MS || 20000));
 const YT_SEARCH_STAGGER_MS = Math.max(0, Number(process.env.YT_SEARCH_STAGGER_MS || 140));
+const YT_DOWNLOAD_RETRY_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.YT_DOWNLOAD_RETRY_ATTEMPTS || 2)
+);
+const YT_DOWNLOAD_RETRY_BACKOFF_MS = Math.max(
+  0,
+  Number(process.env.YT_DOWNLOAD_RETRY_BACKOFF_MS || 1200)
+);
 const _searchCache = new Map();
 const _SEARCH_CACHE_MAX = 800;
 
@@ -436,8 +444,8 @@ export async function downloadMatchedSpotifyTracks(
   });
 }
 
-// Downloads single you tube video for core application logic.
-export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
+// Downloads single you tube video for one attempt in core application logic.
+async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp not found");
 
@@ -495,7 +503,10 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
     const child = execFile(
       YTDLP_BIN,
       finalArgs,
-      { maxBuffer: 1024 * 1024 * 1024 },
+      {
+        maxBuffer: 1024 * 1024 * 1024,
+        windowsHide: true
+      },
       (err, _stdout, stderr) => {
         if (!err) {
           const p = findDownloaded();
@@ -523,7 +534,10 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
           const child2 = execFile(
             YTDLP_BIN,
             retryArgs,
-            { maxBuffer: 1024 * 1024 * 1024 },
+            {
+              maxBuffer: 1024 * 1024 * 1024,
+              windowsHide: true
+            },
             (err2, _so2, se2) => {
               if (!err2) {
                 try {
@@ -563,6 +577,32 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
       registerJobProcess(deriveJobIdFromFileId(fileId), child);
     } catch {}
   });
+}
+
+// Downloads single you tube video with outer retry in core application logic.
+export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= YT_DOWNLOAD_RETRY_ATTEMPTS; attempt++) {
+    try {
+      return await downloadSingleYouTubeVideoOnce(url, fileId, downloadDir);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= YT_DOWNLOAD_RETRY_ATTEMPTS) break;
+
+      console.warn(
+        `[downloadSingleYouTubeVideo] retry ${attempt}/${YT_DOWNLOAD_RETRY_ATTEMPTS - 1} for ${fileId}: ${
+          error?.message || error
+        }`
+      );
+
+      if (YT_DOWNLOAD_RETRY_BACKOFF_MS > 0) {
+        await sleep(YT_DOWNLOAD_RETRY_BACKOFF_MS * attempt);
+      }
+    }
+  }
+
+  throw lastError || new Error("yt-dlp download failed");
 }
 
 // Creates download metadata queue for core application logic.
@@ -612,6 +652,7 @@ export function createDownloadQueue(
 
         const dlResult = {
           index: item.index,
+          idxZeroBased: idx,
           title: item.title,
           uploader: item.uploader,
           filePath,
@@ -637,6 +678,7 @@ export function createDownloadQueue(
       } catch (e) {
         const dlResult = {
           index: item.index,
+          idxZeroBased: idx,
           title: item.title,
           uploader: item.uploader,
           filePath: null,
