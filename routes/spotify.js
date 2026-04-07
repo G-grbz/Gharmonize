@@ -521,6 +521,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     const richMetaByIndex = new Map();
     const outputAbsByIndex = new Map();
     const coverUrlByIndex = new Map();
+    const matchedLogicalIndices = new Set();
     const runMetaLimited = createLimiter(Math.max(1, Math.min(8, Math.floor(parallel * 2))));
     const mktResolved = resolveMarket(market);
 
@@ -885,6 +886,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 
         if (item.id) {
           matchedCount++;
+          matchedLogicalIndices.add(idx);
           job.metadata.selectedIds.push(item.id);
           job.metadata.frozenEntries.push({
             index: item.index,
@@ -965,16 +967,44 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     await Promise.all(convertPromises);
     if (shouldCancel()) { throw new Error("CANCELED"); }
 
+    const downloadResults = dlQueue.getResults();
+    for (const dlResult of downloadResults) {
+      const logicalIndex = Number(dlResult?.idxZeroBased);
+      if (!Number.isFinite(logicalIndex) || logicalIndex < 0) continue;
+      if (!matchedLogicalIndices.has(logicalIndex)) continue;
+      if (!dlResult?.error) continue;
+      if (Object.prototype.hasOwnProperty.call(results, logicalIndex)) continue;
+
+      results[logicalIndex] = {
+        outputPath: null,
+        error: dlResult.error,
+        stage: "download"
+      };
+    }
+
+    for (const logicalIndex of matchedLogicalIndices) {
+      if (Object.prototype.hasOwnProperty.call(results, logicalIndex)) continue;
+      results[logicalIndex] = {
+        outputPath: null,
+        error: "Matched track did not reach conversion",
+        stage: "pipeline"
+      };
+    }
+
     if (job.metadata.includeLyrics && job.metadata.lyricsStats) {
       const stats = job.metadata.lyricsStats;
       job.lastLog = `📊 Lyrics summary: ${stats.found} found, ${stats.notFound} not found`;
     }
 
+    const failedResults = results.filter((r) => r && r.error);
     const successfulResults = results.filter(r => r && r.outputPath && !r.error);
     if (!successfulResults.length) {
       throw new Error("No tracks could be converted");
     }
 
+    job.errorsCount = failedResults.length;
+    job.playlist.skipped = failedResults.length;
+    job.playlist.done = Math.max(job.playlist.done || 0, successfulResults.length + failedResults.length);
     job.resultPath = successfulResults;
 
     if (job.metadata?.autoCreateZip) {
@@ -1008,9 +1038,15 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     job.convertProgress = 100;
     job.phase = "completed";
     job.currentPhase = "completed";
-    job.lastLogKey = 'log.done';
-    job.lastLogVars = { ok: successfulResults.length };
-    job.lastLog = `🎉 All operations completed! ${successfulResults.length} track(s) converted successfully.`;
+    if (failedResults.length > 0) {
+      job.lastLogKey = null;
+      job.lastLogVars = null;
+      job.lastLog = `🎉 All operations completed! ${successfulResults.length} track(s) converted successfully, ${failedResults.length} failed.`;
+    } else {
+      job.lastLogKey = 'log.done';
+      job.lastLogVars = { ok: successfulResults.length };
+      job.lastLog = `🎉 All operations completed! ${successfulResults.length} track(s) converted successfully.`;
+    }
 
     cleanupSpotifyTempFiles(jobId, allFiles);
 
