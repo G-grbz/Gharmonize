@@ -487,6 +487,23 @@ async function findFileRecursive(dir, fileName) {
   throw new Error(`${fileName} not found in archive`);
 }
 
+// Finds first existing file from a list of candidate names.
+async function findFirstFileRecursive(dir, fileNames = []) {
+  let lastError = null;
+  for (const fileName of fileNames) {
+    try {
+      return await findFileRecursive(dir, fileName);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw new Error(
+    lastError?.message ||
+    `None of the requested files were found: ${fileNames.join(", ")}`
+  );
+}
+
 // Checks whether binary is executable for web binary cache.
 function isExecutable(filePath) {
   if (!filePath) return false;
@@ -1038,21 +1055,38 @@ async function ensureLatestMkvmerge(meta, options = {}) {
   }
 
   if (process.platform === "win32") {
-    const bitLabel = process.arch === "ia32" ? "32-bit" : "64-bit";
-    const archivePath = path.join(WEB_CACHE_DIR, `mkvmerge-${safeVersion}.7z`);
+	if (!["x64", "ia32"].includes(process.arch)) return null;
+
+    const bitLabel =
+      process.arch === "ia32"
+        ? "32-bit"
+        : "64-bit";
+
+    const archivePath = path.join(WEB_CACHE_DIR, `mkvtoolnix-${safeVersion}.zip`);
     const tmpArchivePath = `${archivePath}.download`;
     const extractDir = path.join(WEB_CACHE_DIR, `mkvmerge-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const finalPath = path.join(WEB_CACHE_DIR, `mkvmerge-${safeVersion}.exe`);
-    const url = `https://mkvtoolnix.download/windows/releases/${version}/mkvtoolnix-${bitLabel}-${version}.7z`;
+    const helperPath = path.join(WEB_CACHE_DIR, `mkvpropedit-${safeVersion}.exe`);
+    const url = `https://mkvtoolnix.download/windows/releases/${version}/mkvtoolnix-${bitLabel}-${version}.zip`;
 
-    if (isExecutable(finalPath)) {
+    if (isExecutable(finalPath) && isExecutable(helperPath)) {
       try {
-        await verifyBinary(finalPath, ["--version"]);
-        setMetaEntry(meta, "mkvmerge", { tag: version, path: finalPath });
+        await verifyVersionedBinary(finalPath, "mkvmerge", ["--version"]);
+        await verifyVersionedBinary(helperPath, "mkvpropedit", ["--version"]);
+        setMetaEntry(meta, "mkvmerge", {
+          tag: version,
+          path: finalPath,
+          helperPath
+        });
+        if (!process.env.MKVPROPEDIT_BIN) {
+          MKVPROPEDIT_BIN = helperPath;
+        }
         await pruneVersionedFiles("mkvmerge-", finalPath);
+        await pruneVersionedFiles("mkvpropedit-", helperPath);
         return finalPath;
       } catch {
         await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+		await fs.promises.rm(helperPath, { force: true }).catch(() => {});
       }
     }
 
@@ -1061,18 +1095,35 @@ async function ensureLatestMkvmerge(meta, options = {}) {
 
     try {
       startDynamicBinaryTask("mkvmerge", "downloading", "Downloading mkvmerge");
+	  console.log("[binaries] mkvmerge url:", url);
       await downloadToFile(url, tmpArchivePath);
       await fs.promises.rename(tmpArchivePath, archivePath);
       await fs.promises.mkdir(extractDir, { recursive: true });
       await extractArchive(archivePath, extractDir);
-      const extractedPath = await findFileRecursive(extractDir, "mkvmerge.exe");
-      await copyExecutable(extractedPath, finalPath);
-      await verifyBinary(finalPath, ["--version"]);
-      setMetaEntry(meta, "mkvmerge", { tag: version, path: finalPath });
+	  console.log("[binaries] mkvmerge extracted to:", extractDir);
+      const extractedMkvmerge = await findFirstFileRecursive(extractDir, ["mkvmerge.exe"]);
+      const extractedMkvpropedit = await findFirstFileRecursive(extractDir, ["mkvpropedit.exe"]);
+
+      await copyExecutable(extractedMkvmerge, finalPath);
+      await copyExecutable(extractedMkvpropedit, helperPath);
+
+      await verifyVersionedBinary(finalPath, "mkvmerge", ["--version"]);
+      await verifyVersionedBinary(helperPath, "mkvpropedit", ["--version"]);
+
+      setMetaEntry(meta, "mkvmerge", {
+        tag: version,
+        path: finalPath,
+        helperPath
+      });
+      if (!process.env.MKVPROPEDIT_BIN) {
+        MKVPROPEDIT_BIN = helperPath;
+      }
       await pruneVersionedFiles("mkvmerge-", finalPath);
+      await pruneVersionedFiles("mkvpropedit-", helperPath);
       return finalPath;
     } catch (err) {
       await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+	  await fs.promises.rm(helperPath, { force: true }).catch(() => {});
       throw err;
     } finally {
       await fs.promises.rm(tmpArchivePath, { force: true }).catch(() => {});
