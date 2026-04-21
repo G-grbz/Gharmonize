@@ -507,6 +507,19 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       : job.videoSettings?.volumeGain != null
       ? job.videoSettings.volumeGain
       : null;
+  const effectiveLoudnorm =
+    job.metadata?.loudnorm === true ||
+    job.metadata?.loudnorm === "true" ||
+    job.videoSettings?.loudnorm === true ||
+    job.videoSettings?.loudnorm === "true";
+  const effectiveLoudnormMode =
+    String(
+      job.metadata?.loudnormMode ||
+      job.videoSettings?.loudnormMode ||
+      "ebu_r128"
+    )
+      .trim()
+      .toLowerCase();
 
   job.canceled = false;
 
@@ -552,7 +565,21 @@ export async function processJob(jobId, inputPath, format, bitrate) {
   };
 
   // Handles handle lyrics metadata log in core application logic.
-  const handleLyricsLog = (_payload) => {};
+  const handleLyricsLog = (payload) => {
+    if (!payload) return;
+    const text =
+      typeof payload === "string"
+        ? payload
+        : payload?.fallback
+        ? String(payload.fallback)
+        : payload?.message
+        ? String(payload.message)
+        : "";
+    if (!text) return;
+    job.lastLog = text;
+    job.lastLogKey = null;
+    job.lastLogVars = null;
+  };
   // Builds live conversion log with elapsed/duration and real fps.
   const buildLiveVideoConvertLog = (progress, details = {}, label = "") => {
     const pct = Math.max(0, Math.min(100, Math.floor(Number(progress) || 0)));
@@ -854,6 +881,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 isCanceled: () => !!jobs.get(jobId)?.canceled,
                 onLog: handleLyricsLog,
                 volumeGain: effectiveVolumeGain,
+                loudnorm: effectiveLoudnorm,
+                loudnormMode: effectiveLoudnormMode,
                 onLyricsStats: handleLyricsStats,
                 ringtone: job.metadata?.ringtone || null,
                 stereoConvert: job.metadata?.stereoConvert || "auto",
@@ -1516,6 +1545,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                   isCanceled: () => !!jobs.get(jobId)?.canceled,
                   onLog: handleLyricsLog,
                   volumeGain: effectiveVolumeGain,
+                  loudnorm: effectiveLoudnorm,
+                  loudnormMode: effectiveLoudnormMode,
                   onLyricsStats: handleLyricsStats,
                   ringtone: job.metadata?.ringtone || null,
                   stereoConvert: job.metadata?.stereoConvert || "auto",
@@ -2101,6 +2132,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               onLog: handleLyricsLog,
               onLyricsStats: handleLyricsStats,
               volumeGain: effectiveVolumeGain,
+              loudnorm: effectiveLoudnorm,
+              loudnormMode: effectiveLoudnormMode,
               ringtone: job.metadata?.ringtone || null,
               stereoConvert: job.metadata?.stereoConvert || "auto",
               selectedStreams: perStreamSelected,
@@ -2223,6 +2256,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             onLog: handleLyricsLog,
             onLyricsStats: handleLyricsStats,
             volumeGain: effectiveVolumeGain,
+            loudnorm: effectiveLoudnorm,
+            loudnormMode: effectiveLoudnormMode,
             ringtone: job.metadata?.ringtone || null,
             stereoConvert: job.metadata?.stereoConvert || "auto",
             selectedStreams: selectedStreams,

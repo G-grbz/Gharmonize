@@ -271,6 +271,103 @@ function emitLog(onLog, payload) {
   if (onLog) onLog(payload);
 }
 
+// Normalizes loudnorm mode identifiers used by the FFmpeg media conversion pipeline.
+function normalizeLoudnormMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "two_pass") return "two_pass";
+  if (mode === "dynamic") return "dynamic";
+  return "ebu_r128";
+}
+
+// Resolves loudnorm mode configuration used by the FFmpeg media conversion pipeline.
+function getLoudnormModeConfig(value) {
+  const mode = normalizeLoudnormMode(value);
+
+  if (mode === "two_pass") {
+    return {
+      mode,
+      targetI: -23,
+      targetTp: -2,
+      targetLra: 7,
+      linear: true,
+      twoPass: true
+    };
+  }
+
+  if (mode === "dynamic") {
+    return {
+      mode,
+      targetI: -16,
+      targetTp: -1.5,
+      targetLra: 11,
+      linear: false,
+      twoPass: false
+    };
+  }
+
+  return {
+    mode: "ebu_r128",
+    targetI: -23,
+    targetTp: -2,
+    targetLra: 7,
+    linear: true,
+    twoPass: false
+  };
+}
+
+// Builds loudnorm filter expression used by the FFmpeg media conversion pipeline.
+function buildLoudnormFilter(config, stats = null, printFormat = null) {
+  const cfg = config || getLoudnormModeConfig("ebu_r128");
+  const parts = [
+    `loudnorm=I=${cfg.targetI}`,
+    `TP=${cfg.targetTp}`,
+    `LRA=${cfg.targetLra}`
+  ];
+
+  if (cfg.linear === true) parts.push("linear=true");
+  else if (cfg.linear === false) parts.push("linear=false");
+
+  if (stats) {
+    parts.push(`measured_I=${stats.input_i}`);
+    parts.push(`measured_TP=${stats.input_tp}`);
+    parts.push(`measured_LRA=${stats.input_lra}`);
+    parts.push(`measured_thresh=${stats.input_thresh}`);
+    parts.push(`offset=${stats.target_offset}`);
+  }
+
+  if (printFormat) parts.push(`print_format=${printFormat}`);
+  return parts.join(":");
+}
+
+// Parses loudnorm analysis JSON emitted by FFmpeg in the media conversion pipeline.
+function parseLoudnormAnalysisStats(stderr = "") {
+  const text = String(stderr || "");
+  const matches = text.match(/\{\s*"input_i"[\s\S]*?\}/g);
+  if (!matches || !matches.length) return null;
+
+  for (let i = matches.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(matches[i]);
+      const keys = ["input_i", "input_tp", "input_lra", "input_thresh", "target_offset"];
+      const normalized = {};
+
+      let ok = true;
+      for (const key of keys) {
+        const num = Number(parsed?.[key]);
+        if (!Number.isFinite(num)) {
+          ok = false;
+          break;
+        }
+        normalized[key] = String(num);
+      }
+
+      if (ok) return normalized;
+    } catch {}
+  }
+
+  return null;
+}
+
 // Resolves template for the FFmpeg media conversion pipeline.
 export function resolveTemplate(meta, template) {
   const pick = (a, b) =>
@@ -823,6 +920,24 @@ export async function convertMedia(
     volumeGainRaw = metadata.volumeGain;
   }
 
+  let loudnormRaw = null;
+  if (opts?.loudnorm != null) {
+    loudnormRaw = opts.loudnorm;
+  } else if (videoSettings?.loudnorm != null) {
+    loudnormRaw = videoSettings.loudnorm;
+  } else if (metadata?.loudnorm != null) {
+    loudnormRaw = metadata.loudnorm;
+  }
+
+  let loudnormModeRaw = null;
+  if (opts?.loudnormMode != null) {
+    loudnormModeRaw = opts.loudnormMode;
+  } else if (videoSettings?.loudnormMode != null) {
+    loudnormModeRaw = videoSettings.loudnormMode;
+  } else if (metadata?.loudnormMode != null) {
+    loudnormModeRaw = metadata.loudnormMode;
+  }
+
   // Handles clamp int in the FFmpeg media conversion pipeline.
   const clampInt = (v, min, max) => {
    const n = Math.round(Number(v));
@@ -950,6 +1065,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
   const volumeGain =
     volumeGainRaw != null ? Number(volumeGainRaw) : null;
+  const loudnormEnabled =
+    loudnormRaw === true ||
+    loudnormRaw === "true" ||
+    loudnormRaw === "1" ||
+    loudnormRaw === 1;
+  const loudnormMode = normalizeLoudnormMode(loudnormModeRaw);
+  const loudnormConfig = getLoudnormModeConfig(loudnormMode);
   const hasExplicitAudioSelection = Array.isArray(selectedStreams?.audio);
   const selectedAudioStreams = Array.isArray(selectedStreams?.audio)
     ? selectedStreams.audio
@@ -1139,7 +1261,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       inputPath
     )} | fmt=${format} | lyrics=${
       opts.includeLyrics !== false ? "yes" : "no"
-    } | embedLyrics=${opts.embedLyrics === true ? "yes" : "no"} | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust}${ringtone ? ` | ringtone=${describeRingtone(ringtone)}` : ""}`
+    } | embedLyrics=${opts.embedLyrics === true ? "yes" : "no"} | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust} | loudnorm=${loudnormEnabled ? loudnormConfig.mode : "off"}${ringtone ? ` | ringtone=${describeRingtone(ringtone)}` : ""}`
   );
 
   const template = isVideo
@@ -1218,7 +1340,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   let result;
 
   try {
-    result = await new Promise(async (resolve, reject) => {
+    result = await new Promise((resolve, reject) => {
+    (async () => {
 
   const previewClip = ringtone ? null : (selectedStreams?.previewClip || null);
   // Handles timecode to seconds in the FFmpeg media conversion pipeline.
@@ -1270,6 +1393,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   if (clipDuration != null) {
     args.push("-t", String(clipDuration));
   }
+
+  const analysisInputArgs = args.slice();
 
     if (isCanceled()) return reject(new Error("CANCELED"));
 
@@ -2664,7 +2789,101 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
     }
 
-    const afilters = [];
+    const preLoudnormFilters = [];
+    const postLoudnormFilters = [];
+    let loudnormFilter = null;
+    const hasAudioOutputSelected =
+      !isVideo || !hasExplicitAudioSelection || selectedAudioStreams.length > 0;
+    const canApplyAudioFilters =
+      hasAudioOutputSelected &&
+      (!isVideo || String(audioCodec || "").toLowerCase() !== "copy");
+
+    const runLoudnormAnalysisPass = async (filterChain, config) => {
+      if (!canApplyAudioFilters) return null;
+      if (!config?.twoPass) return null;
+      if (isVideo && selectedAudioStreams.length > 1) {
+        console.warn("⚠️ Two-pass loudnorm requested with multiple selected audio streams; falling back to one-pass.");
+        return null;
+      }
+      if (isCanceled()) throw new Error("CANCELED");
+
+      const analysisArgs = [...analysisInputArgs];
+
+      if (selectedAudioStreams.length > 0) {
+        analysisArgs.push("-map", `0:${selectedAudioStreams[0]}`);
+      } else if (!hasExplicitAudioSelection) {
+        analysisArgs.push("-map", "0:a:0?");
+      } else {
+        return null;
+      }
+
+      analysisArgs.push("-vn", "-sn", "-dn", "-acodec", "pcm_s16le");
+      if (filterChain.length > 0) {
+        analysisArgs.push("-af", filterChain.join(","));
+      }
+      analysisArgs.push("-f", "null", "-");
+
+      emitLog(opts.onLog, {
+        fallback: `🎚 Loudnorm analysis started (${config.mode})`
+      });
+      console.log("🎚 Loudnorm analysis pass:", analysisArgs.join(" "));
+
+      return await new Promise((resolve, reject) => {
+        const analysisProc = spawn(ffmpegBin, analysisArgs);
+        try {
+          if (typeof opts.onProcess === "function") {
+            opts.onProcess(analysisProc);
+          }
+        } catch {}
+
+        let stderrData = "";
+        let canceled = false;
+        const cancelTimer = setInterval(() => {
+          if (!canceled && isCanceled()) {
+            canceled = true;
+            try {
+              analysisProc.kill("SIGTERM");
+            } catch {}
+          }
+        }, 250);
+
+        analysisProc.stderr.on("data", (chunk) => {
+          stderrData += chunk.toString();
+        });
+
+        analysisProc.on("close", (code, signal) => {
+          clearInterval(cancelTimer);
+
+          const signalTerminated =
+            signal === "SIGTERM" ||
+            signal === "SIGKILL" ||
+            (Number(code) === 255 && /received signal 15|sigterm|sigkill/i.test(String(stderrData || "")));
+
+          if (canceled || isCanceled() || signalTerminated) {
+            return reject(new Error("CANCELED"));
+          }
+
+          if (code !== 0) {
+            const tail = stderrData.split("\n").slice(-12).join("\n");
+            console.warn(`⚠️ Loudnorm analysis pass failed (code ${code}): ${tail}`);
+            return resolve(null);
+          }
+
+          const stats = parseLoudnormAnalysisStats(stderrData);
+          if (!stats) {
+            console.warn("⚠️ Loudnorm analysis JSON could not be parsed; falling back to one-pass.");
+            return resolve(null);
+          }
+
+          resolve(stats);
+        });
+
+        analysisProc.on("error", (error) => {
+          clearInterval(cancelTimer);
+          reject(new Error(`Loudnorm analysis spawn error: ${error.message}`));
+        });
+      });
+    };
 
     if (atempoAdjust !== "none") {
       const ratioTable = {
@@ -2700,14 +2919,26 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         const chain = splitAtempo(target);
         if (chain.length) {
           const expr = chain.map((v) => `atempo=${v}`).join(",");
-          afilters.push(expr);
+          preLoudnormFilters.push(expr);
         }
       }
     }
 
     if (Number.isFinite(volumeGain) && volumeGain > 0 && volumeGain !== 1) {
       const safeGain = Math.min(Math.max(volumeGain, 0.5), 5.0);
-      afilters.push(`volume=${safeGain.toFixed(2)}`);
+      preLoudnormFilters.push(`volume=${safeGain.toFixed(2)}`);
+    }
+
+    if (loudnormEnabled) {
+      const analysisFilter = [
+        ...preLoudnormFilters,
+        buildLoudnormFilter(loudnormConfig, null, "json")
+      ];
+
+      const stats = await runLoudnormAnalysisPass(analysisFilter, loudnormConfig);
+      loudnormFilter = stats
+        ? buildLoudnormFilter(loudnormConfig, stats)
+        : buildLoudnormFilter(loudnormConfig);
     }
 
     if (ringtoneSegment) {
@@ -2722,18 +2953,24 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       );
 
       if (fadeIn > 0) {
-        afilters.push(`afade=t=in:st=0:d=${fadeIn.toFixed(3)}`);
+        postLoudnormFilters.push(`afade=t=in:st=0:d=${fadeIn.toFixed(3)}`);
       }
 
       if (fadeOut > 0 && clipLen > (fadeOut + 0.05)) {
         const fadeOutStart = Math.max(0, clipLen - fadeOut);
-        afilters.push(`afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut.toFixed(3)}`);
+        postLoudnormFilters.push(`afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut.toFixed(3)}`);
       }
     }
 
-    if (afilters.length > 0) {
+    const afilters = [...preLoudnormFilters];
+    if (loudnormFilter) afilters.push(loudnormFilter);
+    afilters.push(...postLoudnormFilters);
+
+    if (afilters.length > 0 && canApplyAudioFilters) {
       const filterStr = afilters.join(",");
       args.push("-af", filterStr);
+    } else if (afilters.length > 0) {
+      console.warn("⚠️ Audio filters requested but no transcodable audio output is available; skipping audio filters.");
     }
 
     if (!outputPath || !outputFileName) {
@@ -3046,6 +3283,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
       reject(new Error(`FFmpeg spawn error: ${e.message}`));
     });
+    })().catch(reject);
     });
   } catch (transcodeError) {
     const canRetryWithoutHardware =

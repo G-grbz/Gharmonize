@@ -1325,6 +1325,15 @@ updateJobUI(job, batchId = null) {
     if (job.metadata?.volumeGain && job.metadata.volumeGain !== 1.0) {
         extraFeatures.push(`<span class="info-feature">🔊 ${job.metadata.volumeGain}x</span>`);
     }
+    if (job.metadata?.loudnorm) {
+        const loudnormMode = String(job.metadata?.loudnormMode || 'ebu_r128');
+        const loudnormModeLabel = loudnormMode === 'two_pass'
+            ? (this.app.t('option.loudnormMode.twoPass') || 'Two-Pass Processing')
+            : loudnormMode === 'dynamic'
+                ? (this.app.t('option.loudnormMode.dynamic') || 'Dynamic Range Control')
+                : (this.app.t('option.loudnormMode.ebuR128') || 'EBU R128 Standard');
+        extraFeatures.push(`<span class="info-feature">🎚 ${loudnormModeLabel}</span>`);
+    }
     if (job.metadata?.isPlaylist) {
         extraFeatures.push(`<span class="info-feature">📜 ${this.app.t('ui.playlist')}</span>`);
     }
@@ -2190,6 +2199,7 @@ updateJobUI(job, batchId = null) {
             console.log("Sent payload:", payload);
 
             const outputProfile = this.app.applyCurrentOutputProfile(payload, { isFormData });
+            this.app.applyCurrentAudioProcessingSettings(payload, { isFormData });
             const format = String(outputProfile.format || '').toLowerCase();
             const disableAutoZip = format === 'mp4' || format === 'mkv';
 

@@ -261,6 +261,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
       includeLyrics,
       embedLyrics,
       volumeGain,
+      loudnorm,
+      loudnormMode,
       compressionLevel,
       bitDepth,
       videoSettings = {},
@@ -299,6 +301,14 @@ router.post("/api/spotify/process/start", async (req, res) => {
       embedLyricsFlag = false;
     }
     const isVideoOutput = isVideoFormat(format);
+    const isEnabledFlag = (value) =>
+      value === true || value === "true" || value === "1" || value === 1;
+    const normalizeLoudnormMode = (value) => {
+      const mode = String(value || "").trim().toLowerCase();
+      if (mode === "two_pass") return "two_pass";
+      if (mode === "dynamic") return "dynamic";
+      return "ebu_r128";
+    };
 
     const autoCreateZipFlag =
       !isVideoOutput && (
@@ -310,6 +320,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
     console.log('[music-match] UI sent spotifyConcurrency =', spotifyConcurrency);
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
+    const loudnormFlag = isEnabledFlag(loudnorm);
+    const loudnormModeNormalized = normalizeLoudnormMode(loudnormMode);
     if (!url || !isMappedMusicUrl(url)) {
       return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify, Apple Music, or Deezer URL is required", 400);
     }
@@ -334,6 +346,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
     bitrate,
     sampleRate: parseInt(sampleRate) || 48000,
     volumeGain: volumeGainNum,
+    loudnorm: loudnormFlag,
+    loudnormMode: loudnormFlag ? loudnormModeNormalized : null,
     compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
     bitDepth: bitDepth || null,
     videoSettings: isVideoOutput ? videoSettings : null,
@@ -348,6 +362,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
       includeLyrics: includeLyricsFlag,
       embedLyrics: embedLyricsFlag,
       volumeGain: volumeGainNum,
+      loudnorm: loudnormFlag,
+      loudnormMode: loudnormFlag ? loudnormModeNormalized : null,
       compressionLevel: compressionLevel != null ? Number(compressionLevel) : null,
       bitDepth: bitDepth || null,
       ringtone: ringtone || null,
@@ -757,6 +773,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
             embedLyrics: !!job.metadata.embedLyrics,
             sampleRate: job.sampleRate || 48000,
             volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
+            loudnorm: !!job.metadata?.loudnorm,
+            loudnormMode: job.metadata?.loudnormMode || null,
             compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
             bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
             ringtone: job.metadata?.ringtone || null,
@@ -1287,6 +1305,8 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
         embedLyrics: !!job.metadata.embedLyrics,
         sampleRate: job.sampleRate || 48000,
         volumeGain: job.metadata?.volumeGain ?? job.volumeGain ?? null,
+        loudnorm: !!job.metadata?.loudnorm,
+        loudnormMode: job.metadata?.loudnormMode || null,
         compressionLevel: job.metadata?.compressionLevel ?? job.compressionLevel ?? undefined,
         bitDepth: job.metadata?.bitDepth ?? job.bitDepth ?? undefined,
         ringtone: job.metadata?.ringtone || null,

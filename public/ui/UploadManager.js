@@ -960,6 +960,9 @@ export class UploadManager {
   // Handles submit large file with chunks in the browser UI layer.
   async submitLargeFileWithChunks(file, payload, isFormData = false) {
     console.log('📦 submitLargeFileWithChunks called:', file.name, payload);
+    if (!isFormData) {
+      this.app.applyCurrentAudioProcessingSettings(payload, { isFormData: false });
+    }
     const CHUNK_SIZE = 32 * 1024 * 1024;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     let uploadedChunks = 0;
@@ -1002,6 +1005,12 @@ export class UploadManager {
         }
         if (payload.volumeGain != null) {
           chunkFormData.append('volumeGain', payload.volumeGain);
+        }
+        if (payload.loudnorm != null) {
+          chunkFormData.append('loudnorm', payload.loudnorm ? 'true' : 'false');
+        }
+        if (payload.loudnormMode) {
+          chunkFormData.append('loudnormMode', payload.loudnormMode);
         }
 
         const response = await fetch('/api/upload/chunk', {
@@ -1290,6 +1299,7 @@ export class UploadManager {
 
       const outputProfile = this.app.applyCurrentOutputProfile(payload, { isFormData });
       effectiveFormat = outputProfile.format;
+      this.app.applyCurrentAudioProcessingSettings(payload, { isFormData });
 
       if ((effectiveFormat === 'mp4' || effectiveFormat === 'mkv') &&
         this.app.videoManager.videoSettings.transcodeEnabled) {
@@ -1387,6 +1397,16 @@ export class UploadManager {
                     volumeGainRaw === null || volumeGainRaw === undefined
                       ? null
                       : Number(volumeGainRaw);
+                  const loudnormRaw = payload.get('loudnorm');
+                  const loudnorm =
+                    loudnormRaw === true ||
+                    loudnormRaw === 'true' ||
+                    loudnormRaw === '1';
+                  const loudnormModeRaw = payload.get('loudnormMode');
+                  const loudnormMode =
+                    loudnormModeRaw == null || loudnormModeRaw === ''
+                      ? null
+                      : String(loudnormModeRaw);
                   const bitrate =
                     payload.get('bitrate') ||
                     document.getElementById('bitrateSelect')?.value;
@@ -1427,6 +1447,8 @@ export class UploadManager {
                     embedLyrics,
                     selectedStreams,
                     volumeGain,
+                    loudnorm,
+                    ...(loudnormMode ? { loudnormMode } : {}),
                     ...(ringtone ? { ringtone } : {})
                   };
                   if (clientBatch) {

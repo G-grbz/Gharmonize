@@ -70,7 +70,9 @@ export class VideoSettingsManager {
       audioSampleRate: '48000',
       audioAtempoAdjust: 'none',
       audioBitrate: '192k',
-      volumeGain: 1.0
+      volumeGain: 1.0,
+      loudnorm: false,
+      loudnormMode: 'ebu_r128'
     };
 
     this.modalEl = null;
@@ -201,6 +203,8 @@ export class VideoSettingsManager {
 
     if (this.app) {
       this.app.currentVolumeGain = this.videoSettings.volumeGain ?? 1.0;
+      this.app.currentLoudnorm = !!this.videoSettings.loudnorm;
+      this.app.currentLoudnormMode = this.videoSettings.loudnormMode || 'ebu_r128';
     }
 
     this.createUI();
@@ -259,6 +263,12 @@ export class VideoSettingsManager {
       this.videoSettings.audioChannels = this.videoSettings.audioChannels || 'original';
       this.videoSettings.audioSampleRate = this.videoSettings.audioSampleRate || '48000';
       this.videoSettings.audioAtempoAdjust = this.videoSettings.audioAtempoAdjust || 'none';
+      this.videoSettings.loudnorm = !!this.videoSettings.loudnorm;
+      const allowedLoudnormModes = new Set(['ebu_r128', 'two_pass', 'dynamic']);
+      const currentLoudnormMode = String(this.videoSettings.loudnormMode || 'ebu_r128').toLowerCase();
+      this.videoSettings.loudnormMode = allowedLoudnormModes.has(currentLoudnormMode)
+        ? currentLoudnormMode
+        : 'ebu_r128';
       this.videoSettings.swSettings = {
         preset: this.videoSettings.swSettings?.preset || 'veryfast',
         quality: this.videoSettings.swSettings?.quality || '23',

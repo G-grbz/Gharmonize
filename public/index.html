@@ -303,6 +303,24 @@
             <small class="muted" data-i18n="ui.volumeGainHelp">
               Boosts volume from 1x to 5x. Higher values may cause distortion.
             </small>
+            <div class="checkbox-group" id="loudnormCheckboxContainer" style="margin-top:12px;">
+              <input type="checkbox" id="loudnormCheckbox" />
+              <label for="loudnormCheckbox" data-i18n="ui.loudnormLabel">Loudness Normalize (loudnorm)</label>
+            </div>
+            <div class="form-group" id="loudnormModeGroup" style="display:none; margin-top:12px;">
+              <label for="loudnormModeSelect" data-i18n="label.loudnormMode">Loudnorm Mode</label>
+              <select id="loudnormModeSelect">
+                <option value="ebu_r128" data-i18n="option.loudnormMode.ebuR128">EBU R128 Standard</option>
+                <option value="two_pass" data-i18n="option.loudnormMode.twoPass">Two-Pass Processing</option>
+                <option value="dynamic" data-i18n="option.loudnormMode.dynamic">Dynamic Range Control</option>
+              </select>
+            </div>
+            <small class="muted" data-i18n="ui.loudnormHelp">
+              Normalizes perceived loudness between different sources with FFmpeg loudnorm.
+            </small>
+            <small class="muted" id="loudnormModeHelp" style="display:none;" data-i18n="ui.loudnormModeHelp">
+              Choose the loudness normalization strategy to use during conversion.
+            </small>
           </div>
         </div>
       </div>

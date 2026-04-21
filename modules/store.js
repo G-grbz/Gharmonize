@@ -102,6 +102,8 @@ function pickPersistedMetadata(metadata = {}) {
     includeLyrics: !!metadata?.includeLyrics,
     embedLyrics: !!metadata?.embedLyrics,
     volumeGain: metadata?.volumeGain ?? null,
+    loudnorm: !!metadata?.loudnorm,
+    loudnormMode: metadata?.loudnormMode || null,
     lang: metadata?.lang || null,
     url: metadata?.url || null,
     originalUrl: metadata?.originalUrl || null,

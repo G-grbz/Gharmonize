@@ -1196,6 +1196,15 @@ export class JobsPanelManager {
                     ${j.metadata?.volumeGain && j.metadata.volumeGain !== 1.0 ? `
                         <span class="pill pill--volume" title="${this.t('label.volumeGain')}">🔊 ${j.metadata.volumeGain}x</span>
                     ` : ''}
+                    ${j.metadata?.loudnorm ? `
+                        <span class="pill pill--volume" title="${this.t('label.loudnorm') || 'Loudness Normalize'}">🎚 ${
+                            String(j.metadata?.loudnormMode || 'ebu_r128') === 'two_pass'
+                                ? (this.t('option.loudnormMode.twoPass') || 'Two-Pass Processing')
+                                : String(j.metadata?.loudnormMode || 'ebu_r128') === 'dynamic'
+                                    ? (this.t('option.loudnormMode.dynamic') || 'Dynamic Range Control')
+                                    : (this.t('option.loudnormMode.ebuR128') || 'EBU R128 Standard')
+                        }</span>
+                    ` : ''}
                     <span class="pill">${this.phasePill(j)}</span>
                     ${skippedBadge}
                 </div>

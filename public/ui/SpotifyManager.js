@@ -212,6 +212,7 @@ export class SpotifyManager {
     const includeLyrics = document.getElementById('lyricsCheckbox').checked;
     const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
     const videoSettings = this.app.videoManager?.getSettings() || {};
+    const audioProcessing = this.app.getCurrentAudioProcessingSettings();
     const bitDepthSelect = document.getElementById('bitDepthSelect');
 
     let bitDepth = null;
@@ -267,7 +268,7 @@ export class SpotifyManager {
             sampleRate,
             includeLyrics,
             embedLyrics,
-            volumeGain: this.app.currentVolumeGain || 1.0,
+            ...audioProcessing,
             autoCreateZip,
             ringtone: outputSettings.ringtone,
             ...(compressionLevel != null ? { compressionLevel } : {}),
@@ -475,6 +476,7 @@ export class SpotifyManager {
         const includeLyrics = document.getElementById('lyricsCheckbox').checked;
         const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
         const videoSettings = this.app.videoManager?.getSettings() || {};
+        const audioProcessing = this.app.getCurrentAudioProcessingSettings();
         const isVideoFormat = format === 'mp4' || format === 'mkv';
         const compressionLevel =
             format === 'flac'
@@ -506,7 +508,7 @@ export class SpotifyManager {
             includeLyrics,
             embedLyrics,
             isPlaylist: true,
-            volumeGain: this.app.currentVolumeGain || 1.0,
+            ...audioProcessing,
             autoCreateZip,
             ringtone: outputSettings.ringtone,
             ...(compressionLevel !== undefined ? { compressionLevel } : {}),
@@ -523,7 +525,7 @@ export class SpotifyManager {
                 spotifyMapId: this.currentSpotifyTask.id,
                 includeLyrics,
                 embedLyrics,
-                volumeGain: this.app.currentVolumeGain || 1.0
+                ...audioProcessing
             }
         };
 
@@ -598,6 +600,7 @@ export class SpotifyManager {
     async submitSpotifyJob(payload) {
         try {
             this.app.applyCurrentOutputProfile(payload, { isFormData: false });
+            this.app.applyCurrentAudioProcessingSettings(payload, { isFormData: false });
             const response = await fetch('/api/jobs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

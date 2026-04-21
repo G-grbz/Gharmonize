@@ -520,6 +520,9 @@ export async function processYouTubeVideoJob(job, {
           {
             includeLyrics: false,
             isCanceled: () => !!jobs.get(job.id)?.canceled,
+            volumeGain: job.metadata?.volumeGain ?? job.videoSettings?.volumeGain ?? null,
+            loudnorm: !!(job.metadata?.loudnorm ?? job.videoSettings?.loudnorm),
+            loudnormMode: job.metadata?.loudnormMode || job.videoSettings?.loudnormMode || "ebu_r128",
             videoSettings: videoSettings,
             onProcess: (child) => {
               try {
@@ -646,6 +649,9 @@ export async function processYouTubeVideoJob(job, {
       {
         includeLyrics: false,
         isCanceled: () => !!jobs.get(job.id)?.canceled,
+        volumeGain: job.metadata?.volumeGain ?? job.videoSettings?.volumeGain ?? null,
+        loudnorm: !!(job.metadata?.loudnorm ?? job.videoSettings?.loudnorm),
+        loudnormMode: job.metadata?.loudnormMode || job.videoSettings?.loudnormMode || "ebu_r128",
         videoSettings: videoSettings,
         onProcess: (child) => {
           try {
@@ -986,6 +992,9 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
         {
           includeLyrics: false,
           isCanceled: () => !!jobs.get(job.id)?.canceled,
+          volumeGain: job.metadata?.volumeGain ?? job.videoSettings?.volumeGain ?? null,
+          loudnorm: !!(job.metadata?.loudnorm ?? job.videoSettings?.loudnorm),
+          loudnormMode: job.metadata?.loudnormMode || job.videoSettings?.loudnormMode || "ebu_r128",
           videoSettings: videoSettings,
           onProcess: (child) => {
             try {

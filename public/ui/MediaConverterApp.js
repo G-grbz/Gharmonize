@@ -20,6 +20,8 @@ export class MediaConverterApp {
         this.embedLyrics = false;
         this.currentSampleRate = 48000;
         this.currentVolumeGain = 1.0;
+        this.currentLoudnorm = false;
+        this.currentLoudnormMode = 'ebu_r128';
         this.videoManager = new VideoSettingsManager(this);
         this.jobManager = new JobManager(this);
         this.previewManager = new PreviewManager(this);
@@ -521,6 +523,78 @@ export class MediaConverterApp {
         return resolved;
     }
 
+    // Returns current audio-processing settings for outgoing conversion payloads.
+    getCurrentAudioProcessingSettings() {
+        const rawVolume = Number(this.currentVolumeGain);
+        return {
+            volumeGain: Number.isFinite(rawVolume) && rawVolume > 0 ? rawVolume : 1.0,
+            loudnorm: !!this.currentLoudnorm,
+            loudnormMode: this.normalizeLoudnormMode(this.currentLoudnormMode)
+        };
+    }
+
+    // Normalizes loudnorm mode identifiers used across browser UI and API payloads.
+    normalizeLoudnormMode(value) {
+        const mode = String(value || '').trim().toLowerCase();
+        if (mode === 'two_pass') return 'two_pass';
+        if (mode === 'dynamic') return 'dynamic';
+        return 'ebu_r128';
+    }
+
+    // Updates loudnorm mode visibility and descriptive text in the browser UI layer.
+    updateLoudnormModeUI(enabled = this.currentLoudnorm) {
+        const group = document.getElementById('loudnormModeGroup');
+        const help = document.getElementById('loudnormModeHelp');
+        const visible = !!enabled;
+
+        if (group) group.style.display = visible ? '' : 'none';
+        if (help) help.style.display = visible ? 'block' : 'none';
+    }
+
+    // Applies current audio-processing settings to a payload before submission.
+    applyCurrentAudioProcessingSettings(payload, { isFormData = false } = {}) {
+        const settings = this.getCurrentAudioProcessingSettings();
+
+        if (!isFormData) {
+            if (payload && typeof payload === 'object') {
+                if (payload.volumeGain == null) payload.volumeGain = settings.volumeGain;
+                if (payload.loudnorm == null) payload.loudnorm = settings.loudnorm;
+                if (payload.loudnormMode == null) payload.loudnormMode = settings.loudnormMode;
+            }
+            return settings;
+        }
+
+        if (!(payload instanceof FormData)) return settings;
+
+        const existingVolumeGain = payload.get('volumeGain');
+        const existingLoudnorm = payload.get('loudnorm');
+        const existingLoudnormMode = payload.get('loudnormMode');
+
+        if (typeof payload.set === 'function') {
+            if (existingVolumeGain == null) {
+                payload.set('volumeGain', String(settings.volumeGain));
+            }
+            if (existingLoudnorm == null) {
+                payload.set('loudnorm', settings.loudnorm ? 'true' : 'false');
+            }
+            if (existingLoudnormMode == null) {
+                payload.set('loudnormMode', settings.loudnormMode);
+            }
+        } else {
+            if (existingVolumeGain == null) {
+                payload.append('volumeGain', String(settings.volumeGain));
+            }
+            if (existingLoudnorm == null) {
+                payload.append('loudnorm', settings.loudnorm ? 'true' : 'false');
+            }
+            if (existingLoudnormMode == null) {
+                payload.append('loudnormMode', settings.loudnormMode);
+            }
+        }
+
+        return settings;
+    }
+
     // Initializes theme for the browser UI layer.
     initializeTheme() {
         const savedTheme = localStorage.getItem('theme') || 'light';
@@ -744,6 +818,46 @@ export class MediaConverterApp {
                 }
             };
             volumeRange.addEventListener('input', updateVolumeUI);
+        }
+
+        const loudnormCheckbox = document.getElementById('loudnormCheckbox');
+        const loudnormModeSelect = document.getElementById('loudnormModeSelect');
+        if (loudnormCheckbox) {
+            const settings = this.videoManager?.videoSettings || {};
+            const initialLoudnorm = !!settings.loudnorm;
+            loudnormCheckbox.checked = initialLoudnorm;
+            this.currentLoudnorm = initialLoudnorm;
+            this.currentLoudnormMode = this.normalizeLoudnormMode(settings.loudnormMode);
+
+            if (loudnormModeSelect) {
+                loudnormModeSelect.value = this.currentLoudnormMode;
+            }
+            this.updateLoudnormModeUI(initialLoudnorm);
+
+            loudnormCheckbox.addEventListener('change', (e) => {
+                const enabled = !!e.target.checked;
+                this.currentLoudnorm = enabled;
+                this.updateLoudnormModeUI(enabled);
+
+                if (this.videoManager && this.videoManager.videoSettings) {
+                    this.videoManager.videoSettings.loudnorm = enabled;
+                    this.videoManager.saveToStorage();
+                }
+            });
+        }
+
+        if (loudnormModeSelect) {
+            loudnormModeSelect.value = this.normalizeLoudnormMode(this.currentLoudnormMode);
+            loudnormModeSelect.addEventListener('change', (e) => {
+                const mode = this.normalizeLoudnormMode(e.target.value);
+                this.currentLoudnormMode = mode;
+                e.target.value = mode;
+
+                if (this.videoManager && this.videoManager.videoSettings) {
+                    this.videoManager.videoSettings.loudnormMode = mode;
+                    this.videoManager.saveToStorage();
+                }
+            });
         }
 
         const fileInput = document.getElementById('fileInput');

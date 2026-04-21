@@ -993,6 +993,8 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       includeLyrics = false,
       embedLyrics = false,
       volumeGain,
+      loudnorm,
+      loudnormMode,
       spotifyConcurrency,
       stereoConvert = "auto",
       atempoAdjust = "none",
@@ -1081,6 +1083,9 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       }
     }
 
+    const isEnabledFlag = (value) =>
+      value === true || value === "true" || value === "1" || value === 1;
+
     // Parses sr for Express API request handling.
     const parseSR = (v) => {
       if (v == null) return NaN;
@@ -1105,6 +1110,20 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     };
 
     const normalizedCompressionLevel = normalizeFlacLevel(format, compressionLevel);
+    const normalizeLoudnormMode = (value) => {
+      const mode = String(value || "").trim().toLowerCase();
+      if (mode === "two_pass") return "two_pass";
+      if (mode === "dynamic") return "dynamic";
+      return "ebu_r128";
+    };
+    const loudnormFlag =
+      isEnabledFlag(loudnorm) ||
+      isEnabledFlag(selectedStreamsParsed?.loudnorm);
+    const loudnormModeNormalized = normalizeLoudnormMode(
+      loudnormMode != null
+        ? loudnormMode
+        : selectedStreamsParsed?.loudnormMode
+    );
 
     // Parses video settings for Express API request handling.
     const parseVideoSettings = (raw) => {
@@ -1353,6 +1372,8 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         selectedStreams: selectedStreamsParsed,
         youtubeConcurrency: youtubeConcurrencyNormalized,
         ringtone: ringtone || null,
+        loudnorm: loudnormFlag,
+        loudnormMode: loudnormFlag ? loudnormModeNormalized : null,
         volumeGain:
           volumeGain != null
             ? Number(volumeGain)
@@ -1432,6 +1453,9 @@ router.get("/api/jobs", requireAuth, (req, res) => {
         outputSubdir: j.metadata?.outputSubdir || null,
         originalName: j.metadata?.originalName || null,
         includeLyrics: !!j.metadata?.includeLyrics,
+        volumeGain: j.metadata?.volumeGain ?? null,
+        loudnorm: !!j.metadata?.loudnorm,
+        loudnormMode: j.metadata?.loudnormMode || null,
         lyricsStats: j.metadata?.lyricsStats || null,
         selectedStreams: j.metadata?.selectedStreams || null,
         frozenEntries: Array.isArray(j.metadata?.frozenEntries)
@@ -1498,6 +1522,9 @@ router.get("/api/stream", requireAuth, (req, res) => {
       outputSubdir: j.metadata?.outputSubdir || null,
       originalName: j.metadata?.originalName || null,
       includeLyrics: !!j.metadata?.includeLyrics,
+      volumeGain: j.metadata?.volumeGain ?? null,
+      loudnorm: !!j.metadata?.loudnorm,
+      loudnormMode: j.metadata?.loudnormMode || null,
       lyricsStats: j.metadata?.lyricsStats || null,
       selectedStreams: j.metadata?.selectedStreams || null,
       frozenEntries: Array.isArray(j.metadata?.frozenEntries)
