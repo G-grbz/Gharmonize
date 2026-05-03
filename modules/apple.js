@@ -17,7 +17,7 @@ const APPLE_WEB_HEADERS = Object.freeze({
   "user-agent":
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "accept-language": "en-US,en;q=0.8"
+  "accept-language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
 });
 
 const CHAR_FOLD_MAP = Object.freeze({
@@ -575,6 +575,33 @@ function extractAppleAlbumTrackCandidates(html = "") {
     const matches =
       String(html || "").match(/https?:\/\/(?:embed\.)?music\.apple\.com\/[^"'\\<>\s]+/gi) ||
       [];
+    for (const url of matches) {
+      if (!isAppleTrackUrlLike(url)) continue;
+      pushAppleTrackCandidate(candidates, seen, { url });
+    }
+  }
+
+  return candidates;
+}
+
+// Extracts playlist track candidates from Apple Music HTML when JSON-LD track data is missing.
+function extractApplePlaylistTrackCandidates(html = "") {
+  const candidates = [];
+  const seen = new Set();
+
+  for (const url of parseAppleAllMetaContents(html, "property", "music:song")) {
+    pushAppleTrackCandidate(candidates, seen, { url });
+  }
+
+  for (const block of extractJsonLdBlocks(html)) {
+    collectAppleTrackCandidatesFromJsonLd(block, candidates, seen);
+  }
+
+  if (!candidates.length) {
+    const matches =
+      String(html || "").match(/https?:\/\/(?:embed\.)?music\.apple\.com\/[^"'\\<>\s]+/gi) ||
+      [];
+
     for (const url of matches) {
       if (!isAppleTrackUrlLike(url)) continue;
       pushAppleTrackCandidate(candidates, seen, { url });
@@ -1268,6 +1295,42 @@ export async function resolveAppleMusicUrlLite(url, { market } = {}) {
       const item = buildAppleResolvedItem(meta, fallback);
       if (!item.title) continue;
       items.push(item);
+    }
+
+    if (!items.length) {
+      const candidates = extractApplePlaylistTrackCandidates(html);
+      const candidateIds = Array.from(
+        new Set(
+          candidates
+            .map((candidate) => numberOrNull(candidate?.id))
+            .filter((value) => value && value > 0)
+            .map((value) => Math.round(value))
+        )
+      );
+
+      const fallbackTracks = await lookupAppleTracksByIds(candidateIds, {
+        market: effectiveMarket
+      });
+
+      const fallbackById = new Map(
+        fallbackTracks
+          .filter((track) => numberOrNull(track?.trackId))
+          .map((track) => [Math.round(numberOrNull(track.trackId)), track])
+      );
+
+      for (const candidate of candidates) {
+        const track = candidate?.id ? fallbackById.get(candidate.id) || null : null;
+        const meta = track ? appleTrackToMeta(track) : null;
+        const fallback = {
+          title: decodeHtmlEntities(candidate?.title || ""),
+          duration_ms: candidate?.duration_ms ?? null,
+          webpage_url: candidate?.url || "",
+          apple_track_id: candidate?.id ?? null
+        };
+        const item = buildAppleResolvedItem(meta, fallback);
+        if (!item.title) continue;
+        items.push(item);
+      }
     }
 
     if (!items.length) {
