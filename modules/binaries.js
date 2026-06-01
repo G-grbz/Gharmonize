@@ -128,6 +128,11 @@ function resolveBin(envVarName, baseName) {
     return path.join(DEV_BIN_DIR, exeName);
   }
 
+  const managedCachePath = resolveManagedCacheBin(baseName);
+  if (managedCachePath) {
+    return managedCachePath;
+  }
+
   const fromPath = findOnPath(exeName);
   if (fromPath) {
     return fromPath;
@@ -168,6 +173,34 @@ function resolveWebCacheDir() {
 
 const WEB_CACHE_DIR = resolveWebCacheDir();
 const WEB_META_FILE = path.join(WEB_CACHE_DIR, "metadata.json");
+
+// Resolves a managed runtime binary from the persistent web cache.
+function resolveManagedCacheBin(baseName) {
+  if (!WEB_BINARIES_ENABLED) return null;
+
+  const toolKey = baseName === "yt-dlp" ? "ytdlp" : baseName;
+  const meta = readJsonFile(WEB_META_FILE, {});
+  const metaEntry =
+    meta && typeof meta === "object" && !Array.isArray(meta)
+      ? meta[toolKey]
+      : null;
+  const candidates = [
+    path.join(WEB_CACHE_DIR, pickExeName(baseName)),
+    metaEntry?.path ? path.resolve(String(metaEntry.path)) : null,
+    toolKey === "mkvpropedit" && meta?.mkvmerge?.helperPath
+      ? path.resolve(String(meta.mkvmerge.helperPath))
+      : null
+  ].filter(Boolean);
+
+  for (const candidate of [...new Set(candidates)]) {
+    if (isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 const DYNAMIC_BINARY_TOOL_LABELS = {
   ffmpeg: "ffmpeg / ffprobe",
   mkvmerge: "mkvmerge",
@@ -1201,10 +1234,31 @@ export async function initializeDynamicBinaries(options = {}) {
       const meta = readJsonFile(WEB_META_FILE, {});
       let shouldSaveMeta = false;
 
-      const shouldOverride = (envVarName) =>
-        force || WEB_FORCE_DOCKER_OVERRIDE || !process.env[envVarName];
+      const shouldOverride = (
+        envVarName,
+        currentPath = "",
+        { preferNativeInDocker = false } = {}
+      ) => {
+        const explicitEnvPath = String(process.env[envVarName] || "").trim();
+        if (explicitEnvPath) {
+          return false;
+        }
+        if (force) return true;
+        if (
+          preferNativeInDocker &&
+          IS_DOCKER &&
+          !WEB_FORCE_DOCKER_OVERRIDE &&
+          isExecutable(currentPath)
+        ) {
+          return false;
+        }
+        return true;
+      };
 
-      if (shouldOverride("FFMPEG_BIN") || shouldOverride("FFPROBE_BIN")) {
+      if (
+        shouldOverride("FFMPEG_BIN", FFMPEG_BIN) ||
+        shouldOverride("FFPROBE_BIN", FFPROBE_BIN)
+      ) {
         try {
           startDynamicBinaryTask(
             "ffmpeg",
@@ -1234,7 +1288,9 @@ export async function initializeDynamicBinaries(options = {}) {
         finishDynamicBinaryTask("ffmpeg", "skipped", "Using configured ffmpeg / ffprobe path");
       }
 
-      if (shouldOverride("MKVMERGE_BIN")) {
+      if (
+        shouldOverride("MKVMERGE_BIN", MKVMERGE_BIN, { preferNativeInDocker: true })
+      ) {
         try {
           startDynamicBinaryTask(
             "mkvmerge",
@@ -1262,7 +1318,7 @@ export async function initializeDynamicBinaries(options = {}) {
         finishDynamicBinaryTask("mkvmerge", "skipped", "Using configured mkvmerge path");
       }
 
-      if (shouldOverride("YTDLP_BIN")) {
+      if (shouldOverride("YTDLP_BIN", YTDLP_BIN)) {
         try {
           startDynamicBinaryTask(
             "ytdlp",
@@ -1286,7 +1342,7 @@ export async function initializeDynamicBinaries(options = {}) {
         finishDynamicBinaryTask("ytdlp", "skipped", "Using configured yt-dlp path");
       }
 
-      if (shouldOverride("DENO_BIN")) {
+      if (shouldOverride("DENO_BIN", DENO_BIN)) {
         try {
           startDynamicBinaryTask(
             "deno",

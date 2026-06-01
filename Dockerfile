@@ -34,7 +34,7 @@ ENV NODE_ENV=production \
     PORT=5174 \
     GHARMONIZE_WEB_BINARIES=1 \
     GHARMONIZE_WEB_BINARIES_IN_DOCKER=1 \
-    GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries \
+    GHARMONIZE_WEB_CACHE_DIR=/opt/gharmonize/cache/binaries \
     DISABLE_QSV_IN_DOCKER=1 \
     DISABLE_VAAPI_IN_DOCKER=1
 

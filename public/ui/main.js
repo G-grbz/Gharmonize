@@ -4,6 +4,7 @@ import { jobsPanelManager } from './JobsPanelManager.js';
 import { initDiscRipperPanel } from './discRipperPanel.js';
 import { modalManager } from './ModalManager.js';
 import { versionManager } from './VersionManager.js';
+import { TrackExtractorManager } from './TrackExtractorManager.js';
 
 window.focusUrlInput = function() {
     const urlInput = document.getElementById('urlInput');
@@ -85,6 +86,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const app = new MediaConverterApp();
     await app.initialize();
+    const trackExtractorManager = new TrackExtractorManager(app);
+    await trackExtractorManager.initialize();
+    window.trackExtractorManager = trackExtractorManager;
     setupCollapsibleSections();
     setupTitlePositioning();
     initDiscRipperPanel();

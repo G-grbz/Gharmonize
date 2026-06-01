@@ -11,6 +11,7 @@ export async function probeMediaFile(filePath) {
       '-v', 'quiet',
       '-print_format', 'json',
       '-show_format',
+      '-show_chapters',
       '-show_streams',
       filePath
     ]);

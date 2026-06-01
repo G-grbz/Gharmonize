@@ -3,6 +3,7 @@ import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
@@ -17,6 +18,24 @@ import {
 const execFileAsync = promisify(execFile);
 const HOST = '127.0.0.1'
 const PORT = process.env.PORT || '5174'
+const DESKTOP_BRIDGE_TOKEN = process.env.GHARMONIZE_DESKTOP_TOKEN || crypto.randomUUID();
+process.env.GHARMONIZE_DESKTOP_TOKEN = DESKTOP_BRIDGE_TOKEN;
+
+const TRACK_EXTRACTOR_VIDEO_EXTS = new Set([
+  '.mkv',
+  '.mk3d',
+  '.webm',
+  '.mp4',
+  '.m4v',
+  '.mov',
+  '.avi',
+  '.ts',
+  '.m2ts',
+  '.mts',
+  '.mpg',
+  '.mpeg',
+  '.wmv'
+]);
 
 let tray = null;
 let trayMenu = null;
@@ -26,6 +45,8 @@ let isQuitting = false;
 let isHidingToTray = false;
 let creatingWindowPromise = null;
 let showOnWindowReady = false;
+let rendererTrackExtractorReady = false;
+let pendingTrackExtractorFiles = [];
 
 // Cleans up windows run entries for the Electron runtime bridge.
 async function cleanupWindowsRunEntries() {
@@ -174,6 +195,161 @@ function t(key, fallback = key) {
   const value = currentDict[key];
   if (value === undefined) return fallback;
   return value;
+}
+
+function decodeFileArg(rawArg) {
+  const value = String(rawArg || '').trim();
+  if (!value) return '';
+  if (/^file:\/\//i.test(value)) {
+    try {
+      return fileURLToPath(value);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function isTrackExtractorVideoFile(rawArg) {
+  const filePath = decodeFileArg(rawArg);
+  if (!filePath || filePath.startsWith('--')) return false;
+  const ext = path.extname(filePath).toLowerCase();
+  if (!TRACK_EXTRACTOR_VIDEO_EXTS.has(ext)) return false;
+  try {
+    return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function parseTrackExtractorLaunchArgs(argv = []) {
+  const files = [];
+  const args = Array.isArray(argv) ? argv : [];
+
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = String(args[i] || '');
+    if (arg === '--extract-tracks') {
+      const next = args[i + 1];
+      if (next && isTrackExtractorVideoFile(next)) files.push(path.resolve(decodeFileArg(next)));
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--extract-tracks=')) {
+      const value = arg.slice('--extract-tracks='.length);
+      if (isTrackExtractorVideoFile(value)) files.push(path.resolve(decodeFileArg(value)));
+      continue;
+    }
+
+    if (isTrackExtractorVideoFile(arg)) {
+      files.push(path.resolve(decodeFileArg(arg)));
+    }
+  }
+
+  return [...new Set(files)];
+}
+
+function queueTrackExtractorFiles(files = []) {
+  const valid = files
+    .map(decodeFileArg)
+    .filter(isTrackExtractorVideoFile)
+    .map((filePath) => path.resolve(filePath));
+  if (!valid.length) return;
+  pendingTrackExtractorFiles = [...new Set([...pendingTrackExtractorFiles, ...valid])];
+}
+
+function flushPendingTrackExtractorFiles() {
+  if (!rendererTrackExtractorReady || !mainWindowRef || mainWindowRef.isDestroyed()) return;
+  if (!pendingTrackExtractorFiles.length) return;
+
+  const files = pendingTrackExtractorFiles;
+  pendingTrackExtractorFiles = [];
+  mainWindowRef.webContents.send('open-track-extractor', { files });
+}
+
+function shellCommandQuote(value) {
+  return `"${String(value || '').replace(/"/g, '\\"')}"`;
+}
+
+function desktopExecQuote(value) {
+  return `"${String(value || '').replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+async function applyWindowsTrackExtractorContextMenu() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+
+  const label = t('trackExtractor.contextMenu', 'Extract tracks with Gharmonize');
+  const command = `${shellCommandQuote(process.execPath)} --extract-tracks "%1"`;
+  const icon = `${shellCommandQuote(process.execPath)},0`;
+  const associations = [
+    'video',
+    ...Array.from(TRACK_EXTRACTOR_VIDEO_EXTS)
+  ];
+
+  for (const association of associations) {
+    const key = `HKCU\\Software\\Classes\\SystemFileAssociations\\${association}\\shell\\GharmonizeExtractTracks`;
+    const commandKey = `${key}\\command`;
+    try {
+      await execFileAsync('reg', ['add', key, '/ve', '/d', label, '/f'], { windowsHide: true });
+      await execFileAsync('reg', ['add', key, '/v', 'Icon', '/d', icon, '/f'], { windowsHide: true });
+      await execFileAsync('reg', ['add', commandKey, '/ve', '/d', command, '/f'], { windowsHide: true });
+    } catch (error) {
+      console.warn('[track-extractor] Windows context menu registration failed:', error?.message || error);
+      return;
+    }
+  }
+}
+
+function buildLinuxTrackExtractorDesktopFile() {
+  const execPath = process.env.APPIMAGE || process.execPath;
+  const mimeTypes = [
+    'video/x-matroska',
+    'video/webm',
+    'video/mp4',
+    'video/quicktime',
+    'video/x-msvideo',
+    'video/mp2t',
+    'video/mpeg',
+    'video/x-ms-wmv'
+  ].join(';');
+
+  return [
+    '[Desktop Entry]',
+    'Type=Application',
+    'Name=Gharmonize Track Extractor',
+    `Comment=${t('trackExtractor.desktopComment', 'Extract individual tracks from video files')}`,
+    `Exec=${desktopExecQuote(execPath)} --extract-tracks %f`,
+    'Icon=gharmonize',
+    'Terminal=false',
+    'Categories=AudioVideo;Utility;',
+    `MimeType=${mimeTypes};`,
+    'StartupNotify=true',
+    'StartupWMClass=Gharmonize'
+  ].join('\n');
+}
+
+async function applyLinuxTrackExtractorOpenWith() {
+  if (process.platform !== 'linux' || !app.isPackaged) return;
+
+  try {
+    const dir = path.join(app.getPath('home'), '.local', 'share', 'applications');
+    const desktopPath = path.join(dir, 'gharmonize-track-extractor.desktop');
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(desktopPath, `${buildLinuxTrackExtractorDesktopFile()}\n`, 'utf8');
+    await fs.promises.chmod(desktopPath, 0o644).catch(() => {});
+    await execFileAsync('update-desktop-database', [dir], { windowsHide: true }).catch(() => {});
+  } catch (error) {
+    console.warn('[track-extractor] Linux open-with registration failed:', error?.message || error);
+  }
+}
+
+async function applyTrackExtractorShellIntegration() {
+  try {
+    await applyWindowsTrackExtractorContextMenu();
+    await applyLinuxTrackExtractorOpenWith();
+  } catch (error) {
+    console.warn('[track-extractor] Shell integration failed:', error?.message || error);
+  }
 }
 
 // Returns linux autostart desktop path used for the Electron runtime bridge.
@@ -595,6 +771,8 @@ function buildAndShowContextMenu(win, params) {
 // Creates app menu for the Electron runtime bridge.
 function createAppMenu(win) {
   const template = [];
+  const projectUrl = 'https://github.com/G-grbz/Gharmonize';
+  const licenseUrl = 'https://github.com/G-grbz/Gharmonize?tab=License-1-ov-file';
 
   template.push({
     label: 'Help',
@@ -607,21 +785,25 @@ function createAppMenu(win) {
             title: 'About Gharmonize',
             message: 'Gharmonize',
             detail: [
-              'Gharmonize is licensed under the MIT License.',
+              'Gharmonize is licensed under the PolyForm Noncommercial License 1.0.0.',
               '',
               'This application bundles the following third-party command-line tools:',
               '- FFmpeg / FFprobe',
               '- MKVToolNix tools',
               '- yt-dlp',
               '',
-              'More details and source code:',
-              'https://github.com/G-grbz/Gharmonize'
+              'License details:',
+              licenseUrl,
+              '',
+              'Source code:',
+              projectUrl
             ].join('\n')
           });
         }
       },
       { type: 'separator' },
-      { label: 'Open GitHub (Project Page)', click: () => shell.openExternal('https://github.com/G-grbz/Gharmonize') }
+      { label: 'Open License Details', click: () => shell.openExternal(licenseUrl) },
+      { label: 'Open GitHub (Project Page)', click: () => shell.openExternal(projectUrl) }
     ]
   });
 
@@ -640,6 +822,7 @@ async function shouldStartHidden() {
 
 // Creates window for the Electron runtime bridge.
 function createWindow() {
+  rendererTrackExtractorReady = false;
   const win = new BrowserWindow({
     width: 1280,
     height: 720,
@@ -709,6 +892,7 @@ function createWindow() {
   });
 
   win.webContents.on('did-finish-load', () => {
+    rendererTrackExtractorReady = false;
     win.webContents.executeJavaScript(`
       const originalSetLang = window.i18n?.setLang;
       if (originalSetLang) {
@@ -804,6 +988,52 @@ ipcMain.handle('select-directory', async (_event, defaultPath = '') => {
   }
 });
 
+ipcMain.handle('select-video-file', async (_event, defaultPath = '') => {
+  try {
+    const raw = String(defaultPath || '').trim();
+    let suggestedPath;
+
+    if (raw) {
+      const resolved = path.resolve(raw);
+      if (fs.existsSync(resolved)) {
+        try {
+          const stat = fs.statSync(resolved);
+          suggestedPath = stat.isDirectory() ? resolved : path.dirname(resolved);
+        } catch {
+          suggestedPath = path.dirname(resolved);
+        }
+      } else {
+        suggestedPath = path.dirname(resolved);
+      }
+    }
+
+    const win =
+      BrowserWindow.getFocusedWindow()
+      || mainWindowRef
+      || BrowserWindow.getAllWindows()[0];
+
+    const result = await dialog.showOpenDialog(win || undefined, {
+      properties: ['openFile'],
+      defaultPath: suggestedPath,
+      filters: [
+        {
+          name: 'Video files',
+          extensions: Array.from(TRACK_EXTRACTOR_VIDEO_EXTS).map((ext) => ext.replace(/^\./, ''))
+        },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    });
+
+    if (result.canceled || !Array.isArray(result.filePaths) || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    return { canceled: false, path: result.filePaths[0] };
+  } catch (e) {
+    return { canceled: true, error: e?.message || 'Failed to select video file' };
+  }
+});
+
 ipcMain.handle('open-output-folder', async (_event, subdir = '') => {
   try {
     const rootDir = resolveOutputOpenRootDir();
@@ -828,16 +1058,30 @@ ipcMain.handle('get-current-language', async () => {
   return { language: currentLanguage };
 });
 
+ipcMain.handle('get-desktop-bridge-token', async () => {
+  return { token: DESKTOP_BRIDGE_TOKEN };
+});
+
+ipcMain.handle('track-extractor-ready', async () => {
+  rendererTrackExtractorReady = true;
+  flushPendingTrackExtractorFiles();
+  return { success: true, token: DESKTOP_BRIDGE_TOKEN };
+});
+
 const gotLock = app.requestSingleInstanceLock();
 console.log('[boot] argv:', process.argv);
+queueTrackExtractorFiles(parseTrackExtractorLaunchArgs(process.argv));
 
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', async (_event, _commandLine, _workingDirectory) => {
     try {
+      const files = parseTrackExtractorLaunchArgs(_commandLine);
+      if (files.length) queueTrackExtractorFiles(files);
       if (mainWindowRef && !mainWindowRef.isDestroyed()) {
         showMainWindow(mainWindowRef);
+        flushPendingTrackExtractorFiles();
       } else {
         showOnWindowReady = true;
       }
@@ -857,6 +1101,9 @@ app.whenReady().then(async () => {
   });
 
   app.setAppUserModelId('com.gharmonize.app');
+  applyTrackExtractorShellIntegration().catch((error) => {
+    console.warn('[track-extractor] shell integration failed:', error?.message || error);
+  });
 
   try {
     if (app.isPackaged) checkDesktopBinaries();

@@ -13,6 +13,7 @@ import spotifyRoute from './routes/spotify.js'
 import playlistRoute from './routes/playlist.js'
 import jobsRoute from './routes/jobs.js'
 import downloadRoute from './routes/download.js'
+import trackExtractorRoute from './routes/trackExtractor.js'
 import { sendError } from './modules/utils.js'
 import discRouter from './routes/disc.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
@@ -310,6 +311,20 @@ async function runStartupDiagnostics() {
 app.use(express.json({ limit: '10mb' }))
 app.use(express.static(path.join(__dirname, 'public')))
 
+app.use('/api', async (req, res, next) => {
+  if (req.path === '/binaries/status') {
+    return next()
+  }
+
+  try {
+    await dynamicBinariesInitPromise
+    return next()
+  } catch (err) {
+    console.error('⚠️ [api] runtime binary init wait failed:', err?.message || err)
+    return sendError(res, 'INTERNAL', 'Runtime binary initialization failed', 503)
+  }
+})
+
 const storage = multer.diskStorage({
   destination: UPLOAD_DIR,
   filename: (req, file, cb) =>
@@ -324,6 +339,7 @@ app.use(formatsRoute)
 app.use(spotifyRoute)
 app.use(playlistRoute)
 app.use(jobsRoute)
+app.use(trackExtractorRoute)
 app.use(discRouter)
 app.use(downloadRoute)
 app.use('/api', settingsRoute)

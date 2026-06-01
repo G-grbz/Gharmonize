@@ -3,6 +3,9 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { DENO_BIN } from "./binaries.js";
 
+const BASE_DIR = process.env.DATA_DIR || process.cwd();
+const TEMP_COOKIE_DIR = path.resolve(BASE_DIR, "temp", "yt-dlp-cookies");
+
 export const ERR = {
   INVALID_FORMAT: 'INVALID_FORMAT',
   URL_OR_FILE_REQUIRED: 'URL_OR_FILE_REQUIRED',
@@ -172,29 +175,73 @@ export function addCookieArgs(args, { ui = false } = {}) {
     }
   };
 
-  if (ui && process.env.YT_UI_FORCE_COOKIES === "1") {
+  const pruneTempCookieCopies = () => {
+    try {
+      const entries = fs
+        .readdirSync(TEMP_COOKIE_DIR, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && /^cookies-.*\.txt$/i.test(entry.name))
+        .map((entry) => {
+          const abs = path.join(TEMP_COOKIE_DIR, entry.name);
+          let mtimeMs = 0;
+          try {
+            mtimeMs = fs.statSync(abs).mtimeMs || 0;
+          } catch {}
+          return { abs, mtimeMs };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+      const maxKeep = 20;
+      const maxAgeMs = 12 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      entries.forEach((entry, index) => {
+        if (index < maxKeep && now - entry.mtimeMs < maxAgeMs) return;
+        try { fs.unlinkSync(entry.abs); } catch {}
+      });
+    } catch {}
+  };
+
+  const prepareCookieFile = (cookieFile) => {
+    const filePath = String(cookieFile || "").trim();
+    if (!hasCookieFile(filePath)) return "";
+
+    try {
+      fs.mkdirSync(TEMP_COOKIE_DIR, { recursive: true });
+      pruneTempCookieCopies();
+      const snapshotPath = path.join(
+        TEMP_COOKIE_DIR,
+        `cookies-${Date.now()}-${randomUUID()}.txt`
+      );
+      fs.copyFileSync(filePath, snapshotPath);
+      return snapshotPath;
+    } catch (err) {
+      console.warn("[cookies] Temp cookie snapshot failed, using source file:", err?.message || err);
+      return filePath;
+    }
+  };
+
+  const pushPreferredCookieSource = () => {
     const cookieBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER;
     const cookieFile = process.env.YTDLP_COOKIES;
 
-    if (cookieBrowser) {
+    // Use a throwaway snapshot so yt-dlp can normalize/update the jar without
+    // mutating the user-managed source cookie file.
+    if (hasCookieFile(cookieFile)) {
+      args.push("--cookies", prepareCookieFile(cookieFile));
+    } else if (cookieBrowser) {
       args.push("--cookies-from-browser", cookieBrowser);
-    } else if (hasCookieFile(cookieFile)) {
-      args.push("--cookies", cookieFile);
     }
+  };
+
+  if (ui && process.env.YT_UI_FORCE_COOKIES === "1") {
+    pushPreferredCookieSource();
     return args;
   }
 
   const stripEnv = process.env.YT_STRIP_COOKIES;
   if (stripEnv === "1") return args;
 
-  const cookieBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER;
-  const cookieFile = process.env.YTDLP_COOKIES;
-
-  if (cookieBrowser) {
-    args.push("--cookies-from-browser", cookieBrowser);
-  } else if (hasCookieFile(cookieFile)) {
-    args.push("--cookies", cookieFile);
-  }
+  pushPreferredCookieSource();
 
   return args;
 }
