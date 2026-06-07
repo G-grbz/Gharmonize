@@ -505,6 +505,10 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     let matchedCount = 0;
     const totalItems = sp.items.length;
 
+    if (totalItems <= 0) {
+      throw new Error(`${sourceLabel} playlist has no readable tracks`);
+    }
+
     job.playlist.total = totalItems;
     job.playlist.done = 0;
     job.playlist.downloaded = 0;

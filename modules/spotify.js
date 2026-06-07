@@ -16,6 +16,13 @@ const _SPOTIFY_PUBLIC_FETCH_HEADERS = Object.freeze({
 const _spotifyPublicHtmlCache = new Map();
 const _spotifyPublicEmbedCache = new Map();
 const _spotifyPublicTrackMetaCache = new Map();
+const _SPOTIFY_PATHFINDER_URL = "https://api-partner.spotify.com/pathfinder/v1/query";
+const _SPOTIFY_QUERY_PLAYLIST_HASH =
+  "908a5597b4d0af0489a9ad6a2d41bc3b416ff47c0884016d92bbd6822d0eb6d8";
+
+function _hasSpotifyCredentials() {
+  return !!(process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET);
+}
 
 // Checks whether Spotify metadata URL is valid for Spotify mapping and metadata flow.
 export function isSpotifyUrl(url) {
@@ -208,6 +215,19 @@ async function _fetchSpotifyEmbedEntity(type, id) {
   return entity;
 }
 
+async function _fetchSpotifyEmbedStateFresh(type, id) {
+  const res = await fetch(_spotifyEmbedUrl(type, id), {
+    headers: _SPOTIFY_PUBLIC_FETCH_HEADERS
+  });
+  if (!res.ok) {
+    throw new Error(`Spotify embed state fetch failed (${res.status})`);
+  }
+
+  const html = await res.text();
+  const nextData = _extractNextData(html);
+  return nextData?.props?.pageProps?.state || null;
+}
+
 async function _fetchSpotifyPageHtml(type, id) {
   return _fetchSpotifyHtml(_spotifyPageUrl(type, id), _spotifyPublicHtmlCache);
 }
@@ -271,6 +291,137 @@ function _buildPublicTrackItem(
     genre: "",
     duration_ms: Number(track?.duration || 0) || null,
     spId
+  };
+}
+
+function _buildPathfinderTrackItem(track, index) {
+  const uri = String(track?.uri || "");
+  const spId = _parseSpotifyUriId(uri, "track");
+  const artists = Array.isArray(track?.artists?.items)
+    ? track.artists.items
+        .map((artist) => artist?.profile?.name || artist?.name || "")
+        .filter(Boolean)
+    : [];
+  const album = track?.albumOfTrack || null;
+  const releaseDate =
+    album?.date?.isoString ||
+    album?.date?.precision ||
+    album?.releaseDate?.isoString ||
+    "";
+
+  return {
+    title: track?.name || "",
+    artist: _normalizeArtistList(artists.join(", ")),
+    album: album?.name || "",
+    year: String(releaseDate || "").slice(0, 4) || "",
+    date: releaseDate || "",
+    track_number: Number.isFinite(track?.trackNumber) ? Number(track.trackNumber) : null,
+    disc_number: Number.isFinite(track?.discNumber) ? Number(track.discNumber) : null,
+    track_total: null,
+    disc_total: null,
+    isrc: "",
+    coverUrl: pickBestImage(album?.coverArt?.sources || []),
+    spUrl: spId ? _spotifyPageUrl("track", spId) : "",
+    album_artist: artists[0] || "",
+    label: "",
+    copyright: "",
+    genre: "",
+    duration_ms: Number(track?.duration?.totalMilliseconds || 0) || null,
+    spId,
+    playlist_index: index
+  };
+}
+
+async function _fetchSpotifyPathfinderPlaylistPage(token, playlistId, offset, limit) {
+  const body = {
+    operationName: "queryPlaylist",
+    variables: {
+      uri: `spotify:playlist:${playlistId}`,
+      limit,
+      offset
+    },
+    extensions: {
+      persistedQuery: {
+        version: 1,
+        sha256Hash: _SPOTIFY_QUERY_PLAYLIST_HASH
+      }
+    }
+  };
+
+  const res = await fetch(_SPOTIFY_PATHFINDER_URL, {
+    method: "POST",
+    headers: {
+      ..._SPOTIFY_PUBLIC_FETCH_HEADERS,
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json",
+      origin: "https://open.spotify.com",
+      referer: _spotifyPageUrl("playlist", playlistId),
+      "app-platform": "WebPlayer"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    throw new Error(`Spotify pathfinder playlist fetch failed (${res.status})`);
+  }
+
+  const json = await res.json();
+  const playlist = json?.data?.playlistV2 || null;
+  if (!playlist || playlist.__typename === "NotFound") {
+    throw new Error("Spotify playlist not found");
+  }
+  if (playlist.__typename === "GenericError") {
+    throw new Error(playlist.message || "Spotify pathfinder playlist error");
+  }
+  if (Array.isArray(json?.errors) && json.errors.length) {
+    throw new Error(json.errors[0]?.message || "Spotify pathfinder playlist error");
+  }
+
+  return playlist;
+}
+
+async function _resolveSpotifyPlaylistViaPathfinder(id) {
+  const state = await _fetchSpotifyEmbedStateFresh("playlist", id);
+  const token = state?.settings?.session?.accessToken || "";
+  if (!token) {
+    throw new Error("Spotify pathfinder token unavailable");
+  }
+
+  const pageSize = 50;
+  let offset = 0;
+  let total = null;
+  let title = state?.data?.entity?.title || state?.data?.entity?.name || "Spotify Playlist";
+  const items = [];
+
+  while (offset < 10000) {
+    const playlist = await _fetchSpotifyPathfinderPlaylistPage(token, id, offset, pageSize);
+    title = playlist?.name || title;
+
+    const pageItems = Array.isArray(playlist?.content?.items)
+      ? playlist.content.items
+      : [];
+    const pageTotal = Number(playlist?.content?.totalCount);
+    if (Number.isFinite(pageTotal) && pageTotal >= 0) {
+      total = pageTotal;
+    }
+
+    for (const entry of pageItems) {
+      const track = entry?.itemV2?.data || entry?.item?.data || null;
+      if (!track || track.__typename !== "Track") continue;
+      const item = _buildPathfinderTrackItem(track, items.length + 1);
+      if (item.title && item.artist) items.push(item);
+    }
+
+    if (!pageItems.length) break;
+    offset += pageItems.length;
+    if (Number.isFinite(total) && offset >= total) break;
+  }
+
+  return {
+    kind: "playlist",
+    title,
+    items
   };
 }
 
@@ -883,10 +1034,7 @@ async function fetchPlaylistItems(api, id, market) {
   const out = [];
   const albumCache = new Map();
   const artistCache = new Map();
-  let page = await withMarketFallback(async (mkt) => {
-    const r = await api.getPlaylistTracks(id, { limit: 100, ...(mkt ? { market: mkt } : {}) });
-    return r || null;
-  }, resolveMarket(market));
+  let page = await api.getPlaylistTracks(id, { limit: 100 });
   if (!page) return out;
   while (true) {
     for (const it of page.body.items || []) {
@@ -935,17 +1083,16 @@ async function fetchPlaylistItems(api, id, market) {
           album_artist: meta.album_artist,
           label: albumInfo?.label || meta.label || "",
           copyright: copyrightText || "",
-          genre: genreStr || ""
+          genre: genreStr || "",
+          duration_ms: Number(t.duration_ms || 0) || null,
+          spId: t.id || null
         });
       }
     }
     if (page.body.next) {
       const url = new URL(page.body.next);
       const offset = Number(url.searchParams.get("offset") || 0);
-      page = await withMarketFallback(async (mkt) => {
-        const r = await api.getPlaylistTracks(id, { limit: 100, offset, ...(mkt ? { market: mkt } : {}) });
-        return r || null;
-      }, resolveMarket(market));
+      page = await api.getPlaylistTracks(id, { limit: 100, offset });
       if (!page) break;
     } else break;
   }
@@ -1099,6 +1246,48 @@ async function _resolveSpotifyUrlViaApi(url, { market } = {}) {
 }
 
 export async function resolveSpotifyUrlLite(url, { market } = {}) {
+  const parsed = parseSpotifyUrl(url);
+
+  if (parsed.type === "playlist") {
+    let firstError = null;
+
+    if (_hasSpotifyCredentials()) {
+      try {
+        return await _resolveSpotifyUrlViaApi(url, { market });
+      } catch (apiError) {
+        const msg = String(apiError?.message || "");
+        if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
+          throw apiError;
+        }
+        firstError = apiError;
+      }
+    }
+
+    try {
+      return await _resolveSpotifyPlaylistViaPathfinder(parsed.id);
+    } catch (pathfinderError) {
+      if (!firstError) firstError = pathfinderError;
+    }
+
+    try {
+      return await _resolveSpotifyUrlPublic(url);
+    } catch {
+      throw firstError;
+    }
+  }
+
+  if (_hasSpotifyCredentials() && parsed.type === "album") {
+    try {
+      return await _resolveSpotifyUrlViaApi(url, { market });
+    } catch (apiError) {
+      try {
+        return await _resolveSpotifyUrlPublic(url);
+      } catch {
+        throw apiError;
+      }
+    }
+  }
+
   try {
     return await _resolveSpotifyUrlPublic(url);
   } catch (publicError) {

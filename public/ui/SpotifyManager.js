@@ -10,6 +10,7 @@ export class SpotifyManager {
         };
         this.spotifyEventSource = null;
         this.integratedRenderedCount = 0;
+        this.lastIntegratedLogSignature = '';
     }
 
     // Handles start Spotify metadata preview in Spotify mapping and metadata flow.
@@ -248,6 +249,7 @@ export class SpotifyManager {
         const listEl = document.getElementById('spotifyPreviewList');
         if (listEl) listEl.innerHTML = '';
         this.integratedRenderedCount = 0;
+        this.lastIntegratedLogSignature = '';
 
         const isVideoFormat = format === 'mp4' || format === 'mkv';
         let spotifyConcurrency = null;
@@ -386,24 +388,34 @@ export class SpotifyManager {
                     job.lastLog = this.app.normalizeBackendLog(job.lastLog);
                 }
 
-                const logEntry = document.createElement('div');
-                logEntry.className = `log-entry ${job.phase === 'error' ? 'error' : 'info'}`;
-
                 const timestamp = new Date().toLocaleTimeString();
+                let text = '';
 
                 if (job.lastLogKey) {
-                    logEntry.textContent = `[${timestamp}] ${this.app.t(job.lastLogKey, job.lastLogVars || {})}`;
+                    text = this.app.t(job.lastLogKey, job.lastLogVars || {});
                 } else if (job.lastLog) {
-                    const txt = (typeof job.lastLog === 'string' && (job.lastLog.startsWith('log.') || job.lastLog.startsWith('phase.') || job.lastLog.startsWith('status.')))
+                    text = (typeof job.lastLog === 'string' && (job.lastLog.startsWith('log.') || job.lastLog.startsWith('phase.') || job.lastLog.startsWith('status.')))
                         ? this.app.t(job.lastLog, job.lastLogVars || {})
                         : job.lastLog;
-                    logEntry.textContent = `[${timestamp}] ${txt}`;
                 } else if (job.phase) {
-                    logEntry.textContent = `[${timestamp}] ${phaseText[job.phase] || job.phase}`;
+                    text = phaseText[job.phase] || job.phase;
                 }
 
-                logsContainer.appendChild(logEntry);
-                logsContainer.scrollTop = logsContainer.scrollHeight;
+                const signature = JSON.stringify({
+                    phase: job.phase || '',
+                    key: job.lastLogKey || '',
+                    vars: job.lastLogVars || null,
+                    text
+                });
+
+                if (text && signature !== this.lastIntegratedLogSignature) {
+                    this.lastIntegratedLogSignature = signature;
+                    const logEntry = document.createElement('div');
+                    logEntry.className = `log-entry ${job.phase === 'error' ? 'error' : 'info'}`;
+                    logEntry.textContent = `[${timestamp}] ${text}`;
+                    logsContainer.appendChild(logEntry);
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                }
             }
 
 	            if (job?.metadata?.frozenEntries && Array.isArray(job.metadata.frozenEntries)) {

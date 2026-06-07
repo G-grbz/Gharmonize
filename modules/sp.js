@@ -239,6 +239,10 @@ export async function mapSpotifyToYtm(
   onUpdate,
   { concurrency = 3, onLog = null, shouldCancel = null } = {}
 ) {
+  if (!Array.isArray(sp?.items) || sp.items.length === 0) {
+    return [];
+  }
+
   let i = 0,
     running = 0;
   const results = new Array(sp.items.length);
