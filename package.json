@@ -59,7 +59,8 @@
       "uploads/**",
       "outputs/**",
       "temp/**",
-      "build/**"
+      "build/**",
+      "!build/bin/**"
     ],
     "extraResources": [
       {
