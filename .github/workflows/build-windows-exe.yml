@@ -1,0 +1,125 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Upload assets to a GitHub Release"
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release tag. Empty uses package.json version, for example v1.2.7"
+        required: false
+        type: string
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          if (Test-Path package-lock.json) {
+            npm ci
+          } else {
+            npm install
+          }
+
+      - name: Download runtime binaries
+        run: npm run download:binaries
+
+      - name: Build NSIS installer
+        run: npm run desktop:build:nsis
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package release assets
+        id: package_assets
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $assetsDir = "dist/release-assets"
+          $setupName = "Gharmonize-x64.Setup.Version.v$version.exe"
+          $portableName = "Gharmonize-x64.Portable.Folder.Version.v$version"
+          $portableZip = "$assetsDir/$portableName.zip"
+          $portableFolder = "$assetsDir/$portableName"
+          $githubRef = "${{ github.ref }}"
+          $isTagBuild = "${{ github.event_name }}" -eq "push" -and $githubRef.StartsWith("refs/tags/")
+          $releaseTag = "${{ github.ref_name }}"
+
+          if (-not $isTagBuild) {
+            $releaseTag = "${{ github.event.inputs.release_tag }}"
+            if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+              $releaseTag = "v$version"
+            }
+          }
+
+          New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
+
+          $setup = Get-ChildItem -Path dist -Filter "*.exe" -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $setup) {
+            throw "No installer exe found under dist."
+          }
+
+          Copy-Item -Path $setup.FullName -Destination "$assetsDir/$setupName" -Force
+
+          if (-not (Test-Path "dist/win-unpacked")) {
+            throw "dist/win-unpacked was not created by electron-builder."
+          }
+
+          if (Test-Path $portableFolder) {
+            Remove-Item -Recurse -Force $portableFolder
+          }
+          New-Item -ItemType Directory -Force -Path $portableFolder | Out-Null
+          Copy-Item -Path "dist/win-unpacked/*" -Destination $portableFolder -Recurse -Force
+
+          if (Test-Path $portableZip) {
+            Remove-Item -Force $portableZip
+          }
+          Compress-Archive -Path $portableFolder -DestinationPath $portableZip -Force
+
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "SETUP_NAME=$setupName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PORTABLE_ZIP=$portableName.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gharmonize-windows-v${{ steps.package_assets.outputs.version }}
+          path: |
+            dist/release-assets/*.exe
+            dist/release-assets/*.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release assets
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.package_assets.outputs.release_tag }}
+          name: Gharmonize ${{ steps.package_assets.outputs.release_tag }}
+          files: |
+            dist/release-assets/*.exe
+            dist/release-assets/*.zip

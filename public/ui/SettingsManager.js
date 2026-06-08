@@ -160,6 +160,15 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
+                <label for="f_TRACK_EXTRACTOR_SHELL_INTEGRATION" class="settings-field-label">TRACK_EXTRACTOR_SHELL_INTEGRATION</label>
+                <div class="settings-field-hint muted" data-i18n="settings.trackExtractorShellIntegration"></div>
+                <select id="f_TRACK_EXTRACTOR_SHELL_INTEGRATION">
+                    <option value="1">1</option>
+                    <option value="0">0</option>
+                </select>
+                </div>
+
+                <div class="form-group">
                 <label for="f_YTDLP_BIN" class="settings-field-label">YTDLP_BIN</label>
                 <div class="settings-field-hint muted" data-i18n="settings.ytdlpBin"></div>
                 <input id="f_YTDLP_BIN" type="text" placeholder="'C:/tools/yt-dlp.exe'" data-i18n-ph="ph.ytdlpBin">
@@ -812,6 +821,9 @@ export class SettingsManager {
             document.getElementById('f_FFMPEG_BIN').value = s.FFMPEG_BIN || '';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
+            document.getElementById('f_TRACK_EXTRACTOR_SHELL_INTEGRATION').value = (typeof s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== 'undefined' && s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== null && s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== '')
+                ? String(s.TRACK_EXTRACTOR_SHELL_INTEGRATION)
+                : '1';
             document.getElementById('f_PREVIEW_MAX_ENTRIES').value = s.PREVIEW_MAX_ENTRIES || '1000';
             document.getElementById('f_AUTOMIX_ALL_TIMEOUT_MS').value = s.AUTOMIX_ALL_TIMEOUT_MS || '60000';
             document.getElementById('f_AUTOMIX_PAGE_TIMEOUT_MS').value = s.AUTOMIX_PAGE_TIMEOUT_MS || '60000';
@@ -865,6 +877,7 @@ export class SettingsManager {
                 YTDLP_BIN: document.getElementById('f_YTDLP_BIN').value.trim(),
                 FFMPEG_BIN: document.getElementById('f_FFMPEG_BIN').value.trim(),
                 UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
+                TRACK_EXTRACTOR_SHELL_INTEGRATION: document.getElementById('f_TRACK_EXTRACTOR_SHELL_INTEGRATION').value,
                 PREVIEW_MAX_ENTRIES: document.getElementById('f_PREVIEW_MAX_ENTRIES').value.trim(),
                 AUTOMIX_ALL_TIMEOUT_MS: document.getElementById('f_AUTOMIX_ALL_TIMEOUT_MS').value.trim(),
                 AUTOMIX_PAGE_TIMEOUT_MS: document.getElementById('f_AUTOMIX_PAGE_TIMEOUT_MS').value.trim(),

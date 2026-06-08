@@ -25,6 +25,7 @@
   "settings.binaryRefreshDone": "Binary update completed.",
   "settings.binaryRefreshFailed": "Binary update failed",
   "settings.binaryRefreshResult": "ffmpeg: {ffmpeg} | ffprobe: {ffprobe} | mkvmerge: {mkvmerge} | yt-dlp: {ytdlp} | deno: {deno}",
+  "settings.trackExtractorShellIntegration": "Shows the Gharmonize Track Extractor shortcut in the Windows/Linux context menu. 1=on, 0=off.",
   "option.dca": "DTS (core)",
   "option.hdrMode.none": "None (No HDR processing)",
   "option.hdrMode.sdrToHdr": "Convert SDR to HDR (PQ)",

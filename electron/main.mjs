@@ -36,6 +36,11 @@ const TRACK_EXTRACTOR_VIDEO_EXTS = new Set([
   '.mpeg',
   '.wmv'
 ]);
+const TRACK_EXTRACTOR_SHELL_INTEGRATION_ENV = 'TRACK_EXTRACTOR_SHELL_INTEGRATION';
+const TRACK_EXTRACTOR_CONTEXT_MENU_ASSOCIATIONS = [
+  'video',
+  ...Array.from(TRACK_EXTRACTOR_VIDEO_EXTS)
+];
 
 let tray = null;
 let trayMenu = null;
@@ -275,19 +280,28 @@ function desktopExecQuote(value) {
   return `"${String(value || '').replace(/(["\\$`])/g, '\\$1')}"`;
 }
 
+function isEnabledEnvValue(value, defaultValue = true) {
+  if (value === undefined || value === null || String(value).trim() === '') return defaultValue;
+  return !['0', 'false', 'no', 'off', 'disabled'].includes(String(value).trim().toLowerCase());
+}
+
+function isTrackExtractorShellIntegrationEnabled() {
+  return isEnabledEnvValue(process.env[TRACK_EXTRACTOR_SHELL_INTEGRATION_ENV], true);
+}
+
+function getWindowsTrackExtractorContextMenuKey(association) {
+  return `HKCU\\Software\\Classes\\SystemFileAssociations\\${association}\\shell\\GharmonizeExtractTracks`;
+}
+
 async function applyWindowsTrackExtractorContextMenu() {
   if (process.platform !== 'win32' || !app.isPackaged) return;
 
   const label = t('trackExtractor.contextMenu', 'Extract tracks with Gharmonize');
   const command = `${shellCommandQuote(process.execPath)} --extract-tracks "%1"`;
   const icon = `${shellCommandQuote(process.execPath)},0`;
-  const associations = [
-    'video',
-    ...Array.from(TRACK_EXTRACTOR_VIDEO_EXTS)
-  ];
 
-  for (const association of associations) {
-    const key = `HKCU\\Software\\Classes\\SystemFileAssociations\\${association}\\shell\\GharmonizeExtractTracks`;
+  for (const association of TRACK_EXTRACTOR_CONTEXT_MENU_ASSOCIATIONS) {
+    const key = getWindowsTrackExtractorContextMenuKey(association);
     const commandKey = `${key}\\command`;
     try {
       await execFileAsync('reg', ['add', key, '/ve', '/d', label, '/f'], { windowsHide: true });
@@ -297,6 +311,15 @@ async function applyWindowsTrackExtractorContextMenu() {
       console.warn('[track-extractor] Windows context menu registration failed:', error?.message || error);
       return;
     }
+  }
+}
+
+async function removeWindowsTrackExtractorContextMenu() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+
+  for (const association of TRACK_EXTRACTOR_CONTEXT_MENU_ASSOCIATIONS) {
+    const key = getWindowsTrackExtractorContextMenuKey(association);
+    await execFileAsync('reg', ['delete', key, '/f'], { windowsHide: true }).catch(() => {});
   }
 }
 
@@ -328,29 +351,66 @@ function buildLinuxTrackExtractorDesktopFile() {
   ].join('\n');
 }
 
+function getLinuxTrackExtractorDesktopPath() {
+  return path.join(app.getPath('home'), '.local', 'share', 'applications', 'gharmonize-track-extractor.desktop');
+}
+
+async function updateLinuxDesktopDatabase(dir) {
+  await execFileAsync('update-desktop-database', [dir], { windowsHide: true }).catch(() => {});
+}
+
 async function applyLinuxTrackExtractorOpenWith() {
   if (process.platform !== 'linux' || !app.isPackaged) return;
 
   try {
-    const dir = path.join(app.getPath('home'), '.local', 'share', 'applications');
-    const desktopPath = path.join(dir, 'gharmonize-track-extractor.desktop');
+    const desktopPath = getLinuxTrackExtractorDesktopPath();
+    const dir = path.dirname(desktopPath);
     await fs.promises.mkdir(dir, { recursive: true });
     await fs.promises.writeFile(desktopPath, `${buildLinuxTrackExtractorDesktopFile()}\n`, 'utf8');
     await fs.promises.chmod(desktopPath, 0o644).catch(() => {});
-    await execFileAsync('update-desktop-database', [dir], { windowsHide: true }).catch(() => {});
+    await updateLinuxDesktopDatabase(dir);
   } catch (error) {
     console.warn('[track-extractor] Linux open-with registration failed:', error?.message || error);
   }
 }
 
+async function removeLinuxTrackExtractorOpenWith() {
+  if (process.platform !== 'linux' || !app.isPackaged) return;
+
+  try {
+    const desktopPath = getLinuxTrackExtractorDesktopPath();
+    const dir = path.dirname(desktopPath);
+    if (fs.existsSync(desktopPath)) {
+      await fs.promises.unlink(desktopPath);
+    }
+    await updateLinuxDesktopDatabase(dir);
+  } catch (error) {
+    console.warn('[track-extractor] Linux open-with removal failed:', error?.message || error);
+  }
+}
+
 async function applyTrackExtractorShellIntegration() {
   try {
-    await applyWindowsTrackExtractorContextMenu();
-    await applyLinuxTrackExtractorOpenWith();
+    if (isTrackExtractorShellIntegrationEnabled()) {
+      await applyWindowsTrackExtractorContextMenu();
+      await applyLinuxTrackExtractorOpenWith();
+      return;
+    }
+
+    await removeWindowsTrackExtractorContextMenu();
+    await removeLinuxTrackExtractorOpenWith();
   } catch (error) {
     console.warn('[track-extractor] Shell integration failed:', error?.message || error);
   }
 }
+
+process.on('gharmonize:settings-updated', (payload = {}) => {
+  const updates = payload?.updates || {};
+  if (!Object.prototype.hasOwnProperty.call(updates, TRACK_EXTRACTOR_SHELL_INTEGRATION_ENV)) return;
+  applyTrackExtractorShellIntegration().catch((error) => {
+    console.warn('[track-extractor] shell integration update failed:', error?.message || error);
+  });
+});
 
 // Returns linux autostart desktop path used for the Electron runtime bridge.
 function getLinuxAutostartDesktopPath() {
@@ -1101,13 +1161,11 @@ app.whenReady().then(async () => {
   });
 
   app.setAppUserModelId('com.gharmonize.app');
-  applyTrackExtractorShellIntegration().catch((error) => {
-    console.warn('[track-extractor] shell integration failed:', error?.message || error);
-  });
 
   try {
     if (app.isPackaged) checkDesktopBinaries();
     await startServerIfPackaged();
+    await applyTrackExtractorShellIntegration();
     const win = await createWindowOnce();
     if (showOnWindowReady) {
       showOnWindowReady = false;

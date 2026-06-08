@@ -35,6 +35,7 @@ const ALLOWED_KEYS = [
   'YTDLP_BIN',
   'FFMPEG_BIN',
   'UPLOAD_MAX_BYTES',
+  'TRACK_EXTRACTOR_SHELL_INTEGRATION',
   'SPOTIFY_DEBUG_MARKET',
   'CLEAN_SUFFIXES',
   'CLEAN_PHRASES',
@@ -223,6 +224,7 @@ router.post('/settings', authMiddleware, express.json(), (req, res) => {
 
   writeEnv(updates)
   for (const [k, v] of Object.entries(updates)) process.env[k] = v
+  process.emit('gharmonize:settings-updated', { updates })
   res.json({ ok: true, appliedInMemory: true })
 })
 
