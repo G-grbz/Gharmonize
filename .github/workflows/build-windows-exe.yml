@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ""
+      bundle_runtime_binaries:
+        description: "Bundle ffmpeg, ffprobe, mkvmerge, yt-dlp and deno into the app"
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -44,6 +49,7 @@ jobs:
           }
 
       - name: Download runtime binaries
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.bundle_runtime_binaries == 'true'
         run: npm run download:binaries
 
       - name: Build NSIS installer
