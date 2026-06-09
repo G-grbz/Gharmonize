@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Close issues without owner response
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const DAYS_BEFORE_CLOSE = 14;
