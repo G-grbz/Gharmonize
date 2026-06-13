@@ -181,6 +181,8 @@ License details are available in **Third-Party Licenses** and `LICENSES.md`.
 ## YTLive Music UI
 
 YTLive is a dedicated music interface for YouTube and YouTube Music. It is available alongside the classic Gharmonize UI and focuses on search, playback, playlist inspection, and fast queueing into the existing conversion pipeline.
+<img width="1684" height="934" alt="ytLive" src="https://github.com/user-attachments/assets/34945652-9c72-4bc6-9c78-b01302aba81b" />
+
 
 Open it directly:
 
