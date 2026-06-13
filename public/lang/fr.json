@@ -94,6 +94,7 @@
   "ytlive.playlist.addTrack": "Ajouter le titre à la file",
   "ytlive.playlist.loadFailed": "Impossible de charger les titres de la playlist.",
   "ytlive.playlist.trackFallback": "Titre {index}",
+  "ytlive.now.collectionTrack": "Lecture actuelle : {track}",
   "ytlive.download.zip": "Télécharger le ZIP",
   "ytlive.download.file": "Télécharger le fichier",
   "ytlive.download.firstFile": "Télécharger le premier fichier",

@@ -94,6 +94,7 @@
   "ytlive.playlist.addTrack": "Titel zur Warteschlange hinzufügen",
   "ytlive.playlist.loadFailed": "Playlist-Titel konnten nicht geladen werden.",
   "ytlive.playlist.trackFallback": "Titel {index}",
+  "ytlive.now.collectionTrack": "Jetzt läuft: {track}",
   "ytlive.download.zip": "ZIP herunterladen",
   "ytlive.download.file": "Datei herunterladen",
   "ytlive.download.firstFile": "Erste Datei herunterladen",

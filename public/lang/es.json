@@ -94,6 +94,7 @@
   "ytlive.playlist.addTrack": "Añadir pista a la cola",
   "ytlive.playlist.loadFailed": "No se pudieron cargar las pistas de la playlist.",
   "ytlive.playlist.trackFallback": "Pista {index}",
+  "ytlive.now.collectionTrack": "Sonando ahora: {track}",
   "ytlive.download.zip": "Descargar ZIP",
   "ytlive.download.file": "Descargar archivo",
   "ytlive.download.firstFile": "Descargar primer archivo",

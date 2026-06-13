@@ -94,6 +94,7 @@
   "ytlive.playlist.addTrack": "Parçayı kuyruğa ekle",
   "ytlive.playlist.loadFailed": "Playlist parçaları yüklenemedi.",
   "ytlive.playlist.trackFallback": "Parça {index}",
+  "ytlive.now.collectionTrack": "Şu anda çalıyor: {track}",
   "ytlive.download.zip": "ZIP indir",
   "ytlive.download.file": "Dosyayı indir",
   "ytlive.download.firstFile": "İlk dosyayı indir",

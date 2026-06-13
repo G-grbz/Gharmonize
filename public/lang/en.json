@@ -94,6 +94,7 @@
   "ytlive.playlist.addTrack": "Add track to queue",
   "ytlive.playlist.loadFailed": "Playlist tracks could not be loaded.",
   "ytlive.playlist.trackFallback": "Track {index}",
+  "ytlive.now.collectionTrack": "Playing now: {track}",
   "ytlive.download.zip": "Download ZIP",
   "ytlive.download.file": "Download file",
   "ytlive.download.firstFile": "Download first file",
