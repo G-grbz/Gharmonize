@@ -26,6 +26,8 @@ class YTLiveMusicApp {
     this.playlistTracks = [];
     this.playlistTracksSerial = 0;
     this.playlistTracksController = null;
+    this.activeCollection = null;
+    this.currentPlaybackItem = null;
     this.musicHomeShelves = [];
     this.musicHomeController = null;
     this.youtubePlayer = null;
@@ -876,20 +878,33 @@ class YTLiveMusicApp {
       return;
     }
 
-    this.playItem(item, { keepPlaylist: true });
+    this.playPlaylistTrackAt(index);
   }
 
-  async loadPlaylistTracks(rawItem, { autoplayFirst = false } = {}) {
+  async loadPlaylistTracks(rawItem, { autoplayFirst = false, silent = false } = {}) {
     const item = this.normalizeItem(rawItem);
     const panel = document.getElementById('playlistTracksPanel');
     if (!panel || !item.webpage_url) return;
 
     const serial = ++this.playlistTracksSerial;
+    const collectionKey = this.getCollectionKey(item);
     if (this.playlistTracksController) {
       this.playlistTracksController.abort();
     }
     this.playlistTracksController = new AbortController();
     this.playlistTracks = [];
+    if (this.activeCollection?.key === collectionKey) {
+      this.activeCollection = {
+        ...this.activeCollection,
+        item,
+        title: item.title || this.tt('ytlive.youtubePlaylist', 'YouTube Playlist'),
+        total: 0,
+        tracks: [],
+        currentIndex: -1,
+        loading: true
+      };
+      this.updateNowPanelForCollection();
+    }
     this.renderPlaylistTracks({
       loading: true,
       title: item.title || this.tt('ytlive.youtubePlaylist', 'YouTube Playlist')
@@ -933,6 +948,11 @@ class YTLiveMusicApp {
         total = Number(data?.playlist?.count || total || 0);
         title = data?.playlist?.title || title;
         this.playlistTracks = [...this.playlistTracks, ...entries];
+        this.syncActiveCollectionTracks(item, {
+          title,
+          total,
+          loading: rawEntries.length === pageSize && (!total || this.playlistTracks.length < total)
+        });
         this.renderPlaylistTracks({
           loading: rawEntries.length === pageSize && (!total || this.playlistTracks.length < total),
           title,
@@ -941,7 +961,7 @@ class YTLiveMusicApp {
 
         if (autoplayFirst && !autoplayDone && this.playlistTracks[0]) {
           autoplayDone = true;
-          this.playItem(this.playlistTracks[0], { keepPlaylist: true });
+          this.playPlaylistTrackAt(0, { silent });
         }
 
         if (!rawEntries.length || rawEntries.length < pageSize || (total && this.playlistTracks.length >= total)) {
@@ -950,9 +970,11 @@ class YTLiveMusicApp {
         page += 1;
       }
 
+      this.syncActiveCollectionTracks(item, { title, total, loading: false });
       this.renderPlaylistTracks({ title, total });
     } catch (error) {
       if (error.name === 'AbortError') return;
+      this.syncActiveCollectionTracks(item, { loading: false });
       this.renderPlaylistTracks({
         error: error.message || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'),
         title: item.title || this.tt('ytlive.youtubePlaylist', 'YouTube Playlist')
@@ -997,6 +1019,7 @@ class YTLiveMusicApp {
     }
 
     const addTitle = this.escapeHtml(this.tt('ytlive.playlist.addTrack', 'Parçayı kuyruğa ekle'));
+    const activeIndex = Number(this.activeCollection?.currentIndex);
     list.innerHTML = this.playlistTracks.map((track, index) => {
       const trackTitle = this.escapeHtml(track.title || this.tt('ytlive.playlist.trackFallback', 'Parça {index}', { index: index + 1 }));
       const uploader = this.escapeHtml(track.uploader || 'YouTube');
@@ -1004,9 +1027,10 @@ class YTLiveMusicApp {
       const thumb = track.thumbnail ? this.escapeHtml(track.thumbnail) : '';
       const style = thumb ? `style="background-image:url('${thumb.replace(/'/g, '%27')}')"` : '';
       const initials = this.escapeHtml(this.getTitleInitials(track.title || uploader || 'YT'));
+      const activeClass = activeIndex === index ? ' is-active' : '';
 
       return `
-        <article class="playlist-track" data-action="playlist-play" data-index="${index}">
+        <article class="playlist-track${activeClass}" data-action="playlist-play" data-index="${index}">
           <div class="playlist-track__index">${index + 1}</div>
           <div class="playlist-track__thumb ${thumb ? '' : 'playlist-track__thumb--fallback'}" ${style}>
             ${thumb ? '' : initials}
@@ -1029,11 +1053,170 @@ class YTLiveMusicApp {
       this.playlistTracksController = null;
     }
     this.playlistTracks = [];
+    this.activeCollection = null;
     this.renderPlaylistTracks();
   }
 
   getPlaylistTrackKey(item = {}) {
     return this.normalizeResultKey(item.id || item.webpage_url || item.url || `${item.title || ''}:${item.uploader || ''}:${item.index || ''}`);
+  }
+
+  getCollectionKey(item = {}) {
+    const url = item.webpage_url || item.url || '';
+    return this.normalizeResultKey(
+      this.getAlbumBrowseId(url) ||
+      this.getPlaylistId(url) ||
+      item.playlistId ||
+      item.browseId ||
+      item.id ||
+      url ||
+      item.title ||
+      ''
+    );
+  }
+
+  syncActiveCollectionTracks(item = {}, { title = '', total = 0, loading } = {}) {
+    if (!this.activeCollection) return;
+    const collectionKey = this.getCollectionKey(item);
+    if (collectionKey && this.activeCollection.key !== collectionKey) return;
+
+    const nextTotal = Number(total);
+    const currentTrack = this.getCurrentCollectionTrack();
+    const collectionItem = {
+      ...(this.activeCollection.item || {}),
+      ...item,
+      title: title || item.title || this.activeCollection.title || this.activeCollection.item?.title || ''
+    };
+
+    this.activeCollection = {
+      ...this.activeCollection,
+      item: collectionItem,
+      title: collectionItem.title || this.activeCollection.title || '',
+      total: Number.isFinite(nextTotal) && nextTotal > 0 ? nextTotal : this.activeCollection.total,
+      tracks: this.playlistTracks.slice(),
+      loading: loading === undefined ? this.activeCollection.loading : !!loading
+    };
+    this.updateNowPanelForCollection(currentTrack);
+  }
+
+  getCurrentCollectionTrack() {
+    if (!this.activeCollection) return null;
+    const index = Number(this.activeCollection.currentIndex);
+    const tracks = this.playlistTracks.length ? this.playlistTracks : (this.activeCollection.tracks || []);
+    return Number.isInteger(index) && index >= 0 ? (tracks[index] || null) : null;
+  }
+
+  setNowPanelItem(item = {}, { subtitle = '', linkItem = item } = {}) {
+    const typeEl = document.getElementById('nowType');
+    const titleEl = document.getElementById('nowTitle');
+    const subtitleEl = document.getElementById('nowSubtitle');
+    const addCurrent = document.getElementById('addCurrentBtn');
+    const openLink = document.getElementById('openCurrentLink');
+    const linkUrl = linkItem?.webpage_url || linkItem?.url || item.webpage_url || item.url || '';
+
+    if (typeEl) typeEl.textContent = this.getItemTypeLabel(item);
+    if (titleEl) titleEl.textContent = item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği');
+    if (subtitleEl) subtitleEl.textContent = subtitle || item.uploader || item.webpage_url || '';
+    if (addCurrent) addCurrent.disabled = false;
+    if (openLink) {
+      openLink.href = linkUrl || '#';
+      openLink.classList.toggle('is-disabled', !linkUrl);
+    }
+  }
+
+  updateNowPanelForCollection(track = null) {
+    const collection = this.activeCollection;
+    if (!collection?.item) return;
+
+    const activeTrack = track || this.getCurrentCollectionTrack();
+    let subtitle = collection.item.uploader || collection.item.webpage_url || '';
+    if (activeTrack) {
+      const position = Number(collection.currentIndex) + 1;
+      const total = Number(collection.total || this.playlistTracks.length || 0);
+      const positionText = position > 0 ? (total ? `${position}/${total}` : String(position)) : '';
+      const trackText = [
+        positionText,
+        activeTrack.title || this.tt('ytlive.playlist.trackFallback', 'Parça {index}', { index: position || 1 }),
+        activeTrack.uploader || ''
+      ].filter(Boolean).join(' - ');
+      subtitle = this.tt('ytlive.now.collectionTrack', 'Çalıyor: {track}', { track: trackText });
+    }
+
+    this.setNowPanelItem(collection.item, {
+      subtitle,
+      linkItem: collection.item
+    });
+  }
+
+  playPlaylistTrackAt(index, { silent = false, autoplay = true, forceAutoplay = false } = {}) {
+    const safeIndex = Number(index);
+    if (!Number.isInteger(safeIndex) || safeIndex < 0) return false;
+    const track = this.playlistTracks[safeIndex];
+    if (!track) return false;
+
+    if (this.activeCollection) {
+      this.activeCollection = {
+        ...this.activeCollection,
+        currentIndex: safeIndex,
+        tracks: this.playlistTracks.slice()
+      };
+      this.renderPlaylistTracks({
+        loading: !!this.activeCollection.loading,
+        title: this.activeCollection.title || this.activeCollection.item?.title || '',
+        total: this.activeCollection.total || this.playlistTracks.length
+      });
+    }
+
+    this.playItem(track, {
+      keepPlaylist: true,
+      collectionContext: this.activeCollection,
+      playlistIndex: safeIndex,
+      silent,
+      autoplay,
+      forceAutoplay
+    });
+    return true;
+  }
+
+  playNextCollectionTrack(currentItem = null, { silent = true } = {}) {
+    const collection = this.activeCollection;
+    if (!collection) return false;
+
+    const tracks = this.playlistTracks.length ? this.playlistTracks : (collection.tracks || []);
+    if (!this.playlistTracks.length && tracks.length) {
+      this.playlistTracks = tracks.slice();
+    }
+
+    let currentIndex = Number(collection.currentIndex);
+    if (!Number.isInteger(currentIndex) || currentIndex < 0) {
+      const currentKey = this.getPlaylistTrackKey(currentItem || this.currentPlaybackItem || {});
+      currentIndex = tracks.findIndex((track) => this.getPlaylistTrackKey(track) === currentKey);
+    }
+
+    const nextIndex = currentIndex + 1;
+    if (nextIndex < 0 || nextIndex >= tracks.length) return false;
+    return this.playPlaylistTrackAt(nextIndex, { silent, autoplay: true, forceAutoplay: true });
+  }
+
+  handleYouTubePlaybackEnded(item, token) {
+    if (token !== this.youtubePlaybackToken) return;
+    if (this.playNextCollectionTrack(item, { silent: true })) return;
+
+    if (this.activeCollection?.loading) {
+      window.setTimeout(() => {
+        if (token !== this.youtubePlaybackToken) return;
+        this.playNextCollectionTrack(item, { silent: true });
+      }, 900);
+    }
+  }
+
+  handleYouTubePlaybackError(item, token, silent = false) {
+    if (token !== this.youtubePlaybackToken) return false;
+    if (!this.playNextCollectionTrack(item, { silent: true })) return false;
+    if (!silent) {
+      this.notify(this.tt('ytlive.play.skippedUnavailable', 'Parça oynatılamadı, sonraki parçaya geçiliyor.'), 'info');
+    }
+    return true;
   }
 
   setupInfiniteScroll() {
@@ -1314,56 +1497,66 @@ class YTLiveMusicApp {
     this.addItem(item);
   }
 
-  playItem(rawItem, { silent = false, keepPlaylist = false, autoplay = true } = {}) {
+  playItem(rawItem, { silent = false, keepPlaylist = false, autoplay = true, collectionContext = null, playlistIndex = null, forceAutoplay = false } = {}) {
     const item = this.normalizeItem(rawItem);
     const collectionLike = this.isPlaylistLike(item);
 
     if (collectionLike) {
+      const collectionKey = this.getCollectionKey(item);
+      this.activeCollection = {
+        item,
+        key: collectionKey,
+        title: item.title || this.tt('ytlive.youtubePlaylist', 'YouTube Playlist'),
+        total: 0,
+        tracks: [],
+        currentIndex: -1,
+        loading: true
+      };
       this.currentItem = item;
+      this.currentPlaybackItem = item;
       this.stopYouTubePlayback();
       this.showPlayerPlaceholder(
         this.tt('ytlive.player.emptyTitle', 'Select content'),
         this.tt('ytlive.player.emptyText', 'Click a search result or pasted link to play it here.')
       );
 
-      document.getElementById('nowType').textContent = this.getItemTypeLabel(item);
-      document.getElementById('nowTitle').textContent = item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği');
-      document.getElementById('nowSubtitle').textContent = item.uploader || item.webpage_url || '';
+      this.updateNowPanelForCollection();
 
-      const addCurrent = document.getElementById('addCurrentBtn');
-      if (addCurrent) addCurrent.disabled = false;
-
-      const openLink = document.getElementById('openCurrentLink');
-      if (openLink) {
-        openLink.href = item.webpage_url || '#';
-        openLink.classList.toggle('is-disabled', !item.webpage_url);
-      }
-
-      this.loadPlaylistTracks(item, { autoplayFirst: true });
+      this.loadPlaylistTracks(item, { autoplayFirst: true, silent });
       if (!silent) this.notify(this.tt('ytlive.playlist.loading', 'Loading content...'), 'info');
       return;
     }
 
-    const embedUrl = this.getEmbedUrl(item, { autoplay: autoplay && !silent });
+    const shouldAutoplay = autoplay && (!silent || forceAutoplay);
+    const embedUrl = this.getEmbedUrl(item, { autoplay: shouldAutoplay });
     if (!embedUrl) {
+      if (collectionContext && this.playNextCollectionTrack(item, { silent: true })) return;
       this.notify(this.tt('ytlive.play.unavailable', 'Bu içerik oynatılamıyor, ama link olarak eklenebilir.'), 'info');
       return;
     }
 
-    this.currentItem = item;
-    this.startYouTubePlayback(item, { autoplay: autoplay && !silent, silent });
+    const activeCollection = collectionContext || (keepPlaylist ? this.activeCollection : null);
+    if (activeCollection) {
+      const safeIndex = Number(playlistIndex);
+      this.activeCollection = {
+        ...activeCollection,
+        currentIndex: Number.isInteger(safeIndex) && safeIndex >= 0 ? safeIndex : activeCollection.currentIndex,
+        tracks: this.playlistTracks.length ? this.playlistTracks.slice() : (activeCollection.tracks || [])
+      };
+      this.currentItem = this.activeCollection.item;
+      this.currentPlaybackItem = item;
+    } else {
+      this.activeCollection = null;
+      this.currentItem = item;
+      this.currentPlaybackItem = item;
+    }
 
-    document.getElementById('nowType').textContent = this.getItemTypeLabel(item);
-    document.getElementById('nowTitle').textContent = item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği');
-    document.getElementById('nowSubtitle').textContent = item.uploader || item.webpage_url || '';
+    this.startYouTubePlayback(item, { autoplay: shouldAutoplay, silent });
 
-    const addCurrent = document.getElementById('addCurrentBtn');
-    if (addCurrent) addCurrent.disabled = false;
-
-    const openLink = document.getElementById('openCurrentLink');
-    if (openLink) {
-      openLink.href = item.webpage_url || '#';
-      openLink.classList.toggle('is-disabled', !item.webpage_url);
+    if (this.activeCollection) {
+      this.updateNowPanelForCollection(item);
+    } else {
+      this.setNowPanelItem(item);
     }
 
     if (!keepPlaylist) {
@@ -1374,6 +1567,8 @@ class YTLiveMusicApp {
 
   clearPlayer(subtitle = '') {
     this.currentItem = null;
+    this.currentPlaybackItem = null;
+    this.activeCollection = null;
     this.stopYouTubePlayback();
     this.showPlayerPlaceholder(
       this.tt('ytlive.player.emptyTitle', 'Select content'),
@@ -1568,12 +1763,17 @@ class YTLiveMusicApp {
             onStateChange: (event) => {
               if (token !== this.youtubePlaybackToken) return;
               const states = window.YT?.PlayerState || {};
+              if (event.data === states.ENDED || event.data === 0) {
+                this.handleYouTubePlaybackEnded(item, token);
+                return;
+              }
               if ([states.PLAYING, states.BUFFERING, states.CUED].includes(event.data)) {
                 notifyPlayable();
                 reveal(120);
               }
             },
             onError: () => {
+              if (this.handleYouTubePlaybackError(item, token, silent)) return;
               this.showEmbedFallback(item, token, silent);
             }
           }
@@ -2409,7 +2609,9 @@ class YTLiveMusicApp {
     if (queuePanel) queuePanel.dataset.collapsedLabel = this.tt('ytlive.queue.title', 'Kuyruk');
 
     const subtitle = document.getElementById('nowSubtitle');
-    if (this.currentItem) {
+    if (this.activeCollection) {
+      this.updateNowPanelForCollection();
+    } else if (this.currentItem) {
       document.getElementById('nowType').textContent = this.getItemTypeLabel(this.currentItem);
       if (subtitle) subtitle.textContent = this.currentItem.uploader || this.currentItem.webpage_url || '';
     } else if (subtitle) {

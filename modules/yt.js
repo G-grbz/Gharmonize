@@ -2299,10 +2299,13 @@ function getMusicHomeShelfTitle(node = {}) {
 function isMusicHomePlayableItem(item = {}) {
   const url = String(item.webpage_url || item.url || "");
   const id = String(item.id || "");
+  const type = String(item.type || "").toLowerCase();
   if (!url) return false;
   if (isLikelyYouTubeVideoId(id)) return true;
+  if (type === "album" && /\/browse\/MPRE/i.test(url)) return true;
+  if (type === "playlist" && (extractSearchPlaylistId(url) || /\/playlist\?/i.test(url))) return true;
   if (extractSearchPlaylistId(url)) return true;
-  return /(?:\/watch\?|youtu\.be\/|\/playlist\?)/i.test(url);
+  return /(?:\/watch\?|youtu\.be\/|\/playlist\?|\/browse\/MPRE)/i.test(url);
 }
 
 function normalizeMusicHomeItem(entry = {}, index = 0) {
@@ -2349,6 +2352,41 @@ function uniqueMusicHomeItems(items = [], limit = 12) {
   }
 
   return out;
+}
+
+function isMusicHomeDisplayItem(item = {}) {
+  return ["track", "playlist", "album"].includes(String(item.type || "").toLowerCase()) &&
+    !!(item.webpage_url || item.url);
+}
+
+function countMusicHomeShelfTracks(shelf = {}) {
+  return (Array.isArray(shelf?.items) ? shelf.items : [])
+    .filter((item) => String(item?.type || "").toLowerCase() === "track")
+    .length;
+}
+
+function orderMusicHomeShelvesForDisplay(shelves = [], maxShelves = 6) {
+  const list = Array.isArray(shelves) ? shelves : [];
+  const trackShelves = list.filter((shelf) => countMusicHomeShelfTracks(shelf) > 0);
+  if (!trackShelves.length) return list.slice(0, maxShelves);
+
+  const preferredTrackCount = Math.min(
+    trackShelves.length,
+    Math.max(1, Math.ceil(maxShelves / 2))
+  );
+  const picked = [];
+  const seen = new Set();
+
+  const addShelf = (shelf) => {
+    const key = `${normalizeMusicHomeTitleKey(shelf?.title) || ""}:${getMusicHomeItemKey(shelf?.items?.[0] || {})}`;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    picked.push(shelf);
+  };
+
+  trackShelves.slice(0, preferredTrackCount).forEach(addShelf);
+  list.forEach(addShelf);
+  return picked.slice(0, maxShelves);
 }
 
 function buildMusicHomeShelves(data, { maxShelves = 6, limitPerShelf = 12 } = {}) {
@@ -2779,18 +2817,76 @@ function findYtmMenuEndpoint(value) {
   return null;
 }
 
+function isYtmPlayableEndpoint(value = {}) {
+  return !!(
+    value?.watchEndpoint?.videoId ||
+    value?.watchPlaylistEndpoint?.playlistId
+  );
+}
+
+function findYtmPlayableEndpoint(value, maxDepth = 6) {
+  const visited = new WeakSet();
+
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > maxDepth || visited.has(node)) return null;
+    visited.add(node);
+
+    if (isYtmPlayableEndpoint(node)) return node;
+
+    const directCandidates = [
+      node.playNavigationEndpoint,
+      node.clickCommand,
+      node.onTap,
+      node.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint,
+      node.thumbnailOverlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint,
+      node.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.navigationEndpoint,
+      findYtmMenuEndpoint(node)
+    ].filter(Boolean);
+
+    for (const candidate of directCandidates) {
+      const found = walk(candidate, depth + 1);
+      if (found) return found;
+    }
+
+    for (const [key, child] of Object.entries(node)) {
+      if (/(accessibility|badge|icon|logging|thumbnail|tracking)/i.test(key)) {
+        continue;
+      }
+
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          const found = walk(item, depth + 1);
+          if (found) return found;
+        }
+      } else if (child && typeof child === "object") {
+        const found = walk(child, depth + 1);
+        if (found) return found;
+      }
+    }
+
+    return null;
+  };
+
+  return walk(value);
+}
+
 function findYtmEndpoint(value) {
   if (!value || typeof value !== "object") return null;
-  if (value.watchEndpoint || value.watchPlaylistEndpoint || value.browseEndpoint) return value;
+  if (isYtmPlayableEndpoint(value)) return value;
+
+  const playable = findYtmPlayableEndpoint(value);
+  if (playable) return playable;
+
+  if (value.browseEndpoint) return value;
 
   return (
-    value.navigationEndpoint ||
-    value.clickCommand ||
     value.playNavigationEndpoint ||
+    value.clickCommand ||
     value.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint ||
     value.thumbnailOverlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint ||
     value.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.navigationEndpoint ||
     findYtmMenuEndpoint(value) ||
+    value.navigationEndpoint ||
     null
   );
 }
@@ -3002,7 +3098,8 @@ function buildMusicHomeShelvesFromInnertube(data, { maxShelves = 6, limitPerShel
     const items = uniqueMusicHomeItems(
       (Array.isArray(rawItems) ? rawItems : [])
         .map((item, index) => normalizeYtmRendererItem(item, index))
-        .filter(Boolean),
+        .filter(Boolean)
+        .filter(isMusicHomeDisplayItem),
       limitPerShelf
     );
     if (!items.length) return;
@@ -3088,10 +3185,13 @@ function mergeMusicHomeShelves(shelfGroups = [], { maxShelves = 6, limitPerShelf
 
 function selectMusicHomeShelves(shelves = [], { maxShelves = 6, limitPerShelf = 12 } = {}) {
   const shelfLimit = normalizeMusicHomeNumber(maxShelves, 6, 1, 12);
-  return mergeMusicHomeShelves([shelves], {
-    maxShelves: shelfLimit,
+  const candidateLimit = Math.max(shelfLimit, Math.min(40, shelfLimit * 3));
+  const candidates = mergeMusicHomeShelves([shelves], {
+    maxShelves: candidateLimit,
     limitPerShelf
-  }).map((shelf) => ({ ...shelf, pinned: false }));
+  });
+  return orderMusicHomeShelvesForDisplay(candidates, shelfLimit)
+    .map((shelf) => ({ ...shelf, pinned: false }));
 }
 
 function collectYtmContinuationTokens(value, tokens = new Set(), depth = 0) {
@@ -3247,9 +3347,10 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
 export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang = "", region = "" } = {}) {
   const cookieAvailable = hasUsableCookieSource();
   const maxShelves = normalizeMusicHomeNumber(shelves, 6, 1, 12);
+  const defaultFetchShelves = Math.min(40, Math.max(maxShelves * 3, maxShelves + 6));
   const fetchShelves = normalizeMusicHomeNumber(
-    process.env.YTM_HOME_FETCH_SHELVES || maxShelves,
-    maxShelves,
+    process.env.YTM_HOME_FETCH_SHELVES || defaultFetchShelves,
+    defaultFetchShelves,
     maxShelves,
     40
   );
