@@ -4,12 +4,7 @@
 
 # Gharmonize
 
-
-
-
 https://github.com/user-attachments/assets/4083729e-3db9-4936-ac01-28c0f318aebe
-
-
 
 ### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/EXE)
 
@@ -99,6 +94,7 @@ Open:
 * [Binary Management](#binary-management)
 * [Cookie and Runtime Notes](#cookie-and-runtime-notes)
 * [Environment Variables (.env)](#environment-variables-env)
+* [Companion Tool: G-TMCE](#companion-tool-g-tmce)
 * [Gharmonize Homepage Widget](#gharmonize-homepage-widget)
 * [Notes & Troubleshooting](#notes--troubleshooting)
 * [License](#license)
@@ -175,6 +171,16 @@ License details are available in **Third-Party Licenses** and `LICENSES.md`.
 * Docker image deployment with published `latest` and `testing` tags as an alternative setup
 * Runtime settings panel and `.env` configuration
 * Automatic runtime binary download / refresh with fallback to existing binaries
+
+### Companion Tool: G-TMCE
+
+For users who want a more advanced MKV finishing workflow after ripping or extracting DRM-free media, check out **G-TMCE**:
+
+https://github.com/G-grbz/G-TMCE
+
+G-TMCE is a cross-platform MKV creation and extraction GUI for Linux and Windows. It focuses on professional remux workflows with TMDB metadata, automatic `tags.xml` generation, artwork downloads, chapter generation, language-aware audio/subtitle handling, forced/SDH subtitle detection, and MKVToolNix automation.
+
+Gharmonize is designed for downloading, conversion, ripping, tagging, and batch processing. G-TMCE can be used as a companion tool when you want to prepare polished MKV outputs for media libraries and home media servers.
 
 ---
 
