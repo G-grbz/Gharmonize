@@ -191,8 +191,16 @@ class YTLiveMusicApp {
   scrollToDiscoverSection() {
     const discover = document.getElementById('discover') || document.querySelector('.content-section');
     if (!discover) return;
+
     requestAnimationFrame(() => {
-      discover.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const topbar = document.querySelector('.topbar');
+      const offset = (topbar?.offsetHeight || 0) + 18;
+      const targetTop = discover.getBoundingClientRect().top + window.scrollY - offset;
+
+      window.scrollTo({
+        top: Math.max(0, targetTop),
+        behavior: 'smooth'
+      });
     });
   }
 
