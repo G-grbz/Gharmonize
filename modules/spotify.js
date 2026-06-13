@@ -510,10 +510,6 @@ async function _resolveSpotifyUrlPublic(url) {
   }
 
   if (type === "playlist") {
-    if (isPersonalizedMixId(id)) {
-      throw new Error("SPOTIFY_MIX_UNSUPPORTED: This URL is a personalized Spotify Mix. The Spotify Web API does not provide this content (404). Please copy the tracks from the mix into a new playlist in the Spotify app and use that playlist URL instead.");
-    }
-
     const entity = await _fetchSpotifyEmbedEntity("playlist", id);
     const trackList = Array.isArray(entity?.trackList) ? entity.trackList : [];
     const items = trackList.map((track, index) =>
@@ -985,17 +981,18 @@ export async function findSpotifyMetaById(id) {
 
 // Loads track for Spotify mapping and metadata flow.
 async function fetchTrack(api, id, market) {
+  const resolvedMarket = resolveMarket(market);
   const t = await withMarketFallback(async (mkt) => {
     const r = await api.getTrack(id, { ...(mkt ? { market: mkt } : {}) });
     return r?.body || null;
-  }, resolveMarket(market));
+  }, resolvedMarket);
   if (!t) throw new Error("Track could not be fetched");
   const meta = trackToId3Meta(t);
 
-    let albumInfo = null, artistGenres = [];
+  let albumInfo = null, artistGenres = [];
   try {
     if (t.album?.id) {
-      const a = await api.getAlbum(t.album.id);
+      const a = await api.getAlbum(t.album.id, { ...(resolvedMarket ? { market: resolvedMarket } : {}) });
       albumInfo = a?.body || null;
     }
   } catch {}
@@ -1034,7 +1031,15 @@ async function fetchPlaylistItems(api, id, market) {
   const out = [];
   const albumCache = new Map();
   const artistCache = new Map();
-  let page = await api.getPlaylistTracks(id, { limit: 100 });
+  const resolvedMarket = resolveMarket(market);
+  const pageSize = 50;
+  const playlistTrackOptions = (offset = 0) => ({
+    limit: pageSize,
+    offset,
+    ...(resolvedMarket ? { market: resolvedMarket } : {})
+  });
+
+  let page = await api.getPlaylistTracks(id, playlistTrackOptions(0));
   if (!page) return out;
   while (true) {
     for (const it of page.body.items || []) {
@@ -1048,7 +1053,7 @@ async function fetchPlaylistItems(api, id, market) {
           if (albId) {
             if (albumCache.has(albId)) albumInfo = albumCache.get(albId);
             else {
-              const a = await api.getAlbum(albId);
+              const a = await api.getAlbum(albId, { ...(resolvedMarket ? { market: resolvedMarket } : {}) });
               albumInfo = a?.body || null;
               albumCache.set(albId, albumInfo);
             }
@@ -1092,7 +1097,7 @@ async function fetchPlaylistItems(api, id, market) {
     if (page.body.next) {
       const url = new URL(page.body.next);
       const offset = Number(url.searchParams.get("offset") || 0);
-      page = await api.getPlaylistTracks(id, { limit: 100, offset });
+      page = await api.getPlaylistTracks(id, playlistTrackOptions(offset));
       if (!page) break;
     } else break;
   }
@@ -1196,12 +1201,13 @@ async function _resolveSpotifyUrlViaApi(url, { market } = {}) {
   }
 
   if (type === "playlist") {
-    if (isPersonalizedMixId(id)) {
-      throw new Error("SPOTIFY_MIX_UNSUPPORTED: This URL is a personalized Spotify Mix. The Spotify Web API does not provide this content (404). Please copy the tracks from the mix into a new playlist in the Spotify app and use that playlist URL instead.");
-    }
     let plTitle = "Spotify Playlist";
     try {
-      const pl = (await api.getPlaylist(id, { fields: "name" })).body;
+      const resolvedMarket = resolveMarket(market);
+      const pl = (await api.getPlaylist(id, {
+        fields: "name",
+        ...(resolvedMarket ? { market: resolvedMarket } : {})
+      })).body;
       plTitle = pl?.name || plTitle;
     } catch {}
     let items;
@@ -1255,10 +1261,6 @@ export async function resolveSpotifyUrlLite(url, { market } = {}) {
       try {
         return await _resolveSpotifyUrlViaApi(url, { market });
       } catch (apiError) {
-        const msg = String(apiError?.message || "");
-        if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
-          throw apiError;
-        }
         firstError = apiError;
       }
     }

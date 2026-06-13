@@ -36,6 +36,8 @@ const ALLOWED_KEYS = [
   'FFMPEG_BIN',
   'UPLOAD_MAX_BYTES',
   'TRACK_EXTRACTOR_SHELL_INTEGRATION',
+  'FRONTEND_UI',
+  'YOUTUBE_QUICK_ADD_LIMIT',
   'SPOTIFY_DEBUG_MARKET',
   'CLEAN_SUFFIXES',
   'CLEAN_PHRASES',
@@ -180,6 +182,17 @@ router.post('/auth/login', express.json(), (req, res) => {
   }
   const token = sign({ iat: Date.now(), role: 'admin' })
   res.json({ token })
+})
+
+router.get('/ui-config', (_req, res) => {
+  const frontendUi = getEnv('FRONTEND_UI') === 'ytlive' ? 'ytlive' : 'classic'
+  const quickAddRaw = Number(getEnv('YOUTUBE_QUICK_ADD_LIMIT') || 25)
+  const quickAddLimit =
+    Number.isFinite(quickAddRaw) && quickAddRaw > 0
+      ? Math.min(100, Math.max(1, Math.round(quickAddRaw)))
+      : 25
+
+  res.json({ frontendUi, quickAddLimit })
 })
 
 router.get('/auth/verify', authMiddleware, (req, res) => {

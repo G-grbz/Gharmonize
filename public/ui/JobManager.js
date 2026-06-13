@@ -9,6 +9,7 @@ export class JobManager {
         this.sessionSectionsInitialized = false;
         this.storageKey = 'gharmonize_job_session';
         this.progressCache = new Map();
+        this.lastSessionSavedAt = 0;
 
         if (typeof window !== 'undefined') {
             // Handles do restore in the browser UI layer.
@@ -25,6 +26,19 @@ export class JobManager {
             } else {
                 doRestore();
             }
+
+            window.addEventListener('storage', (event) => {
+                if (event.key !== this.storageKey || !event.newValue) return;
+                try {
+                    const data = JSON.parse(event.newValue);
+                    const savedAt = Number(data?.savedAt || 0);
+                    if (savedAt && savedAt <= this.lastSessionSavedAt) return;
+                    if (savedAt) this.lastSessionSavedAt = savedAt;
+                    this.restoreSessionState({ persist: false });
+                } catch (e) {
+                    console.warn('[JobManager] external session sync failed:', e);
+                }
+            });
         }
 
         if (typeof document !== 'undefined') {
@@ -2020,6 +2034,7 @@ updateJobUI(job, batchId = null) {
                 version: 1
             };
 
+            this.lastSessionSavedAt = payload.savedAt;
             localStorage.setItem(this.storageKey, JSON.stringify(payload));
         } catch (e) {
             console.warn('[JobManager] saveSessionState error:', e);
@@ -2122,13 +2137,14 @@ updateJobUI(job, batchId = null) {
         }
 
         // Handles restore session state in the browser UI layer.
-        async restoreSessionState() {
+        async restoreSessionState({ persist = true } = {}) {
             try {
                 const raw = localStorage.getItem(this.storageKey);
                 if (!raw) return;
 
                 const data = JSON.parse(raw);
                 if (!data || !Array.isArray(data.jobs)) return;
+                this.lastSessionSavedAt = Number(data.savedAt || this.lastSessionSavedAt || 0);
 
                 this.sessionSectionsInitialized = false;
 
@@ -2186,7 +2202,7 @@ updateJobUI(job, batchId = null) {
                     }
                 }
 
-                this.saveSessionState();
+                if (persist) this.saveSessionState();
             } catch (e) {
                 console.warn('[JobManager] restoreSessionState error:', e);
                 try { localStorage.removeItem(this.storageKey); } catch (_) {}

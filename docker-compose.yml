@@ -1,6 +1,6 @@
 services:
   web:
-    image: ggrbz/gharmonize:latest
+    image: ggrbz/gharmonize:testing
     container_name: Gharmonize
     # user: "0:0"
     # privileged: true

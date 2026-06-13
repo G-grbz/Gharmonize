@@ -64,6 +64,7 @@ docker compose up -d
 Open:
 
 * `http://localhost:5174`
+* `http://localhost:5174/ytlive.html` for the YTLive music interface
 
 > `docker-compose.yml` uses `ggrbz/gharmonize:latest` by default. Switch it to `ggrbz/gharmonize:testing` if you want the test-stage image.
 
@@ -72,6 +73,7 @@ Open:
 ## What you get
 
 * **YouTube / YouTube Music** downloads for single items, playlists, and mixes
+* **YTLive music UI** for YouTube discovery, playback, playlist browsing, and queueing
 * **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** download and conversion flows
 * **Spotify, Apple Music, and Deezer** mapping for **track / playlist / album** workflows
 * **Phone ringtone output** for **iPhone** and **Android** from supported download flows
@@ -88,6 +90,7 @@ Open:
 
 * [Overview](#overview)
 * [Features](#features)
+* [YTLive Music UI](#ytlive-music-ui)
 * [Requirements](#requirements)
 * [Quick Start (Local)](#quick-start-local)
 * [Quick Start (Docker Compose)](#quick-start-docker-compose)
@@ -134,6 +137,16 @@ License details are available in **Third-Party Licenses** and `LICENSES.md`.
 * Automatic mapping from supported music-service items to YouTube / YouTube Music sources
 * Optional preference for Spotify metadata during tagging
 
+### Dedicated YTLive Interface
+
+* Music-first interface for YouTube and YouTube Music workflows
+* Search tabs for tracks, playlists, and albums
+* Preset discovery for popular, new, playlist, and local music feeds
+* Embedded YouTube playback when the selected video allows it
+* Playlist track preview with per-track queue actions
+* YouTube Music home shelves when a usable YouTube Music cookie source is available
+* Shared job queue visibility with the classic UI
+
 ### Phone Ringtone Output
 
 * Export ringtone-ready files for **iPhone** and **Android**
@@ -162,6 +175,39 @@ License details are available in **Third-Party Licenses** and `LICENSES.md`.
 * Docker image deployment with published `latest` and `testing` tags as an alternative setup
 * Runtime settings panel and `.env` configuration
 * Automatic runtime binary download / refresh with fallback to existing binaries
+
+---
+
+## YTLive Music UI
+
+YTLive is a dedicated music interface for YouTube and YouTube Music. It is available alongside the classic Gharmonize UI and focuses on search, playback, playlist inspection, and fast queueing into the existing conversion pipeline.
+
+Open it directly:
+
+* `http://localhost:5174/ytlive.html`
+
+You can also switch from the classic UI with the `YTLive` toolbar button. From YTLive, use the `Classic UI` sidebar link to return to the original interface.
+
+To make YTLive the default page served from `/`, set:
+
+```dotenv
+FRONTEND_UI=ytlive
+```
+
+YTLive supports:
+
+* YouTube search with track / playlist / album filters
+* discovery presets and infinite loading
+* quick play or queue by pasted YouTube / YouTube Music URL
+* embedded playback plus an "Open on YouTube" fallback for videos that block embeds
+* output controls for format, quality, sample rate, lyrics, ZIP creation, and playlist concurrency
+* playlist preview with individual track add buttons
+* YouTube Music home shelves when cookies are available
+* live queue status through `/api/queue/status`
+
+Playlist quick-add is capped by `YOUTUBE_QUICK_ADD_LIMIT`. Set it between `1` and `100` to control how many playlist entries the YTLive playlist `+` action queues at once.
+
+Personal YouTube Music shelves require a usable cookie source, either `cookies.txt` or browser cookie extraction on a local / desktop install. Docker can use `cookies.txt`, but it cannot extract cookies from a host browser profile inside the container.
 
 ---
 
@@ -211,7 +257,7 @@ openssl rand -hex 32
 
 ### 4. Choose the Docker image tag
 
-The default compose file uses:
+The default compose file in this branch uses:
 
 ```yaml
 image: ggrbz/gharmonize:latest
@@ -651,6 +697,36 @@ UPLOAD_MAX_BYTES=
 # Examples:
 #   UPLOAD_MAX_BYTES=104857600
 #   UPLOAD_MAX_BYTES=100mb
+
+
+########################################
+# Frontend UI
+########################################
+
+FRONTEND_UI=
+# Controls which interface is served from "/".
+#   classic -> existing Gharmonize web UI (default)
+#   ytlive  -> new YouTube / YouTube Music focused YTLive UI
+# Direct routes remain available either way:
+#   /index.html
+#   /ytlive.html
+# Example:
+#   FRONTEND_UI=ytlive
+
+
+YOUTUBE_QUICK_ADD_LIMIT=
+# Maximum number of playlist entries queued by the YTLive playlist "+" action.
+# Valid range: 1-100.
+# Example:
+#   YOUTUBE_QUICK_ADD_LIMIT=50
+
+
+YOUTUBE_DISCOVER_DEBUG=
+# Enables verbose server-side logging for YTLive YouTube discovery internals.
+#   1 -> enabled
+#   0 -> disabled
+# Example:
+#   YOUTUBE_DISCOVER_DEBUG=0
 
 
 ########################################

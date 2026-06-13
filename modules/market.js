@@ -79,15 +79,15 @@ export async function withMarketFallback(
   const resolved = resolveMarket(preferred);
   if (resolved) seq.push(resolved);
 
-  if (includeUndefined) {
-    seq.push(undefined);
-  }
-
   const fallbacks = getFallbackMarkets();
   for (const f of fallbacks) {
     if (!seq.includes(f)) {
       seq.push(f);
     }
+  }
+
+  if (includeUndefined) {
+    seq.push(undefined);
   }
 
   if (debug) {

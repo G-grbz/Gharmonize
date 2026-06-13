@@ -12,7 +12,10 @@ import {
   extractPlaylistPage,
   getPlaylistMetaLite,
   extractAutomixAllFlat,
-  extractAutomixPage
+  extractAutomixPage,
+  searchYouTubeContent,
+  discoverYouTubeContent,
+  getYouTubeMusicHomeShelves
 } from "../modules/yt.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import { isAppleMusicUrl, resolveAppleMusicUrl } from "../modules/apple.js";
@@ -21,6 +24,59 @@ import { searchYtmBestId } from "../modules/sp.js";
 import { resolveMarket } from "../modules/market.js";
 
 const router = express.Router();
+
+router.get("/api/youtube/discover", async (req, res) => {
+  try {
+    const preset = String(req.query.preset || "popular").trim().toLowerCase();
+    const limit = Number(req.query.limit || 18);
+    const page = Number(req.query.page || 1);
+    const lang = String(req.query.lang || "").trim().toLowerCase();
+    const region = String(req.query.region || "").trim().toUpperCase();
+    const result = await discoverYouTubeContent({ preset, limit, page, lang, region });
+    return sendOk(res, result);
+  } catch (e) {
+    console.error("YouTube discover error:", e);
+    return sendError(res, "DISCOVER_FAILED", e.message || "YouTube discover failed", 500);
+  }
+});
+
+router.get("/api/youtube/search", async (req, res) => {
+  try {
+    const query = String(req.query.q || req.query.query || "").trim();
+    const limit = Number(req.query.limit || 12);
+    const type = String(req.query.type || req.query.kind || "").trim().toLowerCase();
+    const sort = String(req.query.sort || "").trim().toLowerCase();
+
+    if (!query) {
+      return sendError(res, "SEARCH_QUERY_REQUIRED", "Search query is required", 400);
+    }
+
+    const result = await searchYouTubeContent(query, { limit, type, sort });
+    return sendOk(res, result);
+  } catch (e) {
+    console.error("YouTube search error:", e);
+    return sendError(res, "SEARCH_FAILED", e.message || "YouTube search failed", 500);
+  }
+});
+
+router.get("/api/youtube/music-home", async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 12);
+    const shelves = Number(req.query.shelves || 6);
+    const lang = String(req.query.lang || "").trim().toLowerCase();
+    const region = String(req.query.region || "").trim().toUpperCase();
+    const result = await getYouTubeMusicHomeShelves({ limit, shelves, lang, region });
+    return sendOk(res, result);
+  } catch (e) {
+    console.warn("YouTube Music home unavailable:", e?.message || e);
+    return sendOk(res, {
+      personalized: false,
+      cookieAvailable: true,
+      shelves: [],
+      warning: e.message || "YouTube Music home failed"
+    });
+  }
+});
 
 router.post("/api/playlist/preview", async (req, res) => {
   try {

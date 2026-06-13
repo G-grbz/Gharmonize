@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs";
 import { spawn, execFile } from "child_process";
+import { createHash } from "crypto";
 import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
 import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs, parseIdFromPath } from "./utils.js";
@@ -42,6 +43,15 @@ const PLAYLIST_META_FALLBACK_TIMEOUT =
 
 const DM_IMPERSONATION_HINT =
   "Dailymotion requires yt-dlp impersonation dependencies (curl_cffi). Rebuild/install yt-dlp with curl-cffi support.";
+
+const YTM_ORIGIN = "https://music.youtube.com";
+const YTM_HOME_BROWSE_ID = "FEmusic_home";
+const YTM_HOME_BROWSE_URL = `${YTM_ORIGIN}/browse/${YTM_HOME_BROWSE_ID}`;
+const YTM_COOKIE_EXPORT_DIR = path.resolve(
+  process.env.DATA_DIR || process.cwd(),
+  "temp",
+  "ytmusic-home-cookies"
+);
 
 // Checks whether benign sabr warning is valid for the yt-dlp YouTube download pipeline.
 function isBenignSabrWarning(line) {
@@ -287,6 +297,7 @@ export const isYouTubePlaylist = (url) => {
     s.includes("list=") ||
     s.includes("/playlist") ||
     s.includes("&list=") ||
+    /music\.youtube\.com\/browse\/MPRE/i.test(s) ||
     !!s.match(/youtube\.com.*[&?]list=/)
   );
 };
@@ -603,6 +614,2685 @@ function processEntries(entries, maxEntries = PREVIEW_MAX_ENTRIES) {
     .slice(0, maxEntries)
     .map(processEntry)
     .sort((a, b) => a.index - b.index);
+}
+
+function normalizeSearchLimit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 12;
+  return Math.max(1, Math.min(30, Math.round(n)));
+}
+
+function normalizeSearchType(value) {
+  const type = String(value || "").trim().toLowerCase();
+  if (["track", "song", "songs", "video", "videos"].includes(type)) return "track";
+  if (["playlist", "playlists"].includes(type)) return "playlist";
+  if (["album", "albums"].includes(type)) return "album";
+  if (["artist", "artists"].includes(type)) return "artist";
+  return "";
+}
+
+function buildYouTubeSearchUrlWithOptions(query, { type = "", sort = "" } = {}) {
+  const url = new URL("https://www.youtube.com/results");
+  url.searchParams.set("search_query", query);
+  const searchType = normalizeSearchType(type);
+  const searchSort = String(sort || "").trim().toLowerCase();
+
+  if (searchType === "playlist") {
+    url.searchParams.set("sp", "EgIQAw==");
+  } else if (searchSort === "date" || searchSort === "upload_date") {
+    url.searchParams.set("sp", "CAI=");
+  }
+
+  return url.toString();
+}
+
+function extractSearchPlaylistId(value = "") {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  try {
+    const url = new URL(source, "https://www.youtube.com");
+    return url.searchParams.get("list") || "";
+  } catch {
+    const match = source.match(/[?&]list=([^&#]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+}
+
+function isLikelyYouTubePlaylistId(id = "") {
+  return /^(?:PL|OLAK5uy_|RD|UU|LL|FL|WL|VL|RDMM|RDEM|RDAO)[A-Za-z0-9_-]+$/i.test(String(id || ""));
+}
+
+function stripPlaylistParamsFromTrackUrl(value = "") {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  try {
+    const url = new URL(source);
+    if (/(^|\.)youtube\.com$/i.test(url.hostname) && url.pathname === "/watch" && url.searchParams.get("v")) {
+      url.searchParams.delete("list");
+      url.searchParams.delete("index");
+      url.searchParams.delete("start_radio");
+      return url.toString();
+    }
+  } catch {}
+  return source.replace(/([?&])(list|index|start_radio)=[^&#]*/gi, "$1").replace(/[?&]+$/, "");
+}
+
+function normalizeDiscoverPlaylistId(value = "") {
+  const id = String(value || "").trim();
+  if (!id) return "";
+  if (/^VL/i.test(id) && isLikelyYouTubePlaylistId(id.slice(2))) return id.slice(2);
+  return isLikelyYouTubePlaylistId(id) ? id : "";
+}
+
+function getDiscoverPlaylistId(item = {}) {
+  return (
+    extractSearchPlaylistId(item.webpage_url || item.url || "") ||
+    normalizeDiscoverPlaylistId(item.playlistId) ||
+    normalizeDiscoverPlaylistId(item.browseId) ||
+    normalizeDiscoverPlaylistId(item.id)
+  );
+}
+
+function toAbsoluteYouTubeUrl(value = "") {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  if (/^https?:\/\//i.test(source)) return source;
+  if (source.startsWith("//")) return `https:${source}`;
+  if (source.startsWith("/")) return `https://www.youtube.com${source}`;
+  return source;
+}
+
+function inferSearchEntryType(entry = {}, item = {}) {
+  const rawType = String(entry?._type || entry?.ie_key || entry?.extractor_key || "").toLowerCase();
+  const url = String(item?.webpage_url || entry?.webpage_url || entry?.url || "");
+  const id = String(item?.id || entry?.id || entry?.playlist_id || "");
+
+  if (
+    rawType.includes("album") ||
+    /^MPRE/i.test(id) ||
+    /music\.youtube\.com\/browse\/MPRE/i.test(url)
+  ) {
+    return "album";
+  }
+
+  if (
+    rawType.includes("playlist") ||
+    entry?.playlist_id ||
+    extractSearchPlaylistId(url) ||
+    isLikelyYouTubePlaylistId(id)
+  ) {
+    return "playlist";
+  }
+
+  return "track";
+}
+
+function normalizeSearchWebpageUrl(entry = {}, item = {}, type = "track") {
+  const direct = String(item?.webpage_url || entry?.webpage_url || entry?.original_url || "").trim();
+  const id = String(item?.id || entry?.id || entry?.url || "").trim();
+  const rawUrl = String(entry?.url || "").trim();
+  const playlistId = String(
+    entry?.playlist_id ||
+    extractSearchPlaylistId(direct) ||
+    extractSearchPlaylistId(rawUrl) ||
+    (type === "playlist" && isLikelyYouTubePlaylistId(id) ? id : "") ||
+    ""
+  ).trim();
+
+  if (type === "album") {
+    const browseId =
+      String(entry?.browseId || item?.browseId || "").trim() ||
+      (String(id).match(/^MPRE[A-Za-z0-9_-]+$/i) ? id : "");
+
+    if (browseId) {
+      return `${YTM_ORIGIN}/browse/${encodeURIComponent(browseId)}`;
+    }
+  }
+
+  if (type === "playlist" && playlistId) {
+    return `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`;
+  }
+
+  const absoluteDirect = toAbsoluteYouTubeUrl(direct);
+  if (/^https?:\/\//i.test(absoluteDirect)) {
+    return normalizeYouTubeUrl(type === "playlist" ? absoluteDirect : stripPlaylistParamsFromTrackUrl(absoluteDirect));
+  }
+
+  if (isLikelyYouTubeVideoId(id)) {
+    return normalizeYouTubeUrl(`https://www.youtube.com/watch?v=${id}`);
+  }
+
+  const absoluteRawUrl = toAbsoluteYouTubeUrl(rawUrl);
+  if (/^https?:\/\//i.test(absoluteRawUrl)) {
+    return normalizeYouTubeUrl(type === "playlist" ? absoluteRawUrl : stripPlaylistParamsFromTrackUrl(absoluteRawUrl));
+  }
+
+  return direct || rawUrl || "";
+}
+
+const YTM_SEARCH_TYPE_PARAMS = {
+  album: "EgWKAQIYAWoKEAMQBBAJEAoQBQ%3D%3D",
+  artist: "EgWKAQIgAWoKEAMQBBAJEAoQBQ%3D%3D"
+};
+
+const SEARCH_QUERY_STOP_WORDS = new Set([
+  "album",
+  "albums",
+  "albumler",
+  "albumleri",
+  "albm",
+  "playlist",
+  "playlists",
+  "liste",
+  "listesi",
+  "sarki",
+  "sarkilar",
+  "song",
+  "songs",
+  "video",
+  "videos",
+  "official",
+  "resmi",
+  "audio",
+  "dinle",
+  "listen",
+  "full",
+  "tam"
+]);
+
+function normalizeSearchMatchText(value = "") {
+  return normalizeMusicHomeTitle(value)
+    .toLocaleLowerCase("tr")
+    .replace(/[ıİ]/g, "i")
+    .replace(/[ğ]/g, "g")
+    .replace(/[ü]/g, "u")
+    .replace(/[ş]/g, "s")
+    .replace(/[ö]/g, "o")
+    .replace(/[ç]/g, "c")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getSearchQueryTokens(query = "") {
+  return normalizeSearchMatchText(query)
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !SEARCH_QUERY_STOP_WORDS.has(token));
+}
+
+function getSearchItemMatchText(item = {}) {
+  return normalizeSearchMatchText([
+    item.title,
+    item.uploader,
+    item.channel,
+    item.artist,
+    item.album,
+    item.album_artist,
+    item.description,
+    item.searchableText
+  ].filter(Boolean).join(" "));
+}
+
+function filterSearchItemsForQuery(items = [], query = "", searchType = "") {
+  const list = Array.isArray(items) ? items : [];
+  if (!["album", "artist"].includes(searchType)) return list;
+
+  const tokens = getSearchQueryTokens(query);
+  if (!tokens.length) return list;
+
+  return list.filter((item) => {
+    const haystack = getSearchItemMatchText(item);
+    return tokens.every((token) => haystack.includes(token));
+  });
+}
+
+function isYtmSearchItemType(item = {}, targetType = "") {
+  const type = String(item?.type || "").toLowerCase();
+  if (!targetType) return true;
+  if (targetType === "album") return type === "album";
+  if (targetType === "artist") return type === "artist";
+  if (targetType === "playlist") return type === "playlist";
+  if (targetType === "track") return type === "track";
+  return true;
+}
+
+function extractYtmSearchItemsFromTree(data, { targetType = "", limit = 30 } = {}) {
+  const out = [];
+  const visited = new WeakSet();
+
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 18 || out.length >= limit || visited.has(node)) return;
+    visited.add(node);
+
+    if (getDirectYtmItemRenderer(node)) {
+      const item = normalizeYtmRendererItem(node, out.length);
+      if (item && isYtmSearchItemType(item, targetType)) {
+        out.push({
+          ...item,
+          index: out.length + 1,
+          source: "youtube_music_search"
+        });
+      }
+      return;
+    }
+
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          walk(child, depth + 1);
+          if (out.length >= limit) return;
+        }
+      } else if (value && typeof value === "object") {
+        walk(value, depth + 1);
+      }
+    }
+  };
+
+  walk(data);
+  return uniqueMusicHomeItems(out, limit);
+}
+
+async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = "", region = "" } = {}) {
+  const q = String(query || "").trim();
+  if (!q) return [];
+
+  const searchType = normalizeSearchType(type);
+  const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
+  const safeRegion = normalizeDiscoverRegion(region || getInnertubeRegion(), safeLang);
+  const timeoutMs = Number(process.env.YTM_SEARCH_TIMEOUT_MS || 12000);
+
+  let cookies = [];
+  try {
+    const cookieFile = await resolveMusicHomeCookieFile();
+    cookies = parseNetscapeCookieFile(cookieFile, "music.youtube.com");
+  } catch {}
+
+  const cookieHeader = buildCookieHeader(cookies);
+  const bootstrap = cookieHeader ? await fetchYtmBootstrapConfig(cookieHeader, Math.min(timeoutMs, 6000)) : {};
+  const clientVersion = String(process.env.YTM_CLIENT_VERSION || bootstrap.clientVersion || getDefaultYtmClientVersion()).trim();
+
+  const headers = {
+    "Accept": "application/json",
+    "Accept-Language": getDiscoverHl(safeLang),
+    "Content-Type": "application/json",
+    "Origin": YTM_ORIGIN,
+    "Referer": `${YTM_ORIGIN}/search?q=${encodeURIComponent(q)}`,
+    "User-Agent": DEFAULT_USER_AGENT,
+    "X-Goog-AuthUser": "0",
+    "X-Origin": YTM_ORIGIN,
+    "X-Youtube-Client-Name": "67",
+    "X-Youtube-Client-Version": clientVersion
+  };
+  if (bootstrap.visitorData) headers["X-Goog-Visitor-Id"] = bootstrap.visitorData;
+  if (cookieHeader) headers.Cookie = cookieHeader;
+  const auth = buildSapisidAuthHeader(cookies);
+  if (auth) headers.Authorization = auth;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const context = {
+      client: {
+        clientName: "WEB_REMIX",
+        clientVersion,
+        visitorData: bootstrap.visitorData || undefined,
+        hl: getDiscoverHl(safeLang),
+        gl: safeRegion
+      },
+      user: { lockedSafetyMode: false },
+      request: { useSsl: true }
+    };
+
+    const body = {
+      context,
+      query: q
+    };
+
+    if (YTM_SEARCH_TYPE_PARAMS[searchType]) {
+      body.params = YTM_SEARCH_TYPE_PARAMS[searchType];
+    }
+
+    const response = await fetch(`${YTM_ORIGIN}/youtubei/v1/search?prettyPrint=false`, {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(body)
+    });
+
+    const text = await response.text();
+    const data = JSON.parse(text);
+    if (!response.ok) return [];
+
+    return extractYtmSearchItemsFromTree(data, {
+      targetType: searchType,
+      limit
+    });
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function searchYouTubeMusicArtistAlbums(query, { limit = 12, lang = "", region = "" } = {}) {
+  const q = String(query || "").trim();
+  if (!q) return [];
+
+  const timeoutMs = Number(process.env.YTM_SEARCH_TIMEOUT_MS || 12000);
+  const artists = await searchYouTubeMusicContent(q, {
+    limit: 8,
+    type: "artist",
+    lang,
+    region
+  });
+  const matchedArtists = filterSearchItemsForQuery(artists, q, "artist")
+    .filter((artist) => artist?.browseId || artist?.id)
+    .slice(0, 2);
+
+  const albums = [];
+  for (const artist of matchedArtists) {
+    if (albums.length >= limit) break;
+    try {
+      const browseId = artist.browseId || artist.id;
+      const artistAlbums = await fetchPublicYouTubeMusicBrowseDiscover({
+        browseId,
+        limit: Math.max(limit, 24),
+        targetType: "album",
+        preset: "",
+        lang,
+        region,
+        timeoutMs: Math.min(timeoutMs, 10000)
+      });
+      albums.push(...artistAlbums.map((album) => ({
+        ...album,
+        type: "album",
+        uploader: /^\d{4}$/.test(String(album.uploader || "").trim())
+          ? (artist.title || album.uploader || "")
+          : (album.uploader || artist.title || ""),
+        searchableText: [album.searchableText, artist.title, artist.uploader].filter(Boolean).join(" ")
+      })));
+    } catch (error) {
+      discoverDebug("artist-albums:error", {
+        artist: summarizeDiscoverItem(artist),
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  return uniqueMusicHomeItems(filterSearchItemsForQuery(albums, q, "album"), limit);
+}
+
+// Searches YouTube content for the ytlive browser UI.
+export async function searchYouTubeContent(query, { limit = 12, type = "", sort = "" } = {}) {
+  const q = String(query || "").trim();
+  if (!q) {
+    return { query: q, items: [] };
+  }
+
+  const safeLimit = normalizeSearchLimit(limit);
+  const searchType = normalizeSearchType(type);
+  const timeout = Number(process.env.YOUTUBE_SEARCH_TIMEOUT_MS || 30000);
+  let data = null;
+
+  if (searchType === "album") {
+    const artistAlbums = await searchYouTubeMusicArtistAlbums(q, {
+      limit: safeLimit,
+      lang: getInnertubeLang(),
+      region: getInnertubeRegion()
+    });
+    if (artistAlbums.length) {
+      return { query: q, type: searchType, items: artistAlbums };
+    }
+
+    const musicItems = await searchYouTubeMusicContent(q, {
+      limit: safeLimit,
+      type: searchType,
+      lang: getInnertubeLang(),
+      region: getInnertubeRegion()
+    });
+    const filteredMusicItems = filterSearchItemsForQuery(musicItems, q, searchType);
+
+    if (filteredMusicItems.length) {
+      return { query: q, type: searchType, items: filteredMusicItems };
+    }
+  }
+
+  const searchSort = String(sort || "").trim().toLowerCase();
+  const preferSearchUrl = searchType === "playlist" || searchSort === "date" || searchSort === "upload_date";
+
+  if (preferSearchUrl) {
+    try {
+      data = await runYtJson(
+        ["--flat-playlist", "--playlist-end", String(safeLimit), buildYouTubeSearchUrlWithOptions(q, { type: searchType, sort: searchSort })],
+        searchType === "playlist" ? "youtube-search-playlist" : "youtube-search-date",
+        timeout
+      );
+    } catch (error) {
+      console.warn("YouTube filtered search URL failed, falling back to ytsearch:", error?.message || error);
+    }
+  }
+
+  if (!data) {
+    data = await runYtJson(
+      ["--flat-playlist", `ytsearch${safeLimit}:${q}`],
+      "youtube-search",
+      timeout
+    );
+  }
+
+  const entries = Array.isArray(data?.entries) ? data.entries : (data ? [data] : []);
+  const items = entries
+    .filter(Boolean)
+    .map((entry, index) => {
+      const base = processEntry(entry, index);
+      const type = inferSearchEntryType(entry, base);
+      const webpageUrl = normalizeSearchWebpageUrl(entry, base, type);
+      return {
+        ...base,
+        index: index + 1,
+        type,
+        source: "youtube",
+        webpage_url: webpageUrl,
+        url: webpageUrl
+      };
+    })
+    .filter((item) => item.title || item.id || item.webpage_url)
+    .filter((item) => {
+      if (!searchType) return true;
+      if (searchType === "track") return item.type === "track";
+      if (searchType === "playlist") return item.type === "playlist";
+      if (searchType === "album") return item.type === "album";
+      return true;
+    });
+
+  return {
+    query: q,
+    type: searchType || "all",
+    items: filterSearchItemsForQuery(items, q, searchType)
+  };
+}
+
+function normalizeDiscoverPreset(value = "") {
+  const preset = String(value || "").trim().toLowerCase();
+  return ["popular", "new", "playlist", "local"].includes(preset) ? preset : "popular";
+}
+
+function normalizeDiscoverPage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.max(1, Math.min(10, Math.round(n)));
+}
+
+function normalizeDiscoverLang(value = "") {
+  const lang = String(value || "").trim().toLowerCase().slice(0, 2);
+  return ["tr", "en", "de", "fr", "es"].includes(lang) ? lang : "en";
+}
+
+function normalizeDiscoverRegion(value = "", lang = "en") {
+  const raw = String(value || "").trim().toUpperCase();
+  const defaults = {
+    tr: "TR",
+    de: "DE",
+    fr: "FR",
+    es: "ES",
+    en: "US"
+  };
+  const safeLang = normalizeDiscoverLang(lang);
+  const fallback = defaults[safeLang] || "US";
+  if (!/^[A-Z]{2}$/.test(raw)) return fallback;
+  if (safeLang !== "en" && raw === "US") return fallback;
+  return raw;
+}
+
+function getDiscoverHl(lang) {
+  return normalizeDiscoverLang(lang);
+}
+
+function getDiscoverTargetType(preset = "") {
+  return normalizeDiscoverPreset(preset) === "playlist" ? "playlist" : "track";
+}
+
+function isDiscoverItemType(item = {}, targetType = "track") {
+  const url = String(item.webpage_url || item.url || "");
+  const itemType = String(item.type || "").toLowerCase();
+  const browseId = String(item.browseId || item.id || "");
+  const playlistLike =
+    itemType === "playlist" ||
+    (itemType !== "track" && (getDiscoverPlaylistId(item) || /(?:\/playlist|[?&]list=)/i.test(url)));
+
+  if (targetType === "album") {
+    return itemType === "album" || /^MPRE/i.test(browseId) || /\/browse\/MPRE/i.test(url);
+  }
+
+  if (targetType === "playlist") {
+    return playlistLike;
+  }
+
+  const videoId = String(item.id || "").match(/^[A-Za-z0-9_-]{11}$/) || /(?:\/watch\?|youtu\.be\/|\/shorts\/)/i.test(url);
+  return !!videoId && !playlistLike;
+}
+
+function normalizeDiscoverEntries(entries = [], { targetType = "track" } = {}) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter(Boolean)
+    .map((entry, index) => {
+      const base = processEntry(entry, index);
+      const type = inferSearchEntryType(entry, base);
+      const webpageUrl = normalizeSearchWebpageUrl(entry, base, type);
+      return {
+        ...base,
+        index: index + 1,
+        type,
+        source: "youtube_discover",
+        webpage_url: webpageUrl,
+        url: webpageUrl
+      };
+    })
+    .filter((item) => item.title || item.id || item.webpage_url)
+    .filter((item) => isDiscoverItemType(item, targetType));
+}
+
+function uniqueDiscoverItems(items = [], limit = 60) {
+  return uniqueMusicHomeItems(items, limit);
+}
+
+const DISCOVER_RESULT_CACHE = new Map();
+const DISCOVER_BROWSE_CACHE = new Map();
+const DISCOVER_BROWSE_SHELF_CACHE = new Map();
+const DISCOVER_PLAYLIST_TRACK_CACHE = new Map();
+
+function isDiscoverDebugEnabled() {
+  return String(process.env.YOUTUBE_DISCOVER_DEBUG || "0").trim() !== "0";
+}
+
+function getDiscoverCacheTtlMs() {
+  const n = Number(process.env.YOUTUBE_DISCOVER_CACHE_TTL_MS || 180000);
+  return Number.isFinite(n) && n >= 0 ? n : 180000;
+}
+
+function getDiscoverNumber(value, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function getCachedDiscoverValue(cache, key) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function setCachedDiscoverValue(cache, key, value) {
+  const ttl = getDiscoverCacheTtlMs();
+  if (!ttl) return value;
+  if (cache.size > 120) {
+    const now = Date.now();
+    for (const [entryKey, entry] of cache) {
+      if (entry.expiresAt < now || cache.size > 100) cache.delete(entryKey);
+    }
+  }
+  cache.set(key, {
+    expiresAt: Date.now() + ttl,
+    value
+  });
+  return value;
+}
+
+function trimDiscoverText(value = "", max = 80) {
+  const text = normalizeMusicHomeTitle(value);
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
+function summarizeDiscoverItem(item = {}) {
+  return {
+    title: trimDiscoverText(item.title || item.id || ""),
+    type: item.type || "",
+    id: trimDiscoverText(item.id || "", 32),
+    browseId: trimDiscoverText(item.browseId || "", 48),
+    playlistId: trimDiscoverText(getDiscoverPlaylistId(item), 48),
+    params: item.params ? trimDiscoverText(item.params, 24) : ""
+  };
+}
+
+function summarizeDiscoverShelf(shelf = {}) {
+  return {
+    title: trimDiscoverText(shelf.title || ""),
+    browseId: trimDiscoverText(shelf.browseId || "", 48),
+    params: shelf.params ? trimDiscoverText(shelf.params, 24) : "",
+    items: Array.isArray(shelf.items) ? shelf.items.length : 0,
+    sample: (Array.isArray(shelf.items) ? shelf.items : []).slice(0, 3).map(summarizeDiscoverItem)
+  };
+}
+
+function discoverDebug(stage, data = {}) {
+  if (!isDiscoverDebugEnabled()) return;
+  try {
+    console.info(`[youtube-discover] ${stage}`, JSON.stringify(data));
+  } catch {
+    console.info(`[youtube-discover] ${stage}`, data);
+  }
+}
+
+function matchesAnyDiscoverPattern(value = "", patterns = []) {
+  const source = normalizeMusicHomeTitle(value).toLowerCase();
+  return patterns.some((pattern) => pattern.test(source));
+}
+
+function getDiscoverShelfPatterns(preset = "", lang = "en") {
+  const safePreset = normalizeDiscoverPreset(preset);
+  if (safePreset === "new") {
+    return [/new/i, /release/i, /latest/i, /yeni/i, /çıkan/i, /nouveau/i, /nouveaut/i, /neu/i, /nueva/i, /nuevo/i];
+  }
+  if (safePreset === "playlist") {
+    return [/playlist/i, /mix/i, /mood/i, /genre/i, /liste/i, /çalma/i, /ruh hali/i, /tarz/i];
+  }
+  if (safePreset === "local") {
+    if (normalizeDiscoverLang(lang) === "tr") return [/türk/i, /turk/i, /pop/i, /yerel/i];
+    return [/pop/i, /local/i, /genre/i];
+  }
+  return [];
+}
+
+function shelfMatchesDiscoverPreset(shelf = {}, preset = "", lang = "en") {
+  const safePreset = normalizeDiscoverPreset(preset);
+  if (safePreset === "popular") return true;
+  if (safePreset === "local" && normalizeDiscoverLang(lang) !== "tr") {
+    const shelfText = `${shelf?.title || ""} ${shelf?.browseId || ""}`;
+    if (isLikelyTurkishDiscoverText(shelfText)) return false;
+  }
+
+  const patterns = getDiscoverShelfPatterns(safePreset, lang);
+  if (!patterns.length) return true;
+
+  return (
+    matchesAnyDiscoverPattern(shelf.title, patterns) ||
+    matchesAnyDiscoverPattern(shelf.browseId, patterns)
+  );
+}
+
+function flattenDiscoverShelves(shelves = [], { targetType = "track", limit = 60, preset = "", lang = "en" } = {}) {
+  const items = [];
+  let skippedShelves = 0;
+  for (const shelf of Array.isArray(shelves) ? shelves : []) {
+    if (preset && !shelfMatchesDiscoverPreset(shelf, preset, lang)) {
+      skippedShelves += 1;
+      continue;
+    }
+    for (const item of Array.isArray(shelf?.items) ? shelf.items : []) {
+      if (!isDiscoverItemType(item, targetType)) continue;
+      items.push({
+        ...item,
+        source: "youtube_music_discover"
+      });
+      if (items.length >= limit) break;
+    }
+    if (items.length >= limit) break;
+  }
+  const unique = uniqueDiscoverItems(items, limit);
+  discoverDebug("flatten", {
+    preset,
+    targetType,
+    shelves: Array.isArray(shelves) ? shelves.length : 0,
+    skippedShelves,
+    rawItems: items.length,
+    uniqueItems: unique.length,
+    sample: unique.slice(0, 5).map(summarizeDiscoverItem)
+  });
+  return unique;
+}
+
+function filterDiscoverShelves(shelves = [], { targetType = "track", limitPerShelf = 12, maxShelves = 6, preset = "", lang = "en" } = {}) {
+  const out = [];
+  let skippedShelves = 0;
+
+  for (const shelf of Array.isArray(shelves) ? shelves : []) {
+    if (preset && !shelfMatchesDiscoverPreset(shelf, preset, lang)) {
+      skippedShelves += 1;
+      continue;
+    }
+
+    const items = uniqueDiscoverItems(
+      (Array.isArray(shelf?.items) ? shelf.items : [])
+        .filter((item) => isDiscoverItemType(item, targetType))
+        .map((item) => ({
+          ...item,
+          source: "youtube_music_discover"
+        })),
+      limitPerShelf
+    );
+
+    if (!items.length) continue;
+    out.push({
+      ...shelf,
+      source: "youtube_music_home_fill",
+      items
+    });
+
+    if (out.length >= maxShelves) break;
+  }
+
+  const uniqueShelves = mergeMusicHomeShelves([out], { maxShelves, limitPerShelf });
+  discoverDebug("shelves:filter", {
+    preset,
+    targetType,
+    shelves: Array.isArray(shelves) ? shelves.length : 0,
+    skippedShelves,
+    returnedShelves: uniqueShelves.length,
+    sample: uniqueShelves.slice(0, 5).map(summarizeDiscoverShelf)
+  });
+  return uniqueShelves;
+}
+
+function extractYtmDiscoverItemsFromTree(data, { targetType = "track", limit = 60 } = {}) {
+  const out = [];
+  const visited = new WeakSet();
+
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 16 || out.length >= limit || visited.has(node)) return;
+    visited.add(node);
+
+    if (getDirectYtmItemRenderer(node)) {
+      const item = normalizeYtmRendererItem(node, out.length);
+      if (item && isDiscoverItemType(item, targetType)) {
+        out.push({
+          ...item,
+          source: "youtube_music_discover"
+        });
+      }
+      return;
+    }
+
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          walk(child, depth + 1);
+          if (out.length >= limit) return;
+        }
+      } else if (value && typeof value === "object") {
+        walk(value, depth + 1);
+      }
+    }
+  };
+
+  walk(data);
+  return uniqueDiscoverItems(out, limit);
+}
+
+async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, targetType, preset = "", lang, region, timeoutMs, useCookies = true, returnShelves = false, maxShelves = 6 }) {
+  const safeLang = normalizeDiscoverLang(lang);
+  const safeRegion = normalizeDiscoverRegion(region, safeLang);
+  const shelfLimit = normalizeMusicHomeNumber(maxShelves, 6, 1, 12);
+  const cacheKey = JSON.stringify({
+    browseId,
+    params,
+    limit,
+    targetType,
+    preset,
+    lang: safeLang,
+    region: safeRegion,
+    useCookies: !!useCookies,
+    returnShelves: !!returnShelves,
+    maxShelves: shelfLimit
+  });
+  const cache = returnShelves ? DISCOVER_BROWSE_SHELF_CACHE : DISCOVER_BROWSE_CACHE;
+  const cached = getCachedDiscoverValue(cache, cacheKey);
+  if (cached) {
+    discoverDebug("browse:cache-hit", {
+      browseId,
+      params: params ? trimDiscoverText(params, 24) : "",
+      preset,
+      targetType,
+      itemCount: returnShelves ? undefined : cached.length,
+      shelfCount: returnShelves ? cached.length : undefined,
+      useCookies: !!useCookies
+    });
+    return cached;
+  }
+
+  let cookies = [];
+  if (useCookies) {
+    try {
+      const cookieFile = await resolveMusicHomeCookieFile();
+      cookies = parseNetscapeCookieFile(cookieFile, "music.youtube.com");
+    } catch {}
+  }
+
+  const cookieHeader = buildCookieHeader(cookies);
+  const bootstrap = cookieHeader ? await fetchYtmBootstrapConfig(cookieHeader, Math.min(timeoutMs, 6000)) : {};
+  const clientVersion = String(process.env.YTM_CLIENT_VERSION || bootstrap.clientVersion || getDefaultYtmClientVersion()).trim();
+
+  const headers = {
+    "Accept": "application/json",
+    "Accept-Language": getDiscoverHl(safeLang),
+    "Content-Type": "application/json",
+    "Origin": YTM_ORIGIN,
+    "Referer": `${YTM_ORIGIN}/`,
+    "User-Agent": DEFAULT_USER_AGENT,
+    "X-Goog-AuthUser": "0",
+    "X-Origin": YTM_ORIGIN,
+    "X-Youtube-Client-Name": "67",
+    "X-Youtube-Client-Version": clientVersion
+  };
+  if (bootstrap.visitorData) headers["X-Goog-Visitor-Id"] = bootstrap.visitorData;
+  if (cookieHeader) headers.Cookie = cookieHeader;
+  const auth = buildSapisidAuthHeader(cookies);
+  if (auth) headers.Authorization = auth;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const context = {
+    client: {
+      clientName: "WEB_REMIX",
+      clientVersion,
+      visitorData: bootstrap.visitorData || undefined,
+      hl: getDiscoverHl(safeLang),
+      gl: safeRegion
+    },
+    user: { lockedSafetyMode: false },
+    request: { useSsl: true }
+  };
+
+  const postBrowse = async (payload) => {
+    let response;
+    try {
+      response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
+        method: "POST",
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({ context, ...payload })
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") throw new Error(`YouTube Music discover timeout (${timeoutMs}ms)`);
+      throw error;
+    }
+
+    const text = await response.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`YouTube Music discover returned non-JSON (${response.status})`);
+    }
+
+    if (!response.ok) {
+      const message = data?.error?.message || data?.error?.status || `YouTube Music discover failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    return data;
+  };
+
+  try {
+    const firstPayload = browseId === "FEmusic_charts"
+      ? { browseId, formData: { selectedValues: [safeRegion] } }
+      : { browseId };
+    if (params) firstPayload.params = params;
+
+    discoverDebug("browse:start", {
+      browseId,
+      params: params ? trimDiscoverText(params, 24) : "",
+      preset,
+      targetType,
+      lang: safeLang,
+      region: safeRegion,
+      limit,
+      returnShelves: !!returnShelves,
+      maxShelves: shelfLimit,
+      hasCookie: !!cookieHeader,
+      hasAuth: !!auth,
+      useCookies: !!useCookies,
+      clientVersion
+    });
+
+    const firstPage = await postBrowse(firstPayload);
+    let shelves = buildMusicHomeShelvesFromInnertube(firstPage, { maxShelves: returnShelves ? shelfLimit : 12, limitPerShelf: limit });
+    discoverDebug("browse:first-page", {
+      browseId,
+      preset,
+      shelfCount: shelves.length,
+      shelves: shelves.slice(0, 8).map(summarizeDiscoverShelf),
+      continuationCount: Array.from(collectYtmContinuationTokens(firstPage)).length
+    });
+    let filteredShelves = returnShelves
+      ? filterDiscoverShelves(shelves, { targetType, limitPerShelf: limit, maxShelves: shelfLimit, preset, lang: safeLang })
+      : [];
+    let items = returnShelves ? [] : flattenDiscoverShelves(shelves, { targetType, limit, preset, lang: safeLang });
+    if (!returnShelves && !items.length) {
+      items = extractYtmDiscoverItemsFromTree(firstPage, { targetType, limit });
+      discoverDebug("browse:direct-items", {
+        browseId,
+        preset,
+        targetType,
+        itemCount: items.length,
+        sample: items.slice(0, 8).map(summarizeDiscoverItem)
+      });
+    }
+    const seenTokens = new Set();
+    const tokenQueue = Array.from(collectYtmContinuationTokens(firstPage));
+    let continuationPages = 0;
+    const maxContinuationPages = getDiscoverNumber(process.env.YOUTUBE_DISCOVER_CONTINUATION_PAGES ?? 2, 2, 0, 6);
+
+    while ((returnShelves ? filteredShelves.length < shelfLimit : items.length < limit) && tokenQueue.length && continuationPages < maxContinuationPages) {
+      const token = tokenQueue.shift();
+      if (!token || seenTokens.has(token)) continue;
+      seenTokens.add(token);
+      continuationPages += 1;
+
+      const nextPage = await postBrowse({ continuation: token });
+      const nextShelves = buildMusicHomeShelvesFromInnertube(nextPage, { maxShelves: returnShelves ? shelfLimit : 12, limitPerShelf: limit });
+      discoverDebug("browse:continuation", {
+        browseId,
+        preset,
+        page: continuationPages,
+        token: trimDiscoverText(token, 18),
+        shelfCount: nextShelves.length,
+        shelves: nextShelves.slice(0, 6).map(summarizeDiscoverShelf)
+      });
+      shelves = mergeMusicHomeShelves(
+        [
+          shelves,
+          nextShelves
+        ],
+        { maxShelves: returnShelves ? shelfLimit : 12, limitPerShelf: limit }
+      );
+      if (returnShelves) {
+        filteredShelves = filterDiscoverShelves(shelves, { targetType, limitPerShelf: limit, maxShelves: shelfLimit, preset, lang: safeLang });
+      }
+      if (!returnShelves) {
+        items = flattenDiscoverShelves(shelves, { targetType, limit, preset, lang: safeLang });
+      }
+      if (!returnShelves && !items.length) {
+        items = extractYtmDiscoverItemsFromTree(nextPage, { targetType, limit });
+        discoverDebug("browse:continuation-direct-items", {
+          browseId,
+          preset,
+          targetType,
+          page: continuationPages,
+          itemCount: items.length,
+          sample: items.slice(0, 6).map(summarizeDiscoverItem)
+        });
+      }
+
+      for (const nextToken of collectYtmContinuationTokens(nextPage)) {
+        if (!seenTokens.has(nextToken)) tokenQueue.push(nextToken);
+      }
+    }
+
+    if (returnShelves) {
+      discoverDebug("browse:shelves-done", {
+        browseId,
+        preset,
+        targetType,
+        shelfCount: filteredShelves.length,
+        continuationPages,
+        sample: filteredShelves.slice(0, 6).map(summarizeDiscoverShelf)
+      });
+      return setCachedDiscoverValue(cache, cacheKey, filteredShelves);
+    }
+
+    discoverDebug("browse:done", {
+      browseId,
+      preset,
+      targetType,
+      itemCount: items.length,
+      continuationPages,
+      sample: items.slice(0, 6).map(summarizeDiscoverItem)
+    });
+    return setCachedDiscoverValue(cache, cacheKey, items);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchPublicYouTubeMusicBrowseDiscover(options = {}) {
+  try {
+    const items = await fetchYouTubeMusicBrowseDiscover({ ...options, useCookies: false });
+    if (items.length || String(process.env.YOUTUBE_DISCOVER_COOKIE_FALLBACK || "1") === "0") return items;
+    discoverDebug("browse:public-empty", {
+      browseId: options.browseId,
+      params: options.params ? trimDiscoverText(options.params, 24) : "",
+      targetType: options.targetType
+    });
+  } catch (error) {
+    discoverDebug("browse:public-error", {
+      browseId: options.browseId,
+      params: options.params ? trimDiscoverText(options.params, 24) : "",
+      targetType: options.targetType,
+      error: error?.message || String(error)
+    });
+  }
+
+  return fetchYouTubeMusicBrowseDiscover({ ...options, useCookies: true });
+}
+
+async function fetchPublicYouTubeMusicBrowseShelves(options = {}) {
+  try {
+    const shelves = await fetchYouTubeMusicBrowseDiscover({ ...options, returnShelves: true, useCookies: false });
+    if (shelves.length || String(process.env.YOUTUBE_DISCOVER_COOKIE_FALLBACK || "1") === "0") return shelves;
+    discoverDebug("browse-shelves:public-empty", {
+      browseId: options.browseId,
+      params: options.params ? trimDiscoverText(options.params, 24) : "",
+      targetType: options.targetType
+    });
+  } catch (error) {
+    discoverDebug("browse-shelves:public-error", {
+      browseId: options.browseId,
+      params: options.params ? trimDiscoverText(options.params, 24) : "",
+      targetType: options.targetType,
+      error: error?.message || String(error)
+    });
+  }
+
+  return fetchYouTubeMusicBrowseDiscover({ ...options, returnShelves: true, useCookies: true });
+}
+
+async function fetchYtdlpDiscoverPlaylist(url, { limit, targetType = "track", timeoutMs, label }) {
+  const data = await runYtJson(
+    ["--extractor-args", "youtubetab:skip=authcheck", "--flat-playlist", "--playlist-end", String(limit), url],
+    label,
+    timeoutMs
+  );
+  const entries = Array.isArray(data?.entries) ? data.entries : (data ? [data] : []);
+  return normalizeDiscoverEntries(entries, { targetType });
+}
+
+async function expandDiscoverPlaylistsToTracks(playlists = [], { limit, timeoutMs, lang, region, useCookies = false } = {}) {
+  const items = [];
+  discoverDebug("playlist-expand:start", {
+    playlistCount: Array.isArray(playlists) ? playlists.length : 0,
+    limit,
+    playlists: (Array.isArray(playlists) ? playlists : []).slice(0, 6).map(summarizeDiscoverItem)
+  });
+  for (const playlist of Array.isArray(playlists) ? playlists : []) {
+    if (items.length >= limit) break;
+
+    const playlistId = getDiscoverPlaylistId(playlist);
+    if (!playlistId) {
+      discoverDebug("playlist-expand:skip-no-id", summarizeDiscoverItem(playlist));
+      continue;
+    }
+
+    const cacheKey = `${playlistId}:${limit}:${normalizeDiscoverLang(lang)}:${normalizeDiscoverRegion(region, lang)}`;
+    const cached = getCachedDiscoverValue(DISCOVER_PLAYLIST_TRACK_CACHE, cacheKey);
+    if (cached) {
+      items.push(...cached.slice(0, Math.max(1, limit - items.length)));
+      discoverDebug("playlist-expand:cache-hit", {
+        playlist: summarizeDiscoverItem(playlist),
+        trackCount: cached.length
+      });
+      continue;
+    }
+
+    let tracks = [];
+    const browseId = playlist.browseId || `VL${playlistId}`;
+    if (browseId) {
+      try {
+        tracks = await fetchPublicYouTubeMusicBrowseDiscover({
+          browseId,
+          limit: Math.max(1, limit - items.length),
+          targetType: "track",
+          preset: "",
+          lang,
+          region,
+          timeoutMs,
+          useCookies
+        });
+        discoverDebug("playlist-expand:api-tracks", {
+          playlist: summarizeDiscoverItem(playlist),
+          trackCount: tracks.length,
+          sample: tracks.slice(0, 4).map(summarizeDiscoverItem)
+        });
+      } catch (error) {
+        discoverDebug("playlist-expand:api-error", {
+          playlist: summarizeDiscoverItem(playlist),
+          error: error?.message || String(error)
+        });
+      }
+    }
+
+    try {
+      if (!tracks.length) {
+        tracks = await fetchYtdlpDiscoverPlaylist(
+          `https://music.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`,
+          {
+            limit: Math.max(1, limit - items.length),
+            timeoutMs: Math.min(timeoutMs, getDiscoverNumber(process.env.YOUTUBE_DISCOVER_PLAYLIST_TIMEOUT_MS || 10000, 10000, 1000, 30000)),
+            label: "youtube-discover-playlist-tracks"
+          }
+        );
+        discoverDebug("playlist-expand:ytdlp-tracks", {
+          playlist: summarizeDiscoverItem(playlist),
+          trackCount: tracks.length,
+          sample: tracks.slice(0, 4).map(summarizeDiscoverItem)
+        });
+      }
+
+      setCachedDiscoverValue(DISCOVER_PLAYLIST_TRACK_CACHE, cacheKey, tracks);
+      items.push(...tracks);
+    } catch (error) {
+      discoverDebug("playlist-expand:error", {
+        playlist: summarizeDiscoverItem(playlist),
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  const unique = uniqueDiscoverItems(items, limit);
+  discoverDebug("playlist-expand:done", {
+    rawItems: items.length,
+    uniqueItems: unique.length,
+    sample: unique.slice(0, 6).map(summarizeDiscoverItem)
+  });
+  return unique;
+}
+
+function getLocalSignalPatterns(lang = "en") {
+  const safeLang = normalizeDiscoverLang(lang);
+  const signals = {
+    tr: [/türk/i, /turk/i, /turkish/i, /türkiye/i, /turkiye/i, /yerel/i],
+    de: [/deutsch/i, /german/i, /deutschland/i, /germany/i],
+    fr: [/fran[çc]ais/i, /fran[çc]aise/i, /french/i, /france/i],
+    es: [/latino/i, /latin/i, /espa[ñn]ol/i, /spanish/i, /espa[ñn]a/i, /mexic/i],
+    en: [/english/i, /american/i, /british/i, /\bus\b/i, /\buk\b/i, /global/i, /international/i]
+  };
+  return signals[safeLang] || signals.en;
+}
+
+function matchesAnyPattern(value = "", patterns = []) {
+  const source = String(value || "");
+  return patterns.some((pattern) => pattern.test(source));
+}
+
+function getLocalCategoryScore(item = {}, lang = "en") {
+  const safeLang = normalizeDiscoverLang(lang);
+  const title = normalizeMusicHomeTitle(item.title || "").toLowerCase();
+  const localSignals = getLocalSignalPatterns(safeLang);
+  const foreignSignals = ["tr", "de", "fr", "es", "en"]
+    .filter((candidate) => candidate !== safeLang)
+    .flatMap((candidate) => getLocalSignalPatterns(candidate));
+  let score = 0;
+  if (/pop/i.test(title)) score += 4;
+  if (matchesAnyPattern(title, localSignals)) score += 8;
+  if (matchesAnyPattern(title, foreignSignals)) score -= 8;
+  if (/k[-\s]?pop/i.test(title)) score -= 5;
+  if (/hits?|top|chart|trend/i.test(title)) score += 1;
+  if (safeLang === "tr" && /parti|havam|enerji|dans|neşeli|neseli|eğlence|eglence/i.test(title)) score += 2;
+  return score;
+}
+
+function getDiscoverCategoryLimit(preset, limit) {
+  const safeLimit = Math.max(1, Number(limit) || 18);
+  if (preset === "local") return Math.max(60, Math.min(80, safeLimit * 3));
+  return Math.max(24, Math.min(60, safeLimit * 2));
+}
+
+function selectDiscoverCategories(categoryCandidates = [], { preset, lang, maxLocal = 3, maxDefault = 6 } = {}) {
+  if (preset !== "local") return categoryCandidates.slice(0, maxDefault);
+
+  const scored = categoryCandidates
+    .map((item) => ({ item, score: getLocalCategoryScore(item, lang) }))
+    .filter(({ score }) => score > 0);
+
+  if (scored.length) return scored.slice(0, maxLocal).map(({ item }) => item);
+  return categoryCandidates.slice(0, maxLocal);
+}
+
+async function getDiscoverCategoryPlaylists({ preset, limit, lang, region, timeoutMs }) {
+  const categoryLimit = getDiscoverCategoryLimit(preset, limit);
+  const categories = await fetchPublicYouTubeMusicBrowseDiscover({
+    browseId: "FEmusic_moods_and_genres",
+    limit: categoryLimit,
+    targetType: "playlist",
+    preset: "",
+    lang,
+    region,
+    timeoutMs
+  });
+
+  const categoryCandidates = categories
+    .filter((item) => item.browseId === "FEmusic_moods_and_genres_category" && item.params)
+    .sort((a, b) => {
+      if (preset !== "local") return 0;
+      return getLocalCategoryScore(b, lang) - getLocalCategoryScore(a, lang);
+    });
+
+  const selectedCategories = selectDiscoverCategories(categoryCandidates, {
+    preset,
+    lang,
+    maxLocal: 3,
+    maxDefault: 6
+  });
+
+  discoverDebug("categories:playlists:selected", {
+    preset,
+    rawCategoryItems: categories.length,
+    candidateCount: categoryCandidates.length,
+    selectedCount: selectedCategories.length,
+    candidates: categoryCandidates.slice(0, 10).map((item) => ({
+      ...summarizeDiscoverItem(item),
+      score: getLocalCategoryScore(item, lang)
+    })),
+    selected: selectedCategories.map((item) => ({
+      ...summarizeDiscoverItem(item),
+      score: getLocalCategoryScore(item, lang)
+    }))
+  });
+
+  let playlists = [];
+  for (const category of selectedCategories) {
+    if (playlists.length >= limit) break;
+    try {
+      const categoryPlaylists = await fetchPublicYouTubeMusicBrowseDiscover({
+        browseId: category.browseId,
+        params: category.params,
+        limit,
+        targetType: "playlist",
+        preset: "",
+        lang,
+        region,
+        timeoutMs
+      });
+      playlists = uniqueDiscoverItems([...playlists, ...categoryPlaylists], limit);
+      discoverDebug("categories:playlists:category", {
+        category: summarizeDiscoverItem(category),
+        returned: categoryPlaylists.length,
+        total: playlists.length,
+        sample: categoryPlaylists.slice(0, 5).map(summarizeDiscoverItem)
+      });
+    } catch (error) {
+      discoverDebug("categories:playlists:error", {
+        category: summarizeDiscoverItem(category),
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  discoverDebug("categories:playlists:done", {
+    preset,
+    playlistCount: playlists.length,
+    sample: playlists.slice(0, 8).map(summarizeDiscoverItem)
+  });
+  return playlists;
+}
+
+async function getDiscoverCategoryTracks({ preset, limit, lang, region, timeoutMs }) {
+  const categoryLimit = getDiscoverCategoryLimit(preset, limit);
+  const categories = await fetchPublicYouTubeMusicBrowseDiscover({
+    browseId: "FEmusic_moods_and_genres",
+    limit: categoryLimit,
+    targetType: "playlist",
+    preset: "",
+    lang,
+    region,
+    timeoutMs
+  });
+
+  const categoryCandidates = categories
+    .filter((item) => item.browseId === "FEmusic_moods_and_genres_category" && item.params)
+    .sort((a, b) => {
+      if (preset !== "local") return 0;
+      return getLocalCategoryScore(b, lang) - getLocalCategoryScore(a, lang);
+    });
+
+  const selectedCategories = selectDiscoverCategories(categoryCandidates, {
+    preset,
+    lang,
+    maxLocal: 3,
+    maxDefault: 6
+  });
+
+  discoverDebug("categories:tracks:selected", {
+    preset,
+    rawCategoryItems: categories.length,
+    candidateCount: categoryCandidates.length,
+    selectedCount: selectedCategories.length,
+    candidates: categoryCandidates.slice(0, 10).map((item) => ({
+      ...summarizeDiscoverItem(item),
+      score: getLocalCategoryScore(item, lang)
+    })),
+    selected: selectedCategories.map((item) => ({
+      ...summarizeDiscoverItem(item),
+      score: getLocalCategoryScore(item, lang)
+    }))
+  });
+
+  let tracks = [];
+  for (const category of selectedCategories) {
+    if (tracks.length >= limit) break;
+    try {
+      const categoryTracks = await fetchPublicYouTubeMusicBrowseDiscover({
+        browseId: category.browseId,
+        params: category.params,
+        limit,
+        targetType: "track",
+        preset: "",
+        lang,
+        region,
+        timeoutMs
+      });
+      tracks = uniqueDiscoverItems([...tracks, ...categoryTracks], limit);
+      discoverDebug("categories:tracks:category", {
+        category: summarizeDiscoverItem(category),
+        returned: categoryTracks.length,
+        total: tracks.length,
+        sample: categoryTracks.slice(0, 5).map(summarizeDiscoverItem)
+      });
+    } catch (error) {
+      discoverDebug("categories:tracks:error", {
+        category: summarizeDiscoverItem(category),
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  discoverDebug("categories:tracks:done", {
+    preset,
+    trackCount: tracks.length,
+    sample: tracks.slice(0, 8).map(summarizeDiscoverItem)
+  });
+  return tracks;
+}
+
+async function getDiscoverItemsForPreset({ preset, limit, lang, region, timeoutMs }) {
+  const safePreset = normalizeDiscoverPreset(preset);
+  discoverDebug("preset:start", { preset: safePreset, limit, lang, region });
+
+  if (safePreset === "popular") {
+    const chartPlaylists = await fetchPublicYouTubeMusicBrowseDiscover({
+      browseId: "FEmusic_charts",
+      limit: Math.max(12, Math.min(40, limit)),
+      targetType: "playlist",
+      preset: "",
+      lang,
+      region,
+      timeoutMs
+    }).then((items) => items.filter((item) => getDiscoverPlaylistId(item)));
+    discoverDebug("preset:popular:chart-playlists", {
+      count: chartPlaylists.length,
+      sample: chartPlaylists.slice(0, 8).map(summarizeDiscoverItem)
+    });
+    const chartTracks = await expandDiscoverPlaylistsToTracks(chartPlaylists, { limit, timeoutMs, lang, region });
+    if (chartTracks.length) {
+      discoverDebug("preset:popular:return-expanded-tracks", {
+        count: chartTracks.length,
+        sample: chartTracks.slice(0, 6).map(summarizeDiscoverItem)
+      });
+      return chartTracks;
+    }
+
+    const directTracks = await fetchPublicYouTubeMusicBrowseDiscover({
+      browseId: "FEmusic_charts",
+      limit,
+      targetType: "track",
+      preset: "",
+      lang,
+      region,
+      timeoutMs
+    });
+    discoverDebug("preset:popular:return-direct-tracks", {
+      count: directTracks.length,
+      sample: directTracks.slice(0, 6).map(summarizeDiscoverItem)
+    });
+    return directTracks;
+  }
+
+  if (safePreset === "new") {
+    try {
+      const newVideos = await fetchPublicYouTubeMusicBrowseDiscover({
+        browseId: "FEmusic_new_releases_videos",
+        limit,
+        targetType: "track",
+        preset: "",
+        lang,
+        region,
+        timeoutMs
+      });
+      discoverDebug("preset:new:direct-videos", {
+        count: newVideos.length,
+        sample: newVideos.slice(0, 8).map(summarizeDiscoverItem)
+      });
+      if (newVideos.length) return newVideos;
+    } catch (error) {
+      discoverDebug("preset:new:direct-videos-error", { error: error?.message || String(error) });
+    }
+
+    const exploreTracks = await fetchPublicYouTubeMusicBrowseDiscover({
+      browseId: "FEmusic_explore",
+      limit,
+      targetType: "track",
+      preset: "new",
+      lang,
+      region,
+      timeoutMs
+    });
+    discoverDebug("preset:new:return-explore", {
+      count: exploreTracks.length,
+      sample: exploreTracks.slice(0, 8).map(summarizeDiscoverItem)
+    });
+    return exploreTracks;
+  }
+
+  if (safePreset === "playlist") {
+    const playlists = await getDiscoverCategoryPlaylists({ preset: "playlist", limit, lang, region, timeoutMs });
+    discoverDebug("preset:playlist:return", {
+      count: playlists.length,
+      sample: playlists.slice(0, 8).map(summarizeDiscoverItem)
+    });
+    return playlists;
+  }
+
+  const localDirectTracks = await getDiscoverCategoryTracks({ preset: "local", limit, lang, region, timeoutMs });
+  if (localDirectTracks.length) {
+    discoverDebug("preset:local:return-direct-category-tracks", {
+      count: localDirectTracks.length,
+      sample: localDirectTracks.slice(0, 8).map(summarizeDiscoverItem)
+    });
+    return localDirectTracks;
+  }
+
+  const localPlaylists = await getDiscoverCategoryPlaylists({ preset: "local", limit: Math.max(12, Math.min(40, limit)), lang, region, timeoutMs });
+  const localTracks = await expandDiscoverPlaylistsToTracks(localPlaylists, { limit, timeoutMs, lang, region });
+  if (localTracks.length) {
+    discoverDebug("preset:local:return-expanded-tracks", {
+      count: localTracks.length,
+      sample: localTracks.slice(0, 8).map(summarizeDiscoverItem)
+    });
+    return localTracks;
+  }
+
+  const fallbackChartPlaylists = await fetchPublicYouTubeMusicBrowseDiscover({
+    browseId: "FEmusic_charts",
+    limit: Math.max(12, Math.min(40, limit)),
+    targetType: "playlist",
+    preset: "",
+    lang,
+    region,
+    timeoutMs
+  }).then((items) => items.filter((item) => getDiscoverPlaylistId(item)));
+  const fallbackTracks = await expandDiscoverPlaylistsToTracks(fallbackChartPlaylists, { limit, timeoutMs, lang, region });
+  discoverDebug("preset:local:return-fallback-chart", {
+    playlistCount: fallbackChartPlaylists.length,
+    count: fallbackTracks.length,
+    sample: fallbackTracks.slice(0, 8).map(summarizeDiscoverItem)
+  });
+  return fallbackTracks;
+}
+
+function isLikelyTurkishDiscoverText(value = "") {
+  const text = normalizeMusicHomeTitle(value).toLowerCase();
+  return (
+    /[çğıöşü]/i.test(text) ||
+    /\b(türk|turk|turkish|türkçe|turkce|kürtçe|kurtce|arabesk|yeni\s+klip|kırgınım|kirginim|değiştiremezsin|degistiremezsin|sebebi\s+yar|durum\s+çok\s+acil|durum\s+cok\s+acil)\b/i.test(text)
+  );
+}
+
+function filterDiscoverItemsForLocale(items = [], { preset, lang } = {}) {
+  if (normalizeDiscoverPreset(preset) !== "new" || normalizeDiscoverLang(lang) !== "en") {
+    return items;
+  }
+
+  const filtered = (Array.isArray(items) ? items : []).filter((item) => {
+    const text = `${item?.title || ""} ${item?.uploader || ""}`;
+    return !isLikelyTurkishDiscoverText(text);
+  });
+
+  discoverDebug("locale-filter:new", {
+    lang,
+    before: Array.isArray(items) ? items.length : 0,
+    after: filtered.length,
+    removed: (Array.isArray(items) ? items : [])
+      .filter((item) => isLikelyTurkishDiscoverText(`${item?.title || ""} ${item?.uploader || ""}`))
+      .slice(0, 6)
+      .map(summarizeDiscoverItem)
+  });
+
+  return filtered;
+}
+
+// Reads queryless regional discovery feeds for the ytlive preset buttons.
+export async function discoverYouTubeContent({ preset = "popular", limit = 18, page = 1, lang = "en", region = "" } = {}) {
+  const safePreset = normalizeDiscoverPreset(preset);
+  const safeLimit = normalizeSearchLimit(limit);
+  const safePage = normalizeDiscoverPage(page);
+  const safeLang = normalizeDiscoverLang(lang);
+  const safeRegion = normalizeDiscoverRegion(region, safeLang);
+  const targetType = getDiscoverTargetType(safePreset);
+  const offset = (safePage - 1) * safeLimit;
+  const fetchLimit = Math.min(120, offset + safeLimit + 1);
+  const timeout = getDiscoverNumber(
+    process.env.YOUTUBE_DISCOVER_TIMEOUT_MS || process.env.YOUTUBE_SEARCH_TIMEOUT_MS || 12000,
+    12000,
+    1000,
+    30000
+  );
+  const apiTimeout = Math.min(
+    timeout,
+    getDiscoverNumber(process.env.YOUTUBE_DISCOVER_API_TIMEOUT_MS || 9000, 9000, 1000, 30000)
+  );
+  let items = [];
+  const resultCacheKey = JSON.stringify({
+    preset: safePreset,
+    limit: safeLimit,
+    page: safePage,
+    lang: safeLang,
+    region: safeRegion
+  });
+  const cachedResult = getCachedDiscoverValue(DISCOVER_RESULT_CACHE, resultCacheKey);
+  if (cachedResult) {
+    discoverDebug("request:cache-hit", {
+      preset: safePreset,
+      page: safePage,
+      itemCount: cachedResult.items?.length || 0,
+      hasMore: !!cachedResult.hasMore
+    });
+    return cachedResult;
+  }
+
+  discoverDebug("request:start", {
+    preset: safePreset,
+    limit: safeLimit,
+    page: safePage,
+    lang: safeLang,
+    region: safeRegion,
+    targetType,
+    fetchLimit,
+    timeout
+  });
+  try {
+    items = await getDiscoverItemsForPreset({
+      preset: safePreset,
+      limit: fetchLimit,
+      lang: safeLang,
+      region: safeRegion,
+      timeoutMs: apiTimeout
+    });
+    items = filterDiscoverItemsForLocale(items, { preset: safePreset, lang: safeLang });
+  } catch (error) {
+    console.warn(`YouTube Music discover ${safePreset} failed:`, error?.message || error);
+  }
+
+  const pageItems = items.slice(offset, offset + safeLimit).map((item, index) => ({
+    ...item,
+    index: offset + index + 1
+  }));
+
+  discoverDebug("request:done", {
+    preset: safePreset,
+    totalItems: items.length,
+    offset,
+    pageItems: pageItems.length,
+    hasMore: items.length > offset + safeLimit,
+    sample: pageItems.slice(0, 8).map(summarizeDiscoverItem)
+  });
+
+  return setCachedDiscoverValue(DISCOVER_RESULT_CACHE, resultCacheKey, {
+    query: "",
+    filterOnly: true,
+    preset: safePreset,
+    type: targetType,
+    lang: safeLang,
+    region: safeRegion,
+    page: safePage,
+    hasMore: items.length > offset + safeLimit,
+    items: pageItems
+  });
+}
+
+function hasUsableCookieSource() {
+  const cookieFile = String(process.env.YTDLP_COOKIES || "").trim();
+  if (cookieFile) {
+    try {
+      if (fs.existsSync(cookieFile) && fs.statSync(cookieFile).size > 0) {
+        return true;
+      }
+    } catch {}
+  }
+
+  return !!String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
+}
+
+function normalizeMusicHomeNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function normalizeMusicHomeTitle(value = "") {
+  return toNFC(String(value || "").replace(/\s+/g, " ").trim());
+}
+
+function normalizeMusicHomeTitleKey(value = "") {
+  return normalizeMusicHomeTitle(value)
+    .toLocaleLowerCase("tr")
+    .replace(/[ıİ]/g, "i")
+    .replace(/[ğ]/g, "g")
+    .replace(/[ü]/g, "u")
+    .replace(/[ş]/g, "s")
+    .replace(/[ö]/g, "o")
+    .replace(/[ç]/g, "c")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getMusicHomeShelfTitle(node = {}) {
+  return normalizeMusicHomeTitle(
+    node?.title ||
+    node?.playlist_title ||
+    node?.name ||
+    node?.label ||
+    node?.tab_title ||
+    node?.section_title ||
+    ""
+  );
+}
+
+function isMusicHomePlayableItem(item = {}) {
+  const url = String(item.webpage_url || item.url || "");
+  const id = String(item.id || "");
+  if (!url) return false;
+  if (isLikelyYouTubeVideoId(id)) return true;
+  if (extractSearchPlaylistId(url)) return true;
+  return /(?:\/watch\?|youtu\.be\/|\/playlist\?)/i.test(url);
+}
+
+function normalizeMusicHomeItem(entry = {}, index = 0) {
+  const base = processEntry(entry, index);
+  const type = inferSearchEntryType(entry, base);
+  const webpageUrl = normalizeSearchWebpageUrl(entry, base, type);
+  const item = {
+    ...base,
+    index: index + 1,
+    type,
+    source: "youtube_music_home",
+    webpage_url: webpageUrl,
+    url: webpageUrl
+  };
+
+  if (!item.title && !item.id && !item.webpage_url) return null;
+  if (!isMusicHomePlayableItem(item)) return null;
+  return item;
+}
+
+function getMusicHomeItemKey(item = {}) {
+  const playlistId = extractSearchPlaylistId(item.webpage_url || item.url || "");
+  const paramKey = item.params ? `${item.id || item.browseId || ""}:${item.params}` : "";
+  return String(
+    paramKey ||
+    item.id ||
+    playlistId ||
+    item.webpage_url ||
+    item.url ||
+    `${item.title || ""}:${item.uploader || ""}`
+  ).trim().toLowerCase();
+}
+
+function uniqueMusicHomeItems(items = [], limit = 12) {
+  const seen = new Set();
+  const out = [];
+
+  for (const item of items) {
+    const key = getMusicHomeItemKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= limit) break;
+  }
+
+  return out;
+}
+
+function buildMusicHomeShelves(data, { maxShelves = 6, limitPerShelf = 12 } = {}) {
+  const shelves = [];
+  const seenShelves = new Set();
+  const visited = new WeakSet();
+
+  const addShelf = (title, items) => {
+    const shelfItems = uniqueMusicHomeItems(items, limitPerShelf);
+    if (!shelfItems.length) return;
+
+    const safeTitle = normalizeMusicHomeTitle(title) || "YouTube Music";
+    const firstKey = getMusicHomeItemKey(shelfItems[0]);
+    const shelfKey = `${safeTitle.toLowerCase()}:${firstKey}`;
+    if (seenShelves.has(shelfKey)) return;
+
+    seenShelves.add(shelfKey);
+    shelves.push({
+      title: safeTitle,
+      items: shelfItems
+    });
+  };
+
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 7 || shelves.length >= maxShelves) return;
+    if (visited.has(node)) return;
+    visited.add(node);
+
+    const entries = Array.isArray(node.entries) ? node.entries.filter(Boolean) : [];
+    if (entries.length) {
+      const directItems = entries
+        .map((entry, index) => normalizeMusicHomeItem(entry, index))
+        .filter(Boolean);
+
+      if (directItems.length) {
+        const title = getMusicHomeShelfTitle(node) || (depth === 0 ? "YouTube Music" : "");
+        if (title || directItems.length > 1) {
+          addShelf(title || "YouTube Music", directItems);
+        }
+      }
+
+      for (const entry of entries) {
+        walk(entry, depth + 1);
+        if (shelves.length >= maxShelves) return;
+      }
+    }
+
+    const nestedKeys = ["contents", "items", "sections", "tabs", "shelves", "children"];
+    for (const key of nestedKeys) {
+      const value = node[key];
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          walk(child, depth + 1);
+          if (shelves.length >= maxShelves) return;
+        }
+      } else if (value && typeof value === "object") {
+        walk(value, depth + 1);
+      }
+    }
+  };
+
+  walk(data);
+  return shelves.slice(0, maxShelves);
+}
+
+function hasCookieFile(filePath = "") {
+  const p = String(filePath || "").trim();
+  if (!p) return false;
+  try {
+    return fs.existsSync(p) && fs.statSync(p).size > 0;
+  } catch {
+    return false;
+  }
+}
+
+let ytmExportedCookieCache = {
+  path: "",
+  expiresAt: 0
+};
+
+function pruneMusicHomeCookieExports() {
+  try {
+    const entries = fs
+      .readdirSync(YTM_COOKIE_EXPORT_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /^ytm-cookies-.*\.txt$/i.test(entry.name))
+      .map((entry) => {
+        const abs = path.join(YTM_COOKIE_EXPORT_DIR, entry.name);
+        let mtimeMs = 0;
+        try { mtimeMs = fs.statSync(abs).mtimeMs || 0; } catch {}
+        return { abs, mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    const now = Date.now();
+    entries.forEach((entry, index) => {
+      if (index < 4 && now - entry.mtimeMs < 10 * 60 * 1000) return;
+      try { fs.unlinkSync(entry.abs); } catch {}
+    });
+  } catch {}
+}
+
+function exportBrowserCookiesForMusicHome(timeoutMs = 12000) {
+  const cookieBrowser = String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
+  if (!cookieBrowser) return Promise.resolve("");
+
+  const YTDLP_BIN = resolveYtDlp();
+  if (!YTDLP_BIN) {
+    return Promise.reject(new Error("yt-dlp not found. Please install it or set YTDLP_BIN to its path."));
+  }
+
+  fs.mkdirSync(YTM_COOKIE_EXPORT_DIR, { recursive: true });
+  pruneMusicHomeCookieExports();
+  const cookiePath = path.join(YTM_COOKIE_EXPORT_DIR, `ytm-cookies-${Date.now()}-${process.pid}.txt`);
+  fs.writeFileSync(cookiePath, "# Netscape HTTP Cookie File\n");
+
+  const args = [
+    "--ignore-config",
+    "--no-warnings",
+    "--cookies-from-browser", cookieBrowser,
+    "--cookies", cookiePath,
+    "--skip-download",
+    "--simulate",
+    "--retries", "0",
+    "--socket-timeout", "1",
+    YTM_HOME_BROWSE_URL
+  ];
+
+  return new Promise((resolve, reject) => {
+    let stderrData = "";
+    const child = spawn(YTDLP_BIN, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const timeoutId = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+    }, timeoutMs);
+
+    child.stderr.on("data", (chunk) => {
+      stderrData += chunk.toString();
+    });
+
+    child.on("close", () => {
+      clearTimeout(timeoutId);
+      if (hasCookieFile(cookiePath) && fs.statSync(cookiePath).size > "# Netscape HTTP Cookie File\n".length) {
+        resolve(cookiePath);
+        return;
+      }
+      reject(new Error(`YouTube Music browser cookies could not be exported.\n${stderrData.slice(-500)}`));
+    });
+
+    child.on("error", (error) => {
+      clearTimeout(timeoutId);
+      reject(new Error(`YouTube Music browser cookie export failed: ${error.message}`));
+    });
+  });
+}
+
+async function resolveMusicHomeCookieFile() {
+  const cookieFile = String(process.env.YTDLP_COOKIES || "").trim();
+  if (hasCookieFile(cookieFile)) return cookieFile;
+  if (String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim()) {
+    if (ytmExportedCookieCache.expiresAt > Date.now() && hasCookieFile(ytmExportedCookieCache.path)) {
+      return ytmExportedCookieCache.path;
+    }
+
+    const exported = await exportBrowserCookiesForMusicHome();
+    ytmExportedCookieCache = {
+      path: exported,
+      expiresAt: Date.now() + getDiscoverNumber(process.env.YTM_COOKIE_EXPORT_CACHE_TTL_MS || 300000, 300000, 0, 3600000)
+    };
+    return exported;
+  }
+  return "";
+}
+
+function parseNetscapeCookieFile(cookieFile, targetHost = "music.youtube.com") {
+  if (!hasCookieFile(cookieFile)) return [];
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const lines = fs.readFileSync(cookieFile, "utf8").split(/\r?\n/);
+  const cookies = [];
+
+  for (let line of lines) {
+    if (!line) continue;
+    if (line.startsWith("#HttpOnly_")) {
+      line = line.slice("#HttpOnly_".length);
+    } else if (line.startsWith("#")) {
+      continue;
+    }
+
+    const parts = line.split("\t");
+    if (parts.length < 7) continue;
+
+    const [domainRaw, , cookiePath, secure, expiryRaw, name, ...valueParts] = parts;
+    const value = valueParts.join("\t");
+    const domain = String(domainRaw || "").replace(/^\./, "").toLowerCase();
+    const expires = Number(expiryRaw || 0);
+    const host = targetHost.toLowerCase();
+    const domainMatches = host === domain || host.endsWith(`.${domain}`);
+
+    if (!domainMatches || !name) continue;
+    if (expires && Number.isFinite(expires) && expires < nowSec) continue;
+
+    cookies.push({
+      domain,
+      path: cookiePath || "/",
+      secure: /^true$/i.test(String(secure || "")),
+      expires,
+      name,
+      value
+    });
+  }
+
+  return cookies;
+}
+
+function buildCookieHeader(cookies = []) {
+  return cookies
+    .filter((cookie) => cookie?.name && cookie.value != null)
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join("; ");
+}
+
+function getCookieValue(cookies = [], names = []) {
+  const wanted = names.map((name) => String(name).toLowerCase());
+  const found = cookies.find((cookie) => wanted.includes(String(cookie.name || "").toLowerCase()));
+  return found?.value || "";
+}
+
+function buildSapisidAuthHeader(cookies = []) {
+  const sapisid = getCookieValue(cookies, ["SAPISID", "__Secure-3PAPISID", "APISID"]);
+  if (!sapisid) return "";
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const hash = createHash("sha1")
+    .update(`${timestamp} ${sapisid} ${YTM_ORIGIN}`)
+    .digest("hex");
+  return `SAPISIDHASH ${timestamp}_${hash}`;
+}
+
+function getInnertubeLang() {
+  return String(process.env.YT_LANG || "en-US").trim() || "en-US";
+}
+
+function getInnertubeRegion() {
+  return String(process.env.YT_DEFAULT_REGION || "US").trim().toUpperCase() || "US";
+}
+
+function getInnertubeLocale(lang = "", region = "") {
+  const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
+  const safeRegion = normalizeDiscoverRegion(region || getInnertubeRegion(), safeLang);
+  return {
+    lang: safeLang,
+    region: safeRegion,
+    hl: `${safeLang}-${safeRegion}`,
+    acceptLanguage: `${safeLang}-${safeRegion},${safeLang};q=0.9,en;q=0.8`
+  };
+}
+
+function getDefaultYtmClientVersion() {
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `1.${stamp}.01.00`;
+}
+
+function extractYtmBootstrapConfig(html = "") {
+  const source = String(html || "");
+  const pick = (patterns) => {
+    for (const pattern of patterns) {
+      const match = source.match(pattern);
+      if (match?.[1]) {
+        try { return JSON.parse(`"${match[1]}"`); } catch { return match[1]; }
+      }
+    }
+    return "";
+  };
+
+  return {
+    clientVersion: pick([
+      /"INNERTUBE_CLIENT_VERSION"\s*:\s*"([^"]+)"/,
+      /"clientVersion"\s*:\s*"([^"]+)"/
+    ]),
+    visitorData: pick([
+      /"VISITOR_DATA"\s*:\s*"([^"]+)"/,
+      /"visitorData"\s*:\s*"([^"]+)"/
+    ])
+  };
+}
+
+async function fetchYtmBootstrapConfig(cookieHeader, timeoutMs = 6000) {
+  if (!cookieHeader) return {};
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${YTM_ORIGIN}/`, {
+      headers: {
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
+        "Cookie": cookieHeader,
+        "User-Agent": DEFAULT_USER_AGENT
+      },
+      signal: controller.signal
+    });
+    const html = await response.text();
+    return response.ok ? extractYtmBootstrapConfig(html) : {};
+  } catch {
+    return {};
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function textFromRuns(value) {
+  if (!value) return "";
+  if (typeof value === "string") return normalizeMusicHomeTitle(value);
+  if (value.simpleText) return normalizeMusicHomeTitle(value.simpleText);
+  if (Array.isArray(value.runs)) {
+    return normalizeMusicHomeTitle(value.runs.map((run) => run?.text || "").join(""));
+  }
+  if (value.text) return textFromRuns(value.text);
+  if (value.accessibility?.accessibilityData?.label) {
+    return normalizeMusicHomeTitle(value.accessibility.accessibilityData.label);
+  }
+  if (value.accessibilityData?.label) return normalizeMusicHomeTitle(value.accessibilityData.label);
+  return "";
+}
+
+function collectYtmSearchableText(value, { maxDepth = 8, maxParts = 120 } = {}) {
+  const parts = [];
+  const visited = new WeakSet();
+
+  const add = (text) => {
+    const safeText = normalizeMusicHomeTitle(text);
+    if (safeText && !parts.includes(safeText)) parts.push(safeText);
+  };
+
+  const walk = (node, depth = 0) => {
+    if (parts.length >= maxParts || depth > maxDepth || node == null) return;
+    if (typeof node === "string") {
+      add(node);
+      return;
+    }
+    if (typeof node !== "object") return;
+    if (visited.has(node)) return;
+    visited.add(node);
+
+    add(textFromRuns(node));
+
+    for (const [key, child] of Object.entries(node)) {
+      if (parts.length >= maxParts) return;
+      if (/(thumbnail|icon|tracking|logging|token|params|url|commandMetadata|webCommandMetadata)/i.test(key)) {
+        continue;
+      }
+      walk(child, depth + 1);
+    }
+  };
+
+  walk(value);
+  return parts.join(" ");
+}
+
+function normalizeYtmThumbnailUrl(url = "") {
+  const source = String(url || "").trim();
+  if (!source) return null;
+  if (source.startsWith("//")) return `https:${source}`;
+  if (source.startsWith("/")) return `${YTM_ORIGIN}${source}`;
+  return source;
+}
+
+function findYtmThumbnail(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const candidates = [
+    value.thumbnail,
+    value.thumbnails,
+    value.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail,
+    value.thumbnailRenderer?.croppedSquareThumbnailRenderer?.thumbnail,
+    value.thumbnail?.musicThumbnailRenderer?.thumbnail,
+    value.thumbnail?.croppedSquareThumbnailRenderer?.thumbnail,
+    value.musicThumbnailRenderer?.thumbnail,
+    value.croppedSquareThumbnailRenderer?.thumbnail
+  ];
+
+  for (const candidate of candidates) {
+    const thumbs = Array.isArray(candidate) ? candidate : candidate?.thumbnails;
+    if (Array.isArray(thumbs) && thumbs.length) {
+      return normalizeYtmThumbnailUrl(thumbs.at(-1)?.url);
+    }
+  }
+
+  const visited = new WeakSet();
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 5 || visited.has(node)) return null;
+    visited.add(node);
+
+    const thumbs = Array.isArray(node.thumbnails) ? node.thumbnails : null;
+    if (thumbs?.length) return normalizeYtmThumbnailUrl(thumbs.at(-1)?.url);
+
+    for (const [key, child] of Object.entries(node)) {
+      if (!/(thumbnail|image|avatar|cover)/i.test(key)) continue;
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          const found = walk(item, depth + 1);
+          if (found) return found;
+        }
+      } else {
+        const found = walk(child, depth + 1);
+        if (found) return found;
+      }
+    }
+
+    return null;
+  };
+
+  return walk(value);
+}
+
+function findYtmMenuEndpoint(value) {
+  const items = value?.menu?.menuRenderer?.items;
+  if (!Array.isArray(items)) return null;
+
+  for (const item of items) {
+    const endpoint =
+      item?.menuNavigationItemRenderer?.navigationEndpoint ||
+      item?.menuServiceItemRenderer?.serviceEndpoint;
+    if (endpoint?.watchEndpoint || endpoint?.watchPlaylistEndpoint || endpoint?.browseEndpoint) {
+      return endpoint;
+    }
+  }
+
+  return null;
+}
+
+function findYtmEndpoint(value) {
+  if (!value || typeof value !== "object") return null;
+  if (value.watchEndpoint || value.watchPlaylistEndpoint || value.browseEndpoint) return value;
+
+  return (
+    value.navigationEndpoint ||
+    value.clickCommand ||
+    value.playNavigationEndpoint ||
+    value.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint ||
+    value.thumbnailOverlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint ||
+    value.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.navigationEndpoint ||
+    findYtmMenuEndpoint(value) ||
+    null
+  );
+}
+
+function ytmEndpointToItem(endpoint = {}, renderer = {}) {
+  const watch = endpoint.watchEndpoint;
+  const watchPlaylist = endpoint.watchPlaylistEndpoint;
+  const browse = endpoint.browseEndpoint;
+  const rendererVideoId =
+    renderer?.playlistItemData?.videoId ||
+    renderer?.videoId ||
+    renderer?.onTap?.watchEndpoint?.videoId ||
+    "";
+
+  if (watch?.videoId || rendererVideoId) {
+    const url = new URL(`${YTM_ORIGIN}/watch`);
+    const videoId = watch?.videoId || rendererVideoId;
+    url.searchParams.set("v", videoId);
+    return {
+      id: videoId,
+      type: "track",
+      playlistId: "",
+      webpage_url: url.toString()
+    };
+  }
+
+  const playlistId =
+    watchPlaylist?.playlistId ||
+    renderer?.playlistId ||
+    (browse?.browseId && /^VL/i.test(browse.browseId) ? browse.browseId.slice(2) : "");
+  if (playlistId) {
+    return {
+      id: playlistId,
+      type: "playlist",
+      browseId: browse?.browseId || "",
+      playlistId,
+      params: browse?.params || "",
+      webpage_url: `${YTM_ORIGIN}/playlist?list=${encodeURIComponent(playlistId)}`
+    };
+  }
+
+  const browseId =
+    browse?.browseId ||
+    renderer?.browseId ||
+    (browse?.params ? "FEmusic_moods_and_genres_category" : "");
+  if (browseId) {
+    const flexText = (Array.isArray(renderer?.flexColumns) ? renderer.flexColumns : [])
+      .map((column) => textFromRuns(column?.musicResponsiveListItemFlexColumnRenderer?.text))
+      .filter(Boolean)
+      .join(" ");
+    const rendererText = normalizeMusicHomeTitle([
+      textFromRuns(renderer?.subtitle),
+      textFromRuns(renderer?.secondSubtitle),
+      textFromRuns(renderer?.byline),
+      flexText
+    ].filter(Boolean).join(" "));
+    const isArtist = /(artist|sanatçı|sanatci|künstler|artiste|artista)/i.test(rendererText);
+    return {
+      id: browseId,
+      type: isArtist ? "artist" : (/^MPRE/i.test(browseId) ? "album" : "playlist"),
+      browseId,
+      params: browse?.params || renderer?.params || "",
+      webpage_url: `${YTM_ORIGIN}/browse/${encodeURIComponent(browseId)}`
+    };
+  }
+
+  return null;
+}
+
+function getYtmRendererTitle(renderer = {}) {
+  const flex = renderer.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text;
+  return textFromRuns(renderer.title || renderer.buttonText || renderer.text || flex || renderer.name);
+}
+
+function getYtmRendererSubtitle(renderer = {}) {
+  const flex = (Array.isArray(renderer.flexColumns) ? renderer.flexColumns.slice(1) : [])
+    .map((column) => textFromRuns(column?.musicResponsiveListItemFlexColumnRenderer?.text))
+    .filter(Boolean)
+    .join(" - ");
+
+  return (
+    textFromRuns(renderer.subtitle) ||
+    textFromRuns(renderer.secondSubtitle) ||
+    textFromRuns(renderer.straplineText) ||
+    textFromRuns(renderer.byline) ||
+    flex ||
+    ""
+  );
+}
+
+function getYtmRendererDuration(renderer = {}) {
+  const fixed = (Array.isArray(renderer.fixedColumns) ? renderer.fixedColumns : [])
+    .map((column) => textFromRuns(column?.musicResponsiveListItemFixedColumnRenderer?.text))
+    .find(Boolean);
+  return fixed || textFromRuns(renderer.duration) || "";
+}
+
+function getDirectYtmItemRenderer(value = {}) {
+  return (
+    value.musicTwoRowItemRenderer ||
+    value.musicResponsiveListItemRenderer ||
+    value.musicMultiRowListItemRenderer ||
+    value.musicNavigationButtonRenderer ||
+    value.musicCardShelfRenderer ||
+    null
+  );
+}
+
+function findYtmItemRenderer(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 5) return null;
+
+  const direct = getDirectYtmItemRenderer(value);
+  if (direct) return direct;
+
+  for (const child of Object.values(value)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const found = findYtmItemRenderer(item, depth + 1);
+        if (found) return found;
+      }
+    } else if (child && typeof child === "object") {
+      const found = findYtmItemRenderer(child, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function normalizeYtmRendererItem(value = {}, index = 0) {
+  const renderer = findYtmItemRenderer(value) || value;
+  if (!renderer || typeof renderer !== "object") return null;
+
+  const endpoint = findYtmEndpoint(renderer);
+  const item = ytmEndpointToItem(endpoint || {}, renderer);
+  if (!item?.webpage_url) return null;
+
+  const title = getYtmRendererTitle(renderer);
+  if (!title && !item.id) return null;
+  const searchableText = collectYtmSearchableText(renderer);
+
+  return {
+    index: index + 1,
+    id: item.id,
+    type: item.type,
+    browseId: item.browseId || null,
+    playlistId: item.playlistId || null,
+    params: item.params || null,
+    title: title || item.id,
+    duration: null,
+    duration_string: getYtmRendererDuration(renderer) || null,
+    uploader: getYtmRendererSubtitle(renderer),
+    searchableText,
+    webpage_url: item.webpage_url,
+    url: item.webpage_url,
+    thumbnail: findYtmThumbnail(renderer),
+    source: "youtube_music_home"
+  };
+}
+
+function getYtmShelfTitle(renderer = {}) {
+  return (
+    textFromRuns(renderer.header?.musicCarouselShelfBasicHeaderRenderer?.title) ||
+    textFromRuns(renderer.header?.musicShelfBasicHeaderRenderer?.title) ||
+    textFromRuns(renderer.header?.runs) ||
+    textFromRuns(renderer.title) ||
+    "YouTube Music"
+  );
+}
+
+function findYtmBrowseEndpoint(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 5) return null;
+  if (value.browseEndpoint) return value.browseEndpoint;
+  if (value.navigationEndpoint?.browseEndpoint) return value.navigationEndpoint.browseEndpoint;
+
+  for (const child of Object.values(value)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const found = findYtmBrowseEndpoint(item, depth + 1);
+        if (found) return found;
+      }
+    } else if (child && typeof child === "object") {
+      const found = findYtmBrowseEndpoint(child, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function getYtmShelfBrowseMeta(renderer = {}) {
+  const browse = findYtmBrowseEndpoint({
+    header: renderer.header,
+    title: renderer.title,
+    navigationEndpoint: renderer.navigationEndpoint,
+    moreContentButton: renderer.moreContentButton
+  });
+  return {
+    browseId: browse?.browseId || "",
+    params: browse?.params || ""
+  };
+}
+
+function buildMusicHomeShelvesFromInnertube(data, { maxShelves = 6, limitPerShelf = 12 } = {}) {
+  const shelves = [];
+  const seenShelves = new Set();
+
+  const addShelf = (title, rawItems, meta = {}) => {
+    const items = uniqueMusicHomeItems(
+      (Array.isArray(rawItems) ? rawItems : [])
+        .map((item, index) => normalizeYtmRendererItem(item, index))
+        .filter(Boolean),
+      limitPerShelf
+    );
+    if (!items.length) return;
+
+    const safeTitle = normalizeMusicHomeTitle(title) || "YouTube Music";
+    const key = `${safeTitle.toLowerCase()}:${getMusicHomeItemKey(items[0])}`;
+    if (seenShelves.has(key)) return;
+    seenShelves.add(key);
+    shelves.push({ title: safeTitle, ...meta, items });
+  };
+
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 12 || shelves.length >= maxShelves) return;
+
+    const carousel = node.musicCarouselShelfRenderer;
+    if (carousel?.contents) {
+      addShelf(getYtmShelfTitle(carousel), carousel.contents, getYtmShelfBrowseMeta(carousel));
+    }
+
+    const shelf = node.musicShelfRenderer;
+    if (shelf?.contents) {
+      addShelf(getYtmShelfTitle(shelf), shelf.contents, getYtmShelfBrowseMeta(shelf));
+    }
+
+    const grid = node.gridRenderer;
+    if (grid?.items) {
+      addShelf(getYtmShelfTitle(grid), grid.items, getYtmShelfBrowseMeta(grid));
+    }
+
+    const cardShelf = node.musicCardShelfRenderer;
+    if (cardShelf) {
+      addShelf(getYtmShelfTitle(cardShelf), [
+        cardShelf,
+        ...(Array.isArray(cardShelf.contents) ? cardShelf.contents : [])
+      ], getYtmShelfBrowseMeta(cardShelf));
+    }
+
+    const immersive = node.musicImmersiveCarouselShelfRenderer;
+    if (immersive?.contents) {
+      addShelf(getYtmShelfTitle(immersive), immersive.contents, getYtmShelfBrowseMeta(immersive));
+    }
+
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          walk(child, depth + 1);
+          if (shelves.length >= maxShelves) return;
+        }
+      } else if (value && typeof value === "object") {
+        walk(value, depth + 1);
+      }
+    }
+  };
+
+  walk(data);
+  return shelves.slice(0, maxShelves);
+}
+
+function mergeMusicHomeShelves(shelfGroups = [], { maxShelves = 6, limitPerShelf = 12 } = {}) {
+  const shelves = [];
+  const seenShelves = new Set();
+  const seenTitles = new Set();
+
+  for (const group of shelfGroups) {
+    for (const shelf of Array.isArray(group) ? group : []) {
+      const items = uniqueMusicHomeItems(shelf?.items, limitPerShelf);
+      if (!items.length) continue;
+
+      const title = normalizeMusicHomeTitle(shelf?.title) || "YouTube Music";
+      const titleKey = normalizeMusicHomeTitleKey(title) || title.toLowerCase();
+      const key = `${titleKey}:${getMusicHomeItemKey(items[0])}`;
+      if (seenTitles.has(titleKey) || seenShelves.has(key)) continue;
+
+      seenTitles.add(titleKey);
+      seenShelves.add(key);
+      shelves.push({ ...shelf, title, items });
+      if (shelves.length >= maxShelves) return shelves;
+    }
+  }
+
+  return shelves;
+}
+
+function selectMusicHomeShelves(shelves = [], { maxShelves = 6, limitPerShelf = 12 } = {}) {
+  const shelfLimit = normalizeMusicHomeNumber(maxShelves, 6, 1, 12);
+  return mergeMusicHomeShelves([shelves], {
+    maxShelves: shelfLimit,
+    limitPerShelf
+  }).map((shelf) => ({ ...shelf, pinned: false }));
+}
+
+function collectYtmContinuationTokens(value, tokens = new Set(), depth = 0) {
+  if (!value || typeof value !== "object" || depth > 12) return tokens;
+
+  const addToken = (token) => {
+    const safe = String(token || "").trim();
+    if (safe) tokens.add(safe);
+  };
+
+  addToken(value.continuationCommand?.token);
+  addToken(value.nextContinuationData?.continuation);
+  addToken(value.reloadContinuationData?.continuation);
+  addToken(value.timedContinuationData?.continuation);
+  addToken(value.continuationEndpoint?.continuationCommand?.token);
+  addToken(value.continuationEndpoint?.nextContinuationData?.continuation);
+  addToken(value.continuationEndpoint?.reloadContinuationData?.continuation);
+  addToken(value.continuationEndpoint?.timedContinuationData?.continuation);
+  addToken(value.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token);
+  addToken(value.continuationItemRenderer?.continuationEndpoint?.nextContinuationData?.continuation);
+  addToken(value.continuationItemRenderer?.continuationEndpoint?.reloadContinuationData?.continuation);
+  addToken(value.continuationItemRenderer?.continuationEndpoint?.timedContinuationData?.continuation);
+
+  for (const child of Object.values(value)) {
+    if (Array.isArray(child)) {
+      for (const item of child) collectYtmContinuationTokens(item, tokens, depth + 1);
+    } else if (child && typeof child === "object") {
+      collectYtmContinuationTokens(child, tokens, depth + 1);
+    }
+  }
+
+  return tokens;
+}
+
+async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeoutMs = 15000, lang = "", region = "" }) {
+  const cookieFile = await resolveMusicHomeCookieFile();
+  const cookies = parseNetscapeCookieFile(cookieFile, "music.youtube.com");
+  const cookieHeader = buildCookieHeader(cookies);
+  if (!cookieHeader) {
+    return { personalized: false, cookieAvailable: false, shelves: [] };
+  }
+
+  const locale = getInnertubeLocale(lang, region);
+  const bootstrap = await fetchYtmBootstrapConfig(cookieHeader, Math.min(timeoutMs, 6000));
+  const clientVersion = String(process.env.YTM_CLIENT_VERSION || bootstrap.clientVersion || getDefaultYtmClientVersion()).trim();
+  const headers = {
+    "Accept": "application/json",
+    "Accept-Language": locale.acceptLanguage,
+    "Content-Type": "application/json",
+    "Origin": YTM_ORIGIN,
+    "Referer": `${YTM_ORIGIN}/`,
+    "User-Agent": DEFAULT_USER_AGENT,
+    "X-Goog-AuthUser": "0",
+    "X-Goog-Visitor-Id": bootstrap.visitorData || "",
+    "X-Origin": YTM_ORIGIN,
+    "X-Youtube-Client-Name": "67",
+    "X-Youtube-Client-Version": clientVersion,
+    "Cookie": cookieHeader
+  };
+  const auth = buildSapisidAuthHeader(cookies);
+  if (auth) headers.Authorization = auth;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const context = {
+    client: {
+      clientName: "WEB_REMIX",
+      clientVersion,
+      visitorData: bootstrap.visitorData || undefined,
+      hl: locale.hl,
+      gl: locale.region
+    },
+    user: { lockedSafetyMode: false },
+    request: { useSsl: true }
+  };
+
+  const postBrowse = async (payload) => {
+    let response;
+    try {
+      response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
+        method: "POST",
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({ context, ...payload })
+      });
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`YouTube Music home API timeout (${timeoutMs}ms)`);
+      }
+      throw error;
+    }
+
+    const text = await response.text();
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`YouTube Music home API returned non-JSON (${response.status})`);
+    }
+
+    if (!response.ok) {
+      const message =
+        data?.error?.message ||
+        data?.error?.status ||
+        `YouTube Music home API failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    return data;
+  };
+
+  try {
+    const firstPage = await postBrowse({ browseId: YTM_HOME_BROWSE_ID });
+    let parsedShelves = buildMusicHomeShelvesFromInnertube(firstPage, { maxShelves, limitPerShelf });
+    const seenTokens = new Set();
+    const tokenQueue = Array.from(collectYtmContinuationTokens(firstPage));
+    let continuationPages = 0;
+
+    while (parsedShelves.length < maxShelves && tokenQueue.length && continuationPages < 8) {
+      const token = tokenQueue.shift();
+      if (!token || seenTokens.has(token)) continue;
+
+      seenTokens.add(token);
+      continuationPages += 1;
+
+      const nextPage = await postBrowse({ continuation: token });
+      parsedShelves = mergeMusicHomeShelves(
+        [
+          parsedShelves,
+          buildMusicHomeShelvesFromInnertube(nextPage, { maxShelves, limitPerShelf })
+        ],
+        { maxShelves, limitPerShelf }
+      );
+
+      for (const nextToken of collectYtmContinuationTokens(nextPage)) {
+        if (!seenTokens.has(nextToken)) tokenQueue.push(nextToken);
+      }
+    }
+
+    return {
+      personalized: parsedShelves.length > 0,
+      cookieAvailable: true,
+      title: "YouTube Music",
+      shelves: parsedShelves
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Reads the signed-in YouTube Music home feed for the ytlive UI.
+export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang = "", region = "" } = {}) {
+  const cookieAvailable = hasUsableCookieSource();
+  const maxShelves = normalizeMusicHomeNumber(shelves, 6, 1, 12);
+  const fetchShelves = normalizeMusicHomeNumber(
+    process.env.YTM_HOME_FETCH_SHELVES || maxShelves,
+    maxShelves,
+    maxShelves,
+    40
+  );
+  const limitPerShelf = normalizeMusicHomeNumber(limit, 12, 4, 24);
+
+  if (!cookieAvailable) {
+    return {
+      personalized: false,
+      cookieAvailable: false,
+      shelves: []
+    };
+  }
+
+  const timeout = Number(process.env.YTM_HOME_TIMEOUT_MS || 45000);
+  try {
+    const result = await fetchYouTubeMusicHomeInnertube({
+      maxShelves: fetchShelves,
+      limitPerShelf,
+      timeoutMs: Math.min(timeout, 15000),
+      lang,
+      region
+    });
+    return {
+      ...result,
+      shelves: selectMusicHomeShelves(result.shelves, { maxShelves, limitPerShelf })
+    };
+  } catch (error) {
+    console.warn("YouTube Music home API failed, falling back to yt-dlp:", error?.message || error);
+  }
+
+  const data = await runYtJson(
+    ["--flat-playlist", YTM_HOME_BROWSE_URL],
+    "youtube-music-home",
+    timeout
+  );
+  const parsedShelves = buildMusicHomeShelves(data, { maxShelves: fetchShelves, limitPerShelf });
+
+  return {
+    personalized: parsedShelves.length > 0,
+    cookieAvailable,
+    title: normalizeMusicHomeTitle(data?.title || "YouTube Music"),
+    shelves: selectMusicHomeShelves(parsedShelves, { maxShelves, limitPerShelf })
+  };
 }
 
 // Extracts playlist data all flat for the yt-dlp YouTube download pipeline.

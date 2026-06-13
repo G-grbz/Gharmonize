@@ -1,5 +1,6 @@
 (function () {
-  const SUPPORTED = ['en', 'tr', 'de', 'fr', 'es',];
+  const DEFAULT_LANG = 'en';
+  const SUPPORTED = ['en', 'tr', 'de', 'fr', 'es'];
   const COOKIE_NAME = 'lang';
   const COOKIE_DOMAIN = '.grbzhome.com';
 
@@ -56,7 +57,7 @@
   const htmlLang = (document.documentElement.getAttribute('lang') || '').toLowerCase().slice(0,2);
   if (SUPPORTED.includes(htmlLang)) return htmlLang;
 
-  return 'en';
+  return DEFAULT_LANG;
 }
 
   function applyDict(dict, root = document) {
@@ -75,7 +76,7 @@
 
   function createT(dict, fallback) {
     return function t(key, vars = {}) {
-      let str = (dict[key] ?? fallback[key] ?? key);
+      let str = (dict?.[key] ?? fallback?.[key] ?? key);
       for (const [k, v] of Object.entries(vars)) {
         str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), v);
       }
@@ -94,13 +95,25 @@
     }, 1500);
 
     try {
-      const lang = detectLang();
-      let dict, fallback;
+      let lang = detectLang();
+      let fallback = {};
+      let dict = null;
 
-      try { dict = await loadDict(lang); } catch {}
-      if (!dict) dict = await loadDict('en');
+      try { fallback = await loadDict(DEFAULT_LANG); } catch {}
 
-      try { fallback = (lang === 'en') ? dict : await loadDict('en'); } catch {}
+      if (lang === DEFAULT_LANG) {
+        dict = fallback;
+      } else {
+        try { dict = await loadDict(lang); } catch {
+          lang = DEFAULT_LANG;
+          dict = fallback;
+        }
+      }
+
+      if (!dict) {
+        lang = DEFAULT_LANG;
+        dict = fallback;
+      }
 
       applyDict(dict);
       html.lang = lang;
@@ -112,16 +125,22 @@
         t: createT(dict, fallback),
         apply(root) { applyDict(api.dict, root || document); },
         async setLang(next) {
-          if (!SUPPORTED.includes(next)) return;
-          localStorage.setItem('lang', next);
-          setLangCookie(next);
-          const newDict = await loadDict(next);
+          let safeNext = SUPPORTED.includes(next) ? next : DEFAULT_LANG;
+          let newDict = null;
+          try {
+            newDict = safeNext === DEFAULT_LANG ? fallback : await loadDict(safeNext);
+          } catch {
+            safeNext = DEFAULT_LANG;
+            newDict = fallback;
+          }
+          localStorage.setItem('lang', safeNext);
+          setLangCookie(safeNext);
           applyDict(newDict);
-          api.lang = next;
+          api.lang = safeNext;
           api.dict = newDict;
           api.t = createT(newDict, fallback);
-          html.lang = next;
-          document.dispatchEvent(new CustomEvent('i18n:applied', { detail: { lang: next } }));
+          html.lang = safeNext;
+          document.dispatchEvent(new CustomEvent('i18n:applied', { detail: { lang: safeNext } }));
         }
       };
       window.i18n = api;
@@ -137,6 +156,8 @@
       return api;
     } finally {
       clearTimeout(safety);
+      try { clearTimeout(window.__gharmonizeI18nSafety); } catch {}
+      html.removeAttribute('data-i18n-pending');
       html.style.visibility = prevVis || '';
     }
   }

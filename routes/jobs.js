@@ -13,7 +13,7 @@ import {
   getJobProcessCount,
 } from "../modules/store.js";
 import { processJob } from "../modules/processor.js";
-import { enqueueJob } from "../modules/queue.js";
+import { enqueueJob, getQueuedJobIds } from "../modules/queue.js";
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import {
   isAppleMusicUrl,
@@ -681,6 +681,30 @@ router.get("/api/jobs/:id", (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return sendError(res, ERR.JOB_NOT_FOUND, "Job not found", 404);
   return sendOk(res, job);
+});
+
+router.get("/api/queue/status", (_req, res) => {
+  const terminal = new Set(["completed", "error", "canceled"]);
+  const activeJobs = Array.from(jobs.values())
+    .filter((job) => job && !terminal.has(String(job.status || "").toLowerCase()))
+    .map((job) => ({
+      id: job.id,
+      status: job.status,
+      currentPhase: job.currentPhase || "queued",
+      title:
+        job.metadata?.frozenTitle ||
+        job.metadata?.extracted?.title ||
+        job.metadata?.spotifyTitle ||
+        job.metadata?.originalName ||
+        null
+    }));
+
+  res.json({
+    ok: true,
+    activeCount: activeJobs.length,
+    queuedIds: getQueuedJobIds(),
+    activeJobs
+  });
 });
 
 router.get("/api/stream/:id", (req, res) => {

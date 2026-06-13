@@ -160,6 +160,21 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
+                <label for="f_FRONTEND_UI" class="settings-field-label">FRONTEND_UI</label>
+                <div class="settings-field-hint muted" data-i18n="settings.frontendUi">Açılışta kullanılacak ön uç: classic = mevcut UI, YTLive = yeni müzik arayüzü.</div>
+                <select id="f_FRONTEND_UI">
+                    <option value="classic">classic</option>
+                    <option value="ytlive">YTLive</option>
+                </select>
+                </div>
+
+                <div class="form-group">
+                <label for="f_YOUTUBE_QUICK_ADD_LIMIT" class="settings-field-label">YOUTUBE_QUICK_ADD_LIMIT</label>
+                <div class="settings-field-hint muted" data-i18n="settings.youtubeQuickAddLimit">YTLive'da YouTube playlist + butonu ile eklenecek ilk parça sayısı.</div>
+                <input id="f_YOUTUBE_QUICK_ADD_LIMIT" type="number" min="1" max="100" placeholder="25" style="width:100%;">
+                </div>
+
+                <div class="form-group">
                 <label for="f_TRACK_EXTRACTOR_SHELL_INTEGRATION" class="settings-field-label">TRACK_EXTRACTOR_SHELL_INTEGRATION</label>
                 <div class="settings-field-hint muted" data-i18n="settings.trackExtractorShellIntegration"></div>
                 <select id="f_TRACK_EXTRACTOR_SHELL_INTEGRATION">
@@ -821,6 +836,8 @@ export class SettingsManager {
             document.getElementById('f_FFMPEG_BIN').value = s.FFMPEG_BIN || '';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
+            document.getElementById('f_FRONTEND_UI').value = s.FRONTEND_UI === 'ytlive' ? 'ytlive' : 'classic';
+            document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value = s.YOUTUBE_QUICK_ADD_LIMIT || '25';
             document.getElementById('f_TRACK_EXTRACTOR_SHELL_INTEGRATION').value = (typeof s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== 'undefined' && s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== null && s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== '')
                 ? String(s.TRACK_EXTRACTOR_SHELL_INTEGRATION)
                 : '1';
@@ -877,6 +894,8 @@ export class SettingsManager {
                 YTDLP_BIN: document.getElementById('f_YTDLP_BIN').value.trim(),
                 FFMPEG_BIN: document.getElementById('f_FFMPEG_BIN').value.trim(),
                 UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
+                FRONTEND_UI: document.getElementById('f_FRONTEND_UI').value,
+                YOUTUBE_QUICK_ADD_LIMIT: document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value.trim(),
                 TRACK_EXTRACTOR_SHELL_INTEGRATION: document.getElementById('f_TRACK_EXTRACTOR_SHELL_INTEGRATION').value,
                 PREVIEW_MAX_ENTRIES: document.getElementById('f_PREVIEW_MAX_ENTRIES').value.trim(),
                 AUTOMIX_ALL_TIMEOUT_MS: document.getElementById('f_AUTOMIX_ALL_TIMEOUT_MS').value.trim(),

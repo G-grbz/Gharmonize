@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en" translate="no" class="notranslate">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="google" content="notranslate" />
+  <title>Gharmonize</title>
+  <style>
+    html[data-i18n-pending] {
+      visibility: hidden;
+    }
+  </style>
+  <link rel="stylesheet" href="/ytlive.css" />
+  <link rel="icon" type="image/x-icon" href="/src/favicon.ico">
+  <script>
+    (function() {
+      try {
+        document.documentElement.setAttribute('data-i18n-pending', '');
+        window.__gharmonizeI18nSafety = setTimeout(function() {
+          document.documentElement.removeAttribute('data-i18n-pending');
+        }, 2500);
+        var saved = localStorage.getItem('theme');
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
+      } catch(e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div class="ytlive-shell">
+    <aside class="sidebar" aria-label="Primary" data-i18n-aria="ytlive.nav.primary">
+      <a class="brand" href="/" aria-label="Gharmonize">
+        <img src="/src/logo.png" alt="" class="brand__logo" />
+        <span class="brand__text">Gharmonize</span>
+      </a>
+
+      <nav class="sidebar-nav">
+        <button class="sidebar-link is-active" type="button" data-scroll="#discover" data-i18n="ytlive.nav.discover">Discover</button>
+        <button class="sidebar-link" type="button" data-focus="#searchInput" data-i18n="ytlive.nav.search">Search</button>
+        <button class="sidebar-link" type="button" data-scroll="#queuePanel" data-i18n="ytlive.nav.jobs">Jobs</button>
+        <a class="sidebar-link" href="/index.html" data-i18n="ytlive.nav.classic">Classic UI</a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <label class="sidebar-label" for="langSelect" data-i18n="lang.label">Language</label>
+        <select id="langSelect" class="compact-select">
+          <option value="en">English</option>
+          <option value="tr">Türkçe</option>
+          <option value="es">Español</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Français</option>
+        </select>
+        <label class="sidebar-label" for="musicHomeShelfCountInput" data-i18n="ytlive.musicHome.shelfCount">Shelf count</label>
+        <input id="musicHomeShelfCountInput" class="compact-number" type="number" min="1" max="12" step="1" value="6" />
+        <button id="themeToggle" class="ghost-button" type="button" data-i18n="ytlive.theme">Theme</button>
+        <button id="settingsBtn" class="ghost-button" type="button" data-i18n="settings.title">Settings</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <form id="searchForm" class="search-form" autocomplete="off">
+          <label class="sr-only" for="searchInput" data-i18n="ytlive.search.label">Search YouTube</label>
+          <input id="searchInput" type="search" placeholder="Search YouTube for songs, artists, albums, or playlists" data-i18n-ph="ytlive.search.placeholder" />
+          <button class="primary-button" type="submit" data-i18n="ytlive.search.button">Search</button>
+        </form>
+        <div class="queue-chip" id="queueChip" data-i18n="ytlive.queue.empty">Queue empty</div>
+      </header>
+
+      <section class="quick-url-panel" aria-label="Play or add by URL" data-i18n-aria="ytlive.quickUrl.aria">
+        <input id="quickUrlInput" type="url" placeholder="Paste a YouTube or YouTube Music link" data-i18n-ph="ytlive.quickUrl.placeholder" />
+        <button id="playUrlBtn" class="secondary-button" type="button" data-i18n="ytlive.play">Play</button>
+        <button id="addUrlBtn" class="primary-button" type="button" data-i18n="ytlive.add">+ Add</button>
+      </section>
+
+      <section class="player-layout">
+        <div class="player-frame">
+          <div id="youtubePlayer" class="youtube-player" hidden></div>
+          <div id="playerEmpty" class="player-empty">
+            <div class="player-empty__title" data-i18n="ytlive.player.emptyTitle">Select content</div>
+            <div class="player-empty__text" data-i18n="ytlive.player.emptyText">Click a search result or pasted link to play it here.</div>
+          </div>
+        </div>
+
+        <aside class="now-panel" aria-label="Now playing" data-i18n-aria="ytlive.now.aria">
+          <div class="eyebrow" id="nowType">YouTube</div>
+          <h1 id="nowTitle">Gharmonize Music</h1>
+          <p id="nowSubtitle" data-i18n="ytlive.now.subtitle">Search YouTube content, play it, and add it to the conversion queue.</p>
+          <div class="now-actions">
+            <button id="addCurrentBtn" class="primary-button" type="button" disabled data-i18n="ytlive.add">+ Add</button>
+            <a id="openCurrentLink" class="secondary-button is-disabled" href="#" target="_blank" rel="noopener" data-i18n="ytlive.openYoutube">Open on YouTube</a>
+          </div>
+
+          <div class="output-panel">
+            <div class="panel-title" data-i18n="ytlive.output.title">Output</div>
+            <label>
+              <span data-i18n="ytlive.output.format">Format</span>
+              <select id="formatSelect"></select>
+            </label>
+            <label>
+              <span data-i18n="ytlive.output.quality">Quality</span>
+              <select id="bitrateSelect"></select>
+            </label>
+            <label>
+              <span data-i18n="ytlive.output.sampleRate">Sample rate</span>
+              <select id="sampleRateSelect">
+                <option value="44100">44.1 kHz</option>
+                <option value="48000" selected>48 kHz</option>
+                <option value="96000">96 kHz</option>
+                <option value="192000">192 kHz</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="ytlive.output.concurrency">Playlist parallel downloads</span>
+              <input id="youtubeConcurrencyInput" type="number" min="1" max="16" step="1" value="4" />
+            </label>
+            <label class="check-row">
+              <input id="includeLyrics" type="checkbox" />
+              <span data-i18n="ytlive.output.includeLyrics">Download lyrics</span>
+            </label>
+            <label class="check-row">
+              <input id="embedLyrics" type="checkbox" />
+              <span data-i18n="ytlive.output.embedLyrics">Embed lyrics into file</span>
+            </label>
+            <label class="check-row">
+              <input id="autoZip" type="checkbox" checked />
+              <span data-i18n="ytlive.output.autoZip">Create ZIP when playlist finishes</span>
+            </label>
+          </div>
+        </aside>
+      </section>
+
+      <section id="playlistTracksPanel" class="playlist-tracks-panel" hidden>
+        <div class="playlist-tracks-header">
+          <div>
+            <div class="eyebrow" data-i18n="ytlive.type.playlist">Playlist</div>
+            <h2 id="playlistTracksTitle" data-i18n="ytlive.playlist.tracksTitle">Playlist tracks</h2>
+          </div>
+          <div id="playlistTracksMeta" class="status-line"></div>
+        </div>
+        <div id="playlistTracksList" class="playlist-tracks-list"></div>
+      </section>
+
+      <section id="musicHomeSection" class="music-home-section" hidden>
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">YouTube Music</div>
+            <h2 data-i18n="ytlive.musicHome.title">Made for you</h2>
+          </div>
+          <button id="refreshMusicHomeBtn" class="ghost-button" type="button" data-i18n="btn.reload">Refresh</button>
+        </div>
+        <div id="musicHomeStatus" class="status-line"></div>
+        <div id="musicHomeShelves" class="music-home-shelves"></div>
+      </section>
+
+      <section class="content-section" id="discover">
+        <div class="section-header">
+          <div>
+            <div class="eyebrow">YouTube</div>
+            <h2 data-i18n="ytlive.content.title">Content</h2>
+          </div>
+          <div class="preset-row" aria-label="Search presets" data-i18n-aria="ytlive.presets.aria">
+            <button class="preset-chip" type="button" data-preset="popular" data-i18n="ytlive.preset.popular">Popular</button>
+            <button class="preset-chip" type="button" data-preset="new" data-i18n="ytlive.preset.new">New</button>
+            <button class="preset-chip" type="button" data-preset="playlist" data-i18n="ytlive.preset.playlist">Playlist</button>
+            <button class="preset-chip" type="button" data-preset="local" data-i18n="ytlive.preset.local">Local pop</button>
+          </div>
+        </div>
+        <div id="resultsStatus" class="status-line" data-i18n="ytlive.results.initial">Use the search box above.</div>
+        <div id="discoverySummary" class="discovery-summary" hidden></div>
+        <div id="resultsGrid" class="content-grid"></div>
+        <div id="resultsLoadMore" class="load-more-sentinel" hidden></div>
+      </section>
+    </main>
+
+    <aside class="queue-panel" id="queuePanel" aria-label="Workflow" data-collapsed-label="" data-i18n-aria="ytlive.workflow.aria">
+      <div class="section-header queue-header">
+        <div>
+          <div class="eyebrow" data-i18n="ytlive.workflow.eyebrow">Workflow</div>
+          <h2 data-i18n="ytlive.queue.title">Queue</h2>
+        </div>
+        <button id="refreshQueueBtn" class="ghost-button" type="button" data-i18n="btn.reload">Refresh</button>
+      </div>
+      <div id="jobList" class="job-list">
+        <div class="empty-state" data-i18n="ytlive.jobs.empty">No active jobs.</div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <script src="/i18n.js"></script>
+  <script type="module" src="/ui/YTLiveMusicApp.js"></script>
+</body>
+</html>

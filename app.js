@@ -309,6 +309,19 @@ async function runStartupDiagnostics() {
 }
 
 app.use(express.json({ limit: '10mb' }))
+
+function getSelectedFrontendUi() {
+  return String(process.env.FRONTEND_UI || '').trim().toLowerCase() === 'ytlive'
+    ? 'ytlive'
+    : 'classic'
+}
+
+app.get('/', (_req, res) => {
+  const selectedUi = getSelectedFrontendUi()
+  const fileName = selectedUi === 'ytlive' ? 'ytlive.html' : 'index.html'
+  res.sendFile(path.join(__dirname, 'public', fileName))
+})
+
 app.use(express.static(path.join(__dirname, 'public')))
 
 app.use('/api', async (req, res, next) => {
