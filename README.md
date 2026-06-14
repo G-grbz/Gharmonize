@@ -73,7 +73,7 @@ Full details in [docs/FEATURES.md](docs/FEATURES.md).
 | [docs/COOKIES.md](docs/COOKIES.md) | Cookies, age-restricted content, environment comparison |
 | [docs/HOMEPAGE_WIDGET.md](docs/HOMEPAGE_WIDGET.md) | Homepage dashboard widget setup |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues & fixes |
-| [LICENSE.md](LICENSE.md) | License & redistribution rules |
+| [LICENSE](LICENSE) | License & redistribution rules |
 | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) | Bundled third-party tool licenses |
 
 ---
