@@ -100,5 +100,5 @@ This software is provided "as is", without warranty of any kind. Use it at your 
 
 Gharmonize is licensed under the **PolyForm Noncommercial License 1.0.0**.
 
-- Full terms and redistribution rules: [LICENSE.md](LICENSE.md)
+- Full terms and redistribution rules: [LICENSE](LICENSE)
 - Licenses for bundled third-party tools (FFmpeg, MKVToolNix, yt-dlp, deno): [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
