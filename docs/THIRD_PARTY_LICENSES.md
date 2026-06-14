@@ -24,4 +24,4 @@ Detailed license texts are included in the distributed builds under:
 - `build/licenses/yt-dlp-Unlicense.txt`
 - `build/licenses/Deno-LICENSE.txt`
 
-Additional license details are also available in `LICENSES.md` at the project root.
+Additional license details are also available in `THIRD_PARTY_LICENSES.md` at the project root.
