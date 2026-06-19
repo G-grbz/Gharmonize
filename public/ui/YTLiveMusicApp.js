@@ -15,6 +15,18 @@ class YTLiveMusicApp {
     this.activePreset = null;
     this.activeSearchQuery = '';
     this.activeSearchType = 'track';
+    this.discoverPresets = [
+      'energizing',
+      'workout',
+      'feel-good',
+      'relax',
+      'sad',
+      'romance',
+      'commute',
+      'party',
+      'focus',
+      'sleep'
+    ];
     this.resultKeys = new Set();
     this.presetPaging = null;
     this.isLoadingMore = false;
@@ -77,7 +89,7 @@ class YTLiveMusicApp {
     await this.refreshQueueStatus();
     this.scheduleQueuePoll();
     this.loadMusicHomeShelves();
-    await this.search('', { preset: 'popular' });
+    await this.search('', { preset: 'energizing' });
   }
 
   bindEvents() {
@@ -411,9 +423,9 @@ class YTLiveMusicApp {
       this.updateLoadMoreState();
       window.setTimeout(() => this.maybeLoadMoreByScroll(), 80);
 
-      if (this.results[0] && (preset || !this.currentItem)) {
-        this.playRandomPlayerContent({ source: 'results', force: !!preset });
-      } else if (!this.results.length && searchType === 'playlist') {
+      if (this.results[0] && !this.hasActivePlayback()) {
+        this.playRandomPlayerContent({ source: 'results' });
+      } else if (!this.results.length && searchType === 'playlist' && !this.hasActivePlayback()) {
         this.clearPlayer(this.tt('ytlive.results.noPlaylists', 'Çalma listesi bulunamadı.'));
       }
     } catch (error) {
@@ -429,7 +441,12 @@ class YTLiveMusicApp {
 
   async fetchSearchItems(query, { preset = null, type = null, signal = null, limit = this.resultLoadLimit } = {}) {
     const searchType = preset === 'playlist' ? 'playlist' : this.normalizeSearchType(type || this.activeSearchType);
-    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    const params = new URLSearchParams({
+      q: query,
+      limit: String(limit),
+      lang: this.getCurrentLang(),
+      region: this.getCurrentRegion()
+    });
     if (searchType) params.set('type', searchType);
     const presetOptions = this.getPresetSearchOptions(preset);
     Object.entries(presetOptions).forEach(([key, value]) => {
@@ -456,9 +473,9 @@ class YTLiveMusicApp {
       });
   }
 
-  async fetchDiscoverItems({ preset = 'popular', page = 1, signal = null, limit = this.resultLoadLimit } = {}) {
+  async fetchDiscoverItems({ preset = 'energizing', page = 1, signal = null, limit = this.resultLoadLimit } = {}) {
     const params = new URLSearchParams({
-      preset: preset || 'popular',
+      preset: preset || 'energizing',
       page: String(page || 1),
       limit: String(limit),
       lang: this.getCurrentLang(),
@@ -1462,6 +1479,10 @@ class YTLiveMusicApp {
     return this.musicHomeShelves.flatMap((shelf) => Array.isArray(shelf.items) ? shelf.items : []);
   }
 
+  hasActivePlayback() {
+    return !!(this.currentPlaybackItem || this.currentItem || this.youtubePlayer);
+  }
+
   getRandomPlayableItem(items = []) {
     const candidates = (Array.isArray(items) ? items : [])
       .map((item) => this.normalizeItem(item))
@@ -1472,8 +1493,8 @@ class YTLiveMusicApp {
     return fallback[Math.floor(Math.random() * fallback.length)];
   }
 
-  playRandomPlayerContent({ source = 'results', force = false } = {}) {
-    if (this.currentItem && !force) return;
+  playRandomPlayerContent({ source = 'results' } = {}) {
+    if (this.hasActivePlayback()) return;
     const pools = source === 'musicHome'
       ? [this.getMusicHomeItems(), this.results]
       : [this.results, this.getMusicHomeItems()];
@@ -2562,9 +2583,9 @@ class YTLiveMusicApp {
     const tags = [];
     if (index < 3) tags.push(this.tt('ytlive.content.featured', 'Öne çıkan'));
     if (this.isPlaylistLike(item)) tags.push(this.tt('ytlive.type.playlist', 'Çalma listesi'));
-    if (this.activePreset === 'new') tags.push(this.tt('ytlive.preset.new', 'Yeni'));
-    if (this.activePreset === 'popular') tags.push(this.tt('ytlive.preset.popular', 'Popüler'));
-    if (this.activePreset === 'local') tags.push(this.tt('ytlive.preset.local', 'Türkçe pop'));
+    if (this.activePreset && this.isDiscoverPreset(this.activePreset)) {
+      tags.push(this.getPresetDisplayLabel(this.activePreset));
+    }
     if (item?.duration && Number(item.duration) > 600) tags.push(this.tt('ytlive.content.longMix', 'Uzun mix'));
     return Array.from(new Set(tags)).slice(0, 3);
   }
@@ -2634,7 +2655,7 @@ class YTLiveMusicApp {
   }
 
   isDiscoverPreset(preset) {
-    return ['popular', 'new', 'playlist', 'local'].includes(String(preset || '').trim().toLowerCase());
+    return this.discoverPresets.includes(String(preset || '').trim().toLowerCase());
   }
 
   getPresetQuery(preset, { advance = false } = {}) {
@@ -2647,11 +2668,17 @@ class YTLiveMusicApp {
   getPresetBaseQuery(preset) {
     const key = `ytlive.preset.${preset}.query`;
     const fallback = {
-      popular: 'hit songs 2026 official audio',
-      new: 'new songs 2026 official audio',
-      playlist: 'top songs 2026 playlist',
-      local: this.getLocaleDefaultMusicQuery()
-    }[preset] || 'hit songs 2026 official audio';
+      energizing: 'energetic music',
+      workout: 'workout music',
+      'feel-good': 'feel good music',
+      relax: 'relaxing music',
+      sad: 'sad music',
+      romance: 'romantic music',
+      commute: 'commute music',
+      party: 'party music',
+      focus: 'focus music',
+      sleep: 'sleep music'
+    }[preset] || 'energetic music';
     return this.tt(key, fallback);
   }
 
@@ -2663,10 +2690,16 @@ class YTLiveMusicApp {
   getPresetDisplayLabel(preset) {
     if (!preset) return this.tt('ytlive.content.title', 'İçerikler');
     const fallback = {
-      popular: 'Popüler',
-      new: 'Yeni',
-      playlist: 'Playlist',
-      local: this.getLocaleDefaultMusicQuery()
+      energizing: 'Enerjik',
+      workout: 'Antrenman',
+      'feel-good': 'Keyifli',
+      relax: 'Rahatlama',
+      sad: 'Hüzünlü',
+      romance: 'Romantik',
+      commute: 'İşe gidip gelme',
+      party: 'Parti',
+      focus: 'Odaklanma',
+      sleep: 'Uyku'
     }[preset] || this.tt('ytlive.content.title', 'İçerikler');
     return this.tt(`ytlive.preset.${preset}`, fallback);
   }
@@ -2817,34 +2850,64 @@ class YTLiveMusicApp {
     const lang = this.getCurrentLang();
     const variants = {
       tr: {
-        popular: ['hit şarkılar 2026 resmi audio', 'popüler şarkılar 2026 resmi klip', 'trend şarkılar 2026', 'top 50 türkçe ve dünya şarkıları'],
-        new: ['yeni çıkan şarkılar 2026 resmi audio', 'bu hafta yeni çıkan şarkılar', 'yeni pop şarkılar 2026', 'son çıkan şarkılar resmi klip'],
-        playlist: ['top 50 şarkılar 2026 playlist', 'hit şarkılar playlist 2026', 'yeni şarkılar playlist 2026', 'pop playlist 2026'],
-        local: ['türkçe pop 2026 resmi klip', 'türkçe pop yeni şarkılar 2026', 'türkçe pop hit şarkılar 2026', 'türkiye top 50 türkçe pop']
+        energizing: ['enerjik müzik', 'hareketli şarkılar', 'motivasyon müzikleri'],
+        workout: ['antrenman müzikleri', 'spor müzikleri', 'fitness şarkıları'],
+        'feel-good': ['keyifli şarkılar', 'iyi hissettiren müzikler', 'neşeli şarkılar'],
+        relax: ['rahatlama müziği', 'sakin müzik', 'chill müzik'],
+        sad: ['hüzünlü şarkılar', 'duygusal müzik', 'melankolik şarkılar'],
+        romance: ['romantik şarkılar', 'aşk şarkıları', 'romantik müzik'],
+        commute: ['işe giderken müzik', 'yol müzikleri', 'araba müzikleri'],
+        party: ['parti müzikleri', 'dans şarkıları', 'eğlence müzikleri'],
+        focus: ['odaklanma müziği', 'çalışma müziği', 'konsantrasyon müziği'],
+        sleep: ['uyku müziği', 'rahat uyku müzikleri', 'sakin uyku müziği']
       },
       en: {
-        popular: ['hit songs 2026 official audio', 'popular songs 2026 official video', 'trending songs 2026', 'top 50 songs 2026'],
-        new: ['new songs 2026 official audio', 'new releases music this week', 'new pop songs 2026', 'latest songs official video'],
-        playlist: ['top songs 2026 playlist', 'hit songs playlist 2026', 'new songs playlist 2026', 'pop playlist 2026'],
-        local: ['pop songs 2026 official audio', 'new pop songs 2026', 'top pop songs 2026', 'pop hits 2026']
+        energizing: ['energetic music', 'upbeat songs', 'motivation music'],
+        workout: ['workout music', 'gym music', 'fitness songs'],
+        'feel-good': ['feel good music', 'happy songs', 'mood booster music'],
+        relax: ['relaxing music', 'chill music', 'calm songs'],
+        sad: ['sad music', 'sad songs', 'melancholy music'],
+        romance: ['romantic music', 'love songs', 'romance songs'],
+        commute: ['commute music', 'driving music', 'road trip songs'],
+        party: ['party music', 'dance songs', 'party playlist'],
+        focus: ['focus music', 'study music', 'concentration music'],
+        sleep: ['sleep music', 'sleep songs', 'calm sleep music']
       },
       de: {
-        popular: ['hit songs 2026 offizielles audio', 'beliebte songs 2026 offizielles video', 'trend songs 2026', 'top 50 songs 2026'],
-        new: ['neue songs 2026 offizielles audio', 'neue releases musik diese woche', 'neue pop songs 2026', 'aktuelle songs offizielles video'],
-        playlist: ['top songs 2026 playlist', 'hit songs playlist 2026', 'neue songs playlist 2026', 'pop playlist 2026'],
-        local: ['deutsche pop songs 2026 offizielles video', 'neue deutsche pop songs 2026', 'deutsche hits 2026', 'deutschland top 50 pop']
+        energizing: ['power musik', 'power playlist', 'energie musik'],
+        workout: ['workout musik', 'fitness musik', 'training musik'],
+        'feel-good': ['gute laune musik', 'frohe songs', 'feel good musik'],
+        relax: ['entspannung musik', 'ruhige musik', 'chill musik'],
+        sad: ['traurig musik', 'melancholische musik', 'traurige songs'],
+        romance: ['romantik musik', 'liebeslieder', 'romantische songs'],
+        commute: ['arbeitsweg musik', 'musik zum pendeln', 'fahrmusik'],
+        party: ['partymusik', 'tanzmusik', 'party songs'],
+        focus: ['konzentration musik', 'fokus musik', 'musik zum arbeiten'],
+        sleep: ['einschlafen musik', 'schlafmusik', 'ruhige schlafmusik']
       },
       fr: {
-        popular: ['tubes 2026 audio officiel', 'chansons populaires 2026 clip officiel', 'musique tendance 2026', 'top 50 chansons 2026'],
-        new: ['nouveaux titres 2026 audio officiel', 'sorties musique cette semaine', 'nouvelle pop 2026', 'dernieres chansons clip officiel'],
-        playlist: ['top chansons 2026 playlist', 'playlist tubes 2026', 'playlist nouveautes 2026', 'playlist pop 2026'],
-        local: ['pop francaise 2026 clip officiel', 'nouveautes pop francaise 2026', 'tubes francais 2026', 'france top 50 pop']
+        energizing: ['energie musique', 'musique energique', 'musique dynamique'],
+        workout: ['sport musique', 'musique sport', 'chansons fitness'],
+        'feel-good': ['musique bonne humeur', 'chansons joyeuses', 'musique feel good'],
+        relax: ['musique detente', 'musique relaxante', 'musique calme'],
+        sad: ['chansons tristes', 'musique melancolique', 'musique triste'],
+        romance: ['romance musique', 'musique romantique', 'chansons amour'],
+        commute: ['pour la route musique', 'musique route', 'musique voiture'],
+        party: ['musique fete', 'chansons danse', 'musique soiree'],
+        focus: ['musique concentration', 'musique travail', 'musique focus'],
+        sleep: ['musique sommeil', 'musique pour dormir', 'musique calme sommeil']
       },
       es: {
-        popular: ['canciones hits 2026 audio oficial', 'canciones populares 2026 video oficial', 'musica tendencia 2026', 'top 50 canciones 2026'],
-        new: ['canciones nuevas 2026 audio oficial', 'nuevos lanzamientos musica esta semana', 'nuevo pop 2026', 'ultimas canciones video oficial'],
-        playlist: ['top canciones 2026 playlist', 'playlist hits 2026', 'playlist canciones nuevas 2026', 'playlist pop 2026'],
-        local: ['pop latino 2026 video oficial', 'nuevas canciones pop latino 2026', 'hits latinos 2026', 'latino top 50 pop']
+        energizing: ['musica energica', 'canciones motivadoras', 'musica con energia'],
+        workout: ['musica entrenamiento', 'musica gimnasio', 'canciones fitness'],
+        'feel-good': ['musica sentirse bien', 'musica buen rollo', 'canciones alegres'],
+        relax: ['musica relax', 'musica relajante', 'musica tranquila'],
+        sad: ['canciones tristes', 'musica melancolica', 'musica triste'],
+        romance: ['musica amor', 'canciones de amor', 'musica romantica'],
+        commute: ['musica desplazamientos diarios', 'musica para conducir', 'canciones de viaje'],
+        party: ['musica de fiesta', 'canciones para bailar', 'musica party'],
+        focus: ['musica concentracion', 'musica para estudiar', 'musica para trabajar'],
+        sleep: ['musica dormir', 'musica para dormir', 'musica tranquila para dormir']
       }
     };
 

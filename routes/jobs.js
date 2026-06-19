@@ -999,6 +999,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     inputPath = abs;
     metadata.source = "local";
     metadata.originalName = path.basename(abs);
+    metadata.frozenTitle = path.parse(path.basename(abs)).name;
     metadata.localPath = abs;
   }
 

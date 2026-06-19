@@ -27,7 +27,7 @@ const router = express.Router();
 
 router.get("/api/youtube/discover", async (req, res) => {
   try {
-    const preset = String(req.query.preset || "popular").trim().toLowerCase();
+    const preset = String(req.query.preset || "energizing").trim().toLowerCase();
     const limit = Number(req.query.limit || 18);
     const page = Number(req.query.page || 1);
     const lang = String(req.query.lang || "").trim().toLowerCase();
@@ -46,12 +46,14 @@ router.get("/api/youtube/search", async (req, res) => {
     const limit = Number(req.query.limit || 12);
     const type = String(req.query.type || req.query.kind || "").trim().toLowerCase();
     const sort = String(req.query.sort || "").trim().toLowerCase();
+    const lang = String(req.query.lang || "").trim().toLowerCase();
+    const region = String(req.query.region || "").trim().toUpperCase();
 
     if (!query) {
       return sendError(res, "SEARCH_QUERY_REQUIRED", "Search query is required", 400);
     }
 
-    const result = await searchYouTubeContent(query, { limit, type, sort });
+    const result = await searchYouTubeContent(query, { limit, type, sort, lang, region });
     return sendOk(res, result);
   } catch (e) {
     console.error("YouTube search error:", e);

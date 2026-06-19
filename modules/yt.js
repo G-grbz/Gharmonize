@@ -631,11 +631,16 @@ function normalizeSearchType(value) {
   return "";
 }
 
-function buildYouTubeSearchUrlWithOptions(query, { type = "", sort = "" } = {}) {
+function buildYouTubeSearchUrlWithOptions(query, { type = "", sort = "", lang = "", region = "" } = {}) {
   const url = new URL("https://www.youtube.com/results");
   url.searchParams.set("search_query", query);
   const searchType = normalizeSearchType(type);
   const searchSort = String(sort || "").trim().toLowerCase();
+  const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
+  const safeRegion = normalizeDiscoverRegion(region || getInnertubeRegion(), safeLang);
+
+  url.searchParams.set("hl", `${safeLang}-${safeRegion}`);
+  url.searchParams.set("gl", safeRegion);
 
   if (searchType === "playlist") {
     url.searchParams.set("sp", "EgIQAw==");
@@ -675,6 +680,10 @@ function stripPlaylistParamsFromTrackUrl(value = "") {
     }
   } catch {}
   return source.replace(/([?&])(list|index|start_radio)=[^&#]*/gi, "$1").replace(/[?&]+$/, "");
+}
+
+function isYouTubeShortsUrl(value = "") {
+  return /(?:^|\/)shorts(?:\/|$)|youtube\.com\/shorts\//i.test(String(value || ""));
 }
 
 function normalizeDiscoverPlaylistId(value = "") {
@@ -835,6 +844,14 @@ function getSearchItemMatchText(item = {}) {
   ].filter(Boolean).join(" "));
 }
 
+function isLikelyNonMusicYtmItem(item = {}) {
+  const url = String(item.webpage_url || item.url || "");
+  if (isYouTubeShortsUrl(url)) return true;
+
+  const text = getSearchItemMatchText(item);
+  return /\b(bolum|episode|episodes|podcast|podcasts)\b/.test(text) || /\bshorts?\b/.test(text);
+}
+
 function filterSearchItemsForQuery(items = [], query = "", searchType = "") {
   const list = Array.isArray(items) ? items : [];
   if (!["album", "artist"].includes(searchType)) return list;
@@ -854,7 +871,7 @@ function isYtmSearchItemType(item = {}, targetType = "") {
   if (targetType === "album") return type === "album";
   if (targetType === "artist") return type === "artist";
   if (targetType === "playlist") return type === "playlist";
-  if (targetType === "track") return type === "track";
+  if (targetType === "track") return type === "track" && !isLikelyNonMusicYtmItem(item);
   return true;
 }
 
@@ -1026,7 +1043,7 @@ async function searchYouTubeMusicArtistAlbums(query, { limit = 12, lang = "", re
 }
 
 // Searches YouTube content for the ytlive browser UI.
-export async function searchYouTubeContent(query, { limit = 12, type = "", sort = "" } = {}) {
+export async function searchYouTubeContent(query, { limit = 12, type = "", sort = "", lang = "", region = "", musicOnly = false } = {}) {
   const q = String(query || "").trim();
   if (!q) {
     return { query: q, items: [] };
@@ -1034,30 +1051,39 @@ export async function searchYouTubeContent(query, { limit = 12, type = "", sort 
 
   const safeLimit = normalizeSearchLimit(limit);
   const searchType = normalizeSearchType(type);
+  const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
+  const safeRegion = normalizeDiscoverRegion(region || getInnertubeRegion(), safeLang);
   const timeout = Number(process.env.YOUTUBE_SEARCH_TIMEOUT_MS || 30000);
   let data = null;
+
+  if (["track", "album", "artist"].includes(searchType)) {
+    const musicItems = await searchYouTubeMusicContent(q, {
+      limit: safeLimit,
+      type: searchType,
+      lang: safeLang,
+      region: safeRegion
+    });
+    const filteredMusicItems = filterSearchItemsForQuery(musicItems, q, searchType);
+    const directMusicItems = filteredMusicItems.length ? filteredMusicItems : musicItems;
+
+    if (directMusicItems.length) {
+      return { query: q, type: searchType, items: directMusicItems };
+    }
+  }
 
   if (searchType === "album") {
     const artistAlbums = await searchYouTubeMusicArtistAlbums(q, {
       limit: safeLimit,
-      lang: getInnertubeLang(),
-      region: getInnertubeRegion()
+      lang: safeLang,
+      region: safeRegion
     });
     if (artistAlbums.length) {
       return { query: q, type: searchType, items: artistAlbums };
     }
+  }
 
-    const musicItems = await searchYouTubeMusicContent(q, {
-      limit: safeLimit,
-      type: searchType,
-      lang: getInnertubeLang(),
-      region: getInnertubeRegion()
-    });
-    const filteredMusicItems = filterSearchItemsForQuery(musicItems, q, searchType);
-
-    if (filteredMusicItems.length) {
-      return { query: q, type: searchType, items: filteredMusicItems };
-    }
+  if (musicOnly) {
+    return { query: q, type: searchType || "all", items: [] };
   }
 
   const searchSort = String(sort || "").trim().toLowerCase();
@@ -1066,7 +1092,7 @@ export async function searchYouTubeContent(query, { limit = 12, type = "", sort 
   if (preferSearchUrl) {
     try {
       data = await runYtJson(
-        ["--flat-playlist", "--playlist-end", String(safeLimit), buildYouTubeSearchUrlWithOptions(q, { type: searchType, sort: searchSort })],
+        ["--flat-playlist", "--playlist-end", String(safeLimit), buildYouTubeSearchUrlWithOptions(q, { type: searchType, sort: searchSort, lang: safeLang, region: safeRegion })],
         searchType === "playlist" ? "youtube-search-playlist" : "youtube-search-date",
         timeout
       );
@@ -1115,9 +1141,34 @@ export async function searchYouTubeContent(query, { limit = 12, type = "", sort 
   };
 }
 
+const DISCOVER_MOOD_PRESETS = new Set([
+  "energizing",
+  "workout",
+  "feel-good",
+  "relax",
+  "sad",
+  "romance",
+  "commute",
+  "party",
+  "focus",
+  "sleep"
+]);
+
+const DISCOVER_PRESETS = new Set([
+  "popular",
+  "new",
+  "playlist",
+  "local",
+  ...DISCOVER_MOOD_PRESETS
+]);
+
 function normalizeDiscoverPreset(value = "") {
   const preset = String(value || "").trim().toLowerCase();
-  return ["popular", "new", "playlist", "local"].includes(preset) ? preset : "popular";
+  return DISCOVER_PRESETS.has(preset) ? preset : "energizing";
+}
+
+function isMoodDiscoverPreset(value = "") {
+  return DISCOVER_MOOD_PRESETS.has(String(value || "").trim().toLowerCase());
 }
 
 function normalizeDiscoverPage(value) {
@@ -1171,7 +1222,9 @@ function isDiscoverItemType(item = {}, targetType = "track") {
     return playlistLike;
   }
 
-  const videoId = String(item.id || "").match(/^[A-Za-z0-9_-]{11}$/) || /(?:\/watch\?|youtu\.be\/|\/shorts\/)/i.test(url);
+  if (isLikelyNonMusicYtmItem(item)) return false;
+
+  const videoId = String(item.id || "").match(/^[A-Za-z0-9_-]{11}$/) || /(?:\/watch\?|youtu\.be\/)/i.test(url);
   return !!videoId && !playlistLike;
 }
 
@@ -1653,9 +1706,32 @@ async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, t
 }
 
 async function fetchPublicYouTubeMusicBrowseDiscover(options = {}) {
+  const preferCookies = shouldPreferDiscoverCookies(options);
+  let triedCookies = false;
+
+  if (preferCookies) {
+    triedCookies = true;
+    try {
+      const items = await fetchYouTubeMusicBrowseDiscover({ ...options, useCookies: true });
+      if (items.length) return items;
+      discoverDebug("browse:cookie-empty", {
+        browseId: options.browseId,
+        params: options.params ? trimDiscoverText(options.params, 24) : "",
+        targetType: options.targetType
+      });
+    } catch (error) {
+      discoverDebug("browse:cookie-error", {
+        browseId: options.browseId,
+        params: options.params ? trimDiscoverText(options.params, 24) : "",
+        targetType: options.targetType,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
   try {
     const items = await fetchYouTubeMusicBrowseDiscover({ ...options, useCookies: false });
-    if (items.length || String(process.env.YOUTUBE_DISCOVER_COOKIE_FALLBACK || "1") === "0") return items;
+    if (items.length || triedCookies || String(process.env.YOUTUBE_DISCOVER_COOKIE_FALLBACK || "1") === "0") return items;
     discoverDebug("browse:public-empty", {
       browseId: options.browseId,
       params: options.params ? trimDiscoverText(options.params, 24) : "",
@@ -1670,13 +1746,37 @@ async function fetchPublicYouTubeMusicBrowseDiscover(options = {}) {
     });
   }
 
+  if (triedCookies) return [];
   return fetchYouTubeMusicBrowseDiscover({ ...options, useCookies: true });
 }
 
 async function fetchPublicYouTubeMusicBrowseShelves(options = {}) {
+  const preferCookies = shouldPreferDiscoverCookies(options);
+  let triedCookies = false;
+
+  if (preferCookies) {
+    triedCookies = true;
+    try {
+      const shelves = await fetchYouTubeMusicBrowseDiscover({ ...options, returnShelves: true, useCookies: true });
+      if (shelves.length) return shelves;
+      discoverDebug("browse-shelves:cookie-empty", {
+        browseId: options.browseId,
+        params: options.params ? trimDiscoverText(options.params, 24) : "",
+        targetType: options.targetType
+      });
+    } catch (error) {
+      discoverDebug("browse-shelves:cookie-error", {
+        browseId: options.browseId,
+        params: options.params ? trimDiscoverText(options.params, 24) : "",
+        targetType: options.targetType,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
   try {
     const shelves = await fetchYouTubeMusicBrowseDiscover({ ...options, returnShelves: true, useCookies: false });
-    if (shelves.length || String(process.env.YOUTUBE_DISCOVER_COOKIE_FALLBACK || "1") === "0") return shelves;
+    if (shelves.length || triedCookies || String(process.env.YOUTUBE_DISCOVER_COOKIE_FALLBACK || "1") === "0") return shelves;
     discoverDebug("browse-shelves:public-empty", {
       browseId: options.browseId,
       params: options.params ? trimDiscoverText(options.params, 24) : "",
@@ -1691,6 +1791,7 @@ async function fetchPublicYouTubeMusicBrowseShelves(options = {}) {
     });
   }
 
+  if (triedCookies) return [];
   return fetchYouTubeMusicBrowseDiscover({ ...options, returnShelves: true, useCookies: true });
 }
 
@@ -1828,14 +1929,253 @@ function getLocalCategoryScore(item = {}, lang = "en") {
   return score;
 }
 
+function getMoodCategoryPatterns(preset = "") {
+  const patterns = {
+    energizing: [
+      /power/,
+      /energi/,
+      /\benergy\b/,
+      /energiz/,
+      /energetic/,
+      /upbeat/,
+      /hareket/,
+      /canli/,
+      /motivasyon/,
+      /motivation/,
+      /dinamik/
+    ],
+    workout: [
+      /workout/,
+      /training/,
+      /fitness/,
+      /\bgym\b/,
+      /exercise/,
+      /antrenman/,
+      /\bspor\b/,
+      /egzersiz/,
+      /entrenamiento/,
+      /gimnasio/,
+      /entrainement/,
+      /sport/
+    ],
+    "feel-good": [
+      /sentirse bien/,
+      /feel good/,
+      /happy/,
+      /mood booster/,
+      /good mood/,
+      /keyif/,
+      /iyi his/,
+      /neseli/,
+      /mutlu/,
+      /gute laune/,
+      /bonne humeur/,
+      /buen rollo/,
+      /alegre/,
+      /joyeux/
+    ],
+    relax: [
+      /relax/,
+      /chill/,
+      /calm/,
+      /rahat/,
+      /sakin/,
+      /dinlen/,
+      /entspann/,
+      /detente/,
+      /relaj/,
+      /tranquil/
+    ],
+    sad: [
+      /\bsad\b/,
+      /sadness/,
+      /huzun/,
+      /duygusal/,
+      /melankol/,
+      /triste/,
+      /traurig/,
+      /chagrin/,
+      /heartbreak/
+    ],
+    romance: [
+      /romant/,
+      /romance/,
+      /\blove\b/,
+      /\bask\b/,
+      /amour/,
+      /amor/,
+      /liebe/
+    ],
+    commute: [
+      /desplazamientos diarios/,
+      /pour la route/,
+      /commute/,
+      /driving/,
+      /drive/,
+      /road trip/,
+      /travel/,
+      /yol/,
+      /araba/,
+      /surus/,
+      /ise gid/,
+      /pendel/,
+      /arbeitsweg/,
+      /fahrt/,
+      /trajet/,
+      /route/,
+      /conduc/,
+      /trayecto/,
+      /viaje/
+    ],
+    party: [
+      /party/,
+      /parti/,
+      /dance/,
+      /dans/,
+      /eglence/,
+      /fiesta/,
+      /feier/,
+      /fete/,
+      /soiree/
+    ],
+    focus: [
+      /focus/,
+      /fokus/,
+      /odak/,
+      /concentr/,
+      /study/,
+      /work/,
+      /calisma/,
+      /konzentr/,
+      /travail/,
+      /estudiar/,
+      /trabajar/,
+      /productiv/
+    ],
+    sleep: [
+      /sleep/,
+      /uyku/,
+      /dorm/,
+      /schlaf/,
+      /sommeil/,
+      /sueno/,
+      /night/
+    ]
+  };
+  return patterns[preset] || [];
+}
+
+function getLocalizedMoodCategoryTitles(preset = "", lang = "en") {
+  const safeLang = normalizeDiscoverLang(lang);
+  const titles = {
+    en: {
+      energizing: ["energizing", "energy"],
+      workout: ["workout"],
+      "feel-good": ["feel good"],
+      relax: ["relax"],
+      sad: ["sad"],
+      romance: ["romance", "romantic"],
+      commute: ["commute"],
+      party: ["party"],
+      focus: ["focus"],
+      sleep: ["sleep"]
+    },
+    tr: {
+      energizing: ["enerjik", "enerji"],
+      workout: ["antrenman", "spor"],
+      "feel-good": ["keyifli", "iyi hisset", "neseli"],
+      relax: ["rahatlama", "rahatla", "sakin"],
+      sad: ["huzunlu", "duygusal"],
+      romance: ["romantik", "ask"],
+      commute: ["ise gidip gelme", "yol"],
+      party: ["parti"],
+      focus: ["odaklanma", "odaklan"],
+      sleep: ["uyku"]
+    },
+    fr: {
+      energizing: ["energie"],
+      workout: ["sport"],
+      "feel-good": ["bonne humeur"],
+      relax: ["detente"],
+      sad: ["triste"],
+      romance: ["romance"],
+      commute: ["pour la route"],
+      party: ["fete"],
+      focus: ["concentration"],
+      sleep: ["sommeil"]
+    },
+    de: {
+      energizing: ["power"],
+      workout: ["workout"],
+      "feel-good": ["gute laune"],
+      relax: ["entspannung"],
+      sad: ["traurig"],
+      romance: ["romantik"],
+      commute: ["arbeitsweg"],
+      party: ["party"],
+      focus: ["konzentration"],
+      sleep: ["einschlafen"]
+    },
+    es: {
+      energizing: ["energia"],
+      workout: ["entrenamiento"],
+      "feel-good": ["sentirse bien"],
+      relax: ["relax"],
+      sad: ["triste"],
+      romance: ["amor"],
+      commute: ["desplazamientos diarios"],
+      party: ["fiesta"],
+      focus: ["concentracion"],
+      sleep: ["dormir"]
+    }
+  };
+  return titles[safeLang]?.[preset] || titles.en[preset] || [];
+}
+
+function getMoodCategoryScore(item = {}, preset = "", lang = "en") {
+  const patterns = getMoodCategoryPatterns(preset);
+  const exactTitles = getLocalizedMoodCategoryTitles(preset, lang);
+  if (!patterns.length && !exactTitles.length) return 0;
+
+  const title = normalizeSearchMatchText(item.title || "");
+  const exactMatch = exactTitles.some((candidate) => title === candidate);
+  const phraseMatch = exactTitles.some((candidate) => candidate && title.includes(candidate));
+  const matchCount = patterns.filter((pattern) => pattern.test(title)).length;
+  if (!matchCount && !phraseMatch) return 0;
+
+  let score = matchCount * 10;
+  if (exactMatch) score += 100;
+  else if (phraseMatch) score += 60;
+  if (new RegExp(`\\b${preset.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`).test(title)) score += 4;
+  if (/playlist|mix|radio|songs|sarkilar|chansons|canciones|songs/.test(title)) score += 1;
+  return score;
+}
+
+function getDiscoverCategoryScore(item = {}, preset = "", lang = "en") {
+  const safePreset = normalizeDiscoverPreset(preset);
+  if (isMoodDiscoverPreset(safePreset)) return getMoodCategoryScore(item, safePreset, lang);
+  return getLocalCategoryScore(item, lang);
+}
+
 function getDiscoverCategoryLimit(preset, limit) {
   const safeLimit = Math.max(1, Number(limit) || 18);
+  if (isMoodDiscoverPreset(preset)) return Math.max(80, Math.min(120, safeLimit * 4));
   if (preset === "local") return Math.max(60, Math.min(80, safeLimit * 3));
   return Math.max(24, Math.min(60, safeLimit * 2));
 }
 
 function selectDiscoverCategories(categoryCandidates = [], { preset, lang, maxLocal = 3, maxDefault = 6 } = {}) {
-  if (preset !== "local") return categoryCandidates.slice(0, maxDefault);
+  const safePreset = normalizeDiscoverPreset(preset);
+  if (isMoodDiscoverPreset(safePreset)) {
+    return categoryCandidates
+      .map((item) => ({ item, score: getMoodCategoryScore(item, safePreset, lang) }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2)
+      .map(({ item }) => item);
+  }
+
+  if (safePreset !== "local") return categoryCandidates.slice(0, maxDefault);
 
   const scored = categoryCandidates
     .map((item) => ({ item, score: getLocalCategoryScore(item, lang) }))
@@ -1860,8 +2200,10 @@ async function getDiscoverCategoryPlaylists({ preset, limit, lang, region, timeo
   const categoryCandidates = categories
     .filter((item) => item.browseId === "FEmusic_moods_and_genres_category" && item.params)
     .sort((a, b) => {
-      if (preset !== "local") return 0;
-      return getLocalCategoryScore(b, lang) - getLocalCategoryScore(a, lang);
+      if (preset === "local" || isMoodDiscoverPreset(preset)) {
+        return getDiscoverCategoryScore(b, preset, lang) - getDiscoverCategoryScore(a, preset, lang);
+      }
+      return 0;
     });
 
   const selectedCategories = selectDiscoverCategories(categoryCandidates, {
@@ -1878,11 +2220,11 @@ async function getDiscoverCategoryPlaylists({ preset, limit, lang, region, timeo
     selectedCount: selectedCategories.length,
     candidates: categoryCandidates.slice(0, 10).map((item) => ({
       ...summarizeDiscoverItem(item),
-      score: getLocalCategoryScore(item, lang)
+      score: getDiscoverCategoryScore(item, preset, lang)
     })),
     selected: selectedCategories.map((item) => ({
       ...summarizeDiscoverItem(item),
-      score: getLocalCategoryScore(item, lang)
+      score: getDiscoverCategoryScore(item, preset, lang)
     }))
   });
 
@@ -1938,8 +2280,10 @@ async function getDiscoverCategoryTracks({ preset, limit, lang, region, timeoutM
   const categoryCandidates = categories
     .filter((item) => item.browseId === "FEmusic_moods_and_genres_category" && item.params)
     .sort((a, b) => {
-      if (preset !== "local") return 0;
-      return getLocalCategoryScore(b, lang) - getLocalCategoryScore(a, lang);
+      if (preset === "local" || isMoodDiscoverPreset(preset)) {
+        return getDiscoverCategoryScore(b, preset, lang) - getDiscoverCategoryScore(a, preset, lang);
+      }
+      return 0;
     });
 
   const selectedCategories = selectDiscoverCategories(categoryCandidates, {
@@ -1956,11 +2300,11 @@ async function getDiscoverCategoryTracks({ preset, limit, lang, region, timeoutM
     selectedCount: selectedCategories.length,
     candidates: categoryCandidates.slice(0, 10).map((item) => ({
       ...summarizeDiscoverItem(item),
-      score: getLocalCategoryScore(item, lang)
+      score: getDiscoverCategoryScore(item, preset, lang)
     })),
     selected: selectedCategories.map((item) => ({
       ...summarizeDiscoverItem(item),
-      score: getLocalCategoryScore(item, lang)
+      score: getDiscoverCategoryScore(item, preset, lang)
     }))
   });
 
@@ -2001,9 +2345,319 @@ async function getDiscoverCategoryTracks({ preset, limit, lang, region, timeoutM
   return tracks;
 }
 
+function getDiscoverMoodFallbackQuery(preset = "", lang = "en") {
+  const safeLang = normalizeDiscoverLang(lang);
+  const queries = {
+    tr: {
+      energizing: "enerjik müzik",
+      workout: "antrenman müzikleri",
+      "feel-good": "keyifli şarkılar",
+      relax: "rahatlama müziği",
+      sad: "hüzünlü şarkılar",
+      romance: "romantik şarkılar",
+      commute: "işe giderken müzik",
+      party: "parti müzikleri",
+      focus: "odaklanma müziği",
+      sleep: "uyku müziği"
+    },
+    en: {
+      energizing: "energetic music",
+      workout: "workout music",
+      "feel-good": "feel good music",
+      relax: "relaxing music",
+      sad: "sad music",
+      romance: "romantic music",
+      commute: "commute music",
+      party: "party music",
+      focus: "focus music",
+      sleep: "sleep music"
+    },
+    de: {
+      energizing: "power musik",
+      workout: "workout musik",
+      "feel-good": "gute laune musik",
+      relax: "entspannung musik",
+      sad: "traurig musik",
+      romance: "romantik musik",
+      commute: "arbeitsweg musik",
+      party: "partymusik",
+      focus: "konzentration musik",
+      sleep: "einschlafen musik"
+    },
+    fr: {
+      energizing: "energie musique",
+      workout: "sport musique",
+      "feel-good": "musique bonne humeur",
+      relax: "musique detente",
+      sad: "chansons tristes",
+      romance: "romance musique",
+      commute: "pour la route musique",
+      party: "musique fete",
+      focus: "musique concentration",
+      sleep: "musique sommeil"
+    },
+    es: {
+      energizing: "musica energica",
+      workout: "musica entrenamiento",
+      "feel-good": "musica sentirse bien",
+      relax: "musica relax",
+      sad: "canciones tristes",
+      romance: "musica amor",
+      commute: "musica desplazamientos diarios",
+      party: "musica de fiesta",
+      focus: "musica concentracion",
+      sleep: "musica dormir"
+    }
+  };
+  return queries[safeLang]?.[preset] || queries.en[preset] || "music";
+}
+
+function getDiscoverMoodFallbackQueries(preset = "", lang = "en") {
+  const safeLang = normalizeDiscoverLang(lang);
+  const variants = {
+    tr: {
+      energizing: ["enerjik", "enerjik şarkılar", "hareketli şarkılar", "motivasyon müzikleri", "türkçe hareketli şarkılar"],
+      workout: ["antrenman", "spor müzikleri", "fitness şarkıları", "gym müzikleri", "koşu müzikleri"],
+      "feel-good": ["keyifli", "keyifli şarkılar", "iyi hissettiren müzikler", "neşeli şarkılar", "mutlu şarkılar"],
+      relax: ["rahatlama", "rahatlama müziği", "sakin müzik", "chill müzik", "dinlendirici şarkılar"],
+      sad: ["hüzünlü", "hüzünlü şarkılar", "duygusal müzik", "melankolik şarkılar", "ağlatan şarkılar"],
+      romance: ["romantik", "romantik şarkılar", "aşk şarkıları", "romantik müzik", "sevda şarkıları"],
+      commute: ["işe giderken", "işe giderken müzik", "yol müzikleri", "araba müzikleri", "uzun yol şarkıları"],
+      party: ["parti", "parti müzikleri", "dans şarkıları", "eğlence müzikleri", "hareketli pop"],
+      focus: ["odaklanma", "odaklanma müziği", "çalışma müziği", "konsantrasyon müziği", "ders çalışma müziği"],
+      sleep: ["uyku", "uyku müziği", "rahat uyku müzikleri", "sakin uyku müziği", "uyku şarkıları"]
+    },
+    en: {
+      energizing: ["energetic music", "upbeat songs", "motivation music", "energy songs"],
+      workout: ["workout music", "gym music", "fitness songs", "running music"],
+      "feel-good": ["feel good music", "happy songs", "mood booster music", "good mood songs"],
+      relax: ["relaxing music", "chill music", "calm songs", "relax songs"],
+      sad: ["sad music", "sad songs", "melancholy music", "emotional songs"],
+      romance: ["romantic music", "love songs", "romance songs", "romantic songs"],
+      commute: ["commute music", "driving music", "road trip songs", "travel songs"],
+      party: ["party music", "dance songs", "party playlist", "club songs"],
+      focus: ["focus music", "study music", "concentration music", "work music"],
+      sleep: ["sleep music", "sleep songs", "calm sleep music", "night music"]
+    },
+    de: {
+      energizing: ["power musik", "energie musik", "motivationsmusik", "dynamische musik"],
+      workout: ["workout musik", "fitness musik", "training musik", "laufmusik"],
+      "feel-good": ["gute laune musik", "frohe songs", "feel good musik", "glückliche songs"],
+      relax: ["entspannung musik", "ruhige musik", "chill musik", "relax musik"],
+      sad: ["traurig musik", "melancholische musik", "traurige songs", "emotionale songs"],
+      romance: ["romantik musik", "liebeslieder", "romantische songs", "liebe musik"],
+      commute: ["arbeitsweg musik", "musik zum pendeln", "fahrmusik", "roadtrip songs"],
+      party: ["partymusik", "tanzmusik", "party songs", "club musik"],
+      focus: ["konzentration musik", "fokus musik", "musik zum arbeiten", "lern musik"],
+      sleep: ["einschlafen musik", "schlafmusik", "ruhige schlafmusik", "nacht musik"]
+    },
+    fr: {
+      energizing: ["energie musique", "musique energique", "musique dynamique", "musique motivation"],
+      workout: ["sport musique", "musique sport", "chansons fitness", "musique entrainement"],
+      "feel-good": ["musique bonne humeur", "chansons joyeuses", "musique feel good", "bonne humeur chansons"],
+      relax: ["musique detente", "musique relaxante", "musique calme", "chansons relax"],
+      sad: ["chansons tristes", "musique melancolique", "musique triste", "chansons emotionnelles"],
+      romance: ["romance musique", "musique romantique", "chansons amour", "chansons romantiques"],
+      commute: ["pour la route musique", "musique route", "musique voiture", "chansons voyage"],
+      party: ["musique fete", "chansons danse", "musique soiree", "musique party"],
+      focus: ["musique concentration", "musique travail", "musique focus", "musique etudier"],
+      sleep: ["musique sommeil", "musique pour dormir", "musique calme sommeil", "musique nuit"]
+    },
+    es: {
+      energizing: ["musica energica", "canciones motivadoras", "musica con energia", "musica dinamica"],
+      workout: ["musica entrenamiento", "musica gimnasio", "canciones fitness", "musica correr"],
+      "feel-good": ["musica sentirse bien", "musica buen rollo", "canciones alegres", "musica feliz"],
+      relax: ["musica relax", "musica relajante", "musica tranquila", "canciones relax"],
+      sad: ["canciones tristes", "musica melancolica", "musica triste", "canciones emocionales"],
+      romance: ["musica amor", "canciones de amor", "musica romantica", "canciones romanticas"],
+      commute: ["musica desplazamientos diarios", "musica para conducir", "canciones de viaje", "musica carretera"],
+      party: ["musica de fiesta", "canciones para bailar", "musica party", "musica discoteca"],
+      focus: ["musica concentracion", "musica para estudiar", "musica para trabajar", "musica focus"],
+      sleep: ["musica dormir", "musica para dormir", "musica tranquila para dormir", "musica noche"]
+    }
+  };
+  return Array.from(new Set([
+    getDiscoverMoodFallbackQuery(preset, safeLang),
+    ...(variants[safeLang]?.[preset] || variants.en[preset] || [])
+  ].map((query) => String(query || "").trim()).filter(Boolean)));
+}
+
+async function searchDiscoverMoodFallback({ preset, limit, lang, region }) {
+  const queries = getDiscoverMoodFallbackQueries(preset, lang);
+  let items = [];
+
+  for (const query of queries) {
+    if (items.length >= limit) break;
+    const search = await searchYouTubeContent(query, {
+      limit: Math.max(12, Math.min(30, limit - items.length)),
+      type: "track",
+      lang,
+      region,
+      musicOnly: true
+    });
+    items = uniqueMusicHomeItems([...items, ...(Array.isArray(search?.items) ? search.items : [])], limit);
+  }
+
+  return {
+    query: queries.join(" | "),
+    items
+  };
+}
+
+function getDiscoverMoodDisplayTitle(preset = "", lang = "en") {
+  const safeLang = normalizeDiscoverLang(lang);
+  const titles = {
+    tr: {
+      energizing: "Enerjik",
+      workout: "Antrenman",
+      "feel-good": "Keyifli",
+      relax: "Rahatlama",
+      sad: "Hüzünlü",
+      romance: "Romantik",
+      commute: "İşe gidip gelme",
+      party: "Parti",
+      focus: "Odaklanma",
+      sleep: "Uyku"
+    },
+    en: {
+      energizing: "Energetic",
+      workout: "Workout",
+      "feel-good": "Feel good",
+      relax: "Relax",
+      sad: "Sad",
+      romance: "Romantic",
+      commute: "Commute",
+      party: "Party",
+      focus: "Focus",
+      sleep: "Sleep"
+    },
+    de: {
+      energizing: "Power",
+      workout: "Workout",
+      "feel-good": "Gute Laune",
+      relax: "Entspannung",
+      sad: "Traurig",
+      romance: "Romantisch",
+      commute: "Arbeitsweg",
+      party: "Party",
+      focus: "Konzentration",
+      sleep: "Einschlafen"
+    },
+    fr: {
+      energizing: "Énergie",
+      workout: "Sport",
+      "feel-good": "Bonne humeur",
+      relax: "Détente",
+      sad: "Triste",
+      romance: "Romance",
+      commute: "Pour la route",
+      party: "Fête",
+      focus: "Concentration",
+      sleep: "Sommeil"
+    },
+    es: {
+      energizing: "Energía",
+      workout: "Entrenamiento",
+      "feel-good": "Sentirse bien",
+      relax: "Relax",
+      sad: "Triste",
+      romance: "Amor",
+      commute: "Desplazamientos diarios",
+      party: "Fiesta",
+      focus: "Concentración",
+      sleep: "Dormir"
+    }
+  };
+  return titles[safeLang]?.[preset] || titles.en[preset] || "YouTube Music";
+}
+
 async function getDiscoverItemsForPreset({ preset, limit, lang, region, timeoutMs }) {
   const safePreset = normalizeDiscoverPreset(preset);
-  discoverDebug("preset:start", { preset: safePreset, limit, lang, region });
+  const safeLang = normalizeDiscoverLang(lang);
+  const safeRegion = normalizeDiscoverRegion(region, safeLang);
+  discoverDebug("preset:start", { preset: safePreset, limit, lang: safeLang, region: safeRegion });
+
+  if (isMoodDiscoverPreset(safePreset)) {
+    if (safeLang !== "en") {
+      try {
+        const { query, items: localizedSearchItems } = await searchDiscoverMoodFallback({
+          preset: safePreset,
+          limit,
+          lang: safeLang,
+          region: safeRegion
+        });
+        if (localizedSearchItems.length) {
+          discoverDebug("preset:mood:return-localized-search", {
+            preset: safePreset,
+            lang: safeLang,
+            region: safeRegion,
+            query,
+            count: localizedSearchItems.length,
+            sample: localizedSearchItems.slice(0, 8).map(summarizeDiscoverItem)
+          });
+          return localizedSearchItems;
+        }
+      } catch (error) {
+        discoverDebug("preset:mood:localized-search-error", {
+          preset: safePreset,
+          lang: safeLang,
+          error: error?.message || String(error)
+        });
+      }
+    }
+
+    const categoryTracks = await getDiscoverCategoryTracks({ preset: safePreset, limit, lang: safeLang, region: safeRegion, timeoutMs });
+    if (categoryTracks.length) {
+      discoverDebug("preset:mood:return-direct-category-tracks", {
+        preset: safePreset,
+        count: categoryTracks.length,
+        sample: categoryTracks.slice(0, 8).map(summarizeDiscoverItem)
+      });
+      return categoryTracks;
+    }
+
+    const categoryPlaylists = await getDiscoverCategoryPlaylists({
+      preset: safePreset,
+      limit: Math.max(12, Math.min(40, limit)),
+      lang: safeLang,
+      region: safeRegion,
+      timeoutMs
+    });
+    const playlistTracks = await expandDiscoverPlaylistsToTracks(categoryPlaylists, { limit, timeoutMs, lang: safeLang, region: safeRegion });
+    if (playlistTracks.length) {
+      discoverDebug("preset:mood:return-expanded-tracks", {
+        preset: safePreset,
+        playlistCount: categoryPlaylists.length,
+        count: playlistTracks.length,
+        sample: playlistTracks.slice(0, 8).map(summarizeDiscoverItem)
+      });
+      return playlistTracks;
+    }
+
+    try {
+      const { query, items: searchItems } = await searchDiscoverMoodFallback({
+        preset: safePreset,
+        limit,
+        lang: safeLang,
+        region: safeRegion
+      });
+      discoverDebug("preset:mood:return-search-fallback", {
+        preset: safePreset,
+        lang: safeLang,
+        region: safeRegion,
+        query,
+        count: searchItems.length,
+        sample: searchItems.slice(0, 8).map(summarizeDiscoverItem)
+      });
+      return searchItems;
+    } catch (error) {
+      discoverDebug("preset:mood:search-fallback-error", {
+        preset: safePreset,
+        error: error?.message || String(error)
+      });
+      return [];
+    }
+  }
 
   if (safePreset === "popular") {
     const chartPlaylists = await fetchPublicYouTubeMusicBrowseDiscover({
@@ -2257,6 +2911,17 @@ function hasUsableCookieSource() {
   }
 
   return !!String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
+}
+
+function shouldPreferDiscoverCookies({ lang = "" } = {}) {
+  if (!hasUsableCookieSource()) return false;
+
+  const configured = String(process.env.YOUTUBE_DISCOVER_COOKIE_FIRST || "").trim();
+  if (configured) return configured !== "0";
+
+  const requestedLang = normalizeDiscoverLang(lang || getInnertubeLang());
+  const defaultLang = normalizeDiscoverLang(getInnertubeLang());
+  return requestedLang === defaultLang;
 }
 
 function normalizeMusicHomeNumber(value, fallback, min, max) {
@@ -2891,6 +3556,59 @@ function findYtmEndpoint(value) {
   );
 }
 
+function getYtmPrimaryBrowseEndpoint(renderer = {}) {
+  if (!renderer || typeof renderer !== "object") return null;
+
+  const titleRunEndpoints = Array.isArray(renderer?.title?.runs)
+    ? renderer.title.runs.map((run) => run?.navigationEndpoint?.browseEndpoint)
+    : [];
+  const scopedBrowse = findYtmBrowseEndpoint({
+    navigationEndpoint: renderer.navigationEndpoint,
+    title: renderer.title,
+    onTap: renderer.onTap,
+    clickCommand: renderer.clickCommand,
+    buttonText: renderer.buttonText
+  });
+
+  const candidates = [
+    renderer?.navigationEndpoint?.browseEndpoint,
+    renderer?.title?.navigationEndpoint?.browseEndpoint,
+    ...titleRunEndpoints,
+    renderer?.onTap?.browseEndpoint,
+    renderer?.clickCommand?.browseEndpoint,
+    scopedBrowse,
+    renderer?.browseId ? { browseId: renderer.browseId, params: renderer.params || "" } : null
+  ];
+
+  return candidates.find((candidate) => candidate?.browseId || candidate?.params) || null;
+}
+
+function getYtmBrowseEndpointType(browse = {}, renderer = {}) {
+  const browseId = String(browse?.browseId || "").trim();
+  if (/^MPRE/i.test(browseId)) return "album";
+
+  const rendererText = normalizeMusicHomeTitle([
+    textFromRuns(renderer?.subtitle),
+    textFromRuns(renderer?.secondSubtitle),
+    textFromRuns(renderer?.straplineText),
+    textFromRuns(renderer?.byline),
+    textFromRuns(renderer?.description)
+  ].filter(Boolean).join(" "));
+
+  if (/(artist|sanatçı|sanatci|künstler|artiste|artista)/i.test(rendererText)) {
+    return "artist";
+  }
+  if (/^VL/i.test(browseId) || isLikelyYouTubePlaylistId(browseId)) {
+    return "playlist";
+  }
+  return "";
+}
+
+function shouldPreferYtmPrimaryBrowseEndpoint(browse = {}, renderer = {}) {
+  const type = getYtmBrowseEndpointType(browse, renderer);
+  return type === "album" || type === "artist";
+}
+
 function ytmEndpointToItem(endpoint = {}, renderer = {}) {
   const watch = endpoint.watchEndpoint;
   const watchPlaylist = endpoint.watchPlaylistEndpoint;
@@ -3020,7 +3738,10 @@ function normalizeYtmRendererItem(value = {}, index = 0) {
   const renderer = findYtmItemRenderer(value) || value;
   if (!renderer || typeof renderer !== "object") return null;
 
-  const endpoint = findYtmEndpoint(renderer);
+  const primaryBrowse = getYtmPrimaryBrowseEndpoint(renderer);
+  const endpoint = primaryBrowse && shouldPreferYtmPrimaryBrowseEndpoint(primaryBrowse, renderer)
+    ? { browseEndpoint: primaryBrowse }
+    : findYtmEndpoint(renderer);
   const item = ytmEndpointToItem(endpoint || {}, renderer);
   if (!item?.webpage_url) return null;
 
@@ -3343,6 +4064,93 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
   }
 }
 
+async function getFallbackYouTubeMusicHomeShelves({ maxShelves, fetchShelves, limitPerShelf, timeoutMs, lang = "", region = "", cookieAvailable = false } = {}) {
+  const targetShelves = normalizeMusicHomeNumber(maxShelves, 6, 1, 12);
+  const browseShelves = normalizeMusicHomeNumber(fetchShelves || targetShelves, targetShelves, targetShelves, 40);
+  const perShelf = normalizeMusicHomeNumber(limitPerShelf, 12, 4, 24);
+  const safeLang = normalizeDiscoverLang(lang);
+  const safeRegion = normalizeDiscoverRegion(region, safeLang);
+  const shelfGroups = [];
+  const browseTimeout = Math.min(timeoutMs || 12000, 12000);
+
+  try {
+    const publicShelves = await fetchPublicYouTubeMusicBrowseShelves({
+      browseId: YTM_HOME_BROWSE_ID,
+      limit: perShelf,
+      targetType: "track",
+      preset: "",
+      lang: safeLang,
+      region: safeRegion,
+      timeoutMs: browseTimeout,
+      maxShelves: browseShelves
+    });
+    if (publicShelves.length) shelfGroups.push(publicShelves);
+  } catch (error) {
+    discoverDebug("home-fallback:public-home-error", {
+      error: error?.message || String(error)
+    });
+  }
+
+  let mergedShelves = mergeMusicHomeShelves(shelfGroups, {
+    maxShelves: browseShelves,
+    limitPerShelf: perShelf
+  });
+
+  const presetOrder = [
+    "energizing",
+    "workout",
+    "feel-good",
+    "relax",
+    "party",
+    "focus",
+    "sleep",
+    "romance",
+    "sad",
+    "commute"
+  ];
+
+  for (const preset of presetOrder) {
+    if (mergedShelves.length >= targetShelves) break;
+    try {
+      const items = await getDiscoverItemsForPreset({
+        preset,
+        limit: perShelf,
+        lang: safeLang,
+        region: safeRegion,
+        timeoutMs: Math.min(timeoutMs || 12000, 10000)
+      });
+      const shelfItems = uniqueMusicHomeItems(items, perShelf);
+      if (!shelfItems.length) continue;
+
+      shelfGroups.push([{
+        title: getDiscoverMoodDisplayTitle(preset, safeLang),
+        source: "youtube_music_home_fallback",
+        items: shelfItems
+      }]);
+      mergedShelves = mergeMusicHomeShelves(shelfGroups, {
+        maxShelves: browseShelves,
+        limitPerShelf: perShelf
+      });
+    } catch (error) {
+      discoverDebug("home-fallback:preset-error", {
+        preset,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  return {
+    personalized: false,
+    fallback: true,
+    cookieAvailable,
+    title: "YouTube Music",
+    shelves: selectMusicHomeShelves(mergedShelves, {
+      maxShelves: targetShelves,
+      limitPerShelf: perShelf
+    })
+  };
+}
+
 // Reads the signed-in YouTube Music home feed for the ytlive UI.
 export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang = "", region = "" } = {}) {
   const cookieAvailable = hasUsableCookieSource();
@@ -3357,11 +4165,15 @@ export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang
   const limitPerShelf = normalizeMusicHomeNumber(limit, 12, 4, 24);
 
   if (!cookieAvailable) {
-    return {
-      personalized: false,
-      cookieAvailable: false,
-      shelves: []
-    };
+    return getFallbackYouTubeMusicHomeShelves({
+      maxShelves,
+      fetchShelves,
+      limitPerShelf,
+      timeoutMs: Number(process.env.YTM_HOME_FALLBACK_TIMEOUT_MS || 12000),
+      lang,
+      region,
+      cookieAvailable: false
+    });
   }
 
   const timeout = Number(process.env.YTM_HOME_TIMEOUT_MS || 45000);
@@ -3373,27 +4185,48 @@ export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang
       lang,
       region
     });
-    return {
-      ...result,
-      shelves: selectMusicHomeShelves(result.shelves, { maxShelves, limitPerShelf })
-    };
+    const selectedShelves = selectMusicHomeShelves(result.shelves, { maxShelves, limitPerShelf });
+    if (selectedShelves.length) {
+      return {
+        ...result,
+        shelves: selectedShelves
+      };
+    }
+    console.warn("YouTube Music home API returned no shelves, using fallback shelves.");
   } catch (error) {
     console.warn("YouTube Music home API failed, falling back to yt-dlp:", error?.message || error);
   }
 
-  const data = await runYtJson(
-    ["--flat-playlist", YTM_HOME_BROWSE_URL],
-    "youtube-music-home",
-    timeout
-  );
-  const parsedShelves = buildMusicHomeShelves(data, { maxShelves: fetchShelves, limitPerShelf });
+  try {
+    const data = await runYtJson(
+      ["--flat-playlist", YTM_HOME_BROWSE_URL],
+      "youtube-music-home",
+      timeout
+    );
+    const parsedShelves = buildMusicHomeShelves(data, { maxShelves: fetchShelves, limitPerShelf });
+    const selectedShelves = selectMusicHomeShelves(parsedShelves, { maxShelves, limitPerShelf });
+    if (selectedShelves.length) {
+      return {
+        personalized: parsedShelves.length > 0,
+        cookieAvailable,
+        title: normalizeMusicHomeTitle(data?.title || "YouTube Music"),
+        shelves: selectedShelves
+      };
+    }
+    console.warn("YouTube Music home yt-dlp returned no shelves, using fallback shelves.");
+  } catch (error) {
+    console.warn("YouTube Music home yt-dlp failed, using fallback shelves:", error?.message || error);
+  }
 
-  return {
-    personalized: parsedShelves.length > 0,
+  return getFallbackYouTubeMusicHomeShelves({
+    maxShelves,
+    fetchShelves,
+    limitPerShelf,
+    timeoutMs: Number(process.env.YTM_HOME_FALLBACK_TIMEOUT_MS || 12000),
+    lang,
+    region,
     cookieAvailable,
-    title: normalizeMusicHomeTitle(data?.title || "YouTube Music"),
-    shelves: selectMusicHomeShelves(parsedShelves, { maxShelves, limitPerShelf })
-  };
+  });
 }
 
 // Extracts playlist data all flat for the yt-dlp YouTube download pipeline.

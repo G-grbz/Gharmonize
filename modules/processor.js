@@ -2346,6 +2346,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         if (isGenericNamingToken(stemFallback)) {
           stemFallback = "";
         }
+        if (/^output$/i.test(stemFallback)) {
+          stemFallback = "";
+        }
         if (isInstagramPlatform && looksLikePlatformShortCode(stemFallback)) {
           stemFallback = "";
         }
@@ -2379,7 +2382,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           baseTitle = "Vimeo Video";
         } else if (isDailymotionSource) {
           baseTitle = "Dailymotion Video";
-        } else if (stemFallback) {
+        } else if (job.metadata?.source === "local" && job.metadata?.originalName) {
+          baseTitle = job.metadata.originalName;
+        } else if (job.metadata?.source === "file" && job.metadata?.originalName) {
+          baseTitle = job.metadata.originalName;
+        } else if (stemFallback && stemFallback.toLowerCase() !== "output") {
           baseTitle = stemFallback;
         } else {
           baseTitle =
