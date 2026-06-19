@@ -1,5 +1,10 @@
 import fs from "fs";
 import path from "path";
+import {
+  isYtMusicAlbumContext,
+  normalizeYtMusicAlbumTitle,
+  pickYtMusicAlbumArtist
+} from "./ytMusicMetadata.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 export const OUTPUT_ROOT_DIR = path.resolve(BASE_DIR, "outputs");
@@ -31,6 +36,15 @@ function safeDecode(v) {
   } catch {
     return String(v || "");
   }
+}
+
+function normalizeOutputCompare(value = "") {
+  return String(value || "")
+    .toLocaleLowerCase("tr")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function sanitizeSegment(v, fallback = "output") {
@@ -115,6 +129,7 @@ export function shouldUsePlaylistOutputDir(job) {
 export function pickPlaylistOutputName(job) {
   const meta = job?.metadata || {};
   const extracted = meta.extracted || {};
+  const frozenEntries = Array.isArray(meta.frozenEntries) ? meta.frozenEntries : [];
   const candidates = [
     meta.frozenTitle,
     meta.spotifyTitle,
@@ -123,8 +138,46 @@ export function pickPlaylistOutputName(job) {
     meta.originalName
   ];
   const first = candidates.find((v) => typeof v === "string" && v.trim());
+  const normalizedFirst = meta.source === "youtube"
+    ? normalizeYtMusicAlbumTitle(first || "", {
+        meta: {
+          ...(extracted || {}),
+          title: first || extracted.title || "",
+          playlist_title: extracted.playlist_title || ""
+        },
+        sourceUrl: meta.url || meta.originalUrl || ""
+      })
+    : first;
+  const albumContext = meta.source === "youtube" && (
+    isYtMusicAlbumContext({
+      ...(extracted || {}),
+      title: first || extracted.title || "",
+      playlist_title: extracted.playlist_title || "",
+      url: meta.url || meta.originalUrl || "",
+      webpage_url: meta.url || meta.originalUrl || ""
+    }, meta.url || meta.originalUrl || "") ||
+    normalizedFirst !== first
+  );
+  const albumArtist = albumContext
+    ? pickYtMusicAlbumArtist(
+        {
+          album_artist: meta.albumArtist || meta.album_artist,
+          artist: meta.artist,
+          uploader: meta.uploader
+        },
+        extracted,
+        ...frozenEntries.slice(0, 8)
+      )
+    : "";
+  const albumAlreadyHasArtist = albumArtist && normalizedFirst
+    ? normalizeOutputCompare(normalizedFirst).startsWith(`${normalizeOutputCompare(albumArtist)} `)
+    : false;
+  const albumTitle =
+    albumContext && albumArtist && normalizedFirst && !albumAlreadyHasArtist
+      ? `${albumArtist} - ${normalizedFirst}`
+      : normalizedFirst;
   const baseTitle =
-    first ||
+    albumTitle ||
     (meta.source === "spotify"
       ? "Spotify Playlist"
       : meta.source === "apple_music"

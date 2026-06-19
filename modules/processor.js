@@ -14,6 +14,12 @@ import {
   buildEntriesMap,
   parsePlaylistIndexFromPath
 } from "./yt.js";
+import {
+  normalizeYtMusicAlbumEntry,
+  normalizeYtMusicAlbumMeta,
+  normalizeYtMusicAlbumTitle,
+  pickYtMusicAlbumArtist
+} from "./ytMusicMetadata.js";
 import { downloadThumbnail, convertMedia, maybeCleanTitle } from "./media.js";
 import { buildId3FromYouTube } from "./tags.js";
 import { probeYoutubeMusicMeta } from "./yt.js";
@@ -24,7 +30,8 @@ import { downloadPlatformMedia } from "./platform.js";
 import {
   resolveJobOutputDir,
   toDownloadPath,
-  resolveDownloadPathToAbs
+  resolveDownloadPathToAbs,
+  pickPlaylistOutputName
 } from "./outputPaths.js";
 import { queueOwnershipFix } from "./fsOwnership.js";
 
@@ -302,6 +309,19 @@ function mergeMeta(base, extra) {
   return base;
 }
 
+function normalizeYouTubeAlbumTitleForJob(title = "", job = null, parentMeta = {}) {
+  return normalizeYtMusicAlbumTitle(title, {
+    meta: {
+      ...(parentMeta || {}),
+      title,
+      playlist_title: parentMeta?.playlist_title || title,
+      url: job?.metadata?.url || "",
+      webpage_url: job?.metadata?.url || ""
+    },
+    sourceUrl: job?.metadata?.url || ""
+  });
+}
+
 // Enriches generic metadata from Apple Music with Deezer fallback in core application logic.
 async function enrichMetaFromApple(base, {
   artist = "",
@@ -417,6 +437,74 @@ function buildUniqueOutputPath(dir, fileName) {
     target = path.join(dir, `${stem} (${i++})${ext}`);
   }
   return target;
+}
+
+function sanitizePlaylistFolderName(value, fallback = "playlist") {
+  const src = String(value || "").trim();
+  const cleaned = src
+    .replace(/[<>:"|?*\\/]+/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/-+/g, "-")
+    .replace(/^[-_.\s]+|[-_.\s]+$/g, "")
+    .slice(0, 120);
+  return cleaned || fallback;
+}
+
+async function maybeRenamePlaylistOutputDir(job, currentDir, outputRootDir = OUTPUT_DIR) {
+  if (!job?.metadata?.isPlaylist || !currentDir) return currentDir;
+
+  const root = path.resolve(outputRootDir || OUTPUT_DIR);
+  const currentAbs = path.resolve(currentDir);
+  if (currentAbs !== root && !currentAbs.startsWith(root + path.sep)) return currentDir;
+  if (!fs.existsSync(currentAbs)) return currentDir;
+
+  try {
+    if (fs.readdirSync(currentAbs).length > 0) return currentDir;
+  } catch {
+    return currentDir;
+  }
+
+  const desiredName = sanitizePlaylistFolderName(pickPlaylistOutputName(job), "");
+  if (!desiredName) return currentDir;
+
+  const currentRelFs = path.relative(root, currentAbs);
+  const currentRel = currentRelFs.replace(/\\/g, "/");
+  const parentRel = path.posix.dirname(currentRel);
+  const safeParentRel = parentRel && parentRel !== "." ? parentRel : "";
+  const currentBase = path.basename(currentAbs);
+  if (sanitizePlaylistFolderName(currentBase, "") === desiredName) return currentDir;
+
+  let candidateRel = safeParentRel
+    ? path.posix.join(safeParentRel, desiredName)
+    : desiredName;
+  let candidateAbs = path.resolve(root, candidateRel);
+  let index = 2;
+
+  while (
+    fs.existsSync(candidateAbs) &&
+    path.resolve(candidateAbs) !== currentAbs &&
+    index < 1000
+  ) {
+    const uniqueName = sanitizePlaylistFolderName(`${desiredName} (${index})`, `${desiredName}_${index}`);
+    candidateRel = safeParentRel
+      ? path.posix.join(safeParentRel, uniqueName)
+      : uniqueName;
+    candidateAbs = path.resolve(root, candidateRel);
+    index += 1;
+  }
+
+  if (candidateAbs !== root && !candidateAbs.startsWith(root + path.sep)) return currentDir;
+  if (path.resolve(candidateAbs) === currentAbs) return currentDir;
+
+  try {
+    fs.renameSync(currentAbs, candidateAbs);
+    job.metadata.outputSubdir = candidateRel;
+    await queueOwnershipFix(candidateAbs, { recursive: true });
+    return candidateAbs;
+  } catch (error) {
+    console.warn("Playlist output directory rename warning:", error?.message || error);
+    return currentDir;
+  }
 }
 
 // Handles safe move file sync in core application logic.
@@ -618,7 +706,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       cvTotal: 0,
       cvDone: 0
     };
-    const outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
+    let outputDir = resolveJobOutputDir(job, OUTPUT_DIR);
     const isVideoFormatFlag = isVideoFormat(format);
 
     if (isVideoFormatFlag && job.metadata?.source === "youtube") {
@@ -975,6 +1063,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         );
       }
 
+      const ytMetaEntries = Array.isArray(ytMeta?.entries) ? ytMeta.entries : [];
+      const ytAlbumArtistHint = pickYtMusicAlbumArtist(
+        ytMeta || {},
+        ...ytMetaEntries.slice(0, 12)
+      );
+
       let flat = {
       title: toNFC(ytMeta?.title || ""),
       raw_title: toNFC(ytMeta?.title || ""),
@@ -1016,6 +1110,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           : ytMeta?.thumbnail) || "",
       playlist_title: toNFC(ytMeta?.playlist_title || "")
     };
+      flat = normalizeYtMusicAlbumMeta(flat, {
+        parentMeta: ytMeta || {},
+        sourceUrl: job.metadata.url,
+        playlistTitle: ytMeta?.title || ytMeta?.playlist_title || job.metadata?.frozenTitle || "",
+        albumArtist: ytAlbumArtistHint
+      });
       flat = applyGlobalMetaCleaning(flat);
       job.metadata.extracted = flat;
 
@@ -1043,6 +1143,20 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           flat.track = id3Guess.track || flat.title || "";
         }
       } catch {}
+      flat = normalizeYtMusicAlbumMeta(flat, {
+        parentMeta: ytMeta || {},
+        sourceUrl: job.metadata.url,
+        playlistTitle: ytMeta?.title || ytMeta?.playlist_title || job.metadata?.frozenTitle || "",
+        albumArtist: ytAlbumArtistHint
+      });
+      if (flat.album_artist || flat.artist) {
+        job.metadata.albumArtist = flat.album_artist || flat.artist;
+        job.metadata.album_artist = flat.album_artist || flat.artist;
+      }
+      job.metadata.extracted = flat;
+      if (job.metadata.isPlaylist && !isAutomix) {
+        outputDir = await maybeRenamePlaylistOutputDir(job, outputDir, OUTPUT_DIR);
+      }
 
       if (flat.thumbnail && !isAutomix) {
         const thumbBase = path.join(TEMP_DIR, `${jobId}.cover`);
@@ -1103,16 +1217,25 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           }
 
         if (Array.isArray(job.metadata?.frozenEntries)) {
+          job.metadata.frozenEntries = job.metadata.frozenEntries.map((entry) =>
+            normalizeYtMusicAlbumEntry(entry, {
+              parentMeta: ytMeta || flat || {},
+              playlistTitle: job.metadata?.frozenTitle || flat.album || flat.title || "",
+              sourceUrl: job.metadata.url,
+              albumArtist: flat.album_artist || flat.artist || ""
+            })
+          );
           for (const e of job.metadata.frozenEntries) {
             if (!e) continue;
+            const normalizedFrozen = e;
 
-            const idx = Number(e.index);
+            const idx = Number(normalizedFrozen.index);
             if (Number.isFinite(idx)) {
-              frozenByIndex.set(idx, { ...e, index: idx });
+              frozenByIndex.set(idx, { ...normalizedFrozen, index: idx });
             }
 
-            if (e.id) {
-              frozenById.set(e.id, { ...e, index: Number.isFinite(idx) ? idx : e.index });
+            if (normalizedFrozen.id) {
+              frozenById.set(normalizedFrozen.id, { ...normalizedFrozen, index: Number.isFinite(idx) ? idx : normalizedFrozen.index });
             }
           }
         }
@@ -1233,6 +1356,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             };
           }
 
+          entry = normalizeYtMusicAlbumEntry(entry, {
+            parentMeta: ytMeta || flat || {},
+            playlistTitle: job.metadata?.frozenTitle || flat.album || flat.title || "",
+            sourceUrl: job.metadata.url,
+            albumArtist: flat.album_artist || flat.artist || ""
+          });
+
           const fallbackTitle = path
             .basename(filePath, path.extname(filePath))
             .replace(/^\d+\s*-\s*/, "");
@@ -1268,10 +1398,14 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             ),
             album:
               flat.album ||
-              (ytMeta?.title ||
-                ytMeta?.playlist_title ||
-                job.metadata.frozenTitle ||
-                ""),
+              normalizeYouTubeAlbumTitleForJob(
+                ytMeta?.title ||
+                  ytMeta?.playlist_title ||
+                  job.metadata.frozenTitle ||
+                  "",
+                job,
+                ytMeta || flat || {}
+              ),
             release_year:
               (entry?.release_year && String(entry.release_year)) ||
               (entry?.release_date ? String(entry.release_date).slice(0, 4) : "") ||
@@ -1332,6 +1466,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             );
             fileMeta = mergeMeta(fileMeta, ytMusic);
           } catch {}
+          fileMeta = normalizeYtMusicAlbumMeta(fileMeta, {
+            parentMeta: ytMeta || flat || {},
+            playlistTitle: job.metadata?.frozenTitle || flat.album || flat.title || "",
+            sourceUrl: job.metadata.url,
+            albumArtist: flat.album_artist || flat.artist || ""
+          });
 
           if (process.env.ENRICH_SPOTIFY_FOR_YT === "1") {
             try {
@@ -1468,6 +1608,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           } catch (error) {
             console.warn(`ID3 strict resolution error: ${error.message}`);
           }
+          fileMeta = normalizeYtMusicAlbumMeta(fileMeta, {
+            parentMeta: ytMeta || flat || {},
+            playlistTitle: job.metadata?.frozenTitle || flat.album || flat.title || "",
+            sourceUrl: job.metadata.url,
+            albumArtist: flat.album_artist || flat.artist || ""
+          });
           fileMeta = applyGlobalMetaCleaning(fileMeta);
           if (isAutomix) {
             const automixAlbum = toNFC(fileMeta.track || fileMeta.title || "").trim();
@@ -1761,22 +1907,32 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               ? idxFromName
               : i + 1;
             const hasLyrics = !!trackLyricsMap.get(index);
-            const entry = {
+            const entry = normalizeYtMusicAlbumEntry({
               index,
               id,
               title,
               uploader,
               webpage_url,
               hasLyrics
-            };
+            }, {
+              parentMeta: ytMeta || flat || {},
+              playlistTitle: job.metadata?.frozenTitle || flat.album || flat.title || "",
+              sourceUrl: job.metadata.url,
+              albumArtist: flat.album_artist || flat.artist || ""
+            });
             fe.push(entry);
             if (id) entryById.set(id, entry);
           }
           job.metadata.frozenEntries = fe;
           job.metadata.frozenTitle =
             job.metadata.frozenTitle ||
-            ytMeta?.title ||
-            ytMeta?.playlist_title ||
+            normalizeYouTubeAlbumTitleForJob(
+              ytMeta?.title ||
+                ytMeta?.playlist_title ||
+                "",
+              job,
+              ytMeta || flat || {}
+            ) ||
             (isAutomix ? "YouTube Automix" : "");
         } else {
           for (const fe of job.metadata.frozenEntries) {
@@ -1797,8 +1953,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           if (!job.clientBatch && job.metadata?.autoCreateZip !== false) {
             try {
               const zipTitle =
-                ytMeta?.title ||
-                ytMeta?.playlist_title ||
+                normalizeYouTubeAlbumTitleForJob(
+                  ytMeta?.title ||
+                    ytMeta?.playlist_title ||
+                    "",
+                  job,
+                  ytMeta || flat || {}
+                ) ||
                 (isAutomix ? "YouTube Automix" : "Playlist");
               job.zipPath = await makeZipFromOutputs(
                 jobId,
@@ -1922,7 +2083,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       if (fs.existsSync(sidecar)) coverPath = sidecar;
     }
 
-    let singleMeta = { ...(job.metadata.extracted || {}) };
+    let singleMeta = normalizeYtMusicAlbumMeta({ ...(job.metadata.extracted || {}) }, {
+      sourceUrl: job.metadata?.url || "",
+      playlistTitle: job.metadata?.frozenTitle || job.metadata?.extracted?.playlist_title || ""
+    });
 
     if (job.metadata.source === "youtube" || isMappedMusicSource(job.metadata.source)) {
       try {
@@ -1931,6 +2095,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         );
         singleMeta = mergeMeta(singleMeta, ytMusicSingle);
       } catch {}
+      singleMeta = normalizeYtMusicAlbumMeta(singleMeta, {
+        sourceUrl: job.metadata?.url || "",
+        playlistTitle: job.metadata?.frozenTitle || singleMeta?.playlist_title || ""
+      });
     }
 
     if (job.metadata.source === "youtube") {
@@ -1975,6 +2143,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       } catch (error) {
         console.warn(`Single ID3 strict resolution error: ${error.message}`);
       }
+      singleMeta = normalizeYtMusicAlbumMeta(singleMeta, {
+        sourceUrl: job.metadata?.url || "",
+        playlistTitle: job.metadata?.frozenTitle || singleMeta?.playlist_title || ""
+      });
     }
 
     if (job.metadata.source === "youtube" && process.env.ENRICH_SPOTIFY_FOR_YT === "1") {

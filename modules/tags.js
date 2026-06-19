@@ -1,5 +1,6 @@
 import { searchSpotifyBestTrackStrict, trackToId3Meta } from "./spotify.js";
 import { withMarketFallback } from "./market.js";
+import { hasYtMusicAlbumPrefix, isGenericYtMusicAlbumLabel, stripYtMusicAlbumPrefix } from "./ytMusicMetadata.js";
 
 // Handles strip tail after delims in core application logic.
 function stripTailAfterDelims(s = "") {
@@ -69,6 +70,12 @@ function splitArtistTitle(title, uploader) {
       return {
         artist: u,
         title: left
+      };
+    }
+    if (isGenericYtMusicAlbumLabel(left) || hasYtMusicAlbumPrefix(t0)) {
+      return {
+        artist: isGenericYtMusicAlbumLabel(u) ? "" : u,
+        title: stripTailAfterDelims(stripYtMusicAlbumPrefix(t0))
       };
     }
     if (rightIsNoise || leftLooksLikeFullTitle) {

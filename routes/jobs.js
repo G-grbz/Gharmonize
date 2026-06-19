@@ -37,6 +37,12 @@ import {
   resolveRingtoneOutputFormat,
   resolveRingtoneSampleRate
 } from "../modules/ringtone.js";
+import {
+  isYtMusicAlbumContext,
+  normalizeYtMusicAlbumEntry,
+  normalizeYtMusicAlbumTitle,
+  pickYtMusicAlbumArtist
+} from "../modules/ytMusicMetadata.js";
 import "dotenv/config";
 import {
   isYouTubeUrl,
@@ -99,6 +105,47 @@ function cleanupCanceledJobTempFiles(jobId) {
       safeRmTempTarget(path.join(TEMP_DIR, name));
     }
   } catch {}
+}
+
+function normalizeYouTubeJobPlaylistTitle(title, sourceUrl = "") {
+  return normalizeYtMusicAlbumTitle(title, {
+    meta: {
+      title,
+      playlist_title: title,
+      url: sourceUrl,
+      webpage_url: sourceUrl
+    },
+    sourceUrl
+  });
+}
+
+function normalizeYouTubeJobFrozenEntries(entries = [], { sourceUrl = "", playlistTitle = "" } = {}) {
+  if (!Array.isArray(entries)) return entries;
+  const normalizedTitle = normalizeYouTubeJobPlaylistTitle(playlistTitle, sourceUrl);
+  const parentMeta = {
+    title: playlistTitle,
+    playlist_title: playlistTitle,
+    url: sourceUrl,
+    webpage_url: sourceUrl
+  };
+  return entries.map((entry) =>
+    normalizeYtMusicAlbumEntry(entry, {
+      parentMeta,
+      playlistTitle: normalizedTitle || playlistTitle,
+      sourceUrl
+    })
+  );
+}
+
+function pickYouTubeJobAlbumArtist(entries = [], { sourceUrl = "", playlistTitle = "" } = {}) {
+  const parentMeta = {
+    title: playlistTitle,
+    playlist_title: playlistTitle,
+    url: sourceUrl,
+    webpage_url: sourceUrl
+  };
+  if (!isYtMusicAlbumContext(parentMeta, sourceUrl)) return "";
+  return pickYtMusicAlbumArtist(...(Array.isArray(entries) ? entries : []).slice(0, 12));
 }
 
 function scheduleCanceledJobTempCleanup(jobId) {
@@ -1327,9 +1374,24 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       console.log("================================");
 
       if (Array.isArray(frozenEntriesParsed) && frozenEntriesParsed.length > 0) {
-    metadata.frozenEntries = frozenEntriesParsed;
-    console.log("📌 YT frozenEntries attached from client. len =", frozenEntriesParsed.length);
-  }
+        metadata.frozenEntries = isYouTubeSource
+          ? normalizeYouTubeJobFrozenEntries(frozenEntriesParsed, {
+              sourceUrl: normalized,
+              playlistTitle: plTitle || ""
+            })
+          : frozenEntriesParsed;
+        if (isYouTubeSource) {
+          const albumArtist = pickYouTubeJobAlbumArtist(metadata.frozenEntries, {
+            sourceUrl: normalized,
+            playlistTitle: plTitle || ""
+          });
+          if (albumArtist) {
+            metadata.albumArtist = albumArtist;
+            metadata.album_artist = albumArtist;
+          }
+        }
+        console.log("📌 YT frozenEntries attached from client. len =", metadata.frozenEntries.length);
+      }
 
       if (metadata.isAutomix &&
           !metadata.selectedIds &&
@@ -1372,7 +1434,9 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
     }
 
     if (metadata.isPlaylist && plTitle) {
-      metadata.frozenTitle = plTitle;
+      metadata.frozenTitle = metadata.source === "youtube"
+        ? normalizeYouTubeJobPlaylistTitle(plTitle, metadata.url || metadata.originalUrl || url || "")
+        : plTitle;
     }
 
     const job = createJob({

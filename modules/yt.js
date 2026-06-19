@@ -7,6 +7,13 @@ import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./ca
 import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs, parseIdFromPath } from "./utils.js";
 import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
 import { YTDLP_BIN as BINARY_YTDLP_BIN, DENO_BIN, FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
+import {
+  normalizeYtMusicAlbumEntry,
+  normalizeYtMusicAlbumMeta,
+  normalizeYtMusicAlbumTitle,
+  pickYtMusicAlbumArtist,
+  isYtMusicAlbumContext
+} from "./ytMusicMetadata.js";
 
 // Checks whether music enabled is valid for the yt-dlp YouTube download pipeline.
 export function isMusicEnabled() {
@@ -561,10 +568,20 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
 }
 
 // Processes entry in the yt-dlp YouTube download pipeline.
-function processEntry(entry, index) {
+function processEntry(entry, index, parentMeta = null) {
+  const parent = parentMeta || {};
+  const albumContext = isYtMusicAlbumContext(parent) || isYtMusicAlbumContext(entry, parent?.webpage_url || parent?.url || "");
+  const albumArtist = albumContext ? pickYtMusicAlbumArtist(entry, parent) : "";
+  const normalizedEntry = albumContext
+    ? normalizeYtMusicAlbumEntry(entry, {
+        parentMeta: parent,
+        playlistTitle: parent?.title || parent?.playlist_title || "",
+        albumArtist
+      })
+    : entry;
   const id = entry?.id || "";
   const isDmId = /^x[0-9a-z]+$/i.test(String(id || ""));
-  const directUrl = entry?.webpage_url || entry?.url || "";
+  const directUrl = normalizedEntry?.webpage_url || normalizedEntry?.url || entry?.webpage_url || entry?.url || "";
   let resolvedUrl = directUrl;
   if (!resolvedUrl && id) {
     if (isLikelyYouTubeVideoId(id)) {
@@ -575,10 +592,10 @@ function processEntry(entry, index) {
   }
 
   const titleRaw =
-    entry?.title ||
-    entry?.alt_title ||
-    entry?.track ||
-    entry?.name ||
+    normalizedEntry?.title ||
+    normalizedEntry?.alt_title ||
+    normalizedEntry?.track ||
+    normalizedEntry?.name ||
     "";
 
   return {
@@ -588,14 +605,17 @@ function processEntry(entry, index) {
     duration: Number.isFinite(entry?.duration) ? entry.duration : null,
     duration_string: entry?.duration_string || null,
     uploader: toNFC(
-      entry?.uploader ||
-      entry?.channel ||
-      entry?.artist ||
-      entry?.creator ||
-      entry?.owner?.screenname ||
-      entry?.owner?.username ||
+      normalizedEntry?.uploader ||
+      normalizedEntry?.channel ||
+      normalizedEntry?.artist ||
+      normalizedEntry?.creator ||
+      normalizedEntry?.owner?.screenname ||
+      normalizedEntry?.owner?.username ||
       ""
     ),
+    artist: toNFC(normalizedEntry?.artist || normalizedEntry?.uploader || ""),
+    album: toNFC(normalizedEntry?.album || ""),
+    album_artist: toNFC(normalizedEntry?.album_artist || albumArtist || normalizedEntry?.artist || ""),
     webpage_url: resolvedUrl,
     thumbnail: (Array.isArray(entry?.thumbnails) && entry.thumbnails.length ?
       entry.thumbnails.at(-1).url :
@@ -608,11 +628,11 @@ function processEntry(entry, index) {
 }
 
 // Processes entries in the yt-dlp YouTube download pipeline.
-function processEntries(entries, maxEntries = PREVIEW_MAX_ENTRIES) {
+function processEntries(entries, maxEntries = PREVIEW_MAX_ENTRIES, parentMeta = null) {
   return entries
     .filter(Boolean)
     .slice(0, maxEntries)
-    .map(processEntry)
+    .map((entry, index) => processEntry(entry, index, parentMeta))
     .sort((a, b) => a.index - b.index);
 }
 
@@ -4241,10 +4261,18 @@ export async function extractPlaylistAllFlat(url) {
     PLAYLIST_ALL_TIMEOUT
   );
 
-  const title = data?.title || data?.playlist_title || "";
+  const parentMeta = {
+    ...(data || {}),
+    webpage_url: data?.webpage_url || url,
+    url: data?.url || url
+  };
+  const title = normalizeYtMusicAlbumTitle(data?.title || data?.playlist_title || "", {
+    meta: parentMeta,
+    sourceUrl: url
+  });
   const rawEntries = Array.isArray(data?.entries) ? data.entries : [];
   const count = Number(data?.n_entries) || rawEntries.length || 0;
-  const items = processEntries(rawEntries);
+  const items = processEntries(rawEntries, PREVIEW_MAX_ENTRIES, parentMeta);
 
   return { title, count, items };
 }
@@ -4286,7 +4314,10 @@ export async function getPlaylistMetaLite(url) {
       PLAYLIST_META_TIMEOUT
     );
 
-    const title = data?.title || data?.playlist_title || "";
+    const title = normalizeYtMusicAlbumTitle(data?.title || data?.playlist_title || "", {
+      meta: data,
+      sourceUrl: url
+    });
     const count = Number(data?.n_entries) || Number(data?.playlist_count) ||
                  (Array.isArray(data?.entries) ? data.entries.length : 0);
 
@@ -4299,7 +4330,10 @@ export async function getPlaylistMetaLite(url) {
         PLAYLIST_META_FALLBACK_TIMEOUT
       );
 
-      const title = data?.title || data?.playlist_title || "";
+      const title = normalizeYtMusicAlbumTitle(data?.title || data?.playlist_title || "", {
+        meta: data,
+        sourceUrl: url
+      });
       const count = Number(data?.n_entries) || Number(data?.playlist_count) || 1;
 
       return { title, count: Math.max(1, count), isAutomix: false };
@@ -4331,8 +4365,16 @@ export async function extractPlaylistPage(url, start, end) {
     );
 
     const entries = Array.isArray(data?.entries) ? data.entries : [];
-    const items = entries.map(processEntry);
-    const title = data?.title || data?.playlist_title || "";
+    const parentMeta = {
+      ...(data || {}),
+      webpage_url: data?.webpage_url || url,
+      url: data?.url || url
+    };
+    const items = entries.map((entry, index) => processEntry(entry, index, parentMeta));
+    const title = normalizeYtMusicAlbumTitle(data?.title || data?.playlist_title || "", {
+      meta: parentMeta,
+      sourceUrl: url
+    });
 
     return { title, items };
   } catch {
@@ -5571,7 +5613,7 @@ export async function probeYoutubeMusicMeta(input) {
   const cover  = (Array.isArray(d.thumbnails) && d.thumbnails.length
     ? d.thumbnails.at(-1).url : d.thumbnail || null);
 
-  const out = {
+  const out = normalizeYtMusicAlbumMeta({
     title: track || d.title || "",
     track: track || d.title || "",
     artist: artist || "",
@@ -5591,7 +5633,7 @@ export async function probeYoutubeMusicMeta(input) {
     isrc: d.isrc || "",
     coverUrl: cover || "",
     webpage_url: d.webpage_url || d.original_url || url
-  };
+  }, { sourceUrl: url, parentMeta: d });
 
   if (!out.title && !out.artist) return null;
   return out;
