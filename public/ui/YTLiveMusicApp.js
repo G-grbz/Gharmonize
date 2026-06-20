@@ -48,10 +48,15 @@ class YTLiveMusicApp {
     this.youtubeRevealTimer = null;
     this.outputSettingsKey = 'gharmonize_ytlive_output_settings';
     this.musicHomeShelfCountKey = 'gharmonize_ytlive_music_home_shelf_count';
+    this.collapsibleStateKey = 'gharmonize_ytlive_collapsible_panels';
     this.classicJobSessionKey = 'gharmonize_job_session';
     this.jobsPanelTokenKey = 'gharmonize_admin_token';
     this.outputSettings = this.loadOutputSettings();
     this.musicHomeShelfCount = this.loadMusicHomeShelfCount();
+    this.collapsibleState = this.loadCollapsibleState();
+    this.collapsiblePanels = ['downloadListsPanel', 'playlistTracksPanel', 'discover'];
+    this.downloadLists = [];
+    this.activeDownloadListMenu = null;
     this.presetCounters = new Map();
     this.escapeMap = {
       '&': '&amp;',
@@ -63,6 +68,10 @@ class YTLiveMusicApp {
       '=': '&#61;',
       '/': '&#47;'
     };
+  }
+
+  renderDownloadIcon() {
+    return '<svg class="download-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
 
   async initialize() {
@@ -83,6 +92,7 @@ class YTLiveMusicApp {
     await settingsManager.initialize();
     this.bindEvents();
     this.applyLocalizedUi();
+    await this.refreshDownloadLists();
     await this.loadUiConfig();
     await this.loadFormats();
     this.renderFormatOptions();
@@ -106,8 +116,12 @@ class YTLiveMusicApp {
 
     document.getElementById('playUrlBtn')?.addEventListener('click', () => this.playUrlInput());
     document.getElementById('addUrlBtn')?.addEventListener('click', () => this.addUrlInput());
+    document.getElementById('addUrlToListBtn')?.addEventListener('click', (event) => this.addUrlInputToList(event));
     document.getElementById('addCurrentBtn')?.addEventListener('click', () => {
       if (this.currentItem) this.addItem(this.currentItem);
+    });
+    document.getElementById('addCurrentToListBtn')?.addEventListener('click', (event) => {
+      if (this.currentItem) this.openDownloadListMenu(event, this.currentItem);
     });
     document.getElementById('refreshQueueBtn')?.addEventListener('click', () => this.refreshQueueStatus(true));
     document.getElementById('refreshMusicHomeBtn')?.addEventListener('click', () => this.loadMusicHomeShelves({ showToast: true }));
@@ -141,10 +155,14 @@ class YTLiveMusicApp {
       });
     });
 
+    this.setupCollapsiblePanels();
+
     document.addEventListener('i18n:applied', () => {
       this.applyLocalizedUi();
+      this.applyCollapsibleStates();
       this.renderResults();
       this.renderMusicHomeShelves();
+      this.renderDownloadLists();
       this.renderJobs();
       this.renderPlaylistTracks();
       this.renderQueueChip(this.getActiveJobCount());
@@ -156,6 +174,7 @@ class YTLiveMusicApp {
     document.getElementById('discover')?.addEventListener('click', (event) => this.handleSearchTypeClick(event));
     document.getElementById('musicHomeSection')?.addEventListener('click', (event) => this.handleMusicHomeInteraction(event));
     document.getElementById('playlistTracksPanel')?.addEventListener('click', (event) => this.handlePlaylistTrackInteraction(event));
+    document.getElementById('downloadListsPanel')?.addEventListener('click', (event) => this.handleDownloadListPanelInteraction(event));
     this.setupInfiniteScroll();
   }
 
@@ -198,6 +217,83 @@ class YTLiveMusicApp {
     const input = document.getElementById('musicHomeShelfCountInput');
     this.saveMusicHomeShelfCount(input?.value || this.musicHomeShelfCount);
     this.loadMusicHomeShelves({ showToast: true });
+  }
+
+  loadCollapsibleState() {
+    try {
+      const raw = localStorage.getItem(this.collapsibleStateKey);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  saveCollapsibleState() {
+    try {
+      localStorage.setItem(this.collapsibleStateKey, JSON.stringify(this.collapsibleState || {}));
+    } catch {}
+  }
+
+  setupCollapsiblePanels() {
+    document.querySelectorAll('[data-collapsible-toggle]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleCollapsiblePanel(button.dataset.collapsibleToggle || '');
+      });
+    });
+
+    document.querySelectorAll('[data-collapsible-trigger]').forEach((header) => {
+      header.addEventListener('click', (event) => {
+        const interactive = event.target.closest('button,a,input,select,textarea,label,[data-preset],[data-action],[data-list-action],[data-music-action]');
+        if (interactive) return;
+        this.toggleCollapsiblePanel(header.dataset.collapsibleTrigger || '');
+      });
+    });
+
+    this.applyCollapsibleStates();
+  }
+
+  toggleCollapsiblePanel(panelId) {
+    if (!panelId) return;
+    const collapsed = !this.isCollapsiblePanelCollapsed(panelId);
+    this.collapsibleState = {
+      ...(this.collapsibleState || {}),
+      [panelId]: collapsed
+    };
+    this.saveCollapsibleState();
+    this.applyCollapsibleState(panelId);
+  }
+
+  isCollapsiblePanelCollapsed(panelId) {
+    return Boolean(this.collapsibleState?.[panelId]);
+  }
+
+  applyCollapsibleStates() {
+    (this.collapsiblePanels || []).forEach((panelId) => this.applyCollapsibleState(panelId));
+  }
+
+  applyCollapsibleState(panelId) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+
+    const collapsed = this.isCollapsiblePanelCollapsed(panelId);
+    panel.classList.toggle('is-collapsed', collapsed);
+    panel.setAttribute('aria-expanded', String(!collapsed));
+
+    const body = panel.querySelector('[data-collapsible-body]');
+    if (body) body.hidden = collapsed;
+
+    const label = collapsed
+      ? this.tt('ytlive.panel.expand', 'Aç')
+      : this.tt('ytlive.panel.collapse', 'Daralt');
+    document.querySelectorAll('[data-collapsible-toggle]').forEach((button) => {
+      if (button.dataset.collapsibleToggle !== panelId) return;
+      button.setAttribute('aria-expanded', String(!collapsed));
+      button.setAttribute('aria-label', label);
+      button.title = label;
+    });
   }
 
   scrollToDiscoverSection() {
@@ -423,7 +519,7 @@ class YTLiveMusicApp {
       this.updateLoadMoreState();
       window.setTimeout(() => this.maybeLoadMoreByScroll(), 80);
 
-      if (this.results[0] && !this.hasActivePlayback()) {
+      if (discoverPreset && this.results[0] && !this.hasActivePlayback()) {
         this.playRandomPlayerContent({ source: 'results' });
       } else if (!this.results.length && searchType === 'playlist' && !this.hasActivePlayback()) {
         this.clearPlayer(this.tt('ytlive.results.noPlaylists', 'Çalma listesi bulunamadı.'));
@@ -589,7 +685,8 @@ class YTLiveMusicApp {
     }
 
     section.hidden = false;
-    const addTitle = this.escapeHtml(this.tt('ytlive.addToQueue', 'Kuyruğa ekle'));
+    const downloadTitle = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
+    const listTitle = this.escapeHtml(this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle'));
     const playTitle = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
 
     host.innerHTML = this.musicHomeShelves.map((shelf, shelfIndex) => {
@@ -606,7 +703,10 @@ class YTLiveMusicApp {
 
         return `
           <article class="music-home-card" data-music-action="play" data-shelf="${shelfIndex}" data-index="${index}">
-            <button class="music-home-card__add" type="button" data-music-action="add" data-shelf="${shelfIndex}" data-index="${index}" title="${addTitle}" aria-label="${addTitle}">+</button>
+            <div class="music-home-card__actions">
+              <button class="music-home-card__download" type="button" data-music-action="download" data-shelf="${shelfIndex}" data-index="${index}" title="${downloadTitle}" aria-label="${downloadTitle}">${this.renderDownloadIcon()}</button>
+              <button class="music-home-card__add" type="button" data-music-action="list-menu" data-shelf="${shelfIndex}" data-index="${index}" title="${listTitle}" aria-label="${listTitle}">+</button>
+            </div>
             <div class="music-home-card__thumb ${thumb ? '' : 'music-home-card__thumb--fallback'}" ${thumbStyle}>
               ${thumb ? '' : `<span>${initials}</span>`}
               ${duration ? `<span class="duration-pill">${duration}</span>` : ''}
@@ -672,7 +772,8 @@ class YTLiveMusicApp {
       const type = this.escapeHtml(this.getItemTypeLabel(item));
       const duration = this.escapeHtml(item.duration_string || (item.duration ? this.formatSeconds(item.duration) : ''));
       const thumbStyle = thumb ? `style="background-image:url('${thumb.replace(/'/g, '%27')}')"` : '';
-      const addTitle = this.escapeHtml(this.tt('ytlive.addToQueue', 'Kuyruğa ekle'));
+      const downloadTitle = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
+      const listTitle = this.escapeHtml(this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle'));
       const playTitle = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
       const rank = String(index + 1).padStart(2, '0');
       const tags = this.getContentTags(item, index)
@@ -683,7 +784,10 @@ class YTLiveMusicApp {
 
       return `
         <article class="content-card" data-action="play" data-index="${index}">
-          <button class="add-button" type="button" data-action="add" data-index="${index}" title="${addTitle}" aria-label="${addTitle}">+</button>
+          <div class="content-card__actions">
+            <button class="download-button" type="button" data-action="download" data-index="${index}" title="${downloadTitle}" aria-label="${downloadTitle}">${this.renderDownloadIcon()}</button>
+            <button class="add-button" type="button" data-action="list-menu" data-index="${index}" title="${listTitle}" aria-label="${listTitle}">+</button>
+          </div>
           <div class="card-thumb ${thumb ? '' : 'card-thumb--fallback'}" ${thumbStyle}>
             <span class="rank-pill">#${rank}</span>
             ${thumb ? '' : `<span class="thumb-initials">${initials}</span>`}
@@ -785,7 +889,8 @@ class YTLiveMusicApp {
     const playlistCount = this.results.filter((item) => this.isPlaylistLike(item)).length;
     const trackCount = Math.max(0, this.results.length - playlistCount);
     const totalDuration = this.formatResultDuration(this.results);
-    const addTitle = this.escapeHtml(this.tt('ytlive.addToQueue', 'Kuyruğa ekle'));
+    const downloadTitle = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
+    const listTitle = this.escapeHtml(this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle'));
     const playTitle = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
     const miniItems = this.results.slice(1, 5).map((item, offset) => {
       const index = offset + 1;
@@ -822,7 +927,8 @@ class YTLiveMusicApp {
           <p>${uploader}</p>
           <div class="spotlight-actions">
             <button class="primary-button compact-action" type="button" data-action="play" data-index="0">${playTitle}</button>
-            <button class="secondary-button compact-action" type="button" data-action="add" data-index="0" title="${addTitle}">+ ${this.escapeHtml(this.tt('ytlive.queue.title', 'Kuyruk'))}</button>
+            <button class="secondary-button compact-action" type="button" data-action="download" data-index="0" title="${downloadTitle}">${downloadTitle}</button>
+            <button class="secondary-button compact-action icon-button" type="button" data-action="list-menu" data-index="0" title="${listTitle}" aria-label="${listTitle}">+</button>
           </div>
         </div>
       </article>
@@ -860,9 +966,15 @@ class YTLiveMusicApp {
     const item = this.results[index];
     if (!item) return;
 
-    if (actionButton.dataset.action === 'add') {
+    if (actionButton.dataset.action === 'download' || actionButton.dataset.action === 'add') {
       event.stopPropagation();
       this.addItem(item);
+      return;
+    }
+
+    if (actionButton.dataset.action === 'list-menu') {
+      event.stopPropagation();
+      this.openDownloadListMenu(event, item);
       return;
     }
 
@@ -879,9 +991,15 @@ class YTLiveMusicApp {
     const item = this.musicHomeShelves[shelfIndex]?.items?.[index];
     if (!item) return;
 
-    if (actionButton.dataset.musicAction === 'add') {
+    if (actionButton.dataset.musicAction === 'download' || actionButton.dataset.musicAction === 'add') {
       event.stopPropagation();
       this.addItem(item);
+      return;
+    }
+
+    if (actionButton.dataset.musicAction === 'list-menu') {
+      event.stopPropagation();
+      this.openDownloadListMenu(event, item);
       return;
     }
 
@@ -897,9 +1015,15 @@ class YTLiveMusicApp {
     const item = this.playlistTracks[index];
     if (!item) return;
 
-    if (actionButton.dataset.action === 'playlist-add') {
+    if (actionButton.dataset.action === 'playlist-download' || actionButton.dataset.action === 'playlist-add') {
       event.stopPropagation();
       this.addItem(item);
+      return;
+    }
+
+    if (actionButton.dataset.action === 'playlist-list-menu') {
+      event.stopPropagation();
+      this.openDownloadListMenu(event, item);
       return;
     }
 
@@ -1043,7 +1167,8 @@ class YTLiveMusicApp {
       return;
     }
 
-    const addTitle = this.escapeHtml(this.tt('ytlive.playlist.addTrack', 'Parçayı kuyruğa ekle'));
+    const downloadTitle = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
+    const listTitle = this.escapeHtml(this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle'));
     const activeIndex = Number(this.activeCollection?.currentIndex);
     list.innerHTML = this.playlistTracks.map((track, index) => {
       const trackTitle = this.escapeHtml(track.title || this.tt('ytlive.playlist.trackFallback', 'Parça {index}', { index: index + 1 }));
@@ -1065,7 +1190,8 @@ class YTLiveMusicApp {
             <p>${uploader}</p>
           </div>
           ${duration ? `<div class="playlist-track__duration">${duration}</div>` : ''}
-          <button class="playlist-track__add" type="button" data-action="playlist-add" data-index="${index}" title="${addTitle}" aria-label="${addTitle}">+</button>
+          <button class="playlist-track__download" type="button" data-action="playlist-download" data-index="${index}" title="${downloadTitle}" aria-label="${downloadTitle}">${this.renderDownloadIcon()}</button>
+          <button class="playlist-track__add" type="button" data-action="playlist-list-menu" data-index="${index}" title="${listTitle}" aria-label="${listTitle}">+</button>
         </article>
       `;
     }).join('');
@@ -1136,6 +1262,7 @@ class YTLiveMusicApp {
     const titleEl = document.getElementById('nowTitle');
     const subtitleEl = document.getElementById('nowSubtitle');
     const addCurrent = document.getElementById('addCurrentBtn');
+    const addCurrentToList = document.getElementById('addCurrentToListBtn');
     const openLink = document.getElementById('openCurrentLink');
     const linkUrl = linkItem?.webpage_url || linkItem?.url || item.webpage_url || item.url || '';
 
@@ -1143,6 +1270,7 @@ class YTLiveMusicApp {
     if (titleEl) titleEl.textContent = item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği');
     if (subtitleEl) subtitleEl.textContent = subtitle || item.uploader || item.webpage_url || '';
     if (addCurrent) addCurrent.disabled = false;
+    if (addCurrentToList) addCurrentToList.disabled = false;
     if (openLink) {
       openLink.href = linkUrl || '#';
       openLink.classList.toggle('is-disabled', !linkUrl);
@@ -1203,7 +1331,7 @@ class YTLiveMusicApp {
     return true;
   }
 
-  playNextCollectionTrack(currentItem = null, { silent = true } = {}) {
+  playNextCollectionTrack(currentItem = null, { silent = true, autoplay = true, forceAutoplay = false } = {}) {
     const collection = this.activeCollection;
     if (!collection) return false;
 
@@ -1220,24 +1348,29 @@ class YTLiveMusicApp {
 
     const nextIndex = currentIndex + 1;
     if (nextIndex < 0 || nextIndex >= tracks.length) return false;
-    return this.playPlaylistTrackAt(nextIndex, { silent, autoplay: true, forceAutoplay: true });
+    return this.playPlaylistTrackAt(nextIndex, { silent, autoplay, forceAutoplay });
   }
 
   handleYouTubePlaybackEnded(item, token) {
     if (token !== this.youtubePlaybackToken) return;
-    if (this.playNextCollectionTrack(item, { silent: true })) return;
+    if (this.playNextCollectionTrack(item, { silent: true, autoplay: true, forceAutoplay: true })) return;
 
     if (this.activeCollection?.loading) {
       window.setTimeout(() => {
         if (token !== this.youtubePlaybackToken) return;
-        this.playNextCollectionTrack(item, { silent: true });
+        this.playNextCollectionTrack(item, { silent: true, autoplay: true, forceAutoplay: true });
       }, 900);
     }
   }
 
   handleYouTubePlaybackError(item, token, silent = false) {
     if (token !== this.youtubePlaybackToken) return false;
-    if (!this.playNextCollectionTrack(item, { silent: true })) return false;
+    const shouldAutoplayNext = !silent;
+    if (!this.playNextCollectionTrack(item, {
+      silent: true,
+      autoplay: shouldAutoplayNext,
+      forceAutoplay: shouldAutoplayNext
+    })) return false;
     if (!silent) {
       this.notify(this.tt('ytlive.play.skippedUnavailable', 'Parça oynatılamadı, sonraki parçaya geçiliyor.'), 'info');
     }
@@ -1483,14 +1616,14 @@ class YTLiveMusicApp {
     return !!(this.currentPlaybackItem || this.currentItem || this.youtubePlayer);
   }
 
-  getRandomPlayableItem(items = []) {
+  getRandomPlayableItem(items = [], { tracksOnly = true } = {}) {
     const candidates = (Array.isArray(items) ? items : [])
       .map((item) => this.normalizeItem(item))
-      .filter((item) => item.webpage_url);
+      .filter((item) => item.webpage_url)
+      .filter((item) => !tracksOnly || (item.type === 'track' && !this.isPlaylistLike(item)));
     const embeddable = candidates.filter((item) => this.getEmbedUrl(item));
-    const fallback = embeddable.length ? embeddable : candidates.filter((item) => this.isPlaylistLike(item));
-    if (!fallback.length) return null;
-    return fallback[Math.floor(Math.random() * fallback.length)];
+    if (!embeddable.length) return null;
+    return embeddable[Math.floor(Math.random() * embeddable.length)];
   }
 
   playRandomPlayerContent({ source = 'results' } = {}) {
@@ -1526,6 +1659,15 @@ class YTLiveMusicApp {
     this.addItem(item);
   }
 
+  addUrlInputToList(event) {
+    const item = this.itemFromUrl(document.getElementById('quickUrlInput')?.value || '');
+    if (!item) {
+      this.notify(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube linki gir.'), 'error');
+      return;
+    }
+    this.openDownloadListMenu(event, item);
+  }
+
   playItem(rawItem, { silent = false, keepPlaylist = false, autoplay = true, collectionContext = null, playlistIndex = null, forceAutoplay = false } = {}) {
     const item = this.normalizeItem(rawItem);
     const collectionLike = this.isPlaylistLike(item);
@@ -1559,7 +1701,12 @@ class YTLiveMusicApp {
     const shouldAutoplay = autoplay && (!silent || forceAutoplay);
     const embedUrl = this.getEmbedUrl(item, { autoplay: shouldAutoplay });
     if (!embedUrl) {
-      if (collectionContext && this.playNextCollectionTrack(item, { silent: true })) return;
+      const shouldAutoplayNext = !silent;
+      if (collectionContext && this.playNextCollectionTrack(item, {
+        silent: true,
+        autoplay: shouldAutoplayNext,
+        forceAutoplay: shouldAutoplayNext
+      })) return;
       this.notify(this.tt('ytlive.play.unavailable', 'Bu içerik oynatılamıyor, ama link olarak eklenebilir.'), 'info');
       return;
     }
@@ -1611,6 +1758,9 @@ class YTLiveMusicApp {
 
     const addCurrent = document.getElementById('addCurrentBtn');
     if (addCurrent) addCurrent.disabled = true;
+
+    const addCurrentToList = document.getElementById('addCurrentToListBtn');
+    if (addCurrentToList) addCurrentToList.disabled = true;
 
     const openLink = document.getElementById('openCurrentLink');
     if (openLink) {
@@ -1895,6 +2045,648 @@ class YTLiveMusicApp {
       selectedIds,
       frozenEntries: entries
     });
+  }
+
+  applyDownloadListsState(data = {}) {
+    this.downloadLists = (Array.isArray(data?.lists) ? data.lists : [])
+      .map((list) => ({
+        ...list,
+        items: Array.isArray(list?.items) ? list.items : []
+      }));
+  }
+
+  async refreshDownloadLists({ showToast = false } = {}) {
+    try {
+      const response = await fetch('/api/ytlive/download-lists', { cache: 'no-store' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data?.error?.message || this.tt('ytlive.lists.loadFailed', 'İndirme listeleri okunamadı.'));
+      }
+      this.applyDownloadListsState(data);
+      this.renderDownloadLists();
+      if (showToast) this.notify(this.tt('ytlive.lists.updated', 'İndirme listeleri güncellendi.'), 'success');
+    } catch (error) {
+      this.renderDownloadLists({ error: error.message });
+      console.warn('Download lists could not be loaded:', error);
+    }
+  }
+
+  async saveDownloadListsRequest(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data?.error?.message || this.tt('ytlive.lists.saveFailed', 'İndirme listesi kaydedilemedi.'));
+    }
+    this.applyDownloadListsState(data);
+    this.renderDownloadLists();
+    return data;
+  }
+
+  renderDownloadLists({ error = '' } = {}) {
+    const panel = document.getElementById('downloadListsPanel');
+    const status = document.getElementById('downloadListsStatus');
+    const grid = document.getElementById('downloadListsGrid');
+    if (!panel || !status || !grid) return;
+
+    if (error) {
+      status.textContent = error;
+      grid.innerHTML = `<div class="empty-state">${this.escapeHtml(error)}</div>`;
+      return;
+    }
+
+    const lists = Array.isArray(this.downloadLists) ? this.downloadLists : [];
+    const itemCount = lists.reduce((sum, list) => sum + (Array.isArray(list.items) ? list.items.length : 0), 0);
+    status.textContent = lists.length
+      ? this.tt('ytlive.lists.status', '{lists} liste, {items} içerik', { lists: lists.length, items: itemCount })
+      : this.tt('ytlive.lists.empty', 'Henüz indirme listesi yok.');
+
+    if (!lists.length) {
+      grid.innerHTML = `<div class="empty-state">${this.escapeHtml(this.tt('ytlive.lists.emptyHint', 'Yeni + butonundan liste oluşturabilirsin.'))}</div>`;
+      return;
+    }
+
+    const playLabel = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
+    const downloadLabel = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
+    const deleteLabel = this.escapeHtml(this.tt('ytlive.lists.delete', 'Sil'));
+    const removeLabel = this.escapeHtml(this.tt('ytlive.lists.removeItem', 'Listeden çıkar'));
+
+    grid.innerHTML = lists.map((list) => {
+      const items = Array.isArray(list.items) ? list.items : [];
+      const previewItems = items.slice(0, 8).map((item) => {
+        const title = this.escapeHtml(item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'));
+        const uploader = this.escapeHtml(item.uploader || 'YouTube');
+        const key = this.escapeHtml(item.key || '');
+        return `
+          <li class="download-list-item">
+            <span>
+              <strong>${title}</strong>
+              <small>${uploader}</small>
+            </span>
+            <button class="download-list-item__remove" type="button" data-list-action="remove-item" data-list-id="${this.escapeHtml(list.id)}" data-item-key="${key}" title="${removeLabel}" aria-label="${removeLabel}">×</button>
+          </li>
+        `;
+      }).join('');
+      const more = items.length > 8
+        ? `<li class="download-list-item download-list-item--more">${this.escapeHtml(this.tt('ytlive.lists.moreItems', '+{count} içerik daha', { count: items.length - 8 }))}</li>`
+        : '';
+
+      return `
+        <article class="download-list-card">
+          <div class="download-list-card__top">
+            <div>
+              <h3>${this.escapeHtml(list.name || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi'))}</h3>
+              <p>${this.escapeHtml(this.tt('ytlive.lists.itemCount', '{count} içerik', { count: items.length }))}</p>
+            </div>
+            <div class="download-list-card__actions">
+              <button class="secondary-button compact-action" type="button" data-list-action="play" data-list-id="${this.escapeHtml(list.id)}" ${items.length ? '' : 'disabled'}>${playLabel}</button>
+              <button class="primary-button compact-action" type="button" data-list-action="download" data-list-id="${this.escapeHtml(list.id)}" ${items.length ? '' : 'disabled'}>${downloadLabel}</button>
+              <button class="ghost-button compact-action" type="button" data-list-action="delete" data-list-id="${this.escapeHtml(list.id)}">${deleteLabel}</button>
+            </div>
+          </div>
+          <ul class="download-list-card__items">
+            ${previewItems || `<li class="download-list-item download-list-item--more">${this.escapeHtml(this.tt('ytlive.lists.emptyList', 'Bu liste boş.'))}</li>`}
+            ${more}
+          </ul>
+        </article>
+      `;
+    }).join('');
+  }
+
+  handleDownloadListPanelInteraction(event) {
+    const button = event.target.closest('[data-list-action]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const listId = button.dataset.listId || '';
+    const action = button.dataset.listAction || '';
+    if (action === 'play') {
+      this.playSavedList(listId);
+      return;
+    }
+    if (action === 'download') {
+      this.downloadSavedList(listId);
+      return;
+    }
+    if (action === 'delete') {
+      this.deleteDownloadList(listId);
+      return;
+    }
+    if (action === 'remove-item') {
+      this.removeDownloadListItem(listId, button.dataset.itemKey || '');
+    }
+  }
+
+  openDownloadListMenu(event, rawItem) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+
+    const item = this.normalizeItem(rawItem);
+    if (!item.webpage_url) {
+      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir YouTube linki bulunamadı.'), 'error');
+      return;
+    }
+
+    this.closeDownloadListMenu();
+
+    const anchor = event?.currentTarget || event?.target || null;
+    const menu = document.createElement('div');
+    menu.className = 'download-list-menu';
+    menu.setAttribute('role', 'menu');
+    menu.tabIndex = -1;
+
+    const title = document.createElement('div');
+    title.className = 'download-list-menu__title';
+    title.textContent = this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle');
+    menu.appendChild(title);
+
+    if (!this.downloadLists.length) {
+      const empty = document.createElement('div');
+      empty.className = 'download-list-menu__empty';
+      empty.textContent = this.tt('ytlive.lists.empty', 'Henüz indirme listesi yok.');
+      menu.appendChild(empty);
+    } else {
+      this.downloadLists.forEach((list) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'download-list-menu__item';
+        button.textContent = `${list.name || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi')} (${Array.isArray(list.items) ? list.items.length : 0})`;
+        button.addEventListener('click', () => {
+          this.closeDownloadListMenu();
+          this.addItemToDownloadList(item, list.id);
+        });
+        menu.appendChild(button);
+      });
+    }
+
+    const createButton = document.createElement('button');
+    createButton.type = 'button';
+    createButton.className = 'download-list-menu__create';
+    createButton.textContent = this.tt('ytlive.lists.createNew', 'Yeni liste oluştur');
+    createButton.addEventListener('click', () => {
+      this.closeDownloadListMenu();
+      this.createDownloadListWithItem(item);
+    });
+    menu.appendChild(createButton);
+
+    document.body.appendChild(menu);
+    const rect = anchor?.getBoundingClientRect?.() || { left: 24, bottom: 24, right: 260 };
+    const menuRect = menu.getBoundingClientRect();
+    const left = Math.min(Math.max(12, rect.left), window.innerWidth - menuRect.width - 12);
+    const top = Math.min(rect.bottom + 8, window.innerHeight - menuRect.height - 12);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${Math.max(12, top)}px`;
+    requestAnimationFrame(() => {
+      menu.classList.add('is-open');
+      menu.focus({ preventScroll: true });
+    });
+
+    const outsideHandler = (evt) => {
+      if (menu.contains(evt.target)) return;
+      this.closeDownloadListMenu();
+    };
+    const keyHandler = (evt) => {
+      if (evt.key === 'Escape') this.closeDownloadListMenu();
+    };
+
+    setTimeout(() => {
+      document.addEventListener('mousedown', outsideHandler);
+      document.addEventListener('keydown', keyHandler);
+    }, 0);
+    this.activeDownloadListMenu = { menu, outsideHandler, keyHandler };
+  }
+
+  closeDownloadListMenu() {
+    const active = this.activeDownloadListMenu;
+    if (!active) return;
+    try { document.removeEventListener('mousedown', active.outsideHandler); } catch {}
+    try { document.removeEventListener('keydown', active.keyHandler); } catch {}
+    active.menu?.remove?.();
+    this.activeDownloadListMenu = null;
+  }
+
+  getCustomModalBackdrop() {
+    let backdrop = document.getElementById('custom-modal-container');
+    if (backdrop) return backdrop;
+
+    backdrop = document.createElement('div');
+    backdrop.id = 'custom-modal-container';
+    backdrop.className = 'custom-modal-backdrop';
+    backdrop.setAttribute('role', 'presentation');
+    backdrop.style.display = 'none';
+    document.body.appendChild(backdrop);
+    return backdrop;
+  }
+
+  showDownloadListNameModal(defaultName = '') {
+    return new Promise((resolve) => {
+      const backdrop = this.getCustomModalBackdrop();
+      const modal = document.createElement('div');
+      const uid = `ytliveListName-${Date.now()}`;
+      modal.className = 'custom-modal custom-modal--info ytlive-list-name-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.setAttribute('aria-labelledby', `${uid}Title`);
+      modal.innerHTML = `
+        <form class="ytlive-list-name-form">
+          <div class="custom-modal__header">
+            <div class="custom-modal__icon">+</div>
+            <div class="custom-modal__content">
+              <h3 class="custom-modal__title" id="${uid}Title">${this.escapeHtml(this.tt('ytlive.lists.nameTitle', 'Yeni indirme listesi'))}</h3>
+              <div class="custom-modal__message">${this.escapeHtml(this.tt('ytlive.lists.nameMessage', 'Bu içerik eklenecek liste için bir ad yaz.'))}</div>
+            </div>
+          </div>
+          <div class="custom-modal__body">
+            <label class="ytlive-list-name-form__label" for="${uid}Input">${this.escapeHtml(this.tt('ytlive.lists.namePrompt', 'Liste adı'))}</label>
+            <input class="ytlive-list-name-form__input" id="${uid}Input" name="listName" type="text" maxlength="120" autocomplete="off" value="${this.escapeHtml(defaultName)}">
+            <div class="ytlive-list-name-form__error" aria-live="polite"></div>
+          </div>
+          <div class="custom-modal__footer">
+            <button class="modal-btn modal-btn-cancel" type="button">${this.escapeHtml(this.tt('btn.cancel', 'İptal'))}</button>
+            <button class="modal-btn modal-btn-confirm" type="submit">${this.escapeHtml(this.tt('ytlive.lists.create', 'Oluştur'))}</button>
+          </div>
+        </form>
+      `;
+
+      const form = modal.querySelector('.ytlive-list-name-form');
+      const input = modal.querySelector('.ytlive-list-name-form__input');
+      const errorEl = modal.querySelector('.ytlive-list-name-form__error');
+      const cancelBtn = modal.querySelector('.modal-btn-cancel');
+
+      const cleanup = () => {
+        modal.remove();
+        if (backdrop.children.length === 0) {
+          backdrop.style.display = 'none';
+          backdrop.classList.remove('is-open');
+        }
+        document.removeEventListener('keydown', keyHandler);
+        backdrop.removeEventListener('click', backdropHandler);
+      };
+
+      const finish = (value) => {
+        cleanup();
+        resolve(value);
+      };
+
+      const submitHandler = (event) => {
+        event.preventDefault();
+        const value = String(input?.value || '').trim();
+        if (!value) {
+          if (errorEl) errorEl.textContent = this.tt('ytlive.lists.nameRequired', 'Liste adı boş olamaz.');
+          input?.focus?.();
+          return;
+        }
+        finish(value);
+      };
+
+      const cancelHandler = () => finish(null);
+      const keyHandler = (event) => {
+        if (event.key === 'Escape') cancelHandler();
+      };
+      const backdropHandler = (event) => {
+        if (event.target === backdrop) cancelHandler();
+      };
+
+      form?.addEventListener('submit', submitHandler);
+      cancelBtn?.addEventListener('click', cancelHandler);
+      document.addEventListener('keydown', keyHandler);
+      backdrop.addEventListener('click', backdropHandler);
+
+      backdrop.style.display = 'flex';
+      backdrop.classList.add('is-open');
+      backdrop.appendChild(modal);
+
+      requestAnimationFrame(() => {
+        input?.focus?.();
+        input?.select?.();
+      });
+    });
+  }
+
+  showDownloadListConfirmModal({ title = '', message = '', confirmText = '', cancelText = '' } = {}) {
+    return new Promise((resolve) => {
+      const backdrop = this.getCustomModalBackdrop();
+      const modal = document.createElement('div');
+      const uid = `ytliveListConfirm-${Date.now()}`;
+      modal.className = 'custom-modal custom-modal--danger ytlive-list-confirm-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+      modal.setAttribute('aria-labelledby', `${uid}Title`);
+      modal.innerHTML = `
+        <div class="custom-modal__header">
+          <div class="custom-modal__icon">!</div>
+          <div class="custom-modal__content">
+            <h3 class="custom-modal__title" id="${uid}Title">${this.escapeHtml(title)}</h3>
+            <div class="custom-modal__message">${this.escapeHtml(message)}</div>
+          </div>
+        </div>
+        <div class="custom-modal__footer">
+          <button class="modal-btn modal-btn-cancel" type="button">${this.escapeHtml(cancelText || this.tt('btn.cancel', 'İptal'))}</button>
+          <button class="modal-btn modal-btn-confirm" type="button">${this.escapeHtml(confirmText || this.tt('ytlive.lists.delete', 'Sil'))}</button>
+        </div>
+      `;
+
+      const cancelBtn = modal.querySelector('.modal-btn-cancel');
+      const confirmBtn = modal.querySelector('.modal-btn-confirm');
+
+      const cleanup = () => {
+        modal.remove();
+        if (backdrop.children.length === 0) {
+          backdrop.style.display = 'none';
+          backdrop.classList.remove('is-open');
+        }
+        document.removeEventListener('keydown', keyHandler);
+        backdrop.removeEventListener('click', backdropHandler);
+      };
+
+      const finish = (value) => {
+        cleanup();
+        resolve(value);
+      };
+
+      const cancelHandler = () => finish(false);
+      const confirmHandler = () => finish(true);
+      const keyHandler = (event) => {
+        if (event.key === 'Escape') cancelHandler();
+      };
+      const backdropHandler = (event) => {
+        if (event.target === backdrop) cancelHandler();
+      };
+
+      cancelBtn?.addEventListener('click', cancelHandler);
+      confirmBtn?.addEventListener('click', confirmHandler);
+      document.addEventListener('keydown', keyHandler);
+      backdrop.addEventListener('click', backdropHandler);
+
+      backdrop.style.display = 'flex';
+      backdrop.classList.add('is-open');
+      backdrop.appendChild(modal);
+
+      requestAnimationFrame(() => {
+        cancelBtn?.focus?.();
+      });
+    });
+  }
+
+  async createDownloadListWithItem(rawItem) {
+    const fallback = this.suggestDownloadListName(rawItem);
+    const name = await this.showDownloadListNameModal(fallback);
+    if (!name) return;
+
+    try {
+      const items = await this.expandItemForDownloadList(rawItem);
+      await this.saveDownloadListsRequest('/api/ytlive/download-lists', {
+        method: 'POST',
+        body: JSON.stringify({ name, items })
+      });
+      this.notify(this.tt('ytlive.lists.created', 'Liste oluşturuldu.'), 'success');
+    } catch (error) {
+      this.notify(error.message || this.tt('ytlive.lists.saveFailed', 'İndirme listesi kaydedilemedi.'), 'error');
+    }
+  }
+
+  async addItemToDownloadList(rawItem, listId) {
+    if (!listId) return;
+    try {
+      const items = await this.expandItemForDownloadList(rawItem);
+      await this.saveDownloadListsRequest(`/api/ytlive/download-lists/${encodeURIComponent(listId)}/items`, {
+        method: 'POST',
+        body: JSON.stringify({ items })
+      });
+      this.notify(this.tt('ytlive.lists.added', '{count} içerik listeye eklendi.', { count: items.length }), 'success');
+    } catch (error) {
+      this.notify(error.message || this.tt('ytlive.lists.saveFailed', 'İndirme listesi kaydedilemedi.'), 'error');
+    }
+  }
+
+  async deleteDownloadList(listId) {
+    const list = this.downloadLists.find((entry) => entry.id === listId);
+    if (!list) return;
+    const ok = await this.showDownloadListConfirmModal({
+      title: this.tt('ytlive.lists.deleteTitle', 'Liste silinsin mi?'),
+      message: this.tt('ytlive.lists.deleteConfirm', '"{name}" silinsin mi?', { name: list.name || '' }),
+      confirmText: this.tt('ytlive.lists.delete', 'Sil'),
+      cancelText: this.tt('btn.cancel', 'İptal')
+    });
+    if (!ok) return;
+
+    try {
+      await this.saveDownloadListsRequest(`/api/ytlive/download-lists/${encodeURIComponent(listId)}`, { method: 'DELETE' });
+      this.notify(this.tt('ytlive.lists.deleted', 'Liste silindi.'), 'success');
+    } catch (error) {
+      this.notify(error.message || this.tt('ytlive.lists.deleteFailed', 'Liste silinemedi.'), 'error');
+    }
+  }
+
+  async removeDownloadListItem(listId, itemKey) {
+    if (!listId || !itemKey) return;
+    try {
+      await this.saveDownloadListsRequest(`/api/ytlive/download-lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemKey)}`, { method: 'DELETE' });
+      this.notify(this.tt('ytlive.lists.itemRemoved', 'İçerik listeden çıkarıldı.'), 'success');
+    } catch (error) {
+      this.notify(error.message || this.tt('ytlive.lists.deleteFailed', 'Liste silinemedi.'), 'error');
+    }
+  }
+
+  async expandItemForDownloadList(rawItem) {
+    const item = this.normalizeItem(rawItem);
+    if (!this.isPlaylistLike(item)) {
+      return [this.toDownloadListItem(item, 0)];
+    }
+
+    this.notify(this.tt('ytlive.lists.expanding', 'Liste içeriği okunuyor...'), 'info');
+    const pageSize = 100;
+    const maxPages = 200;
+    const items = [];
+    const seen = new Set();
+    let page = 1;
+    let total = 0;
+    let title = item.title || this.tt('ytlive.youtubePlaylist', 'YouTube Playlist');
+
+    while (page <= maxPages) {
+      const response = await fetch('/api/playlist/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: item.webpage_url,
+          page,
+          pageSize
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data?.error?.message || this.tt('ytlive.playlist.readFailed', 'Playlist okunamadı.'));
+      }
+
+      const rawEntries = Array.isArray(data.items) ? data.items : [];
+      title = data?.playlist?.title || title;
+      total = Number(data?.playlist?.count || total || 0);
+
+      rawEntries
+        .map((entry, idx) => this.normalizePlaylistEntry(entry, ((page - 1) * pageSize) + idx))
+        .forEach((entry) => {
+          const normalized = this.toDownloadListItem(entry, items.length, {
+            sourceTitle: title,
+            sourceUrl: item.webpage_url
+          });
+          const key = this.getDownloadListItemKey(normalized);
+          if (seen.has(key)) return;
+          seen.add(key);
+          items.push(normalized);
+        });
+
+      if (!rawEntries.length || rawEntries.length < pageSize || (total && items.length >= total)) {
+        break;
+      }
+      page += 1;
+    }
+
+    if (!items.length) {
+      throw new Error(this.tt('ytlive.playlist.noItems', 'Playlist içinde eklenebilir parça bulunamadı.'));
+    }
+
+    return items;
+  }
+
+  toDownloadListItem(rawItem, index = 0, extras = {}) {
+    const item = this.normalizeItem(rawItem);
+    return {
+      type: 'track',
+      index: Number(item.index || index + 1) || index + 1,
+      id: item.id || this.getVideoId(item.webpage_url || item.url || '') || null,
+      title: item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'),
+      uploader: item.uploader || item.artist || item.channel || '',
+      duration: Number.isFinite(Number(item.duration)) ? Number(item.duration) : null,
+      duration_string: item.duration_string || null,
+      thumbnail: item.thumbnail || item.thumbnails?.[0]?.url || null,
+      webpage_url: item.webpage_url || item.url || '',
+      url: item.webpage_url || item.url || '',
+      sourceTitle: extras.sourceTitle || item.sourceTitle || null,
+      sourceUrl: extras.sourceUrl || item.sourceUrl || null
+    };
+  }
+
+  getDownloadListItemKey(item = {}) {
+    return this.normalizeResultKey([
+      item.type || 'track',
+      item.id || '',
+      item.webpage_url || item.url || '',
+      item.title || '',
+      item.uploader || ''
+    ].join('|'));
+  }
+
+  suggestDownloadListName(rawItem = {}) {
+    const item = this.normalizeItem(rawItem);
+    return item.title || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi');
+  }
+
+  getSavedListDownloadItems(list = {}) {
+    return (Array.isArray(list.items) ? list.items : [])
+      .map((item, index) => this.toDownloadListItem(item, index, {
+        sourceTitle: item.sourceTitle || list.name,
+        sourceUrl: item.sourceUrl || ''
+      }))
+      .filter((item) => item.webpage_url || item.id);
+  }
+
+  getSavedListPlayableItems(list = {}) {
+    return this.getSavedListDownloadItems(list)
+      .map((item, index) => this.normalizePlaylistEntry({
+        ...item,
+        index: index + 1,
+        webpage_url: item.webpage_url || item.url || ''
+      }, index));
+  }
+
+  playSavedList(listId) {
+    const list = this.downloadLists.find((entry) => entry.id === listId);
+    if (!list) return;
+
+    const tracks = this.getSavedListPlayableItems(list);
+    if (!tracks.length) {
+      this.notify(this.tt('ytlive.lists.emptyList', 'Bu liste boş.'), 'error');
+      return;
+    }
+
+    const title = list.name || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi');
+    const firstTrack = tracks[0] || {};
+    const collectionItem = {
+      type: 'playlist',
+      id: list.id,
+      title,
+      uploader: this.tt('ytlive.lists.title', 'İndirme Listelerim'),
+      webpage_url: firstTrack.webpage_url || firstTrack.url || '',
+      url: firstTrack.webpage_url || firstTrack.url || '',
+      downloadListId: list.id
+    };
+
+    this.playlistTracks = tracks;
+    this.activeCollection = {
+      item: collectionItem,
+      key: `download-list:${list.id}`,
+      title,
+      total: tracks.length,
+      tracks: tracks.slice(),
+      currentIndex: -1,
+      loading: false
+    };
+    this.currentItem = collectionItem;
+    this.currentPlaybackItem = collectionItem;
+    this.renderPlaylistTracks({ title, total: tracks.length });
+    this.updateNowPanelForCollection();
+    this.playPlaylistTrackAt(0, { silent: false, autoplay: true });
+  }
+
+  async downloadSavedList(listId) {
+    const list = this.downloadLists.find((entry) => entry.id === listId);
+    if (!list) return;
+    const items = this.getSavedListDownloadItems(list);
+
+    if (!items.length) {
+      this.notify(this.tt('ytlive.lists.emptyList', 'Bu liste boş.'), 'error');
+      return;
+    }
+
+    const selectedIds = items
+      .map((item) => item.id || this.getVideoId(item.webpage_url) || item.webpage_url)
+      .filter(Boolean);
+    if (!selectedIds.length) {
+      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir YouTube linki bulunamadı.'), 'error');
+      return;
+    }
+
+    const frozenEntries = items.map((item, index) => ({
+      ...item,
+      index: index + 1,
+      webpage_url: item.webpage_url || item.url || ''
+    }));
+    const isDownloadSource = (value) => /(?:youtube\.com|youtu\.be|music\.youtube\.com|dailymotion\.com|dai\.ly)/i.test(String(value || ''));
+    const sourceUrl =
+      items.find((item) => isDownloadSource(item.sourceUrl))?.sourceUrl ||
+      items.find((item) => isDownloadSource(item.webpage_url || item.url))?.webpage_url ||
+      items[0].webpage_url ||
+      items[0].url;
+
+    try {
+      await this.submitJob({
+        ...this.getOutputPayload(),
+        url: sourceUrl,
+        isPlaylist: true,
+        plTitle: list.name || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi'),
+        selectedIndices: frozenEntries.map((entry) => entry.index),
+        selectedIds,
+        frozenEntries
+      });
+    } catch (error) {
+      this.notify(error.message || this.tt('ytlive.job.addFailed', 'İş eklenemedi.'), 'error');
+    }
   }
 
   buildSinglePayload(item) {

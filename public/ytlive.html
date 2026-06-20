@@ -37,7 +37,7 @@
       <nav class="sidebar-nav">
         <button class="sidebar-link is-active" type="button" data-scroll="#discover" data-i18n="ytlive.nav.discover">Discover</button>
         <button class="sidebar-link" type="button" data-focus="#searchInput" data-i18n="ytlive.nav.search">Search</button>
-        <button class="sidebar-link" type="button" data-scroll="#queuePanel" data-i18n="ytlive.nav.jobs">Jobs</button>
+        <button class="sidebar-link" type="button" data-scroll="#downloadListsPanel" data-i18n="ytlive.nav.downloadLists">My Download Lists</button>
         <a class="sidebar-link" href="/index.html" data-i18n="ytlive.nav.classic">Classic UI</a>
       </nav>
 
@@ -70,7 +70,8 @@
       <section class="quick-url-panel" aria-label="Play or add by URL" data-i18n-aria="ytlive.quickUrl.aria">
         <input id="quickUrlInput" type="url" placeholder="Paste a YouTube or YouTube Music link" data-i18n-ph="ytlive.quickUrl.placeholder" />
         <button id="playUrlBtn" class="secondary-button" type="button" data-i18n="ytlive.play">Play</button>
-        <button id="addUrlBtn" class="primary-button" type="button" data-i18n="ytlive.add">+ Add</button>
+        <button id="addUrlBtn" class="primary-button" type="button" data-i18n="ytlive.download.now">Download</button>
+        <button id="addUrlToListBtn" class="secondary-button icon-button" type="button" data-i18n-title="ytlive.lists.addMenu" aria-label="Add to download list">+</button>
       </section>
 
       <section class="player-layout">
@@ -87,7 +88,8 @@
           <h1 id="nowTitle">Gharmonize Music</h1>
           <p id="nowSubtitle" data-i18n="ytlive.now.subtitle">Search YouTube content, play it, and add it to the conversion queue.</p>
           <div class="now-actions">
-            <button id="addCurrentBtn" class="primary-button" type="button" disabled data-i18n="ytlive.add">+ Add</button>
+            <button id="addCurrentBtn" class="primary-button" type="button" disabled data-i18n="ytlive.download.now">Download</button>
+            <button id="addCurrentToListBtn" class="secondary-button icon-button" type="button" disabled data-i18n-title="ytlive.lists.addMenu" aria-label="Add to download list">+</button>
             <a id="openCurrentLink" class="secondary-button is-disabled" href="#" target="_blank" rel="noopener" data-i18n="ytlive.openYoutube">Open on YouTube</a>
           </div>
 
@@ -130,15 +132,34 @@
         </aside>
       </section>
 
-      <section id="playlistTracksPanel" class="playlist-tracks-panel" hidden>
-        <div class="playlist-tracks-header">
+      <section id="playlistTracksPanel" class="playlist-tracks-panel collapsible-panel" hidden data-collapsible-panel="playlistTracksPanel">
+        <div class="playlist-tracks-header collapsible-header" data-collapsible-trigger="playlistTracksPanel">
           <div>
             <div class="eyebrow" data-i18n="ytlive.type.playlist">Playlist</div>
             <h2 id="playlistTracksTitle" data-i18n="ytlive.playlist.tracksTitle">Playlist tracks</h2>
           </div>
-          <div id="playlistTracksMeta" class="status-line"></div>
+          <div class="collapsible-header__actions">
+            <div id="playlistTracksMeta" class="status-line"></div>
+            <button class="collapsible-toggle" type="button" data-collapsible-toggle="playlistTracksPanel" aria-label="Collapse panel"></button>
+          </div>
         </div>
-        <div id="playlistTracksList" class="playlist-tracks-list"></div>
+        <div class="collapsible-body" data-collapsible-body>
+          <div id="playlistTracksList" class="playlist-tracks-list"></div>
+        </div>
+      </section>
+
+      <section id="downloadListsPanel" class="download-lists-panel collapsible-panel" data-collapsible-panel="downloadListsPanel">
+        <div class="section-header collapsible-header" data-collapsible-trigger="downloadListsPanel">
+          <div>
+            <div class="eyebrow" data-i18n="ytlive.lists.eyebrow">Download Lists</div>
+            <h2 data-i18n="ytlive.lists.title">My Download Lists</h2>
+          </div>
+          <button class="collapsible-toggle" type="button" data-collapsible-toggle="downloadListsPanel" aria-label="Collapse panel"></button>
+        </div>
+        <div class="collapsible-body" data-collapsible-body>
+          <div id="downloadListsStatus" class="status-line"></div>
+          <div id="downloadListsGrid" class="download-lists-grid"></div>
+        </div>
       </section>
 
       <section id="musicHomeSection" class="music-home-section" hidden>
@@ -153,29 +174,34 @@
         <div id="musicHomeShelves" class="music-home-shelves"></div>
       </section>
 
-      <section class="content-section" id="discover">
-        <div class="section-header">
+      <section class="content-section collapsible-panel" id="discover" data-collapsible-panel="discover">
+        <div class="section-header collapsible-header" data-collapsible-trigger="discover">
           <div>
             <div class="eyebrow">YouTube</div>
             <h2 data-i18n="ytlive.content.title">Content</h2>
           </div>
-          <div class="preset-row" aria-label="Search presets" data-i18n-aria="ytlive.presets.aria">
-            <button class="preset-chip" type="button" data-preset="energizing" data-i18n="ytlive.preset.energizing">Energetic</button>
-            <button class="preset-chip" type="button" data-preset="workout" data-i18n="ytlive.preset.workout">Workout</button>
-            <button class="preset-chip" type="button" data-preset="feel-good" data-i18n="ytlive.preset.feel-good">Feel good</button>
-            <button class="preset-chip" type="button" data-preset="relax" data-i18n="ytlive.preset.relax">Relax</button>
-            <button class="preset-chip" type="button" data-preset="sad" data-i18n="ytlive.preset.sad">Sad</button>
-            <button class="preset-chip" type="button" data-preset="romance" data-i18n="ytlive.preset.romance">Romantic</button>
-            <button class="preset-chip" type="button" data-preset="commute" data-i18n="ytlive.preset.commute">Commute</button>
-            <button class="preset-chip" type="button" data-preset="party" data-i18n="ytlive.preset.party">Party</button>
-            <button class="preset-chip" type="button" data-preset="focus" data-i18n="ytlive.preset.focus">Focus</button>
-            <button class="preset-chip" type="button" data-preset="sleep" data-i18n="ytlive.preset.sleep">Sleep</button>
+          <div class="section-header__actions">
+            <div class="preset-row" aria-label="Search presets" data-i18n-aria="ytlive.presets.aria">
+              <button class="preset-chip" type="button" data-preset="energizing" data-i18n="ytlive.preset.energizing">Energetic</button>
+              <button class="preset-chip" type="button" data-preset="workout" data-i18n="ytlive.preset.workout">Workout</button>
+              <button class="preset-chip" type="button" data-preset="feel-good" data-i18n="ytlive.preset.feel-good">Feel good</button>
+              <button class="preset-chip" type="button" data-preset="relax" data-i18n="ytlive.preset.relax">Relax</button>
+              <button class="preset-chip" type="button" data-preset="sad" data-i18n="ytlive.preset.sad">Sad</button>
+              <button class="preset-chip" type="button" data-preset="romance" data-i18n="ytlive.preset.romance">Romantic</button>
+              <button class="preset-chip" type="button" data-preset="commute" data-i18n="ytlive.preset.commute">Commute</button>
+              <button class="preset-chip" type="button" data-preset="party" data-i18n="ytlive.preset.party">Party</button>
+              <button class="preset-chip" type="button" data-preset="focus" data-i18n="ytlive.preset.focus">Focus</button>
+              <button class="preset-chip" type="button" data-preset="sleep" data-i18n="ytlive.preset.sleep">Sleep</button>
+            </div>
+            <button class="collapsible-toggle" type="button" data-collapsible-toggle="discover" aria-label="Collapse panel"></button>
           </div>
         </div>
-        <div id="resultsStatus" class="status-line" data-i18n="ytlive.results.initial">Use the search box above.</div>
-        <div id="discoverySummary" class="discovery-summary" hidden></div>
-        <div id="resultsGrid" class="content-grid"></div>
-        <div id="resultsLoadMore" class="load-more-sentinel" hidden></div>
+        <div class="collapsible-body" data-collapsible-body>
+          <div id="resultsStatus" class="status-line" data-i18n="ytlive.results.initial">Use the search box above.</div>
+          <div id="discoverySummary" class="discovery-summary" hidden></div>
+          <div id="resultsGrid" class="content-grid"></div>
+          <div id="resultsLoadMore" class="load-more-sentinel" hidden></div>
+        </div>
       </section>
     </main>
 
