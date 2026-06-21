@@ -177,6 +177,7 @@ class YTLiveMusicApp {
     document.getElementById('playlistTracksPanel')?.addEventListener('click', (event) => this.handlePlaylistTrackInteraction(event));
     document.getElementById('downloadListsPanel')?.addEventListener('click', (event) => this.handleDownloadListPanelInteraction(event));
     this.setupInfiniteScroll();
+    document.addEventListener('error', (event) => this.handleThumbnailError(event), true);
   }
 
   async loadUiConfig() {
@@ -734,8 +735,10 @@ class YTLiveMusicApp {
       const title = this.escapeHtml(shelf.title || this.tt('ytlive.musicHome.shelfFallback', 'YouTube Music'));
       const count = this.escapeHtml(this.tt('ytlive.musicHome.itemCount', '{count} içerik', { count: shelf.items.length }));
       const items = shelf.items.map((item, index) => {
-        const thumb = item.thumbnail ? this.escapeHtml(item.thumbnail) : '';
-        const thumbStyle = thumb ? `style="background-image:url('${thumb.replace(/'/g, '%27')}')"` : '';
+        const thumbImage = this.renderThumbnailImage(item, {
+          className: 'music-home-card__image',
+          sizes: '(max-width: 640px) 72vw, 248px'
+        });
         const itemTitle = this.escapeHtml(item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'));
         const uploader = this.escapeHtml(item.uploader || 'YouTube Music');
         const type = this.escapeHtml(this.getItemTypeLabel(item));
@@ -748,8 +751,8 @@ class YTLiveMusicApp {
               <button class="music-home-card__download" type="button" data-music-action="download" data-shelf="${shelfIndex}" data-index="${index}" title="${downloadTitle}" aria-label="${downloadTitle}">${this.renderDownloadIcon()}</button>
               <button class="music-home-card__add" type="button" data-music-action="list-menu" data-shelf="${shelfIndex}" data-index="${index}" title="${listTitle}" aria-label="${listTitle}">+</button>
             </div>
-            <div class="music-home-card__thumb ${thumb ? '' : 'music-home-card__thumb--fallback'}" ${thumbStyle}>
-              ${thumb ? '' : `<span>${initials}</span>`}
+            <div class="music-home-card__thumb ${thumbImage ? '' : 'music-home-card__thumb--fallback'}">
+              ${thumbImage || `<span>${initials}</span>`}
               ${duration ? `<span class="duration-pill">${duration}</span>` : ''}
             </div>
             <div class="music-home-card__body">
@@ -807,12 +810,14 @@ class YTLiveMusicApp {
 
     this.renderDiscoverySummary();
     grid.innerHTML = this.results.map((item, index) => {
-      const thumb = item.thumbnail ? this.escapeHtml(item.thumbnail) : '';
+      const thumbImage = this.renderThumbnailImage(item, {
+        className: 'card-thumb__image',
+        sizes: '(max-width: 420px) 100vw, (max-width: 640px) 50vw, 280px'
+      });
       const title = this.escapeHtml(item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'));
       const uploader = this.escapeHtml(item.uploader || 'YouTube');
       const type = this.escapeHtml(this.getItemTypeLabel(item));
       const duration = this.escapeHtml(item.duration_string || (item.duration ? this.formatSeconds(item.duration) : ''));
-      const thumbStyle = thumb ? `style="background-image:url('${thumb.replace(/'/g, '%27')}')"` : '';
       const downloadTitle = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
       const listTitle = this.escapeHtml(this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle'));
       const playTitle = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
@@ -829,9 +834,10 @@ class YTLiveMusicApp {
             <button class="download-button" type="button" data-action="download" data-index="${index}" title="${downloadTitle}" aria-label="${downloadTitle}">${this.renderDownloadIcon()}</button>
             <button class="add-button" type="button" data-action="list-menu" data-index="${index}" title="${listTitle}" aria-label="${listTitle}">+</button>
           </div>
-          <div class="card-thumb ${thumb ? '' : 'card-thumb--fallback'}" ${thumbStyle}>
+          <div class="card-thumb ${thumbImage ? '' : 'card-thumb--fallback'}">
+            ${thumbImage}
             <span class="rank-pill">#${rank}</span>
-            ${thumb ? '' : `<span class="thumb-initials">${initials}</span>`}
+            ${thumbImage ? '' : `<span class="thumb-initials">${initials}</span>`}
             ${duration ? `<span class="duration-pill">${duration}</span>` : ''}
           </div>
           <div class="content-card__body">
@@ -921,8 +927,12 @@ class YTLiveMusicApp {
     const lead = this.results[0];
     const title = this.escapeHtml(lead.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'));
     const uploader = this.escapeHtml(lead.uploader || 'YouTube');
-    const thumb = lead.thumbnail ? this.escapeHtml(lead.thumbnail) : '';
-    const thumbStyle = thumb ? `style="background-image:url('${thumb.replace(/'/g, '%27')}')"` : '';
+    const thumbImage = this.renderThumbnailImage(lead, {
+      className: 'spotlight-art__image',
+      loading: 'eager',
+      priority: true,
+      sizes: '(max-width: 640px) 100vw, 240px'
+    });
     const type = this.escapeHtml(this.getItemTypeLabel(lead));
     const duration = this.escapeHtml(lead.duration_string || (lead.duration ? this.formatSeconds(lead.duration) : ''));
     const presetLabel = this.escapeHtml(this.getPresetDisplayLabel(this.activePreset));
@@ -937,12 +947,14 @@ class YTLiveMusicApp {
       const index = offset + 1;
       const itemTitle = this.escapeHtml(item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'));
       const itemMeta = this.escapeHtml(item.uploader || this.getItemTypeLabel(item));
-      const itemThumb = item.thumbnail ? this.escapeHtml(item.thumbnail) : '';
-      const style = itemThumb ? `style="background-image:url('${itemThumb.replace(/'/g, '%27')}')"` : '';
+      const itemThumbImage = this.renderThumbnailImage(item, {
+        className: 'mini-result__image',
+        sizes: '52px'
+      });
       return `
         <button class="mini-result" type="button" data-action="play" data-index="${index}">
-          <span class="mini-result__thumb ${itemThumb ? '' : 'mini-result__thumb--fallback'}" ${style}>
-            ${itemThumb ? '' : this.escapeHtml(this.getTitleInitials(item.title || item.uploader || 'YT'))}
+          <span class="mini-result__thumb ${itemThumbImage ? '' : 'mini-result__thumb--fallback'}">
+            ${itemThumbImage || this.escapeHtml(this.getTitleInitials(item.title || item.uploader || 'YT'))}
           </span>
           <span class="mini-result__copy">
             <strong>${itemTitle}</strong>
@@ -955,8 +967,8 @@ class YTLiveMusicApp {
     host.hidden = false;
     host.innerHTML = `
       <article class="discovery-spotlight" data-action="play" data-index="0">
-        <div class="spotlight-art ${thumb ? '' : 'spotlight-art--fallback'}" ${thumbStyle}>
-          ${thumb ? '' : `<span>${initials}</span>`}
+        <div class="spotlight-art ${thumbImage ? '' : 'spotlight-art--fallback'}">
+          ${thumbImage || `<span>${initials}</span>`}
           ${duration ? `<span class="duration-pill">${duration}</span>` : ''}
         </div>
         <div class="spotlight-copy">
@@ -1221,16 +1233,18 @@ class YTLiveMusicApp {
       const trackTitle = this.escapeHtml(track.title || this.tt('ytlive.playlist.trackFallback', 'Parça {index}', { index: index + 1 }));
       const uploader = this.escapeHtml(track.uploader || 'YouTube');
       const duration = this.escapeHtml(track.duration_string || (track.duration ? this.formatSeconds(track.duration) : ''));
-      const thumb = track.thumbnail ? this.escapeHtml(track.thumbnail) : '';
-      const style = thumb ? `style="background-image:url('${thumb.replace(/'/g, '%27')}')"` : '';
+      const thumbImage = this.renderThumbnailImage(track, {
+        className: 'playlist-track__image',
+        sizes: '58px'
+      });
       const initials = this.escapeHtml(this.getTitleInitials(track.title || uploader || 'YT'));
       const activeClass = activeIndex === index ? ' is-active' : '';
 
       return `
         <article class="playlist-track${activeClass}" data-action="playlist-play" data-index="${index}">
           <div class="playlist-track__index">${index + 1}</div>
-          <div class="playlist-track__thumb ${thumb ? '' : 'playlist-track__thumb--fallback'}" ${style}>
-            ${thumb ? '' : initials}
+          <div class="playlist-track__thumb ${thumbImage ? '' : 'playlist-track__thumb--fallback'}">
+            ${thumbImage || initials}
           </div>
           <div class="playlist-track__copy">
             <h3>${trackTitle}</h3>
@@ -3859,6 +3873,261 @@ class YTLiveMusicApp {
     return labels[phase] || phase;
   }
 
+  renderThumbnailImage(source = {}, options = {}) {
+    const info = this.getThumbnailRenderInfo(source);
+    if (!info.url) return '';
+
+    const classes = ['ytlive-thumb-img', options.className].filter(Boolean).join(' ');
+    const srcset = info.srcset ? ` srcset="${this.escapeHtml(info.srcset)}"` : '';
+    const sizes = options.sizes ? ` sizes="${this.escapeHtml(options.sizes)}"` : '';
+    const fallback = info.fallback && info.fallback !== info.url
+      ? ` data-fallback-src="${this.escapeHtml(info.fallback)}"`
+      : '';
+    const loading = options.loading === 'eager' ? 'eager' : 'lazy';
+    const priority = options.priority ? ' fetchpriority="high"' : '';
+
+    return `<img class="${this.escapeHtml(classes)}" src="${this.escapeHtml(info.url)}"${srcset}${sizes}${fallback} alt="" loading="${loading}" decoding="async" draggable="false"${priority}>`;
+  }
+
+  getThumbnailRenderInfo(source = {}) {
+    if (source && typeof source === 'object' && !Array.isArray(source)) {
+      const url = this.normalizeThumbnailUrl(source.thumbnail);
+      if (url) {
+        return {
+          url,
+          fallback: this.normalizeThumbnailUrl(source.thumbnailFallback) || url,
+          srcset: source.thumbnailSrcset || this.buildThumbnailSrcset(url)
+        };
+      }
+    }
+    return this.resolveThumbnailInfo(source);
+  }
+
+  resolveThumbnailInfo(source = {}) {
+    const fallback = this.pickThumbnailUrl(source);
+    if (!fallback) return { url: null, fallback: null, srcset: '' };
+
+    const variants = this.getThumbnailVariants(fallback);
+    return {
+      url: variants[0]?.url || fallback,
+      fallback,
+      srcset: this.buildThumbnailSrcset(variants)
+    };
+  }
+
+  pickThumbnailUrl(source = {}) {
+    if (typeof source === 'string') return this.normalizeThumbnailUrl(source);
+
+    const candidates = [];
+    const addCandidate = (value) => {
+      if (!value) return;
+      if (typeof value === 'string') {
+        const url = this.normalizeThumbnailUrl(value);
+        if (!url) return;
+        const dimensions = this.getThumbnailDimensionsFromUrl(url);
+        candidates.push({
+          url,
+          width: dimensions.width,
+          height: dimensions.height,
+          order: candidates.length
+        });
+        return;
+      }
+      if (typeof value !== 'object') return;
+      if (Array.isArray(value)) {
+        value.forEach((entry) => addCandidate(entry));
+        return;
+      }
+      if (Array.isArray(value.thumbnails)) {
+        addCandidate(value.thumbnails);
+      }
+      const url = this.normalizeThumbnailUrl(value.url || value.src);
+      if (!url) return;
+      const dimensions = this.getThumbnailDimensionsFromUrl(url);
+      candidates.push({
+        url,
+        width: Number(value.width || value.w || dimensions.width || 0),
+        height: Number(value.height || value.h || dimensions.height || 0),
+        order: candidates.length
+      });
+    };
+
+    addCandidate(source.thumbnails);
+    addCandidate(source.thumbnail);
+    addCandidate(source.coverUrl);
+    addCandidate(source.thumbnailUrl);
+    addCandidate(source.imageUrl);
+    addCandidate(source.sourceCoverUrl);
+
+    const unique = [];
+    const seen = new Set();
+    candidates.forEach((candidate) => {
+      if (!candidate.url || seen.has(candidate.url)) return;
+      seen.add(candidate.url);
+      unique.push(candidate);
+    });
+
+    unique.sort((a, b) => {
+      const areaA = Number(a.width || 0) * Number(a.height || 0);
+      const areaB = Number(b.width || 0) * Number(b.height || 0);
+      return (areaB - areaA) || (b.order - a.order);
+    });
+
+    return unique[0]?.url || null;
+  }
+
+  getThumbnailVariants(rawUrl = '') {
+    const source = this.normalizeThumbnailUrl(rawUrl);
+    if (!source) return [];
+
+    const variants = [];
+    const addVariant = (url, width = 0) => {
+      const normalized = this.normalizeThumbnailUrl(url);
+      if (!normalized || variants.some((item) => item.url === normalized)) return;
+      const dimensions = this.getThumbnailDimensionsFromUrl(normalized);
+      variants.push({
+        url: normalized,
+        width: Number(width || dimensions.width || 0) || 320
+      });
+    };
+
+    const yt = this.getYouTubeThumbnailParts(source);
+    if (yt) {
+      const ext = yt.ext === 'webp' ? 'webp' : 'jpg';
+      const base = `${yt.origin}/${yt.kind}/${encodeURIComponent(yt.videoId)}`;
+      addVariant(`${base}/maxresdefault.${ext}`, 1280);
+      addVariant(`${base}/sddefault.${ext}`, 640);
+      addVariant(`${base}/hqdefault.${ext}`, 480);
+      addVariant(source);
+      return variants;
+    }
+
+    if (this.isGoogleImageHost(source)) {
+      addVariant(this.withGoogleImageSize(source, 1200), 1200);
+      addVariant(this.withGoogleImageSize(source, 800), 800);
+      addVariant(source);
+      return variants;
+    }
+
+    addVariant(source);
+    return variants;
+  }
+
+  buildThumbnailSrcset(input = '') {
+    const variants = Array.isArray(input) ? input : this.getThumbnailVariants(input);
+    const seenWidths = new Set();
+    return variants
+      .map((variant) => ({
+        url: this.normalizeThumbnailUrl(variant?.url),
+        width: Math.max(1, Math.round(Number(variant?.width || 0) || 320))
+      }))
+      .filter((variant) => {
+        if (!variant.url || seenWidths.has(variant.width)) return false;
+        seenWidths.add(variant.width);
+        return true;
+      })
+      .map((variant) => `${variant.url} ${variant.width}w`)
+      .join(', ');
+  }
+
+  normalizeThumbnailUrl(url = '') {
+    const source = String(url || '').trim();
+    if (!source) return '';
+    if (source.startsWith('//')) return `https:${source}`;
+    if (/^https?:\/\//i.test(source)) return source;
+    return source;
+  }
+
+  getYouTubeThumbnailParts(rawUrl = '') {
+    try {
+      const url = new URL(rawUrl, window.location.origin);
+      const host = url.hostname.toLowerCase();
+      if (!/(^|\.)ytimg\.com$/.test(host) && host !== 'img.youtube.com') return null;
+      const parts = url.pathname.split('/').filter(Boolean);
+      const kindIndex = parts.findIndex((part) => part === 'vi' || part === 'vi_webp');
+      if (kindIndex < 0 || !parts[kindIndex + 1]) return null;
+      const file = parts[kindIndex + 2] || '';
+      const ext = (file.split('.').pop() || '').toLowerCase();
+      return {
+        origin: url.origin,
+        kind: parts[kindIndex],
+        videoId: parts[kindIndex + 1],
+        ext
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  isGoogleImageHost(rawUrl = '') {
+    try {
+      const host = new URL(rawUrl, window.location.origin).hostname.toLowerCase();
+      return /(^|\.)googleusercontent\.com$/.test(host) || /(^|\.)ggpht\.com$/.test(host);
+    } catch {
+      return false;
+    }
+  }
+
+  withGoogleImageSize(rawUrl = '', size = 800) {
+    const source = this.normalizeThumbnailUrl(rawUrl);
+    const safeSize = Math.max(120, Math.min(1600, Math.round(Number(size) || 800)));
+    const match = source.match(/^([^?#]*)([?#].*)?$/);
+    if (!match) return source;
+
+    let path = match[1];
+    const suffix = match[2] || '';
+    if (/=w\d+-h\d+(?:-[^/?#=]+)*$/i.test(path)) {
+      path = path.replace(/=w\d+-h\d+(?:-[^/?#=]+)*$/i, `=w${safeSize}-h${safeSize}-l90-rj`);
+    } else if (/=s\d+(?:-[^/?#=]+)*$/i.test(path)) {
+      path = path.replace(/=s\d+((?:-[^/?#=]+)*)$/i, `=s${safeSize}$1`);
+    } else {
+      path = `${path}=w${safeSize}-h${safeSize}-l90-rj`;
+    }
+    return `${path}${suffix}`;
+  }
+
+  getThumbnailDimensionsFromUrl(rawUrl = '') {
+    const source = String(rawUrl || '');
+    const widthHeight = source.match(/[=/]w(\d+)-h(\d+)/i);
+    if (widthHeight) {
+      return {
+        width: Number(widthHeight[1]) || 0,
+        height: Number(widthHeight[2]) || 0
+      };
+    }
+
+    const square = source.match(/[=/]s(\d+)(?:[-/?#]|$)/i);
+    if (square) {
+      const size = Number(square[1]) || 0;
+      return { width: size, height: size };
+    }
+
+    if (/maxresdefault|hq720/i.test(source)) return { width: 1280, height: 720 };
+    if (/sddefault/i.test(source)) return { width: 640, height: 480 };
+    if (/hqdefault/i.test(source)) return { width: 480, height: 360 };
+    if (/mqdefault/i.test(source)) return { width: 320, height: 180 };
+    if (/(^|\/)default\./i.test(source)) return { width: 120, height: 90 };
+    return { width: 0, height: 0 };
+  }
+
+  handleThumbnailError(event) {
+    const img = event.target;
+    if (!(img instanceof HTMLImageElement) || !img.classList.contains('ytlive-thumb-img')) return;
+
+    const fallback = img.dataset.fallbackSrc || '';
+    if (fallback && img.dataset.fallbackApplied !== 'true') {
+      img.dataset.fallbackApplied = 'true';
+      img.removeAttribute('srcset');
+      img.removeAttribute('sizes');
+      img.src = fallback;
+      return;
+    }
+
+    img.hidden = true;
+    img.closest('.card-thumb,.spotlight-art,.music-home-card__thumb,.mini-result__thumb,.playlist-track__thumb')
+      ?.classList.add('ytlive-thumb-missing');
+  }
+
   normalizeItem(item = {}) {
     let url = String(item.webpage_url || item.url || '').trim();
     const sourceProvider = item.sourceProvider || this.getMappedMusicSource(url);
@@ -3867,12 +4136,16 @@ class YTLiveMusicApp {
     const fallbackTitle = sourceProvider
       ? this.getMappedMusicFallbackTitle(sourceProvider, type)
       : (type === 'playlist' ? this.tt('ytlive.youtubePlaylist', 'YouTube Playlist') : this.tt('ytlive.youtubeVideo', 'YouTube Video'));
+    const thumbnail = this.resolveThumbnailInfo(item);
     return {
       ...item,
       sourceProvider: sourceProvider || item.sourceProvider || null,
       type,
       title: item.title || fallbackTitle,
       uploader: item.uploader || item.artist || (sourceProvider ? this.getMappedMusicLabel(sourceProvider) : item.uploader),
+      thumbnail: thumbnail.url,
+      thumbnailFallback: thumbnail.fallback,
+      thumbnailSrcset: thumbnail.srcset,
       webpage_url: url,
       url
     };
@@ -3887,6 +4160,7 @@ class YTLiveMusicApp {
     const duration = Number.isFinite(Number(entry.duration))
       ? Number(entry.duration)
       : (Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs / 1000) : null);
+    const thumbnail = this.resolveThumbnailInfo(entry);
     return {
       index,
       id: sourceProvider ? null : (entry.id || null),
@@ -3898,7 +4172,9 @@ class YTLiveMusicApp {
       duration,
       duration_ms: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,
       duration_string: entry.duration_string || null,
-      thumbnail: entry.thumbnail || entry.thumbnails?.[0]?.url || null,
+      thumbnail: thumbnail.url,
+      thumbnailFallback: thumbnail.fallback,
+      thumbnailSrcset: thumbnail.srcset,
       sourceProvider,
       sourceUrl: entry.sourceUrl || null,
       sourceItemId: entry.sourceItemId || entry.providerId || null,
