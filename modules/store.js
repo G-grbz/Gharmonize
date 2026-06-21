@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { execFile } from "child_process";
 import { resolveDownloadPathToAbs } from "./outputPaths.js";
 import { uniqueId } from "./utils.js";
 
@@ -443,13 +444,49 @@ export function registerJobProcess(jobId, child) {
   child.on?.('close', cleanup);
 }
 
+function signalJobChild(child, signal = "SIGTERM") {
+  const pid = Number(child?.pid);
+  if (!pid) return false;
+
+  if (process.platform === "win32") {
+    try {
+      execFile("taskkill", ["/pid", String(pid), "/T", signal === "SIGKILL" ? "/F" : ""].filter(Boolean), {
+        windowsHide: true
+      }, () => {});
+      return true;
+    } catch {
+      try { child.kill?.(signal); return true; } catch {}
+      return false;
+    }
+  }
+
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch {}
+
+  try {
+    child.kill?.(signal);
+    return true;
+  } catch {}
+
+  return false;
+}
+
 // Handles kill job state processes in core application logic.
 export function killJobProcesses(jobId) {
   const set = procByJob.get(jobId);
   if (!set || set.size === 0) return 0;
   let killed = 0;
   for (const ch of Array.from(set)) {
-    try { ch.kill?.('SIGTERM'); setTimeout(()=>{ try { ch.kill?.('SIGKILL'); } catch {} }, 500); killed++; } catch {}
+    try {
+      if (signalJobChild(ch, "SIGTERM")) {
+        setTimeout(() => {
+          signalJobChild(ch, "SIGKILL");
+        }, 500);
+        killed++;
+      }
+    } catch {}
   }
   return killed;
 }

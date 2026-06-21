@@ -13,6 +13,12 @@ export class SpotifyManager {
         this.lastIntegratedLogSignature = '';
     }
 
+    getSpotifyConcurrency() {
+        const v = parseInt(document.getElementById('spotifyConcurrencyInput')?.value || '4', 10);
+        if (!Number.isFinite(v) || v <= 0) return 4;
+        return Math.max(1, Math.min(16, Math.round(v)));
+    }
+
     // Handles start Spotify metadata preview in Spotify mapping and metadata flow.
     async startSpotifyPreview() {
         const url = document.getElementById('urlInput').value.trim();
@@ -29,7 +35,10 @@ export class SpotifyManager {
             const response = await fetch('/api/spotify/preview/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url })
+                body: JSON.stringify({
+                    url,
+                    spotifyConcurrency: this.getSpotifyConcurrency()
+                })
             });
 
             if (!response.ok) {
@@ -252,14 +261,7 @@ export class SpotifyManager {
         this.lastIntegratedLogSignature = '';
 
         const isVideoFormat = format === 'mp4' || format === 'mkv';
-        let spotifyConcurrency = null;
-        const concEl = document.getElementById('spotifyConcurrencyInput');
-        if (concEl) {
-            const v = parseInt(concEl.value, 10);
-            if (Number.isFinite(v) && v > 0) {
-                spotifyConcurrency = v;
-            }
-        }
+        const spotifyConcurrency = this.getSpotifyConcurrency();
 
         const autoCreateZip = !isVideoFormat && this.app.autoCreateZip;
 
@@ -276,7 +278,7 @@ export class SpotifyManager {
             ...(compressionLevel != null ? { compressionLevel } : {}),
             ...(bitDepth != null ? { bitDepth } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
-            ...(spotifyConcurrency != null ? { spotifyConcurrency } : {})
+            spotifyConcurrency
         };
 
         const response = await fetch('/api/spotify/process/start', {
@@ -501,14 +503,7 @@ export class SpotifyManager {
             return;
         }
 
-        let spotifyConcurrency = null;
-        const concEl = document.getElementById('spotifyConcurrencyInput');
-        if (concEl) {
-            const v = parseInt(concEl.value, 10);
-            if (Number.isFinite(v) && v > 0) {
-                spotifyConcurrency = v;
-            }
-        }
+        const spotifyConcurrency = this.getSpotifyConcurrency();
 
         const autoCreateZip = !isVideoFormat && this.app.autoCreateZip;
 
@@ -525,13 +520,13 @@ export class SpotifyManager {
             ringtone: outputSettings.ringtone,
             ...(compressionLevel !== undefined ? { compressionLevel } : {}),
             ...(isVideoFormat ? { videoSettings } : {}),
-            ...(spotifyConcurrency != null ? { spotifyConcurrency } : {}),
+            spotifyConcurrency,
             selectedIndices: validItems.map(item => item.index),
             spotifyMapId: this.currentSpotifyTask.id,
             metadata: {
                 source: this.currentSpotifyTask.source || "spotify",
                 spotifyTitle: document.getElementById('spotifyTitle').textContent,
-                ...(spotifyConcurrency != null ? { spotifyConcurrency } : {}),
+                spotifyConcurrency,
                 selectedIds: validItems.map(item => item.id),
                 frozenEntries: validItems,
                 spotifyMapId: this.currentSpotifyTask.id,

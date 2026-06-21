@@ -20,10 +20,61 @@ import {
 import { isSpotifyUrl, resolveSpotifyUrl } from "../modules/spotify.js";
 import { isAppleMusicUrl, resolveAppleMusicUrl } from "../modules/apple.js";
 import { isDeezerUrl, resolveDeezerUrl } from "../modules/deezer.js";
-import { searchYtmBestId } from "../modules/sp.js";
+import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
 import { resolveMarket } from "../modules/market.js";
+import { resolveSpotifyConcurrency } from "../modules/concurrency.js";
 
 const router = express.Router();
+
+function mappedSourceValue(url) {
+  if (isAppleMusicUrl(url)) return "apple_music";
+  if (isDeezerUrl(url)) return "deezer";
+  return "spotify";
+}
+
+function mappedItemUrl(item = {}, source = "") {
+  if (source === "apple_music") {
+    return item.amUrl || item.webpage_url || item.spUrl || "";
+  }
+  if (source === "deezer") {
+    return item.deezerUrl || item.dzUrl || item.webpage_url || "";
+  }
+  return item.spUrl || item.webpage_url || "";
+}
+
+function mappedItemId(item = {}, source = "") {
+  if (source === "apple_music") return item.apple_track_id || null;
+  if (source === "deezer") return item.deezer_track_id || null;
+  return item.spId || null;
+}
+
+function mappedPreviewMetadataItem(item = {}, index, source, sourceUrl) {
+  item = item || {};
+  const url = mappedItemUrl(item, source) || sourceUrl || "";
+  const durationMs = Number(item.duration_ms || 0);
+  const duration = Number.isFinite(durationMs) && durationMs > 0
+    ? Math.round(durationMs / 1000)
+    : null;
+
+  return {
+    index,
+    id: null,
+    providerId: mappedItemId(item, source),
+    sourceProvider: source,
+    sourceUrl,
+    sourceItemUrl: url,
+    title: item.title || "",
+    uploader: item.artist || item.uploader || "",
+    artist: item.artist || item.uploader || "",
+    album: item.album || "",
+    duration,
+    duration_ms: durationMs || null,
+    duration_string: null,
+    webpage_url: url,
+    url,
+    thumbnail: item.coverUrl || null
+  };
+}
 
 router.get("/api/youtube/discover", async (req, res) => {
   try {
@@ -85,6 +136,8 @@ router.post("/api/playlist/preview", async (req, res) => {
     const { url, page = 1, pageSize = 25 } = req.body || {};
 
     if (url && (isSpotifyUrl(url) || isAppleMusicUrl(url) || isDeezerUrl(url))) {
+      const shouldMatch = req.body?.match !== false && req.body?.metadataOnly !== true;
+      const source = mappedSourceValue(url);
       const sourceLabel = isAppleMusicUrl(url)
         ? "Apple Music"
         : isDeezerUrl(url)
@@ -99,12 +152,52 @@ router.post("/api/playlist/preview", async (req, res) => {
         const ps = Math.max(1, Math.min(100, Number(pageSize) || 25));
         const p  = Math.max(1, Number(page) || 1);
         const start = (p - 1) * ps; const slice = (sp.items || []).slice(start, start + ps);
-        const items = [];
-        for (let i=0; i<slice.length; i++) {
-          const it = slice[i]; let vid = null; try { vid = await searchYtmBestId(it.artist, it.title); } catch {}
-          items.push({ index: start + i + 1, id: vid || null, title: it.title, uploader: it.artist, duration: null, duration_string: null, webpage_url: vid ? (process.env.YT_USE_MUSIC !== "0" ? `https://music.youtube.com/watch?v=${vid}` : `https://www.youtube.com/watch?v=${vid}`) : "", thumbnail: null });
+        const totalCount = (sp.items || []).length;
+        const title = sp.title || (sp.kind === "track" ? `${sourceLabel} Track` : `${sourceLabel} Playlist`);
+        if (!shouldMatch) {
+          const items = slice.map((it, i) =>
+            mappedPreviewMetadataItem(it, start + i + 1, source, url)
+          );
+          return sendOk(res, {
+            playlist: {
+              title,
+              count: totalCount,
+              isAutomix: false,
+              isSpotify: source === "spotify",
+              source
+            },
+            page: p,
+            pageSize: ps,
+            items
+          });
         }
-        return sendOk(res, { playlist: { title: sp.title || (sp.kind === "track" ? `${sourceLabel} Track` : `${sourceLabel} Playlist`), count: (sp.items || []).length, isAutomix: false, isSpotify: true }, page: p, pageSize: ps, items });
+        const items = [];
+        await mapMappedMusicWithCache(
+          { ...sp, items: slice },
+          {
+            url,
+            source,
+            replaceManifest: false,
+            indexOffset: start,
+            concurrency: resolveSpotifyConcurrency(
+              req.body?.spotifyConcurrency,
+              req.body?.youtubeConcurrency,
+              req.body?.concurrency
+            ),
+            onUpdate: (idx, item) => {
+            if (!item) return;
+            items[idx] = {
+              ...item,
+              index: start + idx + 1
+            };
+          }
+        });
+        return sendOk(res, {
+          playlist: { title, count: totalCount, isAutomix: false, isSpotify: source === "spotify", source },
+          page: p,
+          pageSize: ps,
+          items: items.filter(Boolean)
+        });
       } catch (e) { return sendError(res, 'PREVIEW_FAILED', e.message || "Music matching preview error", 400); }
     }
 

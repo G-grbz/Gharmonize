@@ -172,7 +172,41 @@ function resolveWebCacheDir() {
 }
 
 const WEB_CACHE_DIR = resolveWebCacheDir();
+const WEB_RUNTIME_TMP_DIR = path.join(WEB_CACHE_DIR, "tmp");
 const WEB_META_FILE = path.join(WEB_CACHE_DIR, "metadata.json");
+
+function resolveBinaryRuntimeTmpDir() {
+  const configured = String(process.env.GHARMONIZE_BINARY_TMP_DIR || "").trim();
+  const candidates = [
+    configured ? path.resolve(configured) : null,
+    WEB_RUNTIME_TMP_DIR,
+    path.join(process.cwd(), "temp", "binary-tmp"),
+    os.tmpdir()
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      fs.mkdirSync(candidate, { recursive: true });
+      fs.accessSync(candidate, fs.constants.W_OK | fs.constants.X_OK);
+      return candidate;
+    } catch {
+    }
+  }
+
+  return os.tmpdir();
+}
+
+export function getBinaryRuntimeEnv(extraEnv = {}) {
+  const tmpDir = resolveBinaryRuntimeTmpDir();
+  return {
+    ...process.env,
+    TMPDIR: tmpDir,
+    TEMP: tmpDir,
+    TMP: tmpDir,
+    PYINSTALLER_TEMP: tmpDir,
+    ...extraEnv
+  };
+}
 
 // Resolves a managed runtime binary from the persistent web cache.
 function resolveManagedCacheBin(baseName) {
@@ -552,7 +586,8 @@ function isExecutable(filePath) {
 async function verifyBinary(binaryPath, args = ["--version"]) {
   await execFileAsync(binaryPath, args, {
     timeout: 8000,
-    windowsHide: true
+    windowsHide: true,
+    env: getBinaryRuntimeEnv()
   });
 }
 
@@ -590,7 +625,8 @@ async function verifyVersionedBinary(
 ) {
   const { stdout, stderr } = await execFileAsync(binaryPath, args, {
     timeout: 8000,
-    windowsHide: true
+    windowsHide: true,
+    env: getBinaryRuntimeEnv()
   });
 
   if (!hasRecognizableVersionOutput(toolName, stdout, stderr)) {

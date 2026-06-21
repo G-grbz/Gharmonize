@@ -3,7 +3,7 @@ import fs from "fs";
 import archiver from "archiver";
 import { resolveId3StrictForYouTube } from "./tags.js";
 import { resolveMarket } from "./market.js";
-import { jobs, registerJobProcess, killJobProcesses, markJobCompleted } from "./store.js";
+import { jobs, registerJobProcess, killJobProcesses, markJobCompleted, getJobProcessCount } from "./store.js";
 import { sanitizeFilename, toNFC, normalizeTitle, parseIdFromPath } from "./utils.js";
 import { processYouTubeVideoJob, qualityToHeight } from "./video.js";
 import {
@@ -34,6 +34,9 @@ import {
   pickPlaylistOutputName
 } from "./outputPaths.js";
 import { queueOwnershipFix } from "./fsOwnership.js";
+import {
+  resolveSpotifyConcurrency
+} from "./concurrency.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
@@ -546,7 +549,6 @@ function createLimiter(max) {
 
   const run = (fn) =>
     new Promise((resolve, reject) => {
-      // Handles task in core application logic.
       const task = () => {
         active++;
         Promise.resolve()
@@ -569,6 +571,33 @@ function createLimiter(max) {
     });
 
   return run;
+}
+
+function scheduleTempCleanupAfterJobProcesses(jobId, originalInputPath, downloadedPath = null) {
+  let attemptsLeft = 15;
+  let finalized = false;
+  const tick = () => {
+    const activeCount = Number(getJobProcessCount(jobId) || 0) || 0;
+    attemptsLeft -= 1;
+    if (activeCount <= 0) {
+      try { cleanupTempFiles(jobId, originalInputPath, downloadedPath); } catch {}
+      if (!finalized) {
+        finalized = true;
+        const finalTimer = setTimeout(() => {
+          try { cleanupTempFiles(jobId, originalInputPath, downloadedPath); } catch {}
+        }, 350);
+        finalTimer.unref?.();
+      }
+      return;
+    }
+    if (attemptsLeft <= 0) return;
+
+    const timer = setTimeout(tick, 1000);
+    timer.unref?.();
+  };
+
+  const timer = setTimeout(tick, 0);
+  timer.unref?.();
 }
 
 // Processes job state in core application logic.
@@ -764,95 +793,54 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       job.counters.dlDone = job.counters.dlDone || 0;
       job.counters.cvDone = job.counters.cvDone || 0;
 
-      const files = await downloadYouTubeVideo(
-        job.metadata.spotifyTitle || sourceLabel,
-        jobId,
-        true,
-        null,
-        false,
-        selectedIds,
-        TEMP_DIR,
-        (progress) => {
-          if (
-            progress &&
-            typeof progress === "object" &&
-            progress.__event &&
-            progress.type === "file-done"
-          ) {
-            const t = Number(
-              progress.total ||
-                job.counters?.dlTotal ||
-                selectedIds.length ||
-                0
-            );
-            job.counters.dlTotal = t;
-            job.counters.dlDone = Math.min(
-              t,
-              Number(progress.downloaded || 0)
-            );
-            job.downloadProgress = Math.floor(
-              (job.counters.dlDone / Math.max(1, t)) * 100
-            );
-          } else {
-            job.downloadProgress = 20 + Number(progress || 0) * 0.8;
-            const t = Number(
-              job.counters?.dlTotal || selectedIds.length || 0
-            );
-            if (t > 0) {
-              const approx = clampInt(
-                ((Number(progress || 0) / 100) * t) | 0,
-                0,
-                t
-              );
-              if ((job.counters.dlDone || 0) < approx)
-                job.counters.dlDone = approx;
-            }
-          }
-          job.progress = Math.floor(
-            (job.downloadProgress + job.convertProgress) / 2
-          );
-        },
-        {
-          video: isVideoFormat(format),
-          onSkipUpdate: handleSkipUpdate,
-          maxHeight: isVideoFormat(format)
-            ? qualityToHeight(bitrate)
-            : undefined
-        },
-        { isCanceled: () => !!job.canceled }
-      );
-
-      job.counters.dlDone = job.counters.dlTotal;
-      job.downloadProgress = 100;
-      job.currentPhase = "converting";
-      job.convertProgress = 0;
-
-      if (!Array.isArray(files) || !files.length) {
-        throw new Error(`${sourceLabel} download completed but no files were found`);
-      }
-
       const frozen = Array.isArray(job.metadata.frozenEntries)
         ? job.metadata.frozenEntries
         : [];
       const byId = new Map();
       for (const e of frozen) if (e?.id) byId.set(e.id, e);
-      const sorted = files
-        .map((fp, i) => ({ fp, auto: i + 1 }))
-        .sort((a, b) => a.auto - b.auto);
 
-      const spotifyConcurrency = job.metadata?.spotifyConcurrency || 4;
+      const spotifyConcurrency = resolveSpotifyConcurrency(job.metadata?.spotifyConcurrency);
       const spotifyLimiter = createLimiter(spotifyConcurrency);
+      const selectedIdToPos = new Map();
+      selectedIds.forEach((id, index) => {
+        if (id) selectedIdToPos.set(String(id), index);
+      });
 
-      const results = new Array(sorted.length);
-      job.playlist = { total: sorted.length, done: 0 };
-      job.counters.cvTotal = sorted.length;
-
+      const results = new Array(selectedIds.length);
+      job.playlist = { total: selectedIds.length, done: 0 };
+      job.counters.cvTotal = selectedIds.length;
       const convertPromisesSpotify = [];
+      const scheduledMappedFiles = new Set();
 
-      for (let i = 0; i < sorted.length; i++) {
-        const convertPromise = spotifyLimiter(async () => {
-          const { fp: filePath, auto } = sorted[i];
-          const pinnedId = selectedIds[auto - 1];
+      const resolveMappedStableIndex = (filePath, playlistIndex = null, fileId = null, fallbackIndex = null) => {
+        const id = fileId || parseIdFromPath(filePath);
+        if (id && selectedIdToPos.has(String(id))) {
+          return selectedIdToPos.get(String(id));
+        }
+        if (Number.isFinite(Number(playlistIndex)) && Number(playlistIndex) > 0) {
+          return Number(playlistIndex) - 1;
+        }
+        const parsedIndex = parsePlaylistIndexFromPath(filePath);
+        if (Number.isFinite(parsedIndex) && parsedIndex > 0) {
+          return parsedIndex - 1;
+        }
+        if (Number.isFinite(Number(fallbackIndex)) && Number(fallbackIndex) >= 0) {
+          return Number(fallbackIndex);
+        }
+        return Math.max(0, scheduledMappedFiles.size - 1);
+      };
+
+      const enqueueMappedMusicConversion = (filePath, playlistIndex = null, fileId = null, fallbackIndex = null) => {
+        if (!filePath) return null;
+        const fileKey = path.resolve(filePath);
+        if (scheduledMappedFiles.has(fileKey)) return null;
+        scheduledMappedFiles.add(fileKey);
+
+        const i = Math.max(0, resolveMappedStableIndex(filePath, playlistIndex, fileId, fallbackIndex));
+        const totalForConvert = Math.max(1, job.playlist?.total || selectedIds.length || 1);
+
+        const promise = spotifyLimiter(async () => {
+          const pinnedId = selectedIds[i];
           const entry = (pinnedId ? byId.get(pinnedId) : null) || {};
           const fallbackTitle = path
             .basename(filePath, path.extname(filePath))
@@ -902,6 +890,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             } catch {}
           }
 
+          if (job.currentPhase !== "converting") {
+            job.currentPhase = "converting";
+            job.convertProgress = job.convertProgress || 0;
+          }
+
           const existingOut = findExistingOutput(
             `${jobId}_${i}`,
             format,
@@ -912,9 +905,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             r = {
               outputPath: toDownloadPathSafe(existingOut)
             };
-            const fileProgress = (i / sorted.length) * 100;
+            const fileProgress = (i / totalForConvert) * 100;
             job.convertProgress = Math.floor(
-              fileProgress + 100 / sorted.length
+              fileProgress + 100 / totalForConvert
             );
             job.progress = Math.floor(
               (job.downloadProgress + job.convertProgress) / 2
@@ -926,9 +919,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               bitrate,
               `${jobId}_${i}`,
               (progress, details) => {
-                const baseProgress = (i / sorted.length) * 100;
+                const baseProgress = (i / totalForConvert) * 100;
                 const currentFileProgress =
-                  (progress / 100) * (100 / sorted.length);
+                  (progress / 100) * (100 / totalForConvert);
                 job.convertProgress = Math.floor(
                   baseProgress + currentFileProgress
                 );
@@ -983,22 +976,99 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
           const hasLrc = !!r?.lyricsPath;
           if (Array.isArray(job.metadata.frozenEntries)) {
-            const fe = job.metadata.frozenEntries.find(
-              (x) => x.index === i + 1
+            const fe = job.metadata.frozenEntries.find((x) =>
+              x?.id === pinnedId || Number(x?.index) === i + 1
             );
             if (fe) fe.hasLyrics = hasLrc;
           }
 
           results[i] = r;
-         bump(job.counters, "cvDone", 1);
-            if (job.playlist) job.playlist.done = job.counters.cvDone;
-            updateLyricsStatsLive(job.playlist.done);
+          bump(job.counters, "cvDone", 1);
+          if (job.playlist) job.playlist.done = job.counters.cvDone;
+          updateLyricsStatsLive(job.playlist.done);
 
           return r;
+        }).catch((error) => {
+          console.error("[processor] mapped music conversion pipeline error:", error);
         });
 
-        convertPromisesSpotify.push(convertPromise);
+        convertPromisesSpotify.push(promise);
+        return promise;
+      };
+
+      const files = await downloadYouTubeVideo(
+        job.metadata.spotifyTitle || sourceLabel,
+        jobId,
+        true,
+        null,
+        false,
+        selectedIds,
+        TEMP_DIR,
+        (progress) => {
+          if (
+            progress &&
+            typeof progress === "object" &&
+            progress.__event &&
+            progress.type === "file-done"
+          ) {
+            const t = Number(
+              progress.total ||
+                job.counters?.dlTotal ||
+                selectedIds.length ||
+                0
+            );
+            job.counters.dlTotal = t;
+            job.counters.dlDone = Math.min(
+              t,
+              Number(progress.downloaded || 0)
+            );
+            job.downloadProgress = Math.floor(
+              (job.counters.dlDone / Math.max(1, t)) * 100
+            );
+          } else {
+            job.downloadProgress = 20 + Number(progress || 0) * 0.8;
+            const t = Number(
+              job.counters?.dlTotal || selectedIds.length || 0
+            );
+            if (t > 0) {
+              const approx = clampInt(
+                ((Number(progress || 0) / 100) * t) | 0,
+                0,
+                t
+              );
+              if ((job.counters.dlDone || 0) < approx)
+                job.counters.dlDone = approx;
+            }
+          }
+          job.progress = Math.floor(
+            (job.downloadProgress + job.convertProgress) / 2
+          );
+        },
+        {
+          video: isVideoFormat(format),
+          onSkipUpdate: handleSkipUpdate,
+          youtubeConcurrency: spotifyConcurrency,
+          sourceUrl: job.metadata?.url || job.metadata?.spotifyUrl || "",
+          frozenEntries: frozen,
+          maxHeight: isVideoFormat(format)
+            ? qualityToHeight(bitrate)
+            : undefined
+        },
+        { isCanceled: () => !!job.canceled }
+      );
+
+      job.counters.dlDone = job.counters.dlTotal;
+      job.downloadProgress = 100;
+      job.currentPhase = "converting";
+      job.convertProgress = job.convertProgress || 0;
+
+      if (!Array.isArray(files) || !files.length) {
+        throw new Error(`${sourceLabel} download completed but no files were found`);
       }
+
+      files.forEach((filePath, fallbackIndex) => {
+        enqueueMappedMusicConversion(filePath, null, null, fallbackIndex);
+      });
 
       await Promise.all(convertPromisesSpotify);
 
@@ -1240,7 +1310,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           }
         }
 
-        const youtubeConcurrency = job.metadata?.youtubeConcurrency || 4;
+        const youtubeConcurrency = resolveSpotifyConcurrency(
+          job.metadata?.youtubeConcurrency,
+          job.metadata?.spotifyConcurrency
+        );
         console.log("⚡ Processing with youtubeConcurrency:", youtubeConcurrency);
         const results = [];
         const youtubeConvertLimiter = createLimiter(youtubeConcurrency);
@@ -2627,8 +2700,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     cleanupTempFiles(jobId, inputPath, actualInputPath);
   } catch (error) {
     const jobRef = jobs.get(jobId);
+    const isCanceled = error && String(error.message).toUpperCase() === "CANCELED";
     if (jobRef) {
-      if (error && String(error.message).toUpperCase() === "CANCELED") {
+      if (isCanceled) {
         jobRef.status = "canceled";
         jobRef.error = null;
         jobRef.currentPhase = "canceled";
@@ -2638,13 +2712,17 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         jobRef.currentPhase = "error";
       }
     }
-    if (!error || String(error.message).toUpperCase() !== "CANCELED") {
+    if (!isCanceled) {
       console.error("Job error:", error);
     }
     try {
       killJobProcesses(jobId);
     } catch {}
-    cleanupTempFiles(jobId, inputPath);
+    if (isCanceled) {
+      scheduleTempCleanupAfterJobProcesses(jobId, inputPath);
+    } else {
+      cleanupTempFiles(jobId, inputPath);
+    }
   }
 }
 

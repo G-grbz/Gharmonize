@@ -60,7 +60,14 @@ function normalizeItem(raw = {}, fallbackIndex = 0) {
   const id = safeString(raw.id, 160);
   const title = safeString(raw.title || id || url || `Track ${fallbackIndex + 1}`, 500);
   const type = safeString(raw.type, 40) || "track";
+  const sourceProvider = safeString(raw.sourceProvider || raw.provider || raw.source, 80) || null;
+  const sourceItemId = safeString(raw.sourceItemId || raw.providerId, 160) || null;
+  const sourceItemUrl = safeString(raw.sourceItemUrl, 1500) || null;
+  const sourceIdentity = sourceProvider
+    ? [sourceProvider, sourceItemId || sourceItemUrl || url].filter(Boolean).join(":")
+    : "";
   const key = itemKey([
+    sourceIdentity,
     type,
     id,
     url,
@@ -80,6 +87,11 @@ function normalizeItem(raw = {}, fallbackIndex = 0) {
     thumbnail: safeString(raw.thumbnail || raw.thumbnails?.[0]?.url, 1500) || null,
     webpage_url: url,
     url,
+    sourceProvider,
+    sourceItemId,
+    sourceItemUrl,
+    album: safeString(raw.album, 500) || null,
+    duration_ms: Number.isFinite(Number(raw.duration_ms)) ? Number(raw.duration_ms) : null,
     sourceTitle: safeString(raw.sourceTitle, 500) || null,
     sourceUrl: safeString(raw.sourceUrl, 1500) || null,
     addedAt: raw.addedAt || nowIso()

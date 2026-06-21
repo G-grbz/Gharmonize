@@ -6,7 +6,12 @@ import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
 import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs, parseIdFromPath } from "./utils.js";
 import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
-import { YTDLP_BIN as BINARY_YTDLP_BIN, DENO_BIN, FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
+import {
+  YTDLP_BIN as BINARY_YTDLP_BIN,
+  DENO_BIN,
+  FFMPEG_BIN as BINARY_FFMPEG_BIN,
+  getBinaryRuntimeEnv
+} from "./binaries.js";
 import {
   normalizeYtMusicAlbumEntry,
   normalizeYtMusicAlbumMeta,
@@ -105,6 +110,28 @@ function normalizeConcurrency(n) {
   const num = Number(n);
   if (!Number.isFinite(num) || num <= 0) return 4;
   return Math.max(1, Math.min(16, Math.round(num)));
+}
+
+function getYtDlpJobSpawnOptions(options = {}) {
+  return {
+    ...options,
+    env: getBinaryRuntimeEnv(options.env),
+    detached: process.platform !== "win32"
+  };
+}
+
+function terminateYtDlpJobProcess(child, signal = "SIGTERM") {
+  const pid = Number(child?.pid);
+  if (!pid) return;
+
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch {}
+  }
+
+  try { child.kill(signal); } catch {}
 }
 
 // Checks whether yt-dlp destination should count as a media item.
@@ -535,7 +562,10 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
     const finalArgs = buildBaseArgs(args, { sourceUrl });
     let stdoutData = "", stderrData = "";
 
-    const process = spawn(YTDLP_BIN, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    const process = spawn(YTDLP_BIN, finalArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: getBinaryRuntimeEnv()
+    });
 
     const timeoutId = setTimeout(() => {
       try { process.kill("SIGKILL"); } catch {}
@@ -3201,7 +3231,10 @@ function exportBrowserCookiesForMusicHome(timeoutMs = 12000) {
 
   return new Promise((resolve, reject) => {
     let stderrData = "";
-    const child = spawn(YTDLP_BIN, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(YTDLP_BIN, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: getBinaryRuntimeEnv()
+    });
     const timeoutId = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch {}
     }, timeoutMs);
@@ -4483,7 +4516,10 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
 
       console.warn("[yt-meta-debug]", label, "args:", args.join(" "));
 
-      const child = spawn(YTDLP_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(YTDLP_BIN, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: getBinaryRuntimeEnv()
+      });
       const timeoutId = setTimeout(() => {
         try { child.kill("SIGKILL"); } catch {}
         reject(new Error(`[${label}] timeout`));
@@ -4759,13 +4795,13 @@ if (opts.video) {
     let downloadedCount = 0;
     let activeDestinationIsMedia = false;
 
-    const child = spawn(ytDlpBin, args);
+    const child = spawn(ytDlpBin, args, getYtDlpJobSpawnOptions());
     try { registerJobProcess(jobId, child); } catch {}
 
     // Handles abort if canceled in the yt-dlp YouTube download pipeline.
     const abortIfCanceled = () => {
       if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
-        try { child.kill("SIGTERM"); } catch {}
+        terminateYtDlpJobProcess(child, "SIGTERM");
         return true;
       }
       return false;
@@ -5018,13 +5054,13 @@ async function downloadSelectedIdsParallel(
       let mediaDestAbs = null;
       let emittedDone = false;
 
-      const child = spawn(ytDlpBin, args);
+      const child = spawn(ytDlpBin, args, getYtDlpJobSpawnOptions());
       try { registerJobProcess(jobId, child); } catch {}
 
       // Handles abort if canceled in the yt-dlp YouTube download pipeline.
       const abortIfCanceled = () => {
         if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
-          try { child.kill("SIGTERM"); } catch {}
+          terminateYtDlpJobProcess(child, "SIGTERM");
           return true;
         }
         return false;
@@ -5320,13 +5356,16 @@ async function downloadStandard(
 
   const finalArgs = withDailymotionNoImpersonation(args, opts?.sourceUrl || url);
   return new Promise((resolve, reject) => {
-    const child = spawn(ytDlpBin, finalArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(ytDlpBin, finalArgs, {
+      ...getYtDlpJobSpawnOptions(),
+      stdio: ["ignore", "pipe", "pipe"]
+    });
     try { registerJobProcess(jobId, child); } catch {}
 
     // Handles abort if canceled in the yt-dlp YouTube download pipeline.
     const abortIfCanceled = () => {
       if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
-        try { child.kill("SIGTERM"); } catch {}
+        terminateYtDlpJobProcess(child, "SIGTERM");
         return true;
       }
       return false;

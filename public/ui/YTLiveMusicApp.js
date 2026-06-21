@@ -38,6 +38,7 @@ class YTLiveMusicApp {
     this.playlistTracks = [];
     this.playlistTracksSerial = 0;
     this.playlistTracksController = null;
+    this.mappedMusicPreviewStream = null;
     this.activeCollection = null;
     this.currentPlaybackItem = null;
     this.musicHomeShelves = [];
@@ -135,7 +136,7 @@ class YTLiveMusicApp {
 
     document.querySelectorAll('[data-scroll]').forEach((button) => {
       button.addEventListener('click', () => {
-        document.querySelector(button.dataset.scroll)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        this.scrollToPageSection(button.dataset.scroll, button.dataset.scrollFallback);
       });
     });
 
@@ -300,16 +301,43 @@ class YTLiveMusicApp {
     const discover = document.getElementById('discover') || document.querySelector('.content-section');
     if (!discover) return;
 
+    this.scrollToPageSection(discover);
+  }
+
+  scrollToPageSection(targetOrSelector, fallbackSelector = '') {
+    let target = typeof targetOrSelector === 'string'
+      ? document.querySelector(targetOrSelector)
+      : targetOrSelector;
+    if (this.isElementHiddenFromLayout(target) && fallbackSelector) {
+      target = document.querySelector(fallbackSelector);
+    }
+    if (!target) return;
+
     requestAnimationFrame(() => {
-      const topbar = document.querySelector('.topbar');
-      const offset = (topbar?.offsetHeight || 0) + 18;
-      const targetTop = discover.getBoundingClientRect().top + window.scrollY - offset;
+      const offset = this.getStickyScrollOffset();
+      const targetTop = target.getBoundingClientRect().top + window.scrollY - offset;
 
       window.scrollTo({
         top: Math.max(0, targetTop),
         behavior: 'smooth'
       });
     });
+  }
+
+  getStickyScrollOffset() {
+    const topbar = document.querySelector('.topbar');
+    if (!topbar) return 18;
+
+    const styles = window.getComputedStyle(topbar);
+    const stickyTop = Number.parseFloat(styles.top) || 0;
+    const topbarHeight = topbar.offsetHeight || topbar.getBoundingClientRect().height || 0;
+
+    return Math.ceil(stickyTop + topbarHeight + 18);
+  }
+
+  isElementHiddenFromLayout(element) {
+    if (!element) return true;
+    return element.hidden || element.offsetParent === null;
   }
 
   async loadFormats() {
@@ -418,8 +446,9 @@ class YTLiveMusicApp {
     }
 
     const youtubeConcurrency = document.getElementById('youtubeConcurrencyInput');
-    if (youtubeConcurrency && Number.isFinite(Number(settings.youtubeConcurrency))) {
-      youtubeConcurrency.value = String(Math.max(1, Math.min(16, Math.round(Number(settings.youtubeConcurrency)))));
+    const savedConcurrency = settings.spotifyConcurrency ?? settings.youtubeConcurrency;
+    if (youtubeConcurrency && Number.isFinite(Number(savedConcurrency))) {
+      youtubeConcurrency.value = String(Math.max(1, Math.min(16, Math.round(Number(savedConcurrency)))));
     }
 
     [
@@ -446,11 +475,13 @@ class YTLiveMusicApp {
   }
 
   saveOutputSettings() {
+    const concurrency = this.getSpotifyConcurrency();
     const settings = {
       format: this.getSelectedFormat(),
       bitrate: document.getElementById('bitrateSelect')?.value || 'auto',
       sampleRate: Number(document.getElementById('sampleRateSelect')?.value || 48000),
-      youtubeConcurrency: Number(document.getElementById('youtubeConcurrencyInput')?.value || 4),
+      youtubeConcurrency: concurrency,
+      spotifyConcurrency: concurrency,
       includeLyrics: !!document.getElementById('includeLyrics')?.checked,
       embedLyrics: !!document.getElementById('embedLyrics')?.checked,
       autoCreateZip: !!document.getElementById('autoZip')?.checked
@@ -461,6 +492,16 @@ class YTLiveMusicApp {
     } catch (error) {
       console.warn('Output settings could not be saved:', error);
     }
+  }
+
+  getSpotifyConcurrency() {
+    const raw =
+      document.getElementById('spotifyConcurrencyInput')?.value ??
+      document.getElementById('youtubeConcurrencyInput')?.value ??
+      4;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return 4;
+    return Math.max(1, Math.min(16, Math.round(n)));
   }
 
   async search(rawQuery, { preset = null, type = null } = {}) {
@@ -1035,7 +1076,13 @@ class YTLiveMusicApp {
     const panel = document.getElementById('playlistTracksPanel');
     if (!panel || !item.webpage_url) return;
 
+    if (this.isMappedMusicItem(item)) {
+      await this.startMappedMusicCollectionPlayback(item, { autoplayFirst, silent });
+      return;
+    }
+
     const serial = ++this.playlistTracksSerial;
+    this.closeMappedMusicPreviewStream();
     const collectionKey = this.getCollectionKey(item);
     if (this.playlistTracksController) {
       this.playlistTracksController.abort();
@@ -1199,6 +1246,7 @@ class YTLiveMusicApp {
 
   clearPlaylistTracks() {
     this.playlistTracksSerial += 1;
+    this.closeMappedMusicPreviewStream();
     if (this.playlistTracksController) {
       this.playlistTracksController.abort();
       this.playlistTracksController = null;
@@ -1206,6 +1254,12 @@ class YTLiveMusicApp {
     this.playlistTracks = [];
     this.activeCollection = null;
     this.renderPlaylistTracks();
+  }
+
+  closeMappedMusicPreviewStream() {
+    if (!this.mappedMusicPreviewStream) return;
+    try { this.mappedMusicPreviewStream.close(); } catch {}
+    this.mappedMusicPreviewStream = null;
   }
 
   getPlaylistTrackKey(item = {}) {
@@ -1641,35 +1695,314 @@ class YTLiveMusicApp {
     }
   }
 
-  playUrlInput() {
+  async playUrlInput() {
     const item = this.itemFromUrl(document.getElementById('quickUrlInput')?.value || '');
     if (!item) {
-      this.notify(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube linki gir.'), 'error');
+      this.notify(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube, Spotify, Deezer veya Apple Music linki gir.'), 'error');
       return;
     }
-    this.playItem(item);
+    try {
+      if (this.isMappedMusicItem(item)) {
+        await this.playMappedMusicUrl(item);
+        return;
+      }
+      this.playItem(item);
+    } catch (error) {
+      this.notify(error.message || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'), 'error');
+    }
   }
 
-  addUrlInput() {
+  async addUrlInput() {
     const item = this.itemFromUrl(document.getElementById('quickUrlInput')?.value || '');
     if (!item) {
-      this.notify(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube linki gir.'), 'error');
+      this.notify(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube, Spotify, Deezer veya Apple Music linki gir.'), 'error');
       return;
     }
-    this.addItem(item);
+    await this.addItem(item);
   }
 
   addUrlInputToList(event) {
     const item = this.itemFromUrl(document.getElementById('quickUrlInput')?.value || '');
     if (!item) {
-      this.notify(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube linki gir.'), 'error');
+      this.notify(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube, Spotify, Deezer veya Apple Music linki gir.'), 'error');
       return;
     }
     this.openDownloadListMenu(event, item);
   }
 
+  async playMappedMusicUrl(rawItem, { silent = false } = {}) {
+    const item = this.normalizeItem(rawItem);
+    const url = item.webpage_url || item.url || '';
+    if (!url) throw new Error(this.tt('ytlive.url.invalid', 'Geçerli bir YouTube, Spotify, Deezer veya Apple Music linki gir.'));
+
+    this.notify(this.tt('ytlive.musicUrl.matching', 'Link eşleştiriliyor...'), 'info');
+    const task = await this.startMappedMusicPreviewTask(item);
+    const resolvedType = this.getMappedMusicPlaybackType(item, task.total);
+
+    if (resolvedType === 'track') {
+      this.streamMappedMusicTrackPlayback(task, item, { silent });
+      return;
+    }
+
+    this.streamMappedMusicCollectionPlayback(task, {
+      ...item,
+      type: resolvedType,
+      title: task.title || item.title || this.getMappedMusicFallbackTitle(item.sourceProvider, resolvedType),
+      uploader: this.getMappedMusicLabel(item.sourceProvider),
+      webpage_url: url,
+      url
+    }, { autoplayFirst: true, silent });
+  }
+
+  async startMappedMusicPreviewTask(rawItem) {
+    const item = this.normalizeItem(rawItem);
+    const url = item.webpage_url || item.url || '';
+    const spotifyConcurrency = this.getSpotifyConcurrency();
+    const response = await fetch('/api/spotify/preview/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url,
+        market: this.getCurrentRegion(),
+        youtubeConcurrency: spotifyConcurrency,
+        spotifyConcurrency
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data?.error?.message || this.tt('ytlive.playlist.readFailed', 'Playlist okunamadı.'));
+    }
+    return {
+      mapId: data.mapId,
+      title: data.title || item.title || this.getMappedMusicFallbackTitle(item.sourceProvider, item.type),
+      total: Number(data.total || 0),
+      source: data.source || item.sourceProvider || this.getMappedMusicSource(url)
+    };
+  }
+
+  streamMappedMusicTrackPlayback(task, rawItem, { silent = false } = {}) {
+    const item = this.normalizeItem(rawItem);
+    const serial = ++this.playlistTracksSerial;
+    this.closeMappedMusicPreviewStream();
+    if (this.playlistTracksController) {
+      this.playlistTracksController.abort();
+      this.playlistTracksController = null;
+    }
+    this.playlistTracks = [];
+    this.renderPlaylistTracks({
+      loading: true,
+      title: task.title || item.title,
+      total: task.total || 1
+    });
+
+    let settled = false;
+    const playResolvedTrack = (rawTrack) => {
+      if (settled || serial !== this.playlistTracksSerial) return false;
+      const track = this.normalizePlaylistEntry(rawTrack, 0);
+      if (!track?.webpage_url && !track?.id) return false;
+
+      settled = true;
+      this.closeMappedMusicPreviewStream();
+      this.playlistTracks = [track];
+      this.renderPlaylistTracks({
+        title: task.title || item.title,
+        total: 1
+      });
+      this.playItem(track, {
+        silent,
+        autoplay: true,
+        forceAutoplay: !silent
+      });
+      return true;
+    };
+
+    const failIfUnresolved = (message = '') => {
+      if (settled || serial !== this.playlistTracksSerial) return;
+      settled = true;
+      this.closeMappedMusicPreviewStream();
+      this.renderPlaylistTracks({
+        error: message || this.tt('ytlive.playlist.noItems', 'Playlist içinde eklenebilir parça bulunamadı.'),
+        title: task.title || item.title
+      });
+    };
+
+    if (!task.mapId) {
+      failIfUnresolved(this.tt('ytlive.playlist.readFailed', 'Playlist okunamadı.'));
+      return;
+    }
+
+    const stream = new EventSource(`/api/spotify/preview/stream/${encodeURIComponent(task.mapId)}`);
+    this.mappedMusicPreviewStream = stream;
+    stream.onmessage = (event) => {
+      if (serial !== this.playlistTracksSerial) {
+        try { stream.close(); } catch {}
+        return;
+      }
+      const data = JSON.parse(event.data || '{}');
+      if (data.type === 'init') {
+        const items = Array.isArray(data.items) ? data.items : [];
+        items.some((entry) => playResolvedTrack(entry));
+        return;
+      }
+      if (data.type === 'item') {
+        playResolvedTrack(data.item);
+        return;
+      }
+      if (data.type === 'done') {
+        if (data.status === 'error') {
+          failIfUnresolved(data.error || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'));
+        } else {
+          failIfUnresolved();
+        }
+      }
+    };
+    stream.onerror = () => {
+      failIfUnresolved(this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'));
+    };
+  }
+
+  async startMappedMusicCollectionPlayback(rawItem, { autoplayFirst = true, silent = false } = {}) {
+    const item = this.normalizeItem(rawItem);
+    this.notify(this.tt('ytlive.musicUrl.matching', 'Link eşleştiriliyor...'), 'info');
+    const task = await this.startMappedMusicPreviewTask(item);
+    const resolvedType = this.getMappedMusicPlaybackType(item, task.total);
+    this.streamMappedMusicCollectionPlayback(task, {
+      ...item,
+      type: resolvedType === 'track' ? 'playlist' : resolvedType,
+      title: task.title || item.title || this.getMappedMusicFallbackTitle(item.sourceProvider, resolvedType)
+    }, { autoplayFirst, silent });
+  }
+
+  streamMappedMusicCollectionPlayback(task, rawItem, { autoplayFirst = true, silent = false } = {}) {
+    const item = this.normalizeItem(rawItem);
+    const serial = ++this.playlistTracksSerial;
+    this.closeMappedMusicPreviewStream();
+    if (this.playlistTracksController) {
+      this.playlistTracksController.abort();
+      this.playlistTracksController = null;
+    }
+
+    const title = task.title || item.title || this.getMappedMusicFallbackTitle(item.sourceProvider, item.type);
+    const total = Number(task.total || 0);
+    const collectionKey = this.getCollectionKey(item);
+    this.playlistTracks = [];
+    this.activeCollection = {
+      item: { ...item, title },
+      key: collectionKey,
+      title,
+      total,
+      tracks: [],
+      currentIndex: -1,
+      loading: true
+    };
+    this.currentItem = this.activeCollection.item;
+    this.currentPlaybackItem = this.activeCollection.item;
+    this.stopYouTubePlayback();
+    this.showPlayerPlaceholder(
+      this.tt('ytlive.player.emptyTitle', 'Select content'),
+      this.tt('ytlive.player.emptyText', 'Click a search result or pasted link to play it here.')
+    );
+    this.updateNowPanelForCollection();
+    this.renderPlaylistTracks({ loading: true, title, total });
+
+    const seen = new Set();
+    let autoplayDone = false;
+    const addResolvedTrack = (rawTrack) => {
+      if (serial !== this.playlistTracksSerial) return null;
+      const track = this.normalizePlaylistEntry(rawTrack, this.playlistTracks.length);
+      if (!track?.webpage_url && !track?.id) return null;
+      const key = this.getPlaylistTrackKey(track);
+      if (seen.has(key)) return null;
+      seen.add(key);
+
+      this.playlistTracks = [...this.playlistTracks, track];
+      this.syncActiveCollectionTracks(item, {
+        title,
+        total,
+        loading: true
+      });
+      this.renderPlaylistTracks({
+        loading: true,
+        title,
+        total
+      });
+
+      if (autoplayFirst && !autoplayDone) {
+        autoplayDone = true;
+        this.playPlaylistTrackAt(this.playlistTracks.length - 1, { silent });
+      }
+      return track;
+    };
+
+    const finish = (error = '') => {
+      if (serial !== this.playlistTracksSerial) return;
+      this.closeMappedMusicPreviewStream();
+      this.syncActiveCollectionTracks(item, { title, total, loading: false });
+      if (error && !this.playlistTracks.length) {
+        this.renderPlaylistTracks({ error, title, total });
+        return;
+      }
+      if (!this.playlistTracks.length) {
+        this.renderPlaylistTracks({
+          error: this.tt('ytlive.playlist.noItems', 'Playlist içinde eklenebilir parça bulunamadı.'),
+          title,
+          total
+        });
+        return;
+      }
+      this.renderPlaylistTracks({ title, total });
+    };
+
+    if (!task.mapId) {
+      finish(this.tt('ytlive.playlist.readFailed', 'Playlist okunamadı.'));
+      return;
+    }
+
+    const stream = new EventSource(`/api/spotify/preview/stream/${encodeURIComponent(task.mapId)}`);
+    this.mappedMusicPreviewStream = stream;
+    stream.onmessage = (event) => {
+      if (serial !== this.playlistTracksSerial) {
+        try { stream.close(); } catch {}
+        return;
+      }
+      const data = JSON.parse(event.data || '{}');
+      if (data.type === 'init') {
+        (Array.isArray(data.items) ? data.items : []).forEach((entry) => addResolvedTrack(entry));
+        return;
+      }
+      if (data.type === 'item') {
+        addResolvedTrack(data.item);
+        return;
+      }
+      if (data.type === 'progress') {
+        const nextTotal = Number(data.total || total || 0);
+        this.syncActiveCollectionTracks(item, { title, total: nextTotal, loading: data.status !== 'completed' });
+        this.renderPlaylistTracks({
+          loading: data.status !== 'completed',
+          title,
+          total: nextTotal
+        });
+        return;
+      }
+      if (data.type === 'done') {
+        finish(data.status === 'error'
+          ? (data.error || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'))
+          : '');
+      }
+    };
+    stream.onerror = () => {
+      finish(this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'));
+    };
+  }
+
   playItem(rawItem, { silent = false, keepPlaylist = false, autoplay = true, collectionContext = null, playlistIndex = null, forceAutoplay = false } = {}) {
     const item = this.normalizeItem(rawItem);
+    if (this.isMappedMusicItem(item)) {
+      this.playMappedMusicUrl(item, { silent }).catch((error) => {
+        this.notify(error.message || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'), 'error');
+      });
+      return;
+    }
     const collectionLike = this.isPlaylistLike(item);
 
     if (collectionLike) {
@@ -1985,11 +2318,16 @@ class YTLiveMusicApp {
   async addItem(rawItem) {
     const item = this.normalizeItem(rawItem);
     if (!item.webpage_url) {
-      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir YouTube linki bulunamadı.'), 'error');
+      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir link bulunamadı.'), 'error');
       return;
     }
 
     try {
+      if (this.isMappedMusicItem(item)) {
+        await this.submitMappedMusicJob(item);
+        return;
+      }
+
       if (this.isPlaylistLike(item)) {
         try {
           await this.quickAddPlaylist(item);
@@ -2045,6 +2383,55 @@ class YTLiveMusicApp {
       selectedIds,
       frozenEntries: entries
     });
+  }
+
+  async submitMappedMusicJob(rawItem) {
+    const item = this.normalizeItem(rawItem);
+    const payload = this.buildMappedMusicPayload(item);
+    const submittedPayload = this.clonePayload(payload);
+    const response = await fetch('/api/spotify/process/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data?.error?.message || this.tt('ytlive.job.createFailed', 'İş oluşturulamadı.'));
+    }
+
+    const jobId = data.jobId || data.id;
+    if (!jobId) throw new Error(this.tt('ytlive.job.createFailed', 'İş oluşturulamadı.'));
+
+    const initialJob = {
+      id: jobId,
+      status: 'queued',
+      phase: 'preparing',
+      currentPhase: 'preparing',
+      format: payload.format,
+      bitrate: payload.bitrate,
+      sampleRate: payload.sampleRate,
+      metadata: {
+        source: item.sourceProvider || this.getMappedMusicSource(item.webpage_url || item.url || ''),
+        mediaPlatform: item.sourceProvider || this.getMappedMusicSource(item.webpage_url || item.url || ''),
+        url: item.webpage_url || item.url || '',
+        originalUrl: item.webpage_url || item.url || '',
+        spotifyTitle: item.title || null,
+        frozenTitle: item.title || null,
+        isPlaylist: item.type !== 'track',
+        includeLyrics: !!payload.includeLyrics,
+        embedLyrics: !!payload.embedLyrics,
+        autoCreateZip: !!payload.autoCreateZip
+      }
+    };
+
+    this.jobs.set(jobId, this.mergeJobState(this.jobs.get(jobId), initialJob));
+    this.notify(this.tt('ytlive.job.queued', 'İş kuyruğa eklendi.'), 'success');
+    this.persistClassicJobSession(initialJob, submittedPayload);
+    this.trackJob(jobId);
+    this.renderQueueChip(this.getActiveJobCount());
+    this.renderJobs();
+    await this.refreshQueueStatus();
+    return data;
   }
 
   applyDownloadListsState(data = {}) {
@@ -2113,11 +2500,13 @@ class YTLiveMusicApp {
 
     const playLabel = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
     const downloadLabel = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
+    const syncLabel = this.escapeHtml(this.tt('ytlive.lists.sync', 'Senkronize'));
     const deleteLabel = this.escapeHtml(this.tt('ytlive.lists.delete', 'Sil'));
     const removeLabel = this.escapeHtml(this.tt('ytlive.lists.removeItem', 'Listeden çıkar'));
 
     grid.innerHTML = lists.map((list) => {
       const items = Array.isArray(list.items) ? list.items : [];
+      const canSync = !!this.getMappedListSourceUrl(items);
       const previewItems = items.slice(0, 8).map((item) => {
         const title = this.escapeHtml(item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'));
         const uploader = this.escapeHtml(item.uploader || 'YouTube');
@@ -2146,6 +2535,7 @@ class YTLiveMusicApp {
             <div class="download-list-card__actions">
               <button class="secondary-button compact-action" type="button" data-list-action="play" data-list-id="${this.escapeHtml(list.id)}" ${items.length ? '' : 'disabled'}>${playLabel}</button>
               <button class="primary-button compact-action" type="button" data-list-action="download" data-list-id="${this.escapeHtml(list.id)}" ${items.length ? '' : 'disabled'}>${downloadLabel}</button>
+              <button class="secondary-button compact-action" type="button" data-list-action="sync" data-list-id="${this.escapeHtml(list.id)}" ${canSync ? '' : 'disabled'}>${syncLabel}</button>
               <button class="ghost-button compact-action" type="button" data-list-action="delete" data-list-id="${this.escapeHtml(list.id)}">${deleteLabel}</button>
             </div>
           </div>
@@ -2174,6 +2564,10 @@ class YTLiveMusicApp {
       this.downloadSavedList(listId);
       return;
     }
+    if (action === 'sync') {
+      this.syncDownloadList(listId);
+      return;
+    }
     if (action === 'delete') {
       this.deleteDownloadList(listId);
       return;
@@ -2189,7 +2583,7 @@ class YTLiveMusicApp {
 
     const item = this.normalizeItem(rawItem);
     if (!item.webpage_url) {
-      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir YouTube linki bulunamadı.'), 'error');
+      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir link bulunamadı.'), 'error');
       return;
     }
 
@@ -2236,13 +2630,9 @@ class YTLiveMusicApp {
     menu.appendChild(createButton);
 
     document.body.appendChild(menu);
-    const rect = anchor?.getBoundingClientRect?.() || { left: 24, bottom: 24, right: 260 };
-    const menuRect = menu.getBoundingClientRect();
-    const left = Math.min(Math.max(12, rect.left), window.innerWidth - menuRect.width - 12);
-    const top = Math.min(rect.bottom + 8, window.innerHeight - menuRect.height - 12);
-    menu.style.left = `${left}px`;
-    menu.style.top = `${Math.max(12, top)}px`;
+    this.positionDownloadListMenu(menu, anchor);
     requestAnimationFrame(() => {
+      this.positionDownloadListMenu(menu, anchor);
       menu.classList.add('is-open');
       menu.focus({ preventScroll: true });
     });
@@ -2254,12 +2644,57 @@ class YTLiveMusicApp {
     const keyHandler = (evt) => {
       if (evt.key === 'Escape') this.closeDownloadListMenu();
     };
+    const repositionHandler = () => this.positionDownloadListMenu(menu, anchor);
 
     setTimeout(() => {
+      if (this.activeDownloadListMenu?.menu !== menu) return;
       document.addEventListener('mousedown', outsideHandler);
       document.addEventListener('keydown', keyHandler);
+      window.addEventListener('resize', repositionHandler, { passive: true });
+      window.visualViewport?.addEventListener('resize', repositionHandler, { passive: true });
     }, 0);
-    this.activeDownloadListMenu = { menu, outsideHandler, keyHandler };
+    this.activeDownloadListMenu = { menu, outsideHandler, keyHandler, repositionHandler };
+  }
+
+  positionDownloadListMenu(menu, anchor) {
+    if (!menu) return;
+
+    const margin = 12;
+    const gap = 8;
+    const viewportWidth = Math.max(document.documentElement?.clientWidth || 0, window.innerWidth || 0);
+    const viewportHeight = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
+    const availableWidth = Math.max(0, viewportWidth - (margin * 2));
+    const availableHeight = Math.max(0, viewportHeight - (margin * 2));
+    const fallbackRect = { left: margin, right: margin, top: margin, bottom: margin };
+    const rect = anchor?.getBoundingClientRect?.() || fallbackRect;
+
+    menu.style.maxWidth = `${availableWidth}px`;
+    menu.style.maxHeight = `${availableHeight}px`;
+
+    const menuRect = menu.getBoundingClientRect();
+    const menuWidth = Math.min(menuRect.width || availableWidth, availableWidth);
+    const menuHeight = Math.min(menuRect.height || availableHeight, availableHeight);
+    const maxLeft = Math.max(margin, viewportWidth - menuWidth - margin);
+    const maxTop = Math.max(margin, viewportHeight - menuHeight - margin);
+
+    let left = rect.left;
+    if (left + menuWidth + margin > viewportWidth) {
+      left = rect.right - menuWidth;
+    }
+    left = Math.min(Math.max(margin, left), maxLeft);
+
+    const belowTop = rect.bottom + gap;
+    const aboveTop = rect.top - menuHeight - gap;
+    const opensAbove = belowTop + menuHeight + margin > viewportHeight && aboveTop >= margin;
+    const top = opensAbove
+      ? aboveTop
+      : Math.min(Math.max(margin, belowTop), maxTop);
+    const originX = left < rect.left ? 'right' : 'left';
+    const originY = opensAbove ? 'bottom' : 'top';
+
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.setProperty('transform-origin', `${originY} ${originX}`, 'important');
   }
 
   closeDownloadListMenu() {
@@ -2267,6 +2702,8 @@ class YTLiveMusicApp {
     if (!active) return;
     try { document.removeEventListener('mousedown', active.outsideHandler); } catch {}
     try { document.removeEventListener('keydown', active.keyHandler); } catch {}
+    try { window.removeEventListener('resize', active.repositionHandler); } catch {}
+    try { window.visualViewport?.removeEventListener('resize', active.repositionHandler); } catch {}
     active.menu?.remove?.();
     this.activeDownloadListMenu = null;
   }
@@ -2494,8 +2931,37 @@ class YTLiveMusicApp {
     }
   }
 
+  async syncDownloadList(listId) {
+    if (!listId) return;
+    try {
+      this.notify(this.tt('ytlive.lists.syncing', 'Liste senkronize ediliyor...'), 'info');
+      const spotifyConcurrency = this.getSpotifyConcurrency();
+      const data = await this.saveDownloadListsRequest(`/api/ytlive/download-lists/${encodeURIComponent(listId)}/sync`, {
+        method: 'POST',
+        body: JSON.stringify({
+          market: this.getCurrentRegion(),
+          youtubeConcurrency: spotifyConcurrency,
+          spotifyConcurrency
+        })
+      });
+      const sync = data?.sync || {};
+      this.notify(
+        this.tt('ytlive.lists.synced', '{added} yeni içerik eklendi. Toplam {total}.', {
+          added: Number(sync.added || 0),
+          total: Number(sync.total || 0)
+        }),
+        'success'
+      );
+    } catch (error) {
+      this.notify(error.message || this.tt('ytlive.lists.syncFailed', 'Liste senkronize edilemedi.'), 'error');
+    }
+  }
+
   async expandItemForDownloadList(rawItem) {
     const item = this.normalizeItem(rawItem);
+    if (this.isMappedMusicItem(item)) {
+      return this.expandMappedMusicItemForDownloadList(item);
+    }
     if (!this.isPlaylistLike(item)) {
       return [this.toDownloadListItem(item, 0)];
     }
@@ -2535,6 +3001,56 @@ class YTLiveMusicApp {
             sourceTitle: title,
             sourceUrl: item.webpage_url
           });
+          if (!normalized.webpage_url && !normalized.id) return;
+          const key = this.getDownloadListItemKey(normalized);
+          if (seen.has(key)) return;
+          seen.add(key);
+          items.push(normalized);
+        });
+
+      if (!rawEntries.length || rawEntries.length < pageSize || (total && items.length >= total)) {
+        break;
+      }
+      page += 1;
+    }
+
+    if (!items.length) {
+      throw new Error(this.tt('ytlive.playlist.noItems', 'Playlist içinde eklenebilir parça bulunamadı.'));
+    }
+
+    return items;
+  }
+
+  async expandMappedMusicItemForDownloadList(rawItem) {
+    const item = this.normalizeItem(rawItem);
+    this.notify(this.tt('ytlive.lists.expanding', 'Liste içeriği okunuyor...'), 'info');
+
+    const pageSize = 100;
+    const maxPages = 200;
+    const items = [];
+    const seen = new Set();
+    let page = 1;
+    let total = 0;
+    let title = item.title || this.getMappedMusicFallbackTitle(item.sourceProvider, item.type);
+
+    while (page <= maxPages) {
+      const data = await this.fetchMappedMusicMetadata(item.webpage_url, {
+        page,
+        pageSize
+      });
+      const rawEntries = Array.isArray(data.items) ? data.items : [];
+      title = data?.playlist?.title || title;
+      total = Number(data?.playlist?.count || total || 0);
+
+      rawEntries
+        .map((entry, idx) => this.normalizePlaylistEntry(entry, ((page - 1) * pageSize) + idx))
+        .forEach((entry) => {
+          const normalized = this.toDownloadListItem(entry, items.length, {
+            sourceTitle: title,
+            sourceUrl: item.webpage_url,
+            sourceProvider: item.sourceProvider
+          });
+          if (!normalized.webpage_url && !normalized.sourceItemUrl) return;
           const key = this.getDownloadListItemKey(normalized);
           if (seen.has(key)) return;
           seen.add(key);
@@ -2556,17 +3072,27 @@ class YTLiveMusicApp {
 
   toDownloadListItem(rawItem, index = 0, extras = {}) {
     const item = this.normalizeItem(rawItem);
+    const itemUrl = item.webpage_url || item.url || '';
+    const sourceProvider = extras.sourceProvider || item.sourceProvider || this.getMappedMusicSource(itemUrl) || null;
+    const sourceItemUrl = extras.sourceItemUrl || item.sourceItemUrl || (this.getMappedMusicSource(itemUrl) ? itemUrl : null);
+    const sourceItemId = extras.sourceItemId || item.sourceItemId || item.providerId || null;
+    const videoId = sourceProvider ? null : this.getVideoId(itemUrl);
     return {
       type: 'track',
       index: Number(item.index || index + 1) || index + 1,
-      id: item.id || this.getVideoId(item.webpage_url || item.url || '') || null,
+      id: sourceProvider ? null : (item.id || videoId || null),
       title: item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'),
       uploader: item.uploader || item.artist || item.channel || '',
       duration: Number.isFinite(Number(item.duration)) ? Number(item.duration) : null,
+      duration_ms: Number.isFinite(Number(item.duration_ms)) ? Number(item.duration_ms) : null,
       duration_string: item.duration_string || null,
       thumbnail: item.thumbnail || item.thumbnails?.[0]?.url || null,
-      webpage_url: item.webpage_url || item.url || '',
-      url: item.webpage_url || item.url || '',
+      webpage_url: itemUrl,
+      url: itemUrl,
+      sourceProvider,
+      sourceItemId,
+      sourceItemUrl,
+      album: item.album || null,
       sourceTitle: extras.sourceTitle || item.sourceTitle || null,
       sourceUrl: extras.sourceUrl || item.sourceUrl || null
     };
@@ -2591,9 +3117,26 @@ class YTLiveMusicApp {
     return (Array.isArray(list.items) ? list.items : [])
       .map((item, index) => this.toDownloadListItem(item, index, {
         sourceTitle: item.sourceTitle || list.name,
-        sourceUrl: item.sourceUrl || ''
+        sourceUrl: item.sourceUrl || '',
+        sourceProvider: item.sourceProvider || null,
+        sourceItemId: item.sourceItemId || null,
+        sourceItemUrl: item.sourceItemUrl || null
       }))
       .filter((item) => item.webpage_url || item.id);
+  }
+
+  getMappedListSourceUrl(items = []) {
+    const sourceUrls = (Array.isArray(items) ? items : [])
+      .map((item) => item.sourceUrl || '')
+      .filter((url) => this.isMappedMusicUrl(url));
+    const uniqueSourceUrls = Array.from(new Set(sourceUrls));
+    if (uniqueSourceUrls.length === 1) return uniqueSourceUrls[0];
+
+    const itemUrls = (Array.isArray(items) ? items : [])
+      .map((item) => item.webpage_url || item.url || '')
+      .filter((url) => this.isMappedMusicUrl(url));
+    const uniqueItemUrls = Array.from(new Set(itemUrls));
+    return uniqueItemUrls.length === 1 ? uniqueItemUrls[0] : '';
   }
 
   getSavedListPlayableItems(list = {}) {
@@ -2608,6 +3151,15 @@ class YTLiveMusicApp {
   playSavedList(listId) {
     const list = this.downloadLists.find((entry) => entry.id === listId);
     if (!list) return;
+
+    const downloadItems = this.getSavedListDownloadItems(list);
+    const mappedSourceUrl = this.getMappedListSourceUrl(downloadItems);
+    if (mappedSourceUrl && downloadItems.every((item) => this.isMappedMusicUrl(item.sourceUrl || item.webpage_url || item.url))) {
+      this.playResolvedSavedMappedList(listId, list).catch((error) => {
+        this.notify(error.message || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'), 'error');
+      });
+      return;
+    }
 
     const tracks = this.getSavedListPlayableItems(list);
     if (!tracks.length) {
@@ -2644,6 +3196,65 @@ class YTLiveMusicApp {
     this.playPlaylistTrackAt(0, { silent: false, autoplay: true });
   }
 
+  async resolveSavedMappedList(listId) {
+    const spotifyConcurrency = this.getSpotifyConcurrency();
+    const response = await fetch(`/api/ytlive/download-lists/${encodeURIComponent(listId)}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        market: this.getCurrentRegion(),
+        youtubeConcurrency: spotifyConcurrency,
+        spotifyConcurrency
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data?.error?.message || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'));
+    }
+    return data;
+  }
+
+  async startSavedMappedListResolveTask(listId, list = {}) {
+    const spotifyConcurrency = this.getSpotifyConcurrency();
+    const response = await fetch(`/api/ytlive/download-lists/${encodeURIComponent(listId)}/resolve/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        market: this.getCurrentRegion(),
+        youtubeConcurrency: spotifyConcurrency,
+        spotifyConcurrency
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data?.error?.message || this.tt('ytlive.playlist.loadFailed', 'Playlist parçaları yüklenemedi.'));
+    }
+    return {
+      mapId: data.mapId,
+      title: data.title || list.name || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi'),
+      total: Number(data.total || 0),
+      source: data.source || ''
+    };
+  }
+
+  async playResolvedSavedMappedList(listId, list = {}) {
+    this.notify(this.tt('ytlive.musicUrl.matching', 'Link eşleştiriliyor...'), 'info');
+    const task = await this.startSavedMappedListResolveTask(listId, list);
+    const items = this.getSavedListDownloadItems(list);
+    const sourceUrl = this.getMappedListSourceUrl(items);
+    const sourceProvider = this.getMappedMusicSource(sourceUrl) || task.source || '';
+    this.streamMappedMusicCollectionPlayback(task, {
+      type: 'playlist',
+      id: listId,
+      title: task.title || list.name || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi'),
+      uploader: this.tt('ytlive.lists.title', 'İndirme Listelerim'),
+      sourceProvider,
+      webpage_url: sourceUrl,
+      url: sourceUrl,
+      downloadListId: listId
+    }, { autoplayFirst: true, silent: false });
+  }
+
   async downloadSavedList(listId) {
     const list = this.downloadLists.find((entry) => entry.id === listId);
     if (!list) return;
@@ -2654,11 +3265,44 @@ class YTLiveMusicApp {
       return;
     }
 
+    const mappedSourceUrl = this.getMappedListSourceUrl(items);
+    if (mappedSourceUrl && items.every((item) => this.isMappedMusicUrl(item.sourceUrl || item.webpage_url || item.url))) {
+      try {
+        this.notify(this.tt('ytlive.musicUrl.matching', 'Link eşleştiriliyor...'), 'info');
+        const data = await this.resolveSavedMappedList(listId);
+        const resolvedItems = (Array.isArray(data.items) ? data.items : [])
+          .map((item, index) => ({
+            ...item,
+            index: index + 1,
+            webpage_url: item.webpage_url || item.url || ''
+          }))
+          .filter((item) => item.id && item.webpage_url);
+
+        if (!resolvedItems.length) {
+          this.notify(this.tt('ytlive.lists.emptyList', 'Bu liste boş.'), 'error');
+          return;
+        }
+
+        await this.submitJob({
+          ...this.getOutputPayload(),
+          url: resolvedItems[0].webpage_url,
+          isPlaylist: true,
+          plTitle: list.name || this.tt('ytlive.lists.fallbackName', 'İndirme Listesi'),
+          selectedIndices: resolvedItems.map((entry) => entry.index),
+          selectedIds: resolvedItems.map((entry) => entry.id),
+          frozenEntries: resolvedItems
+        });
+      } catch (error) {
+        this.notify(error.message || this.tt('ytlive.job.addFailed', 'İş eklenemedi.'), 'error');
+      }
+      return;
+    }
+
     const selectedIds = items
       .map((item) => item.id || this.getVideoId(item.webpage_url) || item.webpage_url)
       .filter(Boolean);
     if (!selectedIds.length) {
-      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir YouTube linki bulunamadı.'), 'error');
+      this.notify(this.tt('ytlive.add.noUrl', 'Eklenebilir bir link bulunamadı.'), 'error');
       return;
     }
 
@@ -2708,9 +3352,21 @@ class YTLiveMusicApp {
     };
   }
 
+  buildMappedMusicPayload(item) {
+    const output = this.getOutputPayload();
+    return {
+      ...output,
+      url: item.webpage_url || item.url || '',
+      market: this.getCurrentRegion(),
+      spotifyConcurrency: output.spotifyConcurrency,
+      autoCreateZip: output.autoCreateZip
+    };
+  }
+
   getOutputPayload() {
     const format = this.getSelectedFormat();
     const isVideo = this.isVideoFormat(format);
+    const spotifyConcurrency = this.getSpotifyConcurrency();
     return {
       format,
       bitrate: document.getElementById('bitrateSelect')?.value || 'auto',
@@ -2718,7 +3374,8 @@ class YTLiveMusicApp {
       includeLyrics: !isVideo && !!document.getElementById('includeLyrics')?.checked,
       embedLyrics: !isVideo && !!document.getElementById('embedLyrics')?.checked,
       autoCreateZip: !isVideo && !!document.getElementById('autoZip')?.checked,
-      youtubeConcurrency: Number(document.getElementById('youtubeConcurrencyInput')?.value || 4)
+      youtubeConcurrency: spotifyConcurrency,
+      spotifyConcurrency
     };
   }
 
@@ -3016,10 +3673,12 @@ class YTLiveMusicApp {
       this.isPlaylistUrl(rawUrl)
     );
     const mediaPlatform = serverMeta.mediaPlatform || job.mediaPlatform || previous.mediaPlatform || this.detectMediaPlatform(rawUrl);
+    const mappedSource = this.getMappedMusicSource(rawUrl);
     const source =
       serverMeta.source ||
       job.source ||
       previous.source ||
+      mappedSource ||
       (mediaPlatform === 'youtube' || mediaPlatform === 'dailymotion' ? 'youtube' : (rawUrl ? 'direct_url' : 'youtube'));
 
     return {
@@ -3088,6 +3747,8 @@ class YTLiveMusicApp {
 
   detectMediaPlatform(rawUrl = '') {
     const url = String(rawUrl || '');
+    const mappedSource = this.getMappedMusicSource(url);
+    if (mappedSource) return mappedSource;
     if (/dailymotion\.com|dai\.ly/i.test(url)) return 'dailymotion';
     if (this.isYouTubeUrl(url)) return 'youtube';
     return null;
@@ -3200,34 +3861,69 @@ class YTLiveMusicApp {
 
   normalizeItem(item = {}) {
     let url = String(item.webpage_url || item.url || '').trim();
-    const type = item.type || (this.isPlaylistUrl(url) ? 'playlist' : 'track');
-    if (type === 'track') url = this.toSingleTrackUrl(url, item.id);
+    const sourceProvider = item.sourceProvider || this.getMappedMusicSource(url);
+    const type = item.type || (sourceProvider ? this.getMappedMusicUrlType(url) : (this.isPlaylistUrl(url) ? 'playlist' : 'track'));
+    if (type === 'track' && !sourceProvider) url = this.toSingleTrackUrl(url, item.id);
+    const fallbackTitle = sourceProvider
+      ? this.getMappedMusicFallbackTitle(sourceProvider, type)
+      : (type === 'playlist' ? this.tt('ytlive.youtubePlaylist', 'YouTube Playlist') : this.tt('ytlive.youtubeVideo', 'YouTube Video'));
     return {
       ...item,
+      sourceProvider: sourceProvider || item.sourceProvider || null,
       type,
-      title: item.title || (type === 'playlist' ? this.tt('ytlive.youtubePlaylist', 'YouTube Playlist') : this.tt('ytlive.youtubeVideo', 'YouTube Video')),
+      title: item.title || fallbackTitle,
+      uploader: item.uploader || item.artist || (sourceProvider ? this.getMappedMusicLabel(sourceProvider) : item.uploader),
       webpage_url: url,
       url
     };
   }
 
   normalizePlaylistEntry(entry = {}, offset = 0) {
+    entry = entry || {};
     const index = Number(entry.index || entry.playlist_index || (offset + 1));
+    const rawUrl = entry.webpage_url || entry.url || entry.sourceItemUrl || '';
+    const sourceProvider = entry.sourceProvider || this.getMappedMusicSource(rawUrl) || null;
+    const durationMs = Number(entry.duration_ms || 0);
+    const duration = Number.isFinite(Number(entry.duration))
+      ? Number(entry.duration)
+      : (Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs / 1000) : null);
     return {
       index,
-      id: entry.id || null,
+      id: sourceProvider ? null : (entry.id || null),
       type: 'track',
       title: entry.title || entry.id || '',
-      uploader: entry.uploader || entry.channel || '',
-      duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
+      uploader: entry.uploader || entry.artist || entry.channel || '',
+      artist: entry.artist || entry.uploader || entry.channel || '',
+      album: entry.album || '',
+      duration,
+      duration_ms: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,
       duration_string: entry.duration_string || null,
       thumbnail: entry.thumbnail || entry.thumbnails?.[0]?.url || null,
-      webpage_url: this.normalizePlayableUrl(entry.webpage_url || entry.url || '', entry.id)
+      sourceProvider,
+      sourceUrl: entry.sourceUrl || null,
+      sourceItemId: entry.sourceItemId || entry.providerId || null,
+      sourceItemUrl: entry.sourceItemUrl || (sourceProvider ? rawUrl : null),
+      webpage_url: sourceProvider ? rawUrl : this.normalizePlayableUrl(rawUrl, entry.id),
+      url: sourceProvider ? rawUrl : this.normalizePlayableUrl(rawUrl, entry.id)
     };
   }
 
   itemFromUrl(rawUrl) {
     const url = this.normalizePlayableUrl(rawUrl);
+    const sourceProvider = this.getMappedMusicSource(url);
+    if (sourceProvider) {
+      const type = this.getMappedMusicUrlType(url);
+      return {
+        type,
+        id: this.getMappedMusicEntityId(url) || null,
+        title: this.getMappedMusicFallbackTitle(sourceProvider, type),
+        uploader: this.getMappedMusicLabel(sourceProvider),
+        sourceProvider,
+        webpage_url: url,
+        url
+      };
+    }
+
     if (!url || !this.isYouTubeUrl(url)) return null;
     const playlistId = this.getPlaylistId(url);
     const videoId = this.getVideoId(url);
@@ -3243,6 +3939,127 @@ class YTLiveMusicApp {
       webpage_url: url,
       url
     };
+  }
+
+  async fetchMappedMusicPreview(rawUrl, { page = 1, pageSize = 25, match = true } = {}) {
+    const response = await fetch('/api/playlist/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: rawUrl,
+        page,
+        pageSize,
+        match,
+        youtubeConcurrency: this.getSpotifyConcurrency(),
+        spotifyConcurrency: this.getSpotifyConcurrency(),
+        market: this.getCurrentRegion()
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data?.error?.message || this.tt('ytlive.playlist.readFailed', 'Playlist okunamadı.'));
+    }
+    return data;
+  }
+
+  fetchMappedMusicMetadata(rawUrl, { page = 1, pageSize = 25 } = {}) {
+    return this.fetchMappedMusicPreview(rawUrl, {
+      page,
+      pageSize,
+      match: false
+    });
+  }
+
+  getMappedMusicPlaybackType(item = {}, total = 0) {
+    const type = String(item.type || this.getMappedMusicUrlType(item.webpage_url || item.url || '') || '').toLowerCase();
+    if (type === 'album') return 'album';
+    if (type === 'playlist') return 'playlist';
+    return Number(total) > 1 ? 'playlist' : 'track';
+  }
+
+  isMappedMusicItem(item = {}) {
+    return !!this.getMappedMusicSource(item?.webpage_url || item?.url || '');
+  }
+
+  isMappedMusicUrl(rawUrl = '') {
+    return !!this.getMappedMusicSource(rawUrl);
+  }
+
+  getMappedMusicSource(rawUrl = '') {
+    const value = String(rawUrl || '').trim();
+    if (!value) return null;
+    if (/^spotify:(track|album|playlist):[A-Za-z0-9]+$/i.test(value) || /^https?:\/\/open\.spotify\.com\//i.test(value)) {
+      return 'spotify';
+    }
+    if (/^deezer:(track|album|playlist):\d+$/i.test(value) || /^https?:\/\/(?:[^/]+\.)?deezer\.com\//i.test(value) || /^https?:\/\/(?:[^/]+\.)?deezer\.page\.link\//i.test(value)) {
+      return 'deezer';
+    }
+    if (/^https?:\/\/(?:embed\.)?music\.apple\.com\//i.test(value)) {
+      return 'apple_music';
+    }
+    return null;
+  }
+
+  getMappedMusicLabel(source = '') {
+    const value = String(source || '').toLowerCase();
+    if (value === 'apple_music') return 'Apple Music';
+    if (value === 'deezer') return 'Deezer';
+    return 'Spotify';
+  }
+
+  getMappedMusicFallbackTitle(source = '', type = '') {
+    const label = this.getMappedMusicLabel(source);
+    const kind = String(type || '').toLowerCase();
+    if (kind === 'track') return `${label} ${this.tt('ytlive.type.track', 'Tek parça')}`;
+    if (kind === 'album') return `${label} ${this.tt('ytlive.type.album', 'Albüm')}`;
+    return `${label} ${this.tt('ytlive.type.playlist', 'Çalma listesi')}`;
+  }
+
+  getMappedMusicUrlType(rawUrl = '') {
+    const value = String(rawUrl || '').trim();
+    let match = value.match(/^spotify:(track|album|playlist):[A-Za-z0-9]+$/i) ||
+      value.match(/open\.spotify\.com\/(?:intl-[a-z]{2}(?:-[a-z]{2})?\/)?(track|album|playlist)\//i) ||
+      value.match(/^deezer:(track|album|playlist):\d+$/i);
+    if (match) return match[1].toLowerCase();
+
+    try {
+      const parsed = new URL(value);
+      const host = parsed.hostname.toLowerCase();
+      const parts = parsed.pathname.split('/').filter(Boolean).map((part) => part.toLowerCase());
+
+      if (host.includes('deezer.com')) {
+        const type = parts.find((part) => ['track', 'album', 'playlist'].includes(part));
+        if (type) return type;
+      }
+
+      if (host === 'music.apple.com' || host === 'embed.music.apple.com') {
+        const appleType = parts[1] || '';
+        if (appleType === 'song' || parsed.searchParams.has('i')) return 'track';
+        if (appleType === 'album') return 'album';
+        if (appleType === 'playlist') return 'playlist';
+      }
+    } catch {}
+
+    return 'playlist';
+  }
+
+  getMappedMusicEntityId(rawUrl = '') {
+    const value = String(rawUrl || '').trim();
+    const uriMatch = value.match(/^(?:spotify|deezer):(track|album|playlist):([A-Za-z0-9]+)$/i);
+    if (uriMatch) return uriMatch[2];
+
+    try {
+      const parsed = new URL(value);
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      const type = this.getMappedMusicUrlType(value);
+      if (type === 'track' && parsed.hostname.toLowerCase().includes('apple.com')) {
+        return parsed.searchParams.get('i') || parts[parts.length - 1] || '';
+      }
+      const typeIndex = parts.findIndex((part) => ['track', 'album', 'playlist'].includes(String(part).toLowerCase()));
+      return typeIndex >= 0 ? (parts[typeIndex + 1] || '') : (parts[parts.length - 1] || '');
+    } catch {
+      return '';
+    }
   }
 
   normalizePlayableUrl(rawUrl, fallbackId = '') {
@@ -3366,6 +4183,8 @@ class YTLiveMusicApp {
   }
 
   getSourceLabel(item) {
+    const provider = item?.sourceProvider || this.getMappedMusicSource(item?.webpage_url || item?.url || '');
+    if (provider) return this.getMappedMusicLabel(provider);
     if (this.isPlaylistLike(item)) return this.tt('ytlive.source.collection', 'Koleksiyon');
     if (String(item?.webpage_url || item?.url || '').includes('music.youtube.com')) return 'YouTube Music';
     return 'YouTube';

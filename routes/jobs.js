@@ -23,7 +23,7 @@ import {
   isDeezerUrl,
   resolveDeezerUrl
 } from "../modules/deezer.js";
-import { idsToMusicUrls, searchYtmBestId } from "../modules/sp.js";
+import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js";
 import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modules/probe.js";
@@ -37,6 +37,10 @@ import {
   resolveRingtoneOutputFormat,
   resolveRingtoneSampleRate
 } from "../modules/ringtone.js";
+import {
+  parseConcurrency,
+  resolveSpotifyConcurrency
+} from "../modules/concurrency.js";
 import {
   isYtMusicAlbumContext,
   normalizeYtMusicAlbumEntry,
@@ -1133,11 +1137,15 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
       }
     }
 
-    const parsedYoutubeConc = Number(youtubeConcurrency);
-    const youtubeConcurrencyNormalized =
-      Number.isFinite(parsedYoutubeConc) && parsedYoutubeConc > 0
-        ? Math.min(16, Math.max(1, Math.round(parsedYoutubeConc)))
-        : 4;
+    const youtubeConcurrencyInput =
+      youtubeConcurrency != null && youtubeConcurrency !== ""
+        ? youtubeConcurrency
+        : spotifyConcurrency;
+    const youtubeConcurrencyNormalized = parseConcurrency(youtubeConcurrencyInput, 4);
+    const spotifyConcurrencyNormalized = resolveSpotifyConcurrency(
+      spotifyConcurrency,
+      youtubeConcurrency
+    );
 
     console.log("🎛️ UI youtubeConcurrency:", youtubeConcurrency);
     console.log("🎛️ Normalized concurrency:", youtubeConcurrencyNormalized);
@@ -1288,22 +1296,40 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
             ? sel.map(i => all[i-1]).filter(Boolean)
             : all;
 
-          const ids = [];
-          const frozen = [];
-          for (let i = 0; i < itemsToUse.length; i++) {
-            const it = itemsToUse[i];
-            const vid = await searchYtmBestId(it.artist, it.title);
-            if (!vid) continue;
-            ids.push(vid);
-            frozen.push({
-              index: (sel && sel !== "all") ? sel[i] : (i+1),
-              id: vid,
-              title: it.title,
-              uploader: it.artist,
-              webpage_url: `https://music.youtube.com/watch?v=${vid}`,
-              thumbnails: []
-            });
-          }
+          const idsByIndex = [];
+          const frozenByIndex = [];
+          const mapConcurrency = resolveSpotifyConcurrency(
+            spotifyConcurrency,
+            youtubeConcurrency
+          );
+          const selectedOriginalIndexes = itemsToUse.map((_, i) =>
+            (sel && sel !== "all") ? sel[i] : (i + 1)
+          );
+
+          await mapMappedMusicWithCache(
+            { ...sp, items: itemsToUse },
+            {
+              url,
+              source: musicSource,
+              concurrency: mapConcurrency,
+              replaceManifest: !(sel && sel !== "all"),
+              onUpdate: (idx, item) => {
+                if (!item?.id) return;
+                idsByIndex[idx] = item.id;
+                frozenByIndex[idx] = {
+                  index: selectedOriginalIndexes[idx] || (idx + 1),
+                  id: item.id,
+                  title: item.title,
+                  uploader: item.uploader,
+                  webpage_url: item.webpage_url,
+                  thumbnails: []
+                };
+              }
+            }
+          );
+
+          const ids = idsByIndex.filter(Boolean);
+          const frozen = frozenByIndex.filter(Boolean);
 
           if (!ids.length) return sendError(res, ERR.PREVIEW_FAILED, "No music matches found", 400);
 
@@ -1452,9 +1478,7 @@ router.post("/api/jobs", upload.single("file"), async (req, res) => {
         ...metadata,
         includeLyrics: includeLyricsFlag,
         embedLyrics: embedLyricsFlag,
-        spotifyConcurrency: (Number.isFinite(Number(spotifyConcurrency)) && Number(spotifyConcurrency) > 0)
-        ? Math.min(16, Math.max(1, Math.round(Number(spotifyConcurrency))))
-        : undefined,
+        spotifyConcurrency: spotifyConcurrencyNormalized,
         stereoConvert: stereoConvert,
         atempoAdjust: atempoAdjust,
         compressionLevel: normalizedCompressionLevel,

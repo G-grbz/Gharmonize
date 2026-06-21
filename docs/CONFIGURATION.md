@@ -256,6 +256,8 @@ Enable extra debug logging related to market selection and fallbacks.
 SPOTIFY_DEBUG_MARKET=1
 ```
 
+Spotify, Apple Music, and Deezer matching/download concurrency is controlled from the UI with the max concurrent downloads/conversions field.
+
 ### `PREFER_SPOTIFY_TAGS`
 When writing tags (ID3, etc.), prefer metadata coming from Spotify.
 

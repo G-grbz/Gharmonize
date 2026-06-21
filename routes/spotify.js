@@ -3,7 +3,8 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { sendOk, sendError, uniqueId } from "../modules/utils.js";
-import { idsToMusicUrls, mapSpotifyToYtm, createDownloadQueue } from "../modules/sp.js";
+import { createDownloadQueue } from "../modules/sp.js";
+import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
 import {
   isSpotifyUrl,
   resolveSpotifyUrl,
@@ -42,6 +43,9 @@ import {
   resolveRingtoneOutputFormat,
   resolveRingtoneSampleRate
 } from "../modules/ringtone.js";
+import {
+  resolveSpotifyConcurrency
+} from "../modules/concurrency.js";
 
 const router = express.Router();
 
@@ -112,13 +116,6 @@ async function resolveCoverForRetag({
 function makeBgToken() {
   try { return crypto.randomBytes(8).toString("hex"); }
   catch { return String(Date.now()); }
-}
-
-// Parses concurrency for Spotify mapping and metadata flow.
-function parseConcurrency(v, fallback = 4) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.min(16, Math.max(1, Math.round(n)));
 }
 
 // Formats fps text for live conversion logs in Spotify mapping and metadata flow.
@@ -329,10 +326,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
     const source = musicSourceFromUrl(url);
     const sourceLabel = musicSourceLabel(source);
 
-    const effectiveSpotifyConcurrency = parseConcurrency(
-      spotifyConcurrency,
-      parseConcurrency(process.env.SPOTIFY_CONCURRENCY || 4, 4)
-    );
+    const effectiveSpotifyConcurrency = resolveSpotifyConcurrency(spotifyConcurrency);
 
     console.log('[music-match] effectiveSpotifyConcurrency =', {
       effectiveSpotifyConcurrency
@@ -529,7 +523,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       1,
       Math.min(
         16,
-        Number(job.metadata?.spotifyConcurrency || process.env.SPOTIFY_CONCURRENCY || 4)
+        resolveSpotifyConcurrency(job.metadata?.spotifyConcurrency)
       )
     );
 
@@ -896,9 +890,14 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           }
         })
       : null;
-    await mapSpotifyToYtm(
+    await mapMappedMusicWithCache(
       sp,
-      (idx, item) => {
+      {
+        url: job.metadata?.spotifyUrl || "",
+        source,
+        concurrency: parallel,
+        shouldCancel,
+        onUpdate: (idx, item) => {
         if (shouldCancel()) return;
 
         job.progress = 5 + Math.floor(((idx + 1) / totalItems) * 25);
@@ -909,14 +908,14 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         if (item.id) {
           matchedCount++;
           matchedLogicalIndices.add(idx);
-          job.metadata.selectedIds.push(item.id);
-          job.metadata.frozenEntries.push({
+          job.metadata.selectedIds[idx] = item.id;
+          job.metadata.frozenEntries[idx] = {
             index: item.index,
             id: item.id,
             title: item.title,
             uploader: item.uploader,
             webpage_url: item.webpage_url
-          });
+          };
 
           if (dlQueue) {
             dlQueue.enqueue(
@@ -932,9 +931,6 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           }
         }
       },
-      {
-        concurrency: parallel,
-        shouldCancel,
         onLog: (payload) => {
           const { logKey, logVars, fallback } =
             (typeof payload === 'string')
@@ -949,6 +945,9 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     );
 
     if (shouldCancel()) { throw new Error("CANCELED"); }
+
+    job.metadata.selectedIds = (job.metadata.selectedIds || []).filter(Boolean);
+    job.metadata.frozenEntries = (job.metadata.frozenEntries || []).filter(Boolean);
 
     if (matchedCount === 0) {
       throw new Error("No matching tracks found");
@@ -1120,7 +1119,12 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       return !!(j && (j.canceled || j.status === "canceled"));
     };
 
-    await mapSpotifyToYtm(sp, (idx, item) => {
+    await mapMappedMusicWithCache(sp, {
+      url: job.metadata?.spotifyUrl || "",
+      source,
+      concurrency: 1,
+      shouldCancel,
+      onUpdate: (_idx, item) => {
       if (shouldCancel()) return;
       if (item.id) {
         matchedItem = item;
@@ -1133,9 +1137,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
           webpage_url: item.webpage_url
         }];
       }
-    }, {
-      concurrency: 1,
-      shouldCancel,
+    },
       onLog: (payload) => {
         const { logKey, logVars, fallback } = (typeof payload === 'string')
           ? { logKey: null, logVars: null, fallback: payload }
@@ -1475,6 +1477,11 @@ router.post("/api/spotify/preview/start", async (req, res) => {
 
     const source = musicSourceFromUrl(url);
     const sourceLabel = musicSourceLabel(source);
+    const effectiveMapConcurrency = resolveSpotifyConcurrency(
+      req.body?.spotifyConcurrency,
+      req.body?.youtubeConcurrency,
+      req.body?.concurrency
+    );
 
     let sp;
     try {
@@ -1508,26 +1515,31 @@ router.post("/api/spotify/preview/start", async (req, res) => {
     };
     spotifyMapTasks.set(id, task);
 
-    mapSpotifyToYtm(sp, (idx, item) => {
-      task.items[idx] = item;
-      task.done++;
-      if (item.id) task.validItems.push(item);
-    }, {
-      concurrency: Number(process.env.SPOTIFY_MAP_CONCURRENCY || 3),
+    mapMappedMusicWithCache(sp, {
+      url,
+      source,
+      concurrency: effectiveMapConcurrency,
+      onUpdate: (idx, item) => {
+        task.items[idx] = item;
+        task.done++;
+        if (item?.id) task.validItems.push(item);
+      },
       onLog: (log) => { task.logs.push({ time: new Date(), message: log }); console.log(`[music-match ${id}] ${log}`); }
-    }).then(() => {
+    }).then((result) => {
       task.status = "completed";
-      if (task.validItems.length > 0) {
-        const urls = idsToMusicUrls(task.validItems.map(i => i.id));
-        fs.mkdirSync(TEMP_DIR, { recursive: true });
-        const listFile = path.join(TEMP_DIR, `${task.id}.urls.txt`);
-        fs.writeFileSync(listFile, urls.join("\n"), "utf8");
-        task.urlListFile = listFile;
-        console.log(`✅ ${sourceLabel} URL list created: ${listFile}`);
-      }
+      task.validItems = (task.items || []).filter((item) => item?.id);
+      task.cache = {
+        sourceKey: result.sourceKey,
+        jsonFile: result.jsonFile,
+        urlListFile: result.urlListFile,
+        cacheHits: result.cacheHits,
+        newlyMapped: result.newlyMapped
+      };
+      task.urlListFile = result.urlListFile;
+      console.log(`✅ ${sourceLabel} URL list ready: ${result.urlListFile}`);
     }).catch((e) => { task.status = "error"; task.error = e.message; });
 
-    return sendOk(res, { mapId: id, title: task.title, total: task.total, source });
+    return sendOk(res, { mapId: id, title: task.title, total: task.total, source, concurrency: effectiveMapConcurrency });
   } catch (e) {
     return sendError(res, 'PREVIEW_FAILED', e.message || "Music matching start error", 400);
   }
@@ -1541,9 +1553,19 @@ router.get("/api/spotify/preview/stream/:id", (req, res) => {
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
   send({ type: "init", title: task.title, total: task.total, done: task.done, items: task.items || [] });
-  let lastSent = task.items.length;
+  const sentItems = new Set();
+  (task.items || []).forEach((item, index) => {
+    if (item) sentItems.add(index);
+  });
+  const sendPendingItems = () => {
+    (task.items || []).forEach((item, index) => {
+      if (!item || sentItems.has(index)) return;
+      send({ type: "item", item });
+      sentItems.add(index);
+    });
+  };
   const interval = setInterval(() => {
-    while (lastSent < task.items.length) { const item = task.items[lastSent]; if (item) send({ type: "item", item }); lastSent++; }
+    sendPendingItems();
     send({ type: "progress", done: task.done, total: task.total, status: task.status });
     if (task.status === "completed" || task.status === "error") { send({ type: "done", status: task.status, error: task.error || null }); clearInterval(interval); res.end(); }
   }, 800);
@@ -1558,19 +1580,25 @@ router.get("/api/spotify/preview/stream-logs/:id", (req, res) => {
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
   send({ type: "init", title: task.title, total: task.total, done: task.done, items: task.items || [] });
-  let lastSent = task.items.length;
-  const interval = setInterval(() => {
-    while (lastSent < task.items.length) {
-      const item = task.items[lastSent];
-      if (item) send({
+  const sentItems = new Set();
+  (task.items || []).forEach((item, index) => {
+    if (item) sentItems.add(index);
+  });
+  const sendPendingItems = () => {
+    (task.items || []).forEach((item, index) => {
+      if (!item || sentItems.has(index)) return;
+      send({
         type: "item",
         item,
         logKey: "log.matchFound",
         logVars: { artist: item.uploader, title: item.title },
         log: `✅ Match found: ${item.uploader} - ${item.title}`
       });
-      lastSent++;
-    }
+      sentItems.add(index);
+    });
+  };
+  const interval = setInterval(() => {
+    sendPendingItems();
     send({ type: "progress", done: task.done, total: task.total, status: task.status });
     if (task.status === "completed" || task.status === "error") {
       send({
