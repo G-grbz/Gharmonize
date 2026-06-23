@@ -646,6 +646,36 @@ function processEntry(entry, index, parentMeta = null) {
     artist: toNFC(normalizedEntry?.artist || normalizedEntry?.uploader || ""),
     album: toNFC(normalizedEntry?.album || ""),
     album_artist: toNFC(normalizedEntry?.album_artist || albumArtist || normalizedEntry?.artist || ""),
+    release_year: String(
+      normalizedEntry?.release_year ||
+      (normalizedEntry?.release_date ? String(normalizedEntry.release_date).slice(0, 4) : "") ||
+      ""
+    ),
+    upload_year: String(
+      normalizedEntry?.upload_year ||
+      (normalizedEntry?.upload_date ? String(normalizedEntry.upload_date).slice(0, 4) : "") ||
+      ""
+    ),
+    track_number: Number.isFinite(Number(normalizedEntry?.track_number)) && Number(normalizedEntry.track_number) > 0
+      ? Number(normalizedEntry.track_number)
+      : null,
+    track_total: Number.isFinite(Number(normalizedEntry?.track_total)) && Number(normalizedEntry.track_total) > 0
+      ? Number(normalizedEntry.track_total)
+      : null,
+    disc_number: Number.isFinite(Number(normalizedEntry?.disc_number)) && Number(normalizedEntry.disc_number) > 0
+      ? Number(normalizedEntry.disc_number)
+      : null,
+    disc_total: Number.isFinite(Number(normalizedEntry?.disc_total)) && Number(normalizedEntry.disc_total) > 0
+      ? Number(normalizedEntry.disc_total)
+      : null,
+    genre: toNFC(
+      normalizedEntry?.genre ||
+      (Array.isArray(normalizedEntry?.categories) ? normalizedEntry.categories[0] : "") ||
+      ""
+    ),
+    isrc: String(normalizedEntry?.isrc || ""),
+    channel_id: String(normalizedEntry?.channel_id || entry?.channel_id || ""),
+    view_count: Number.isFinite(Number(normalizedEntry?.view_count)) ? Number(normalizedEntry.view_count) : null,
     webpage_url: resolvedUrl,
     thumbnail: (Array.isArray(entry?.thumbnails) && entry.thumbnails.length ?
       entry.thumbnails.at(-1).url :

@@ -38,6 +38,8 @@ const ALLOWED_KEYS = [
   'TRACK_EXTRACTOR_SHELL_INTEGRATION',
   'FRONTEND_UI',
   'YOUTUBE_QUICK_ADD_LIMIT',
+  'YTLIVE_MUSIC_TITLE',
+  'YTLIVE_MUSIC_SUBTITLE',
   'SPOTIFY_DEBUG_MARKET',
   'CLEAN_SUFFIXES',
   'CLEAN_PHRASES',
@@ -191,8 +193,10 @@ router.get('/ui-config', (_req, res) => {
     Number.isFinite(quickAddRaw) && quickAddRaw > 0
       ? Math.min(100, Math.max(1, Math.round(quickAddRaw)))
       : 25
+  const musicTitle = getEnv('YTLIVE_MUSIC_TITLE') || 'Gharmonize Music'
+  const musicSubtitle = getEnv('YTLIVE_MUSIC_SUBTITLE')
 
-  res.json({ frontendUi, quickAddLimit })
+  res.json({ frontendUi, quickAddLimit, musicTitle, musicSubtitle })
 })
 
 router.get('/auth/verify', authMiddleware, (req, res) => {

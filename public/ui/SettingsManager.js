@@ -175,6 +175,45 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
+                    <label
+                        for="f_YTLIVE_MUSIC_TITLE"
+                        class="settings-field-label">YTLIVE_MUSIC_TITLE</label>
+
+                    <div
+                        class="settings-field-hint muted"
+                        data-i18n="settings.ytliveMusicTitle">
+                        YTLive oynatıcı boş durumunda gösterilecek ana başlık. Boş bırakılırsa “Gharmonize Music” kullanılır.
+                    </div>
+
+                    <input
+                        id="f_YTLIVE_MUSIC_TITLE"
+                        type="text"
+                        maxlength="120"
+                        placeholder="Gharmonize Music"
+                        data-i18n-ph="ph.ytliveMusicTitle">
+                </div>
+
+                <div class="form-group">
+                    <label
+                        for="f_YTLIVE_MUSIC_SUBTITLE"
+                        class="settings-field-label"
+                    >YTLIVE_MUSIC_SUBTITLE</label>
+
+                    <div
+                        class="settings-field-hint muted"
+                        data-i18n="settings.ytliveMusicSubtitle">
+                        Ana başlığın altında gösterilecek açıklama. Boş bırakılırsa seçili dilin varsayılan açıklaması kullanılır.
+                    </div>
+
+                    <input
+                        id="f_YTLIVE_MUSIC_SUBTITLE"
+                        type="text"
+                        maxlength="300"
+                        placeholder="YouTube içeriklerini ara, oynat ve dönüşüm kuyruğuna ekle."
+                        data-i18n-ph="ph.ytliveMusicSubtitle">
+                </div>
+
+                <div class="form-group">
                 <label for="f_TRACK_EXTRACTOR_SHELL_INTEGRATION" class="settings-field-label">TRACK_EXTRACTOR_SHELL_INTEGRATION</label>
                 <div class="settings-field-hint muted" data-i18n="settings.trackExtractorShellIntegration"></div>
                 <select id="f_TRACK_EXTRACTOR_SHELL_INTEGRATION">
@@ -838,6 +877,8 @@ export class SettingsManager {
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
             document.getElementById('f_FRONTEND_UI').value = s.FRONTEND_UI === 'ytlive' ? 'ytlive' : 'classic';
             document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value = s.YOUTUBE_QUICK_ADD_LIMIT || '25';
+            document.getElementById('f_YTLIVE_MUSIC_TITLE').value = s.YTLIVE_MUSIC_TITLE || '';
+            document.getElementById('f_YTLIVE_MUSIC_SUBTITLE').value = s.YTLIVE_MUSIC_SUBTITLE || '';
             document.getElementById('f_TRACK_EXTRACTOR_SHELL_INTEGRATION').value = (typeof s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== 'undefined' && s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== null && s.TRACK_EXTRACTOR_SHELL_INTEGRATION !== '')
                 ? String(s.TRACK_EXTRACTOR_SHELL_INTEGRATION)
                 : '1';
@@ -896,6 +937,8 @@ export class SettingsManager {
                 UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
                 FRONTEND_UI: document.getElementById('f_FRONTEND_UI').value,
                 YOUTUBE_QUICK_ADD_LIMIT: document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value.trim(),
+                YTLIVE_MUSIC_TITLE: document.getElementById('f_YTLIVE_MUSIC_TITLE').value.trim(),
+                YTLIVE_MUSIC_SUBTITLE: document.getElementById('f_YTLIVE_MUSIC_SUBTITLE').value.trim(),
                 TRACK_EXTRACTOR_SHELL_INTEGRATION: document.getElementById('f_TRACK_EXTRACTOR_SHELL_INTEGRATION').value,
                 PREVIEW_MAX_ENTRIES: document.getElementById('f_PREVIEW_MAX_ENTRIES').value.trim(),
                 AUTOMIX_ALL_TIMEOUT_MS: document.getElementById('f_AUTOMIX_ALL_TIMEOUT_MS').value.trim(),
@@ -931,6 +974,8 @@ export class SettingsManager {
                 const e = await r.json().catch(() => ({}));
                 throw new Error(e?.error?.message || this.t('errors.saveFailed'));
             }
+
+            await window.app?.reloadUiConfig?.();
 
             modalManager.showAlert({
                 title: this.t('settings.title') || 'Ayarlar',

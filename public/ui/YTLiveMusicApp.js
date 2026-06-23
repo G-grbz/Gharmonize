@@ -5,6 +5,8 @@ class YTLiveMusicApp {
     this.results = [];
     this.currentItem = null;
     this.quickAddLimit = 25;
+    this.musicTitle = 'Gharmonize Music';
+    this.musicSubtitle = '';
     this.resultLoadLimit = 18;
     this.formats = [];
     this.jobs = new Map();
@@ -55,7 +57,7 @@ class YTLiveMusicApp {
     this.outputSettings = this.loadOutputSettings();
     this.musicHomeShelfCount = this.loadMusicHomeShelfCount();
     this.collapsibleState = this.loadCollapsibleState();
-    this.collapsiblePanels = ['downloadListsPanel', 'playlistTracksPanel', 'discover'];
+    this.collapsiblePanels = ['downloadListsPanel', 'playlistTracksPanel', 'musicHomeSection', 'discover'];
     this.downloadLists = [];
     this.activeDownloadListMenu = null;
     this.presetCounters = new Map();
@@ -84,7 +86,8 @@ class YTLiveMusicApp {
 
     window.app = {
       showNotification: (message, type = 'info') => this.notify(message, type),
-      t: (key, vars) => this.t(key, vars)
+      t: (key, vars) => this.t(key, vars),
+      reloadUiConfig: () => this.loadUiConfig()
     };
     window.versionManager = window.versionManager || {
       checkNow: () => this.notify(this.tt('ytlive.version.classicOnly', 'Güncelleme kontrolü klasik UI içinde kullanılabilir.'), 'info')
@@ -175,6 +178,7 @@ class YTLiveMusicApp {
     document.getElementById('discover')?.addEventListener('click', (event) => this.handleSearchTypeClick(event));
     document.getElementById('musicHomeSection')?.addEventListener('click', (event) => this.handleMusicHomeInteraction(event));
     document.getElementById('playlistTracksPanel')?.addEventListener('click', (event) => this.handlePlaylistTrackInteraction(event));
+    document.getElementById('playlistTracksPanel')?.addEventListener('keydown', (event) => this.handlePlaylistTrackKeyInteraction(event));
     document.getElementById('downloadListsPanel')?.addEventListener('click', (event) => this.handleDownloadListPanelInteraction(event));
     this.setupInfiniteScroll();
     document.addEventListener('error', (event) => this.handleThumbnailError(event), true);
@@ -189,9 +193,31 @@ class YTLiveMusicApp {
       if (Number.isFinite(limit) && limit > 0) {
         this.quickAddLimit = Math.max(1, Math.min(100, Math.round(limit)));
       }
+      this.musicTitle = String(data.musicTitle || '').trim() || 'Gharmonize Music';
+      this.musicSubtitle = String(data.musicSubtitle || '').trim();
+      this.applyConfiguredNowPanel();
     } catch (error) {
       console.warn('UI config could not be loaded:', error);
     }
+  }
+
+  getConfiguredNowTitle() {
+    return this.musicTitle || 'Gharmonize Music';
+  }
+
+  getConfiguredNowSubtitle() {
+    return this.musicSubtitle || this.tt(
+      'ytlive.now.subtitle',
+      'YouTube içeriklerini ara, oynat ve dönüşüm kuyruğuna ekle.'
+    );
+  }
+
+  applyConfiguredNowPanel() {
+    if (this.currentItem || this.activeCollection) return;
+    const title = document.getElementById('nowTitle');
+    const subtitle = document.getElementById('nowSubtitle');
+    if (title) title.textContent = this.getConfiguredNowTitle();
+    if (subtitle) subtitle.textContent = this.getConfiguredNowSubtitle();
   }
 
   loadMusicHomeShelfCount() {
@@ -1083,6 +1109,18 @@ class YTLiveMusicApp {
     this.playPlaylistTrackAt(index);
   }
 
+  handlePlaylistTrackKeyInteraction(event) {
+    if (!['Enter', ' '].includes(event.key)) return;
+    if (event.target.closest('button,a,input,select,textarea')) return;
+
+    const row = event.target.closest('.playlist-track[data-index]');
+    const panel = document.getElementById('playlistTracksPanel');
+    if (!row || !panel?.contains(row)) return;
+
+    event.preventDefault();
+    this.playPlaylistTrackAt(Number(row.dataset.index));
+  }
+
   async loadPlaylistTracks(rawItem, { autoplayFirst = false, silent = false } = {}) {
     const item = this.normalizeItem(rawItem);
     const panel = document.getElementById('playlistTracksPanel');
@@ -1228,34 +1266,133 @@ class YTLiveMusicApp {
 
     const downloadTitle = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
     const listTitle = this.escapeHtml(this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle'));
+    const playTitle = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
+    const playingTitle = this.escapeHtml(this.tt('ytlive.playlist.playing', 'Çalıyor'));
+    const trackLabel = this.escapeHtml(this.tt('ytlive.type.track', 'Tek parça'));
     const activeIndex = Number(this.activeCollection?.currentIndex);
+    const displayTotal = Math.max(Number(total) || 0, count);
+
     list.innerHTML = this.playlistTracks.map((track, index) => {
-      const trackTitle = this.escapeHtml(track.title || this.tt('ytlive.playlist.trackFallback', 'Parça {index}', { index: index + 1 }));
-      const uploader = this.escapeHtml(track.uploader || 'YouTube');
+      const isActive = activeIndex === index;
+      const rawTitle = track.title || this.tt('ytlive.playlist.trackFallback', 'Parça {index}', { index: index + 1 });
+      const rawArtist = track.artist || track.album_artist || track.uploader || 'YouTube';
+      const trackTitle = this.escapeHtml(rawTitle);
+      const artist = this.escapeHtml(rawArtist);
       const duration = this.escapeHtml(track.duration_string || (track.duration ? this.formatSeconds(track.duration) : ''));
       const thumbImage = this.renderThumbnailImage(track, {
         className: 'playlist-track__image',
-        sizes: '58px'
+        sizes: '(max-width: 560px) 70px, 88px'
       });
-      const initials = this.escapeHtml(this.getTitleInitials(track.title || uploader || 'YT'));
-      const activeClass = activeIndex === index ? ' is-active' : '';
+      const initials = this.escapeHtml(this.getTitleInitials(rawTitle || rawArtist || 'YT'));
+      const activeClass = isActive ? ' is-active' : '';
+      const rowNumber = String(index + 1).padStart(2, '0');
+      const sourceLabelRaw = this.getSourceLabel(track);
+      const sourceLabel = this.escapeHtml(sourceLabelRaw);
+      const sourceCode = this.escapeHtml(this.getPlaylistTrackSourceCode(track));
+      const metaChips = this.renderPlaylistTrackMeta(track, index);
+      const rowTitle = this.escapeHtml([
+        rawTitle,
+        rawArtist,
+        track.album,
+        duration
+      ].filter(Boolean).join(' • '));
 
       return `
-        <article class="playlist-track${activeClass}" data-action="playlist-play" data-index="${index}">
-          <div class="playlist-track__index">${index + 1}</div>
-          <div class="playlist-track__thumb ${thumbImage ? '' : 'playlist-track__thumb--fallback'}">
-            ${thumbImage || initials}
+        <article class="playlist-track${activeClass}" data-action="playlist-play" data-index="${index}"
+          tabindex="0" aria-current="${isActive ? 'true' : 'false'}" aria-label="${rowTitle}" title="${rowTitle}">
+          <div class="playlist-track__lead" aria-hidden="true">
+            <span class="playlist-track__index">${rowNumber}</span>
+            <span class="playlist-track__play-state">
+              ${isActive
+                ? '<span class="playlist-track__equalizer"><i></i><i></i><i></i></span>'
+                : '<svg viewBox="0 0 24 24" focusable="false"><path d="M8 5.8v12.4L18 12 8 5.8Z" fill="currentColor"/></svg>'}
+            </span>
           </div>
+
+          <div class="playlist-track__thumb ${thumbImage ? '' : 'playlist-track__thumb--fallback'}">
+            ${thumbImage || `<span class="playlist-track__initials">${initials}</span>`}
+            <span class="playlist-track__source-code" title="${sourceLabel}">${sourceCode}</span>
+            ${duration ? `<span class="playlist-track__duration-badge">${duration}</span>` : ''}
+          </div>
+
+          <div class="playlist-track__eyebrow">
+            ${isActive ? `<span class="playlist-track__playing-pill">${playingTitle}</span>` : ''}
+            <span>${trackLabel}</span>
+            <span aria-hidden="true">•</span>
+            <span>${sourceLabel}</span>
+          </div>
+
           <div class="playlist-track__copy">
             <h3>${trackTitle}</h3>
-            <p>${uploader}</p>
+            <p class="playlist-track__artist">${artist}</p>
+            ${metaChips ? `<div class="playlist-track__meta">${metaChips}</div>` : ''}
           </div>
-          ${duration ? `<div class="playlist-track__duration">${duration}</div>` : ''}
-          <button class="playlist-track__download" type="button" data-action="playlist-download" data-index="${index}" title="${downloadTitle}" aria-label="${downloadTitle}">${this.renderDownloadIcon()}</button>
-          <button class="playlist-track__add" type="button" data-action="playlist-list-menu" data-index="${index}" title="${listTitle}" aria-label="${listTitle}">+</button>
+
+          <div class="playlist-track__stats" aria-label="${this.escapeHtml(this.tt('ytlive.playlist.trackInfo', 'Parça bilgisi'))}">
+            <strong>${duration || '—:—'}</strong>
+            <span>${index + 1} / ${displayTotal}</span>
+          </div>
+
+          <div class="playlist-track__actions">
+            <button class="playlist-track__play" type="button" data-action="playlist-play" data-index="${index}"
+              title="${isActive ? playingTitle : playTitle}" aria-label="${isActive ? playingTitle : playTitle}">
+              ${isActive
+                ? '<span class="playlist-track__equalizer"><i></i><i></i><i></i></span>'
+                : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.8v12.4L18 12 8 5.8Z" fill="currentColor"/></svg>'}
+            </button>
+            <button class="playlist-track__download" type="button" data-action="playlist-download" data-index="${index}"
+              title="${downloadTitle}" aria-label="${downloadTitle}">${this.renderDownloadIcon()}</button>
+            <button class="playlist-track__add" type="button" data-action="playlist-list-menu" data-index="${index}"
+              title="${listTitle}" aria-label="${listTitle}">+</button>
+          </div>
         </article>
       `;
     }).join('');
+  }
+
+  renderPlaylistTrackMeta(track = {}, index = 0) {
+    const values = [];
+    const album = String(track.album || '').trim();
+    const albumArtist = String(track.album_artist || '').trim();
+    const year = String(track.release_year || track.upload_year || '').trim();
+    const genre = String(track.genre || '').trim();
+    const trackNumber = Number(track.track_number);
+    const trackTotal = Number(track.track_total);
+
+    if (album) {
+      values.push({ icon: 'album', label: this.tt('ytlive.type.album', 'Albüm'), value: album });
+    } else if (albumArtist && albumArtist !== track.artist && albumArtist !== track.uploader) {
+      values.push({ icon: 'artist', label: this.tt('ytlive.playlist.albumArtist', 'Albüm sanatçısı'), value: albumArtist });
+    }
+
+    if (Number.isFinite(trackNumber) && trackNumber > 0) {
+      const numberValue = Number.isFinite(trackTotal) && trackTotal > 0
+        ? `${trackNumber}/${trackTotal}`
+        : String(trackNumber);
+      values.push({ icon: 'track', label: this.tt('ytlive.playlist.trackNumber', 'Parça no'), value: numberValue });
+    }
+
+    if (year) values.push({ icon: 'year', label: this.tt('ytlive.playlist.year', 'Yıl'), value: year });
+    if (genre) values.push({ icon: 'genre', label: this.tt('ytlive.playlist.genre', 'Tür'), value: genre });
+
+    if (!values.length && track.id) {
+      values.push({ icon: 'id', label: 'YouTube ID', value: String(track.id) });
+    }
+
+    return values.slice(0, 4).map(({ icon, label, value }) => `
+      <span class="playlist-track__meta-chip playlist-track__meta-chip--${icon}" title="${this.escapeHtml(`${label}: ${value}`)}">
+        <span>${this.escapeHtml(value)}</span>
+      </span>
+    `).join('');
+  }
+
+  getPlaylistTrackSourceCode(track = {}) {
+    const provider = track.sourceProvider || this.getMappedMusicSource(track.webpage_url || track.url || '');
+    if (provider === 'spotify') return 'SP';
+    if (provider === 'apple_music') return 'AM';
+    if (provider === 'deezer') return 'DZ';
+    if (String(track.webpage_url || track.url || '').includes('music.youtube.com')) return 'YTM';
+    return 'YT';
   }
 
   clearPlaylistTracks() {
@@ -2099,9 +2236,9 @@ class YTLiveMusicApp {
     );
 
     document.getElementById('nowType').textContent = 'YouTube';
-    document.getElementById('nowTitle').textContent = 'Gharmonize Music';
+    document.getElementById('nowTitle').textContent = this.getConfiguredNowTitle();
     document.getElementById('nowSubtitle').textContent =
-      subtitle || this.tt('ytlive.now.subtitle', 'YouTube içeriklerini ara, oynat ve dönüşüm kuyruğuna ekle.');
+      subtitle || this.getConfiguredNowSubtitle();
 
     const addCurrent = document.getElementById('addCurrentBtn');
     if (addCurrent) addCurrent.disabled = true;
@@ -4169,6 +4306,17 @@ class YTLiveMusicApp {
       uploader: entry.uploader || entry.artist || entry.channel || '',
       artist: entry.artist || entry.uploader || entry.channel || '',
       album: entry.album || '',
+      album_artist: entry.album_artist || entry.albumArtist || '',
+      release_year: entry.release_year || (entry.release_date ? String(entry.release_date).slice(0, 4) : ''),
+      upload_year: entry.upload_year || (entry.upload_date ? String(entry.upload_date).slice(0, 4) : ''),
+      track_number: Number.isFinite(Number(entry.track_number)) && Number(entry.track_number) > 0 ? Number(entry.track_number) : null,
+      track_total: Number.isFinite(Number(entry.track_total)) && Number(entry.track_total) > 0 ? Number(entry.track_total) : null,
+      disc_number: Number.isFinite(Number(entry.disc_number)) && Number(entry.disc_number) > 0 ? Number(entry.disc_number) : null,
+      disc_total: Number.isFinite(Number(entry.disc_total)) && Number(entry.disc_total) > 0 ? Number(entry.disc_total) : null,
+      genre: entry.genre || (Array.isArray(entry.categories) ? entry.categories[0] || '' : ''),
+      isrc: entry.isrc || '',
+      channel_id: entry.channel_id || '',
+      view_count: Number.isFinite(Number(entry.view_count)) ? Number(entry.view_count) : null,
       duration,
       duration_ms: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,
       duration_string: entry.duration_string || null,
@@ -4530,8 +4678,10 @@ class YTLiveMusicApp {
     } else if (this.currentItem) {
       document.getElementById('nowType').textContent = this.getItemTypeLabel(this.currentItem);
       if (subtitle) subtitle.textContent = this.currentItem.uploader || this.currentItem.webpage_url || '';
-    } else if (subtitle) {
-      subtitle.textContent = this.tt('ytlive.now.subtitle', 'YouTube içeriklerini ara, oynat ve dönüşüm kuyruğuna ekle.');
+    } else {
+      const title = document.getElementById('nowTitle');
+      if (title) title.textContent = this.getConfiguredNowTitle();
+      if (subtitle) subtitle.textContent = this.getConfiguredNowSubtitle();
     }
   }
 

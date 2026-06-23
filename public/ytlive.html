@@ -52,8 +52,119 @@
         </select>
         <label class="sidebar-label" for="musicHomeShelfCountInput" data-i18n="ytlive.musicHome.shelfCount">Shelf count</label>
         <input id="musicHomeShelfCountInput" class="compact-number" type="number" min="1" max="12" step="1" value="6" />
-        <button id="themeToggle" class="ghost-button" type="button" data-i18n="ytlive.theme">Theme</button>
-        <button id="settingsBtn" class="ghost-button" type="button" data-i18n="settings.title">Settings</button>
+
+        <!-- Yeni container - Theme ve Settings butonları için -->
+        <div class="sidebar-actions-container">
+          <button
+            id="themeToggle"
+            class="ghost-button sidebar-icon-button"
+            type="button"
+            data-i18n-aria="ytlive.theme"
+            data-i18n-title="ytlive.theme"
+            aria-label="Theme"
+            title="Theme"
+          >
+            <svg
+              class="button-icon theme-icon theme-icon--moon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M21 12.79A9 9 0 1 1 11.21 3
+                  7 7 0 0 0 21 12.79Z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+
+            <svg
+              class="button-icon theme-icon theme-icon--sun"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42
+                  M17.66 17.66l1.41 1.41M2 12h2M20 12h2
+                  M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+
+            <span class="button-label" data-i18n="ytlive.theme">Theme</span>
+          </button>
+
+          <button
+            id="settingsBtn"
+            class="ghost-button sidebar-icon-button"
+            type="button"
+            data-i18n-aria="settings.title"
+            data-i18n-title="settings.title"
+            aria-label="Settings"
+            title="Settings"
+          >
+            <svg
+              class="button-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              />
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06
+                  a2 2 0 1 1-2.83 2.83l-.06-.06
+                  a1.65 1.65 0 0 0-1.82-.33
+                  1.65 1.65 0 0 0-1 1.51V21
+                  a2 2 0 1 1-4 0v-.09
+                  a1.65 1.65 0 0 0-1.08-1.5
+                  1.65 1.65 0 0 0-1.82.33l-.06.06
+                  a2 2 0 1 1-2.83-2.83l.06-.06
+                  A1.65 1.65 0 0 0 4.6 15
+                  a1.65 1.65 0 0 0-1.51-1H3
+                  a2 2 0 1 1 0-4h.09
+                  A1.65 1.65 0 0 0 4.6 9
+                  a1.65 1.65 0 0 0-.33-1.82l-.06-.06
+                  a2 2 0 1 1 2.83-2.83l.06.06
+                  A1.65 1.65 0 0 0 9 4.6h.08
+                  A1.65 1.65 0 0 0 10 3.09V3
+                  a2 2 0 1 1 4 0v.09
+                  a1.65 1.65 0 0 0 1 1.51
+                  1.65 1.65 0 0 0 1.82-.33l.06-.06
+                  a2 2 0 1 1 2.83 2.83l-.06.06
+                  A1.65 1.65 0 0 0 19.4 9v.08
+                  A1.65 1.65 0 0 0 20.91 10H21
+                  a2 2 0 1 1 0 4h-.09
+                  A1.65 1.65 0 0 0 19.4 15Z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+
+            <span class="button-label" data-i18n="settings.title">Settings</span>
+          </button>
+        </div>
       </div>
     </aside>
 
@@ -162,24 +273,34 @@
         </div>
       </section>
 
-      <section id="musicHomeSection" class="music-home-section" hidden>
-        <div class="section-header">
+      <section id="musicHomeSection" class="music-home-section collapsible-panel" hidden data-collapsible-panel="musicHomeSection">
+        <div class="section-header collapsible-header" data-collapsible-trigger="musicHomeSection">
           <div>
             <div class="eyebrow">YouTube Music</div>
             <h2 data-i18n="ytlive.musicHome.title">Made for you</h2>
           </div>
-          <button id="refreshMusicHomeBtn" class="ghost-button" type="button" data-i18n="btn.reload">Refresh</button>
+          <div class="section-header__actions">
+            <button id="refreshMusicHomeBtn" class="ghost-button" type="button" data-i18n="btn.reload">Refresh</button>
+            <button class="collapsible-toggle" type="button" data-collapsible-toggle="musicHomeSection" aria-label="Collapse panel"></button>
+          </div>
         </div>
-        <div id="musicHomeStatus" class="status-line"></div>
-        <div id="musicHomeShelves" class="music-home-shelves"></div>
+        <div class="collapsible-body" data-collapsible-body>
+          <div id="musicHomeStatus" class="status-line"></div>
+          <div id="musicHomeShelves" class="music-home-shelves"></div>
+        </div>
       </section>
 
       <section class="content-section collapsible-panel" id="discover" data-collapsible-panel="discover">
         <div class="section-header collapsible-header" data-collapsible-trigger="discover">
-          <div>
-            <div class="eyebrow">YouTube</div>
-            <h2 data-i18n="ytlive.content.title">Content</h2>
+          <!-- Sol taraf: div ve collapsible-toggle'ı bir container'da topladık -->
+          <div class="section-header-left">
+            <div>
+              <div class="eyebrow">YouTube</div>
+              <h2 data-i18n="ytlive.content.title">Content</h2>
+            </div>
+            <button class="collapsible-toggle" type="button" data-collapsible-toggle="discover" aria-label="Collapse panel"></button>
           </div>
+          <!-- Sağ taraf: sadece preset-row -->
           <div class="section-header__actions">
             <div class="preset-row" aria-label="Search presets" data-i18n-aria="ytlive.presets.aria">
               <button class="preset-chip" type="button" data-preset="energizing" data-i18n="ytlive.preset.energizing">Energetic</button>
@@ -193,7 +314,6 @@
               <button class="preset-chip" type="button" data-preset="focus" data-i18n="ytlive.preset.focus">Focus</button>
               <button class="preset-chip" type="button" data-preset="sleep" data-i18n="ytlive.preset.sleep">Sleep</button>
             </div>
-            <button class="collapsible-toggle" type="button" data-collapsible-toggle="discover" aria-label="Collapse panel"></button>
           </div>
         </div>
         <div class="collapsible-body" data-collapsible-body>
