@@ -2037,6 +2037,7 @@ class YTLiveMusicApp {
   async playAutoRandomTrack(currentItem = {}, token = this.youtubePlaybackToken) {
     if (!this.autoPlayMode || this.autoAdvanceInProgress) return false;
     this.autoAdvanceInProgress = true;
+    this.updatePlayerNavigationControls();
 
     try {
       const candidate = await this.findAutoPlayCandidate(currentItem);
@@ -2056,6 +2057,7 @@ class YTLiveMusicApp {
       return true;
     } finally {
       this.autoAdvanceInProgress = false;
+      this.updatePlayerNavigationControls();
     }
   }
 
