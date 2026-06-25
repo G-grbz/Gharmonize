@@ -1,8 +1,8 @@
 <div align="center">
 
-<img width="128" height="128" alt="Gharmonize Logo" src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" />
-
-# Gharmonize
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" alt="logo" width="200" style="background: transparent; display: inline-block;" />
+</p>
 
 https://github.com/user-attachments/assets/4083729e-3db9-4936-ac01-28c0f318aebe
 
