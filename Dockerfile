@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
-FROM node:20-bookworm AS base
+FROM node:22-bookworm AS base
 
 WORKDIR /usr/src/app
+
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN set -eux; \
     apt-get update; \
@@ -21,12 +23,13 @@ COPY package*.json ./
 RUN set -eux; \
     export NPM_CONFIG_LOGLEVEL=warn; \
     export NPM_CONFIG_IGNORE_SCRIPTS=true; \
+    export NPM_CONFIG_UPDATE_NOTIFIER=false; \
     if [ -f package-lock.json ]; then \
       npm ci --omit=dev; \
     else \
       npm install --omit=dev; \
     fi; \
-    npm cache clean --force
+    rm -rf /root/.npm
 
 COPY . .
 
