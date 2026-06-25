@@ -181,7 +181,7 @@
   "ytlive.musicHome.itemCount": "{count} Inhalte",
   "ytlive.musicHome.shelfCount": "Regalanzahl",
   "settings.frontendUi": "Beim Start verwendete Oberfläche: classic = aktuelle UI, YTLive = neue Musikoberfläche.",
-  "settings.youtubeQuickAddLimit": "Anzahl der ersten Titel, die in YTLive über die YouTube-Playlist-Schaltfläche + hinzugefügt werden.",
+  "settings.youtubeQuickAddLimit": "Max. Titel pro Playlist in der YTLive-Oberfläche",
   "settings.ytliveMusicTitle": "Der Haupttitel, der angezeigt wird, wenn der YTLive-Player leer ist. Wenn das Feld leer bleibt, wird „Gharmonize Music“ verwendet.",
   "settings.ytliveMusicSubtitle": "Die Beschreibung, die unter dem Haupttitel angezeigt wird. Wenn das Feld leer bleibt, wird die Standardbeschreibung der ausgewählten, Sprache verwendet.",
   "ph.ytliveMusicTitle": "Gharmonize Music",

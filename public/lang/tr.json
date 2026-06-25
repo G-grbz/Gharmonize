@@ -182,7 +182,7 @@
   "ytlive.musicHome.itemCount": "{count} içerik",
   "ytlive.musicHome.shelfCount": "Raf sayısı",
   "settings.frontendUi": "Açılışta kullanılacak ön uç: classic = mevcut UI, YTLive = yeni müzik arayüzü.",
-  "settings.youtubeQuickAddLimit": "YTLive'da YouTube playlist + butonu ile eklenecek ilk parça sayısı.",
+  "settings.youtubeQuickAddLimit": "YTLive Arayüzünde Playlist Başına Maks. Parça",
   "settings.ytliveMusicTitle": "YTLive oynatıcı boş durumunda gösterilecek ana başlık. Boş bırakılırsa “Gharmonize Music” kullanılır.",
   "settings.ytliveMusicSubtitle": "Ana başlığın altında gösterilecek açıklama. Boş bırakılırsa seçili dilin varsayılan açıklaması kullanılır.",
   "ph.ytliveMusicTitle": "Gharmonize Music",
