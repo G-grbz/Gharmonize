@@ -14,7 +14,7 @@ import {
 } from "../modules/spotify.js";
 import { spotifyMapTasks, jobs, killJobProcesses, createJob, registerJobProcess, getJobProcessCount, markJobCompleted } from "../modules/store.js";
 import { convertMedia, downloadThumbnail, retagMediaFile } from "../modules/media.js";
-import archiver from "archiver";
+import { ZipArchive } from "archiver";
 import { resolveMarket } from "../modules/market.js";
 import { isVideoFormat, processYouTubeVideoJob } from "../modules/video.js";
 import {
@@ -1380,7 +1380,7 @@ async function makeZipFromOutputs(
 
   return new Promise((resolve, reject) => {
     const output  = fs.createWriteStream(zipAbs);
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
 
     output.on("close", async () => {
       await queueOwnershipFix(zipAbs);

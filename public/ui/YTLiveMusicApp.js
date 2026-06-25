@@ -51,11 +51,15 @@ class YTLiveMusicApp {
     this.youtubeRevealTimer = null;
     this.outputSettingsKey = 'gharmonize_ytlive_output_settings';
     this.musicHomeShelfCountKey = 'gharmonize_ytlive_music_home_shelf_count';
+    this.autoPlayModeKey = 'gharmonize_ytlive_auto_play_mode';
     this.collapsibleStateKey = 'gharmonize_ytlive_collapsible_panels';
     this.classicJobSessionKey = 'gharmonize_job_session';
     this.jobsPanelTokenKey = 'gharmonize_admin_token';
     this.outputSettings = this.loadOutputSettings();
     this.musicHomeShelfCount = this.loadMusicHomeShelfCount();
+    this.autoPlayMode = this.loadAutoPlayMode();
+    this.autoAdvanceInProgress = false;
+    this.autoPlayHistory = [];
     this.collapsibleState = this.loadCollapsibleState();
     this.collapsiblePanels = ['downloadListsPanel', 'playlistTracksPanel', 'musicHomeSection', 'discover'];
     this.downloadLists = [];
@@ -119,6 +123,13 @@ class YTLiveMusicApp {
     searchInput?.addEventListener('click', () => this.scrollToDiscoverSection());
 
     document.getElementById('playUrlBtn')?.addEventListener('click', () => this.playUrlInput());
+    document.getElementById('previousTrackBtn')?.addEventListener('click', () => {
+      this.playPreviousCollectionTrack(null, { silent: true, autoplay: true, forceAutoplay: true });
+    });
+    document.getElementById('nextTrackBtn')?.addEventListener('click', () => {
+      void this.playNextTrackNow();
+    });
+    document.getElementById('autoPlayModeBtn')?.addEventListener('click', () => this.toggleAutoPlayMode());
     document.getElementById('addUrlBtn')?.addEventListener('click', () => this.addUrlInput());
     document.getElementById('addUrlToListBtn')?.addEventListener('click', (event) => this.addUrlInputToList(event));
     document.getElementById('addCurrentBtn')?.addEventListener('click', () => {
@@ -171,6 +182,7 @@ class YTLiveMusicApp {
       this.renderPlaylistTracks();
       this.renderQueueChip(this.getActiveJobCount());
       this.updateLoadMoreState();
+      this.updatePlayerNavigationControls();
       this.handleLocaleChanged();
     });
 
@@ -181,6 +193,7 @@ class YTLiveMusicApp {
     document.getElementById('playlistTracksPanel')?.addEventListener('keydown', (event) => this.handlePlaylistTrackKeyInteraction(event));
     document.getElementById('downloadListsPanel')?.addEventListener('click', (event) => this.handleDownloadListPanelInteraction(event));
     this.setupInfiniteScroll();
+    this.updatePlayerNavigationControls();
     document.addEventListener('error', (event) => this.handleThumbnailError(event), true);
   }
 
@@ -239,6 +252,32 @@ class YTLiveMusicApp {
   syncMusicHomeShelfCountInput() {
     const input = document.getElementById('musicHomeShelfCountInput');
     if (input) input.value = String(this.musicHomeShelfCount);
+  }
+
+  loadAutoPlayMode() {
+    try {
+      return localStorage.getItem(this.autoPlayModeKey) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  saveAutoPlayMode() {
+    try {
+      localStorage.setItem(this.autoPlayModeKey, this.autoPlayMode ? '1' : '0');
+    } catch {}
+  }
+
+  toggleAutoPlayMode() {
+    this.autoPlayMode = !this.autoPlayMode;
+    this.saveAutoPlayMode();
+    this.updatePlayerNavigationControls();
+    this.notify(
+      this.autoPlayMode
+        ? this.tt('ytlive.player.autoOnNotice', 'Auto mode enabled. Playback will continue with random tracks.')
+        : this.tt('ytlive.player.autoOffNotice', 'Auto mode disabled.'),
+      this.autoPlayMode ? 'success' : 'info'
+    );
   }
 
   handleMusicHomeShelfCountChange() {
@@ -1405,6 +1444,7 @@ class YTLiveMusicApp {
     this.playlistTracks = [];
     this.activeCollection = null;
     this.renderPlaylistTracks();
+    this.updatePlayerNavigationControls();
   }
 
   closeMappedMusicPreviewStream() {
@@ -1484,6 +1524,7 @@ class YTLiveMusicApp {
 
   updateNowPanelForCollection(track = null) {
     const collection = this.activeCollection;
+    this.updatePlayerNavigationControls();
     if (!collection?.item) return;
 
     const activeTrack = track || this.getCurrentCollectionTrack();
@@ -1536,9 +1577,9 @@ class YTLiveMusicApp {
     return true;
   }
 
-  playNextCollectionTrack(currentItem = null, { silent = true, autoplay = true, forceAutoplay = false } = {}) {
+  getCollectionNavigationState(currentItem = null) {
     const collection = this.activeCollection;
-    if (!collection) return false;
+    if (!collection) return { collection: null, tracks: [], currentIndex: -1 };
 
     const tracks = this.playlistTracks.length ? this.playlistTracks : (collection.tracks || []);
     if (!this.playlistTracks.length && tracks.length) {
@@ -1551,22 +1592,144 @@ class YTLiveMusicApp {
       currentIndex = tracks.findIndex((track) => this.getPlaylistTrackKey(track) === currentKey);
     }
 
+    return { collection, tracks, currentIndex };
+  }
+
+  updatePlayerNavigationControls() {
+    const controls = document.getElementById('playerNavigationControls');
+    const previousButton = document.getElementById('previousTrackBtn');
+    const nextButton = document.getElementById('nextTrackBtn');
+    const autoButton = document.getElementById('autoPlayModeBtn');
+    const autoLabel = document.getElementById('autoPlayModeLabel');
+    const position = document.getElementById('playerTrackPosition');
+    if (!controls || !previousButton || !nextButton || !autoButton || !autoLabel || !position) return;
+
+    const { collection, tracks, currentIndex } = this.getCollectionNavigationState();
+    const hasCollection = !!collection;
+    const hasPlayback = !!this.currentPlaybackItem;
+    const hasCurrentTrack = currentIndex >= 0 && currentIndex < tracks.length;
+    const total = Math.max(Number(collection?.total || 0), tracks.length);
+    autoButton.hidden = hasCollection;
+    autoButton.disabled = hasCollection;
+
+    controls.hidden = !hasPlayback && !hasCollection;
+    previousButton.disabled = !hasCurrentTrack || currentIndex <= 0;
+    nextButton.disabled = hasCollection
+      ? (!hasCurrentTrack || currentIndex >= tracks.length - 1)
+      : (!hasPlayback || this.autoAdvanceInProgress);
+
+    const previousLabel = this.tt('ytlive.player.previousTrack', 'Previous track');
+    const nextLabel = this.tt('ytlive.player.nextTrack', 'Next track');
+    previousButton.setAttribute('aria-label', previousLabel);
+    previousButton.title = previousLabel;
+    nextButton.setAttribute('aria-label', nextLabel);
+    nextButton.title = nextLabel;
+
+    const autoStateLabel = this.autoPlayMode
+      ? this.tt('ytlive.player.autoOn', 'Auto ON')
+      : this.tt('ytlive.player.autoOff', 'Auto OFF');
+    const autoTitle = this.autoPlayMode
+      ? this.tt('ytlive.player.disableAuto', 'Disable automatic random playback')
+      : this.tt('ytlive.player.enableAuto', 'Enable automatic random playback');
+    autoButton.setAttribute('aria-pressed', String(this.autoPlayMode));
+    autoButton.setAttribute('aria-label', autoTitle);
+    autoButton.title = autoTitle;
+    autoLabel.textContent = autoStateLabel;
+
+    position.hidden = !hasCollection;
+    if (!hasCollection) {
+      position.textContent = '';
+      position.removeAttribute('aria-label');
+      return;
+    }
+
+    const shownPosition = hasCurrentTrack ? currentIndex + 1 : 0;
+    position.textContent = total > 0 ? `${shownPosition} / ${total}` : '…';
+    position.setAttribute('aria-label', this.tt(
+      'ytlive.player.trackPosition',
+      'Track {current} of {total}',
+      { current: shownPosition, total: total || tracks.length || 0 }
+    ));
+  }
+
+  playPreviousCollectionTrack(currentItem = null, { silent = true, autoplay = true, forceAutoplay = false } = {}) {
+    const { tracks, currentIndex } = this.getCollectionNavigationState(currentItem);
+    const previousIndex = currentIndex - 1;
+    if (previousIndex < 0 || previousIndex >= tracks.length) return false;
+    return this.playPlaylistTrackAt(previousIndex, { silent, autoplay, forceAutoplay });
+  }
+
+  playNextCollectionTrack(currentItem = null, { silent = true, autoplay = true, forceAutoplay = false } = {}) {
+    const { tracks, currentIndex } = this.getCollectionNavigationState(currentItem);
     const nextIndex = currentIndex + 1;
     if (nextIndex < 0 || nextIndex >= tracks.length) return false;
     return this.playPlaylistTrackAt(nextIndex, { silent, autoplay, forceAutoplay });
   }
 
-  handleYouTubePlaybackEnded(item, token) {
-    if (token !== this.youtubePlaybackToken) return;
-    if (this.playNextCollectionTrack(item, { silent: true, autoplay: true, forceAutoplay: true })) return;
+  async playNextTrackNow() {
+    if (this.playNextCollectionTrack(null, {
+      silent: true,
+      autoplay: true,
+      forceAutoplay: true
+    })) return true;
 
-    if (this.activeCollection?.loading) {
-      window.setTimeout(() => {
-        if (token !== this.youtubePlaybackToken) return;
-        this.playNextCollectionTrack(item, { silent: true, autoplay: true, forceAutoplay: true });
-      }, 900);
+    // Playlist veya albüm sonundaysa rastgele moda geçme.
+    if (this.activeCollection || !this.currentPlaybackItem || this.autoAdvanceInProgress) {
+      return false;
+    }
+
+    const currentItem = this.currentPlaybackItem;
+    const token = this.youtubePlaybackToken;
+    this.autoAdvanceInProgress = true;
+    this.updatePlayerNavigationControls();
+
+    try {
+      const candidate = await this.findAutoPlayCandidate(currentItem);
+      if (token !== this.youtubePlaybackToken || !candidate) return false;
+
+      this.rememberAutoPlayItem(currentItem);
+      this.rememberAutoPlayItem(candidate);
+      this.playItem(candidate, {
+        silent: true,
+        autoplay: true,
+        forceAutoplay: true
+      });
+      return true;
+    } finally {
+      this.autoAdvanceInProgress = false;
+      this.updatePlayerNavigationControls();
     }
   }
+
+  handleYouTubePlaybackEnded(item, token) {
+  if (token !== this.youtubePlaybackToken) return;
+  if (this.playNextCollectionTrack(item, {
+    silent: true,
+    autoplay: true,
+    forceAutoplay: true
+  })) return;
+
+  if (this.activeCollection?.loading) {
+    window.setTimeout(() => {
+      if (token !== this.youtubePlaybackToken) return;
+
+      if (this.playNextCollectionTrack(item, {
+        silent: true,
+        autoplay: true,
+        forceAutoplay: true
+      })) return;
+
+      if (this.activeCollection) return;
+
+      void this.playAutoRandomTrack(item, token);
+    }, 900);
+
+    return;
+  }
+
+  if (this.activeCollection) return;
+  void this.playAutoRandomTrack(item, token);
+}
 
   handleYouTubePlaybackError(item, token, silent = false) {
     if (token !== this.youtubePlaybackToken) return false;
@@ -1821,18 +1984,83 @@ class YTLiveMusicApp {
     return !!(this.currentPlaybackItem || this.currentItem || this.youtubePlayer);
   }
 
-  getRandomPlayableItem(items = [], { tracksOnly = true } = {}) {
+  getRandomPlayableItem(items = [], { tracksOnly = true, excludeKeys = [] } = {}) {
+    const excluded = new Set((Array.isArray(excludeKeys) ? excludeKeys : []).filter(Boolean));
     const candidates = (Array.isArray(items) ? items : [])
       .map((item) => this.normalizeItem(item))
       .filter((item) => item.webpage_url)
-      .filter((item) => !tracksOnly || (item.type === 'track' && !this.isPlaylistLike(item)));
+      .filter((item) => !tracksOnly || (item.type === 'track' && !this.isPlaylistLike(item)))
+      .filter((item) => !excluded.has(this.getPlaylistTrackKey(item)));
     const embeddable = candidates.filter((item) => this.getEmbedUrl(item));
     if (!embeddable.length) return null;
     return embeddable[Math.floor(Math.random() * embeddable.length)];
   }
 
+  rememberAutoPlayItem(item = {}) {
+    const key = this.getPlaylistTrackKey(item);
+    if (!key) return;
+    this.autoPlayHistory = [...this.autoPlayHistory.filter((value) => value !== key), key].slice(-12);
+  }
+
+  async findAutoPlayCandidate(currentItem = {}) {
+    const currentKey = this.getPlaylistTrackKey(currentItem || this.currentPlaybackItem || {});
+    const strictExclusions = [currentKey, ...this.autoPlayHistory].filter(Boolean);
+    const relaxedExclusions = [currentKey].filter(Boolean);
+    const pools = [this.results, this.getMusicHomeItems(), this.playlistTracks];
+
+    for (const exclusions of [strictExclusions, relaxedExclusions]) {
+      for (const pool of pools) {
+        const candidate = this.getRandomPlayableItem(pool, { excludeKeys: exclusions });
+        if (candidate) return candidate;
+      }
+    }
+
+    const presets = Array.isArray(this.discoverPresets) && this.discoverPresets.length
+      ? this.discoverPresets
+      : ['energizing', 'feel-good', 'relax', 'focus'];
+    const preset = presets[Math.floor(Math.random() * presets.length)] || 'energizing';
+
+    try {
+      const result = await this.fetchDiscoverItems({
+        preset,
+        page: 1,
+        limit: Math.max(12, this.resultLoadLimit || 18)
+      });
+      return this.getRandomPlayableItem(result.items, { excludeKeys: strictExclusions })
+        || this.getRandomPlayableItem(result.items, { excludeKeys: relaxedExclusions });
+    } catch (error) {
+      console.warn('Auto mode could not load a random track:', error);
+      return null;
+    }
+  }
+
+  async playAutoRandomTrack(currentItem = {}, token = this.youtubePlaybackToken) {
+    if (!this.autoPlayMode || this.autoAdvanceInProgress) return false;
+    this.autoAdvanceInProgress = true;
+
+    try {
+      const candidate = await this.findAutoPlayCandidate(currentItem);
+      if (!this.autoPlayMode || token !== this.youtubePlaybackToken) return false;
+      if (!candidate) {
+        this.notify(this.tt('ytlive.player.autoNoTrack', 'Auto mode could not find another playable track.'), 'info');
+        return false;
+      }
+
+      this.rememberAutoPlayItem(currentItem);
+      this.rememberAutoPlayItem(candidate);
+      this.playItem(candidate, {
+        silent: true,
+        autoplay: true,
+        forceAutoplay: true
+      });
+      return true;
+    } finally {
+      this.autoAdvanceInProgress = false;
+    }
+  }
+
   playRandomPlayerContent({ source = 'results' } = {}) {
-    if (this.hasActivePlayback()) return;
+    if (this.hasActivePlayback()) return false;
     const pools = source === 'musicHome'
       ? [this.getMusicHomeItems(), this.results]
       : [this.results, this.getMusicHomeItems()];
@@ -1841,9 +2069,10 @@ class YTLiveMusicApp {
       const item = this.getRandomPlayableItem(pool);
       if (item) {
         this.playItem(item, { silent: true });
-        return;
+        return true;
       }
     }
+    return false;
   }
 
   async playUrlInput() {

@@ -147,8 +147,10 @@ router.post("/api/outputs/open", async (req, res) => {
   }
 });
 
-router.get("/download/*", (req, res) => {
-  const requested = String(req.params?.[0] || "").trim();
+router.get("/download/*filePath", (req, res) => {
+  const requested = Array.isArray(req.params.filePath)
+    ? req.params.filePath.join("/")
+    : String(req.params.filePath || "").trim();
   const abs = resolveOutputPath(`/download/${requested}`);
   if (!abs) {
     return res.status(400).send("Bad path");

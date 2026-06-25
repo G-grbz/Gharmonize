@@ -71,6 +71,7 @@ const dynamicBinariesInitPromise = initializeDynamicBinaries()
 const { default: settingsRoute } = await import('./modules/settings.js')
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const PUBLIC_DIR = path.join(__dirname, 'public')
 const app = express()
 
 for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, LOCAL_INPUTS_DIR, CACHE_DIR, COOKIE_DIR]) {
@@ -317,13 +318,16 @@ function getSelectedFrontendUi() {
     : 'classic'
 }
 
-app.get('/', (_req, res) => {
+app.get('/', (_req, res, next) => {
   const selectedUi = getSelectedFrontendUi()
   const fileName = selectedUi === 'ytlive' ? 'ytlive.html' : 'index.html'
-  res.sendFile(path.join(__dirname, 'public', fileName))
+
+  res.sendFile(fileName, { root: PUBLIC_DIR }, (err) => {
+    if (err) next(err)
+  })
 })
 
-app.use(express.static(path.join(__dirname, 'public')))
+app.use(express.static(PUBLIC_DIR))
 
 app.use('/api', async (req, res, next) => {
   if (req.path === '/binaries/status') {
@@ -402,10 +406,6 @@ app.get('/api/binaries/status', (req, res) => {
     });
   }
 });
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'))
-})
 
 app.use((err, req, res, next) => {
   if (err?.code === 'LIMIT_FILE_SIZE') {

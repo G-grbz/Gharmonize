@@ -53,7 +53,6 @@
         <label class="sidebar-label" for="musicHomeShelfCountInput" data-i18n="ytlive.musicHome.shelfCount">Shelf count</label>
         <input id="musicHomeShelfCountInput" class="compact-number" type="number" min="1" max="12" step="1" value="6" />
 
-        <!-- Yeni container - Theme ve Settings butonları için -->
         <div class="sidebar-actions-container">
           <button
             id="themeToggle"
@@ -192,6 +191,51 @@
             <div class="player-empty__title" data-i18n="ytlive.player.emptyTitle">Select content</div>
             <div class="player-empty__text" data-i18n="ytlive.player.emptyText">Click a search result or pasted link to play it here.</div>
           </div>
+
+          <div id="playerNavigationControls" class="player-navigation" aria-label="Playback navigation" hidden>
+            <button
+              id="previousTrackBtn"
+              class="player-navigation__button"
+              type="button"
+              aria-label="Previous track"
+              title="Previous track"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 6v12" />
+                <path d="M18 6L9 12l9 6V6Z" />
+              </svg>
+            </button>
+
+            <div class="player-navigation__center">
+              <button
+                id="autoPlayModeBtn"
+                class="player-navigation__auto"
+                type="button"
+                aria-pressed="false"
+                aria-label="Enable automatic random playback"
+                title="Enable automatic random playback"
+              >
+                <span class="player-navigation__auto-dot" aria-hidden="true"></span>
+                <span id="autoPlayModeLabel">Auto OFF</span>
+              </button>
+              <span id="playerTrackPosition" class="player-navigation__position" aria-live="polite" hidden></span>
+            </div>
+
+            <button
+              id="nextTrackBtn"
+              class="player-navigation__button"
+              type="button"
+              aria-label="Next track"
+              title="Next track"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6v12" />
+                <path d="M6 6l9 6-9 6V6Z" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <aside class="now-panel" aria-label="Now playing" data-i18n-aria="ytlive.now.aria">
@@ -292,7 +336,6 @@
 
       <section class="content-section collapsible-panel" id="discover" data-collapsible-panel="discover">
         <div class="section-header collapsible-header" data-collapsible-trigger="discover">
-          <!-- Sol taraf: div ve collapsible-toggle'ı bir container'da topladık -->
           <div class="section-header-left">
             <div>
               <div class="eyebrow">YouTube</div>
@@ -300,7 +343,6 @@
             </div>
             <button class="collapsible-toggle" type="button" data-collapsible-toggle="discover" aria-label="Collapse panel"></button>
           </div>
-          <!-- Sağ taraf: sadece preset-row -->
           <div class="section-header__actions">
             <div class="preset-row" aria-label="Search presets" data-i18n-aria="ytlive.presets.aria">
               <button class="preset-chip" type="button" data-preset="energizing" data-i18n="ytlive.preset.energizing">Energetic</button>

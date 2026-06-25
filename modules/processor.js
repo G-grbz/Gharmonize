@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import archiver from "archiver";
+import { ZipArchive } from "archiver";
 import { resolveId3StrictForYouTube } from "./tags.js";
 import { resolveMarket } from "./market.js";
 import { jobs, registerJobProcess, killJobProcesses, markJobCompleted, getJobProcessCount } from "./store.js";
@@ -2768,7 +2768,7 @@ async function makeZipFromOutputs(
 
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(zipAbs);
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
 
     output.on("close", async () => {
       await queueOwnershipFix(zipAbs);
