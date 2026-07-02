@@ -859,9 +859,17 @@ export async function convertMedia(
   opts = {}
 ) {
   const tempFilesToCleanup = [];
+  const outputRootDir = opts?.outputRootDir
+    ? path.resolve(opts.outputRootDir)
+    : undefined;
+  const toResultDownloadPath = (absPath) =>
+    toDownloadPath(absPath, outputRootDir) ||
+    `/download/${encodeURIComponent(path.basename(absPath || ""))}`;
+  const resolveResultDownloadPath = (downloadPath) =>
+    resolveDownloadPathToAbs(downloadPath, outputRootDir);
   const ensureResultOwnership = async (mediaResult) => {
-    const actualOutputPath = resolveDownloadPathToAbs(mediaResult?.outputPath);
-    const actualLyricsPath = resolveDownloadPathToAbs(mediaResult?.lyricsPath);
+    const actualOutputPath = resolveResultDownloadPath(mediaResult?.outputPath);
+    const actualLyricsPath = resolveResultDownloadPath(mediaResult?.lyricsPath);
 
     if (actualOutputPath) {
       await ensureOwnership(actualOutputPath);
@@ -3237,9 +3245,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         });
         console.log(`✅ Conversion completed: ${outputPath}`);
         await ensureOwnership(outputPath);
-        const downloadPath =
-          toDownloadPath(outputPath) ||
-          `/download/${encodeURIComponent(path.basename(outputPath))}`;
+        const downloadPath = toResultDownloadPath(outputPath);
         resolve({
           outputPath: downloadPath,
           fileSize: fs.statSync(outputPath).size,
@@ -3347,7 +3353,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     if (shouldProcessLyrics && !isVideo && result && result.outputPath) {
       console.log("🎵 Adding lyrics...");
-      const actualOutputPath = resolveDownloadPathToAbs(result.outputPath);
+      const actualOutputPath = resolveResultDownloadPath(result.outputPath);
       if (!actualOutputPath) {
         console.warn("⚠️ Could not resolve output path for lyrics:", result.outputPath);
         return result;
@@ -3392,9 +3398,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
         if (lyricsPath) {
           console.log(`✅ lyrics added successfully: ${lyricsPath}`);
-          result.lyricsPath =
-            toDownloadPath(lyricsPath) ||
-            `/download/${encodeURIComponent(path.basename(lyricsPath))}`;
+          result.lyricsPath = toResultDownloadPath(lyricsPath);
 
           const job = jobs.get(jobId.split("_")[0]);
           if (job) {
@@ -3435,7 +3439,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     if (!isVideo && String(format || "").toLowerCase() === "mp3" && result?.outputPath) {
-      const actualOutputPath = resolveDownloadPathToAbs(result.outputPath);
+      const actualOutputPath = resolveResultDownloadPath(result.outputPath);
       if (actualOutputPath) {
         writeRichId3v2Tag(actualOutputPath, {
           ...resolvedMeta,

@@ -174,6 +174,7 @@ export function qualityToHeight(q) {
 // Processes you tube video job state in core application logic.
 export async function processYouTubeVideoJob(job, {
   OUTPUT_DIR = path.resolve(process.cwd(), "outputs"),
+  OUTPUT_ROOT_DIR = path.resolve(process.env.DATA_DIR || process.cwd(), "outputs"),
   TEMP_DIR   = path.resolve(process.cwd(), "temp"),
 }) {
   const TARGET_H = qualityToHeight(job.bitrate);
@@ -197,7 +198,7 @@ export async function processYouTubeVideoJob(job, {
 
   if (isMappedMusicSource(job.metadata?.source)) {
     console.log(`🎬 ${mappedMusicLabel(job.metadata?.source)} video processing: ${job.metadata.spotifyTitle}`);
-    await processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings });
+    await processSpotifyVideoJob(job, { OUTPUT_DIR, OUTPUT_ROOT_DIR, TEMP_DIR, TARGET_H, format, videoSettings });
     return;
   }
 
@@ -450,7 +451,7 @@ export async function processYouTubeVideoJob(job, {
         safeMoveSync(filePath, targetAbs);
         await ensureOwnership(targetAbs);
         const downloadPath =
-          toDownloadPath(targetAbs) ||
+          toDownloadPath(targetAbs, OUTPUT_ROOT_DIR) ||
           `/download/${encodeURIComponent(path.basename(targetAbs))}`;
 
         results.push({
@@ -523,6 +524,7 @@ export async function processYouTubeVideoJob(job, {
             volumeGain: job.metadata?.volumeGain ?? job.videoSettings?.volumeGain ?? null,
             loudnorm: !!(job.metadata?.loudnorm ?? job.videoSettings?.loudnorm),
             loudnormMode: job.metadata?.loudnormMode || job.videoSettings?.loudnormMode || "ebu_r128",
+            outputRootDir: OUTPUT_ROOT_DIR,
             videoSettings: videoSettings,
             onProcess: (child) => {
               try {
@@ -591,7 +593,7 @@ export async function processYouTubeVideoJob(job, {
     safeMoveSync(filePath, targetAbs);
     await ensureOwnership(targetAbs);
     const downloadPath =
-      toDownloadPath(targetAbs) ||
+      toDownloadPath(targetAbs, OUTPUT_ROOT_DIR) ||
       `/download/${encodeURIComponent(path.basename(targetAbs))}`;
 
     job.convertProgress   = 100;
@@ -652,6 +654,7 @@ export async function processYouTubeVideoJob(job, {
         volumeGain: job.metadata?.volumeGain ?? job.videoSettings?.volumeGain ?? null,
         loudnorm: !!(job.metadata?.loudnorm ?? job.videoSettings?.loudnorm),
         loudnormMode: job.metadata?.loudnormMode || job.videoSettings?.loudnormMode || "ebu_r128",
+        outputRootDir: OUTPUT_ROOT_DIR,
         videoSettings: videoSettings,
         onProcess: (child) => {
           try {
@@ -676,7 +679,7 @@ export async function processYouTubeVideoJob(job, {
 }
 
 // Processes Spotify metadata video job state in core application logic.
-async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, format, videoSettings }) {
+async function processSpotifyVideoJob(job, { OUTPUT_DIR, OUTPUT_ROOT_DIR, TEMP_DIR, TARGET_H, format, videoSettings }) {
   const sourceLabel = mappedMusicLabel(job.metadata?.source);
   const playlistTitle = mappedMusicPlaylistTitle(job);
 
@@ -905,7 +908,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
       safeMoveSync(filePath, targetAbs);
       await ensureOwnership(targetAbs);
       const downloadPath =
-        toDownloadPath(targetAbs) ||
+        toDownloadPath(targetAbs, OUTPUT_ROOT_DIR) ||
         `/download/${encodeURIComponent(path.basename(targetAbs))}`;
 
       results.push({
@@ -995,6 +998,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, TEMP_DIR, TARGET_H, for
           volumeGain: job.metadata?.volumeGain ?? job.videoSettings?.volumeGain ?? null,
           loudnorm: !!(job.metadata?.loudnorm ?? job.videoSettings?.loudnorm),
           loudnormMode: job.metadata?.loudnormMode || job.videoSettings?.loudnormMode || "ebu_r128",
+          outputRootDir: OUTPUT_ROOT_DIR,
           videoSettings: videoSettings,
           onProcess: (child) => {
             try {

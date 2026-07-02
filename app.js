@@ -31,6 +31,7 @@ import {
 
 const defaultEnv = process.env.ENV_DEFAULT_PATH
 const userEnv = process.env.ENV_USER_PATH
+const desktopDataDir = process.env.GHARMONIZE_DESKTOP_DATA_DIR
 
 if (defaultEnv && fs.existsSync(defaultEnv)) {
   dotenv.config({ path: defaultEnv })
@@ -45,6 +46,10 @@ if (userEnv && fs.existsSync(userEnv)) {
     dotenv.config({ path: localEnv, override: true })
     console.log('✅ Loaded local .env file:', localEnv)
   }
+}
+
+if (desktopDataDir) {
+  process.env.DATA_DIR = desktopDataDir
 }
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd()

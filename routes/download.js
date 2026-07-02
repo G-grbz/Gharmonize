@@ -135,6 +135,12 @@ function applyDownloadHeaders(res, abs, stat) {
   res.setHeader("Content-Disposition", contentDispositionForFilename(filename));
 }
 
+function clearDownloadHeaders(res) {
+  res.removeHeader("Content-Type");
+  res.removeHeader("Content-Length");
+  res.removeHeader("Content-Disposition");
+}
+
 function getRequestedDownloadPath(req) {
   return Array.isArray(req.params.filePath)
     ? req.params.filePath.join("/")
@@ -170,19 +176,23 @@ function handleDownload(req, res) {
       return res.status(200).end();
     }
 
-    return res.sendFile(abs, (sendErr) => {
-      if (!sendErr) return;
+    const stream = fs.createReadStream(abs);
 
+    stream.once("error", (sendErr) => {
       console.warn("[download] Send failed:", abs, sendErr);
+
       if (!res.headersSent) {
-        const status = sendErr.statusCode || sendErr.status || 500;
-        return res.status(status >= 400 && status < 600 ? status : 500).send("Unable to send file");
+        clearDownloadHeaders(res);
+        const missing = sendErr?.code === "ENOENT" || sendErr?.code === "ENOTDIR";
+        return res.status(missing ? 404 : 500).send(missing ? "Not found" : "Unable to send file");
       }
 
       try {
         res.destroy(sendErr);
       } catch {}
     });
+
+    stream.pipe(res);
   });
 }
 

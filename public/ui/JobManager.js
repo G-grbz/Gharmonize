@@ -7,7 +7,9 @@ export class JobManager {
         this.batches = new Map();
         this.jobToBatch = new Map();
         this.sessionSectionsInitialized = false;
-        this.storageKey = 'gharmonize_job_session';
+        this.storageKey = (typeof window !== 'undefined' && window.electronAPI)
+            ? 'gharmonize_job_session_desktop'
+            : 'gharmonize_job_session';
         this.progressCache = new Map();
         this.lastSessionSavedAt = 0;
 
@@ -2069,17 +2071,24 @@ updateJobUI(job, batchId = null) {
 
             if (!candidates.length) return false;
 
-            const url = this.app.toRelative(candidates[0]);
+            return await this.checkOutputExists(candidates[0]);
+        }
+
+        // Checks output existence through the API to avoid noisy /download 404 requests.
+        async checkOutputExists(rawPath) {
+            const path = String(rawPath || '').trim();
+            if (!path) return false;
 
             try {
-                const resp = await fetch(url, { method: 'HEAD' });
-                if (resp.status === 404) {
-                    return false;
-                }
+                const resp = await fetch(`/api/outputs/exists?path=${encodeURIComponent(path)}`, {
+                    cache: 'no-store'
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-                return true;
+                const data = await resp.json();
+                return !!data?.exists;
             } catch (e) {
-                console.warn('[JobManager] jobHasExistingOutput fetch error:', e);
+                console.warn('[JobManager] output existence check failed:', e);
                 return true;
             }
         }
@@ -2101,30 +2110,14 @@ updateJobUI(job, batchId = null) {
                 let raw = r.outputPath || r.path;
                 if (!raw) continue;
 
-                const url = this.app.toRelative(raw);
-
-                try {
-                    const resp = await fetch(url, { method: 'HEAD' });
-
-                    if (resp.status === 404) {
-                        continue;
-                    }
-                    keptResults.push(r);
-                } catch (e) {
-                    console.warn('[JobManager] prunePlaylistOutputs HEAD error:', e);
+                if (await this.checkOutputExists(raw)) {
                     keptResults.push(r);
                 }
             }
 
             if (job.zipPath) {
-                try {
-                    const zipResp = await fetch(this.app.toRelative(job.zipPath), { method: 'HEAD' });
-
-                    if (zipResp.status === 404) {
-                        job.zipPath = null;
-                    }
-                } catch (e) {
-                    console.warn('[JobManager] prunePlaylistOutputs zip HEAD error:', e);
+                if (!(await this.checkOutputExists(job.zipPath))) {
+                    job.zipPath = null;
                 }
             }
 

@@ -53,7 +53,9 @@ class YTLiveMusicApp {
     this.musicHomeShelfCountKey = 'gharmonize_ytlive_music_home_shelf_count';
     this.autoPlayModeKey = 'gharmonize_ytlive_auto_play_mode';
     this.collapsibleStateKey = 'gharmonize_ytlive_collapsible_panels';
-    this.classicJobSessionKey = 'gharmonize_job_session';
+    this.classicJobSessionKey = (typeof window !== 'undefined' && window.electronAPI)
+      ? 'gharmonize_job_session_desktop'
+      : 'gharmonize_job_session';
     this.jobsPanelTokenKey = 'gharmonize_admin_token';
     this.outputSettings = this.loadOutputSettings();
     this.musicHomeShelfCount = this.loadMusicHomeShelfCount();

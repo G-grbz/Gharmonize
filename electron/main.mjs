@@ -17,7 +17,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const HOST = '127.0.0.1'
-const PORT = process.env.PORT || '5174'
+let PORT = process.env.PORT || '5174'
 const DESKTOP_BRIDGE_TOKEN = process.env.GHARMONIZE_DESKTOP_TOKEN || crypto.randomUUID();
 process.env.GHARMONIZE_DESKTOP_TOKEN = DESKTOP_BRIDGE_TOKEN;
 
@@ -661,6 +661,44 @@ async function waitForServer(port, retries = 75, delayMs = 200) {
   throw new Error(`Server not reachable on ${HOST}:${port}`)
 }
 
+// Checks whether the desktop bridge can bind the requested local port.
+function canBindPort(port, host = HOST) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    const done = (ok) => {
+      probe.removeAllListeners();
+      try { probe.close(() => resolve(ok)); } catch { resolve(ok); }
+    };
+
+    probe.once('error', () => done(false));
+    probe.once('listening', () => done(true));
+    probe.listen(Number(port), host);
+  });
+}
+
+// Picks a local port for the packaged desktop server without attaching to an existing process.
+async function resolveDesktopServerPort() {
+  const requested = Number(PORT || 5174);
+  if (!Number.isFinite(requested) || requested <= 0) return '5174';
+
+  if (await canBindPort(requested)) {
+    return String(requested);
+  }
+
+  if (process.env.PORT) {
+    throw new Error(`Port ${requested} is already in use`);
+  }
+
+  for (let candidate = requested + 1; candidate < requested + 100; candidate += 1) {
+    if (await canBindPort(candidate)) {
+      console.warn(`[desktop] Port ${requested} is busy; using ${candidate}.`);
+      return String(candidate);
+    }
+  }
+
+  throw new Error(`No available local port found near ${requested}`);
+}
+
 // Handles check desktop binaries in the Electron runtime bridge.
 function checkDesktopBinaries() {
   const missing = [];
@@ -687,6 +725,8 @@ function checkDesktopBinaries() {
 async function startServerIfPackaged() {
   if (!app.isPackaged) return;
 
+  PORT = await resolveDesktopServerPort()
+
   const serverPath = path.join(process.resourcesPath, 'app.asar', 'bootstrap.mjs')
   const defaultEnv = path.join(process.resourcesPath, 'app.asar', '.env.default')
   const userEnv = path.join(app.getPath('userData'), '.env')
@@ -695,6 +735,8 @@ async function startServerIfPackaged() {
   process.env.ENV_DEFAULT_PATH = defaultEnv
   process.env.ENV_USER_PATH = userEnv
   process.env.DATA_DIR = dataDir
+  process.env.GHARMONIZE_DESKTOP_DATA_DIR = dataDir
+  process.env.PORT = PORT
 
   try {
     if (!fs.existsSync(userEnv) && fs.existsSync(defaultEnv)) {

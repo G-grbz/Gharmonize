@@ -766,6 +766,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           outputDir,
           TEMP_DIR,
           {
+            outputRootDir: OUTPUT_DIR,
             onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
             includeLyrics: !!job.metadata.includeLyrics,
             embedLyrics: !!job.metadata.embedLyrics,
@@ -969,7 +970,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       };
       job.lastLog = `🎬 Starting ${sourceLabel} video processing: ${playlistTitle} (${trackCount} track(s))`;
 
-      await processYouTubeVideoJob(job, { OUTPUT_DIR: outputDir, TEMP_DIR });
+      await processYouTubeVideoJob(job, { OUTPUT_DIR: outputDir, OUTPUT_ROOT_DIR: OUTPUT_DIR, TEMP_DIR });
 
       cleanupSpotifyTempFiles(jobId, null, null);
       return;
@@ -1306,6 +1307,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       outputDir,
       TEMP_DIR,
       {
+        outputRootDir: OUTPUT_DIR,
         onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
         includeLyrics: !!job.metadata.includeLyrics,
         embedLyrics: !!job.metadata.embedLyrics,

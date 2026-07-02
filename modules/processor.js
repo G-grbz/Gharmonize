@@ -739,7 +739,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     const isVideoFormatFlag = isVideoFormat(format);
 
     if (isVideoFormatFlag && job.metadata?.source === "youtube") {
-      await processYouTubeVideoJob(job, { OUTPUT_DIR: outputDir, TEMP_DIR });
+      await processYouTubeVideoJob(job, { OUTPUT_DIR: outputDir, OUTPUT_ROOT_DIR: OUTPUT_DIR, TEMP_DIR });
 
       try {
         if (
@@ -949,6 +949,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               outputDir,
               TEMP_DIR,
               {
+                outputRootDir: OUTPUT_DIR,
                 onProcess: (child) => {
                   try {
                     registerJobProcess(jobId, child);
@@ -1751,6 +1752,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 outputDir,
                 TEMP_DIR,
                 {
+                  outputRootDir: OUTPUT_DIR,
                   onProcess: (child) => {
                     try {
                       registerJobProcess(jobId, child);
@@ -2363,6 +2365,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             outputDir,
             TEMP_DIR,
             {
+              outputRootDir: OUTPUT_DIR,
               onProcess: (child) => {
                 try {
                   registerJobProcess(jobId, child);
@@ -2487,6 +2490,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           outputDir,
           TEMP_DIR,
           {
+            outputRootDir: OUTPUT_DIR,
             onProcess: (child) => {
               try {
                 registerJobProcess(jobId, child);
