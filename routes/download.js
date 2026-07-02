@@ -100,6 +100,92 @@ function resolveOutputPath(rawPath) {
   return resolveDownloadPathToAbs(rawPath, OUTPUT_DIR);
 }
 
+function encodeRfc5987Value(value) {
+  return encodeURIComponent(value).replace(/['()*]/g, (ch) =>
+    `%${ch.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
+
+function asciiFilenameFallback(filename) {
+  const clean = String(filename || "download")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+  const ascii = clean
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]+/g, "_")
+    .replace(/[\\"]/g, "_")
+    .trim();
+  return ascii || "download";
+}
+
+function contentDispositionForFilename(filename) {
+  const clean = String(filename || "download")
+    .replace(/[\r\n]+/g, " ")
+    .trim() || "download";
+  const fallback = asciiFilenameFallback(clean).replace(/(["\\])/g, "\\$1");
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeRfc5987Value(clean)}`;
+}
+
+function applyDownloadHeaders(res, abs, stat) {
+  const filename = path.basename(abs);
+  const isZip = filename.toLowerCase().endsWith(".zip");
+  res.setHeader("Content-Type", isZip ? "application/zip" : "application/octet-stream");
+  res.setHeader("Content-Length", String(stat.size));
+  res.setHeader("Content-Disposition", contentDispositionForFilename(filename));
+}
+
+function getRequestedDownloadPath(req) {
+  return Array.isArray(req.params.filePath)
+    ? req.params.filePath.join("/")
+    : String(req.params.filePath || "").trim();
+}
+
+function handleDownload(req, res) {
+  const requested = getRequestedDownloadPath(req);
+  const abs = resolveOutputPath(`/download/${requested}`);
+  if (!abs) {
+    return res.status(400).send("Bad path");
+  }
+
+  fs.stat(abs, (statErr, stat) => {
+    if (statErr) {
+      if (statErr.code === "ENOENT" || statErr.code === "ENOTDIR") {
+        console.warn("[download] Not found:", abs);
+        return res.status(404).send("Not found");
+      }
+
+      console.warn("[download] Stat failed:", abs, statErr);
+      return res.status(500).send("Unable to read file");
+    }
+
+    if (!stat.isFile()) {
+      console.warn("[download] Not a file:", abs);
+      return res.status(404).send("Not found");
+    }
+
+    applyDownloadHeaders(res, abs, stat);
+
+    if (req.method === "HEAD") {
+      return res.status(200).end();
+    }
+
+    return res.sendFile(abs, (sendErr) => {
+      if (!sendErr) return;
+
+      console.warn("[download] Send failed:", abs, sendErr);
+      if (!res.headersSent) {
+        const status = sendErr.statusCode || sendErr.status || 500;
+        return res.status(status >= 400 && status < 600 ? status : 500).send("Unable to send file");
+      }
+
+      try {
+        res.destroy(sendErr);
+      } catch {}
+    });
+  });
+}
+
 router.get("/api/outputs/location", (_req, res) => {
   const isWindows = process.platform === "win32";
   const linuxPath = isWindows ? OUTPUTS_DISPLAY_DIR.replace(/\\/g, "/") : OUTPUTS_DISPLAY_DIR;
@@ -147,29 +233,7 @@ router.post("/api/outputs/open", async (req, res) => {
   }
 });
 
-router.get("/download/*filePath", (req, res) => {
-  const requested = Array.isArray(req.params.filePath)
-    ? req.params.filePath.join("/")
-    : String(req.params.filePath || "").trim();
-  const abs = resolveOutputPath(`/download/${requested}`);
-  if (!abs) {
-    return res.status(400).send("Bad path");
-  }
-
-  if (!fs.existsSync(abs)) {
-    console.warn("[download] Not found:", abs);
-    return res.status(404).send("Not found");
-  }
-
-  const filename = path.basename(abs);
-  const isZip = filename.toLowerCase().endsWith(".zip");
-  res.setHeader("Content-Type", isZip ? "application/zip" : "application/octet-stream");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`
-  );
-
-  return res.download(abs, filename);
-});
+router.head("/download/*filePath", handleDownload);
+router.get("/download/*filePath", handleDownload);
 
 export default router;
