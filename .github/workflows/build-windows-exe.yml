@@ -8,16 +8,19 @@ on:
         required: false
         type: boolean
         default: false
+
       release_tag:
         description: "Release tag. Empty uses package.json version, for example v1.2.7"
         required: false
         type: string
         default: ""
+
       bundle_runtime_binaries:
         description: "Bundle ffmpeg, ffprobe, mkvmerge, yt-dlp and deno into the app"
         required: false
         type: boolean
         default: false
+
   push:
     tags:
       - "v*"
@@ -61,63 +64,263 @@ jobs:
       - name: Package release assets
         id: package_assets
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $ErrorActionPreference = "Stop"
+
           $version = node -p "require('./package.json').version"
           $assetsDir = "dist/release-assets"
-          $setupName = "Gharmonize-x64.Setup.Version.v$version.exe"
-          $portableName = "Gharmonize-x64.Portable.Folder.Version.v$version"
-          $portableZip = "$assetsDir/$portableName.zip"
-          $portableFolder = "$assetsDir/$portableName"
           $githubRef = "${{ github.ref }}"
-          $isTagBuild = "${{ github.event_name }}" -eq "push" -and $githubRef.StartsWith("refs/tags/")
+          $eventName = "${{ github.event_name }}"
           $releaseTag = "${{ github.ref_name }}"
+          $repository = "${{ github.repository }}"
+
+          $isTagBuild = (
+            $eventName -eq "push" -and
+            $githubRef.StartsWith("refs/tags/")
+          )
 
           if (-not $isTagBuild) {
             $releaseTag = "${{ github.event.inputs.release_tag }}"
+
             if ([string]::IsNullOrWhiteSpace($releaseTag)) {
               $releaseTag = "v$version"
             }
           }
 
-          New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
+          Write-Host "Package version: $version"
+          Write-Host "Release tag: $releaseTag"
 
-          $setup = Get-ChildItem -Path dist -Filter "*.exe" -File |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $setup) {
-            throw "No installer exe found under dist."
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $assetsDir | Out-Null
+
+          # Mevcut GitHub Release içindeki asset adlarını al.
+          $existingAssetNames = @()
+
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
           }
 
-          Copy-Item -Path $setup.FullName -Destination "$assetsDir/$setupName" -Force
+          $encodedReleaseTag = [Uri]::EscapeDataString($releaseTag)
+          $releaseApiUrl = "https://api.github.com/repos/$repository/releases/tags/$encodedReleaseTag"
+
+          try {
+            $release = Invoke-RestMethod `
+              -Uri $releaseApiUrl `
+              -Headers $headers `
+              -Method Get
+
+            $existingAssetNames = @(
+              $release.assets |
+                ForEach-Object {
+                  $_.name
+                }
+            )
+
+            Write-Host "Existing release assets:"
+
+            if ($existingAssetNames.Count -gt 0) {
+              $existingAssetNames |
+                ForEach-Object {
+                  Write-Host " - $_"
+                }
+            } else {
+              Write-Host " - No assets found."
+            }
+          } catch {
+            $statusCode = 0
+
+            if ($_.Exception.Response) {
+              $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+
+            if ($statusCode -eq 404) {
+              Write-Host "Release $releaseTag does not exist yet."
+              $existingAssetNames = @()
+            } else {
+              throw
+            }
+          }
+
+          # Checkout edilen repository içindeki yerel release asset'lerini de kontrol et.
+          if (Test-Path $assetsDir) {
+            $localAssetNames = @(
+              Get-ChildItem `
+                -Path $assetsDir `
+                -File `
+                -ErrorAction SilentlyContinue |
+                  ForEach-Object {
+                    $_.Name
+                  }
+            )
+
+            $existingAssetNames = @(
+              $existingAssetNames
+              $localAssetNames
+            ) | Sort-Object -Unique
+          }
+
+          # Dosya çiftinin kullanabileceği boş eki bul.
+          #
+          # İlk build:
+          #   dosya.exe
+          #   dosya.zip
+          #
+          # İkinci build:
+          #   dosya.fix.exe
+          #   dosya.fix.zip
+          #
+          # Sonraki build'ler:
+          #   dosya.fix2.exe
+          #   dosya.fix2.zip
+
+          $revision = 0
+
+          while ($true) {
+            if ($revision -eq 0) {
+              $suffix = ""
+            } elseif ($revision -eq 1) {
+              $suffix = ".fix"
+            } else {
+              $suffix = ".fix$revision"
+            }
+
+            $setupName = "Gharmonize-x64.Setup.Version.v$version$suffix.exe"
+            $portableName = "Gharmonize-x64.Portable.Folder.Version.v$version$suffix"
+            $portableZipName = "$portableName.zip"
+
+            $setupExists = (
+              $existingAssetNames -contains $setupName
+            ) -or (
+              Test-Path (Join-Path $assetsDir $setupName)
+            )
+
+            $portableExists = (
+              $existingAssetNames -contains $portableZipName
+            ) -or (
+              Test-Path (Join-Path $assetsDir $portableZipName)
+            )
+
+            if (-not $setupExists -and -not $portableExists) {
+              break
+            }
+
+            $revision++
+          }
+
+          $setupDestination = Join-Path $assetsDir $setupName
+          $portableFolder = Join-Path $assetsDir $portableName
+          $portableZip = Join-Path $assetsDir $portableZipName
+
+          Write-Host "Selected setup name: $setupName"
+          Write-Host "Selected portable name: $portableZipName"
+
+          # electron-builder tarafından oluşturulan NSIS EXE dosyasını bul.
+          $setup = Get-ChildItem `
+            -Path dist `
+            -Filter "*.exe" `
+            -File |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
+          if (-not $setup) {
+            throw "No installer exe found directly under dist."
+          }
+
+          Write-Host "Installer source: $($setup.FullName)"
+
+          # Yeni ve benzersiz adıyla installer'ı kopyala.
+          Copy-Item `
+            -Path $setup.FullName `
+            -Destination $setupDestination `
+            -Force
 
           if (-not (Test-Path "dist/win-unpacked")) {
             throw "dist/win-unpacked was not created by electron-builder."
           }
 
           if (Test-Path $portableFolder) {
-            Remove-Item -Recurse -Force $portableFolder
+            Remove-Item `
+              -Path $portableFolder `
+              -Recurse `
+              -Force
           }
-          New-Item -ItemType Directory -Force -Path $portableFolder | Out-Null
-          Copy-Item -Path "dist/win-unpacked/*" -Destination $portableFolder -Recurse -Force
 
-          if (Test-Path $portableZip) {
-            Remove-Item -Force $portableZip
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $portableFolder | Out-Null
+
+          Copy-Item `
+            -Path "dist/win-unpacked/*" `
+            -Destination $portableFolder `
+            -Recurse `
+            -Force
+
+          Compress-Archive `
+            -Path $portableFolder `
+            -DestinationPath $portableZip `
+            -CompressionLevel Optimal
+
+          if (-not (Test-Path $setupDestination)) {
+            throw "Setup package was not created: $setupDestination"
           }
-          Compress-Archive -Path $portableFolder -DestinationPath $portableZip -Force
 
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "SETUP_NAME=$setupName" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PORTABLE_ZIP=$portableName.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if (-not (Test-Path $portableZip)) {
+            throw "Portable ZIP was not created: $portableZip"
+          }
+
+          Write-Host "Created release assets:"
+          Write-Host " - $setupDestination"
+          Write-Host " - $portableZip"
+
+          "VERSION=$version" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append
+
+          "SETUP_NAME=$setupName" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append
+
+          "PORTABLE_ZIP=$portableZipName" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append
+
+          "version=$version" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Append
+
+          "release_tag=$releaseTag" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Append
+
+          "setup_name=$setupName" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Append
+
+          "portable_zip=$portableZipName" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Append
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: gharmonize-windows-v${{ steps.package_assets.outputs.version }}
           path: |
-            dist/release-assets/*.exe
-            dist/release-assets/*.zip
+            dist/release-assets/${{ steps.package_assets.outputs.setup_name }}
+            dist/release-assets/${{ steps.package_assets.outputs.portable_zip }}
           if-no-files-found: error
 
       - name: Publish GitHub Release assets
@@ -127,5 +330,5 @@ jobs:
           tag_name: ${{ steps.package_assets.outputs.release_tag }}
           name: Gharmonize ${{ steps.package_assets.outputs.release_tag }}
           files: |
-            dist/release-assets/*.exe
-            dist/release-assets/*.zip
+            dist/release-assets/${{ steps.package_assets.outputs.setup_name }}
+            dist/release-assets/${{ steps.package_assets.outputs.portable_zip }}
