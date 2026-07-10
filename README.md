@@ -98,7 +98,7 @@ This software is provided "as is", without warranty of any kind. Use it at your 
 
 ## License
 
-Gharmonize is licensed under the **Gharmonize Noncommercial Source-Available License 1.0**.
+Gharmonize is licensed under the **GPL-3.0 license**.
 
 - Full terms and redistribution rules: [LICENSE.md](LICENSE.md)
 - Licenses for bundled third-party tools (FFmpeg, MKVToolNix, yt-dlp, deno): [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
