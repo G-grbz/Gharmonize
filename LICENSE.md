@@ -1,6 +1,6 @@
 # License
 
-## PolyForm Noncommercial License 1.0.0
+## Gharmonize Noncommercial Source-Available License 1.0
 
 Copyright (c) 2026 G-grbz
 
