@@ -55,6 +55,6 @@ Official project repository: https://github.com/yt-dlp/yt-dlp
 
 ## Gharmonize Source Code License
 
-The source code of Gharmonize itself is licensed under the **MIT License**.
+The source code of Gharmonize itself is licensed under the **GNU General Public License v3.0 (GPL-3.0-only)**.
 
-See the [LICENSE](./LICENSE) file in the repository root for details.
+See the [LICENSE.md](./LICENSE.md) file in the repository root for details.

@@ -874,7 +874,7 @@ function buildAndShowContextMenu(win, params) {
 function createAppMenu(win) {
   const template = [];
   const projectUrl = 'https://github.com/G-grbz/Gharmonize';
-  const licenseUrl = 'https://github.com/G-grbz/Gharmonize?tab=License-1-ov-file';
+  const licenseUrl = 'https://github.com/G-grbz/Gharmonize/blob/main/LICENSE.md';
 
   template.push({
     label: 'Help',
@@ -887,12 +887,13 @@ function createAppMenu(win) {
             title: 'About Gharmonize',
             message: 'Gharmonize',
             detail: [
-              'Gharmonize is licensed under the PolyForm Noncommercial License 1.0.0.',
+              'Gharmonize is licensed under the GNU General Public License v3.0 (GPL-3.0-only).',
               '',
               'This application bundles the following third-party command-line tools:',
               '- FFmpeg / FFprobe',
               '- MKVToolNix tools',
               '- yt-dlp',
+              '- deno',
               '',
               'License details:',
               licenseUrl,
