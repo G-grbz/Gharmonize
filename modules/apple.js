@@ -150,6 +150,21 @@ function countTokenOverlap(left = [], right = []) {
   return overlap;
 }
 
+function compactArtistAliases(value = "") {
+  const normalized = norm(value);
+  if (!normalized) return [];
+  const parts = normalized.split(/\s+(?:and|ve|x)\s+/i).filter(Boolean);
+  return Array.from(new Set([normalized, ...parts]
+    .map((entry) => entry.replace(/[^\p{L}\p{N}]/gu, ""))
+    .filter((entry) => entry.length >= 5)));
+}
+
+function hasSafeCompactArtistMatch(expected = "", candidate = "") {
+  const expectedAliases = compactArtistAliases(expected);
+  const candidateAliases = new Set(compactArtistAliases(candidate));
+  return expectedAliases.some((alias) => candidateAliases.has(alias));
+}
+
 // Scores Apple artist similarity for query matching and metadata flow.
 function buildArtistMatchInfo(expected = "", candidate = "") {
   const expectedNorm = norm(expected);
@@ -197,14 +212,23 @@ function buildArtistMatchInfo(expected = "", candidate = "") {
     };
   }
 
+  if (hasSafeCompactArtistMatch(expectedNorm, candidateNorm)) {
+    return {
+      exact: false,
+      partial: true,
+      overlap: 1,
+      acceptable: true
+    };
+  }
+
   const expectedTokens = tokenizeNorm(expectedNorm).filter((token) => token.length > 1);
   const candidateTokens = tokenizeNorm(candidateNorm).filter((token) => token.length > 1);
   const overlap = countTokenOverlap(expectedTokens, candidateTokens);
   const expectedRatio = expectedTokens.length ? overlap / expectedTokens.length : 0;
   const candidateRatio = candidateTokens.length ? overlap / candidateTokens.length : 0;
   const partial =
-    overlap >= 1 &&
-    (expectedRatio >= 0.5 || candidateRatio >= 0.5);
+    overlap >= 2 &&
+    (expectedRatio >= 0.67 || candidateRatio >= 0.67);
 
   return {
     exact: false,

@@ -17,9 +17,19 @@ import {
 
 const execFileAsync = promisify(execFile);
 const HOST = '127.0.0.1'
+const APP_DISPLAY_NAME = 'Gharmonize';
+const LINUX_DESKTOP_ID = 'gharmonize';
+const LINUX_DESKTOP_FILE = `${LINUX_DESKTOP_ID}.desktop`;
 let PORT = process.env.PORT || '5174'
 const DESKTOP_BRIDGE_TOKEN = process.env.GHARMONIZE_DESKTOP_TOKEN || crypto.randomUUID();
 process.env.GHARMONIZE_DESKTOP_TOKEN = DESKTOP_BRIDGE_TOKEN;
+
+app.setName(APP_DISPLAY_NAME);
+if (process.platform === 'linux') {
+  // Keep Chromium's Wayland app_id/X11 WM_CLASS aligned with gharmonize.desktop.
+  app.commandLine.appendSwitch('class', LINUX_DESKTOP_ID);
+  app.setDesktopName?.(LINUX_DESKTOP_FILE);
+}
 
 const TRACK_EXTRACTOR_VIDEO_EXTS = new Set([
   '.mkv',
@@ -347,7 +357,7 @@ function buildLinuxTrackExtractorDesktopFile() {
     'Categories=AudioVideo;Utility;',
     `MimeType=${mimeTypes};`,
     'StartupNotify=true',
-    'StartupWMClass=Gharmonize'
+    `StartupWMClass=${LINUX_DESKTOP_ID}`
   ].join('\n');
 }
 
@@ -443,7 +453,7 @@ function buildLinuxDesktopFile(prefs = {}) {
     'Terminal=false',
     'Categories=AudioVideo;Utility;',
     'StartupNotify=true',
-    'StartupWMClass=Gharmonize',
+    `StartupWMClass=${LINUX_DESKTOP_ID}`,
     'X-GNOME-Autostart-enabled=true',
     'X-GNOME-Autostart-Delay=3',
     'X-KDE-autostart-after=panel'
@@ -632,7 +642,7 @@ function resolveIcon() {
   }
   if (process.platform === 'linux') {
     return app.isPackaged
-      ? path.join(process.resourcesPath, 'build', 'icon.png')
+      ? path.join(process.resourcesPath, 'icon.png')
       : path.join(process.cwd(), 'build', 'icon.png');
   }
   return undefined;

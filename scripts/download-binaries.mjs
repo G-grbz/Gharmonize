@@ -205,17 +205,17 @@ const DEFAULTS = {
       find: 'ffprobe'
     },
     mkvmerge: {
-      url: 'https://mkvtoolnix.download/appimage/MKVToolNix_GUI-99.0-x86_64.AppImage',
+      url: 'https://mkvtoolnix.download/appimage/MKVToolNix_GUI-100.0-x86_64.AppImage',
       type: 'direct',
       out: 'mkvmerge'
     },
     ytdlp: {
-      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp_linux',
+      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux',
       type: 'direct',
       out: 'yt-dlp'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.8.3/deno-x86_64-unknown-linux-gnu.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip',
       type: 'zip',
       find: 'deno'
     }
@@ -233,17 +233,17 @@ const DEFAULTS = {
       find: 'ffprobe.exe'
     },
     mkvmerge: {
-      url: 'https://mkvtoolnix.download/windows/releases/99.0/mkvtoolnix-64-bit-97.0.zip',
+      url: 'https://mkvtoolnix.download/windows/releases/100.0/mkvtoolnix-64-bit-100.0.zip',
       type: 'zip',
       find: 'mkvmerge.exe'
     },
     ytdlp: {
-      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp.exe',
+      url: 'https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp.exe',
       type: 'direct',
       out: 'yt-dlp.exe'
     },
     deno: {
-      url: 'https://github.com/denoland/deno/releases/download/v2.8.3/deno-x86_64-pc-windows-msvc.zip',
+      url: 'https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-pc-windows-msvc.zip',
       type: 'zip',
       find: 'deno.exe'
     }

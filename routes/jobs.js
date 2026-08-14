@@ -1565,11 +1565,13 @@ router.get("/api/jobs", requireAuth, (req, res) => {
         spotifyTitle: j.metadata?.spotifyTitle || null,
         outputSubdir: j.metadata?.outputSubdir || null,
         originalName: j.metadata?.originalName || null,
+        directoryName: j.metadata?.directoryName || null,
         includeLyrics: !!j.metadata?.includeLyrics,
         volumeGain: j.metadata?.volumeGain ?? null,
         loudnorm: !!j.metadata?.loudnorm,
         loudnormMode: j.metadata?.loudnormMode || null,
         lyricsStats: j.metadata?.lyricsStats || null,
+        retagStats: j.metadata?.retagStats || null,
         selectedStreams: j.metadata?.selectedStreams || null,
         frozenEntries: Array.isArray(j.metadata?.frozenEntries)
           ? j.metadata.frozenEntries.map(e => ({
@@ -1634,11 +1636,13 @@ router.get("/api/stream", requireAuth, (req, res) => {
       spotifyTitle: j.metadata?.spotifyTitle || null,
       outputSubdir: j.metadata?.outputSubdir || null,
       originalName: j.metadata?.originalName || null,
+      directoryName: j.metadata?.directoryName || null,
       includeLyrics: !!j.metadata?.includeLyrics,
       volumeGain: j.metadata?.volumeGain ?? null,
       loudnorm: !!j.metadata?.loudnorm,
       loudnormMode: j.metadata?.loudnormMode || null,
       lyricsStats: j.metadata?.lyricsStats || null,
+      retagStats: j.metadata?.retagStats || null,
       selectedStreams: j.metadata?.selectedStreams || null,
       frozenEntries: Array.isArray(j.metadata?.frozenEntries)
         ? j.metadata.frozenEntries.map(e => ({

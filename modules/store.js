@@ -100,6 +100,7 @@ function pickPersistedMetadata(metadata = {}) {
     spotifyTitle: metadata?.spotifyTitle || null,
     outputSubdir: metadata?.outputSubdir || null,
     originalName: metadata?.originalName || null,
+    directoryName: metadata?.directoryName || null,
     includeLyrics: !!metadata?.includeLyrics,
     embedLyrics: !!metadata?.embedLyrics,
     volumeGain: metadata?.volumeGain ?? null,
@@ -110,6 +111,7 @@ function pickPersistedMetadata(metadata = {}) {
     originalUrl: metadata?.originalUrl || null,
     skipStats: safeJsonClone(metadata?.skipStats, { skippedCount: 0, errorsCount: 0 }),
     lyricsStats: safeJsonClone(metadata?.lyricsStats, null),
+    retagStats: safeJsonClone(metadata?.retagStats, null),
     selectedStreams: safeJsonClone(metadata?.selectedStreams, null),
     selectedIndices: Array.isArray(metadata?.selectedIndices)
       ? metadata.selectedIndices.map((value) => Number(value)).filter(Number.isFinite)
@@ -336,6 +338,7 @@ function outputExists(downloadPath) {
 
 export function jobHasAnyExistingOutput(job) {
   if (!job) return false;
+  if (job.metadata?.source === "retag" && job.status === "completed") return true;
 
   if (job.zipPath && outputExists(job.zipPath)) {
     return true;
@@ -502,6 +505,14 @@ setInterval(() => {
   for (const [id, job] of jobs.entries()) {
     if (!job?.createdAt) continue;
     if (job.status === "completed") {
+      if (
+        job.metadata?.source === "retag" &&
+        (now - new Date(job.completedAt || job.createdAt).getTime()) > JOB_MAX_AGE_MS
+      ) {
+        jobs.delete(id);
+        procByJob.delete(id);
+        continue;
+      }
       if (!jobHasAnyExistingOutput(job)) {
         jobs.delete(id);
         procByJob.delete(id);

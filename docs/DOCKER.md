@@ -58,6 +58,14 @@ docker compose up -d
 - `http://localhost:5174` — classic Web UI
 - `http://localhost:5174/ytlive.html` — YTLive music UI (see [YTLIVE.md](YTLIVE.md))
 
+To use the classic UI's in-place **Retag** output mode for MP3, FLAC, and M4A files, set `MUSIC_DIR` to the host music directory before starting Compose. The directory is mounted read/write at `/music`; Gharmonize's web directory picker is restricted to that mount.
+
+```bash
+MUSIC_DIR=/home/your-user/Music docker compose up -d
+```
+
+Because retagging replaces metadata and embedded cover art in the original files, the container user (`PUID`/`PGID`) must have write permission on this directory.
+
 ### 7. Runtime binaries in Docker
 
 The provided `docker-compose.yml` enables runtime binary management inside the container:
@@ -109,6 +117,7 @@ services:
       - PGID=${PGID:-1000}
       - DATA_DIR=/usr/src/app
       - OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs
+      - RETAG_ROOTS=/music
 ```
 
 After the edit:
@@ -149,11 +158,13 @@ docker run -d \
   -e PGID=1000 \
   -e DATA_DIR=/usr/src/app \
   -e OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs \
+  -e RETAG_ROOTS=/music \
   -v /opt/gharmonize/uploads:/usr/src/app/uploads \
   -v /opt/gharmonize/outputs:/usr/src/app/outputs \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
   -v /opt/gharmonize/cache:/usr/src/app/cache \
   -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
+  -v /home/your-user/Music:/music \
   -v /opt/gharmonize/cookies:/usr/src/app/cookies \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   -v /home:/home:ro \
@@ -186,11 +197,13 @@ docker run -d \
   -e PGID=1000 \
   -e DATA_DIR=/usr/src/app \
   -e OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs \
+  -e RETAG_ROOTS=/music \
   -v /opt/gharmonize/uploads:/usr/src/app/uploads \
   -v /opt/gharmonize/outputs:/usr/src/app/outputs \
   -v /opt/gharmonize/temp:/usr/src/app/temp \
   -v /opt/gharmonize/cache:/usr/src/app/cache \
   -v /opt/gharmonize/local-inputs:/usr/src/app/local-inputs \
+  -v /home/your-user/Music:/music \
   -v /opt/gharmonize/cookies:/usr/src/app/cookies \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   -v /home:/home:ro \

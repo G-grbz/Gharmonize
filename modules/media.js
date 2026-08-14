@@ -675,6 +675,7 @@ export async function retagMediaFile(
   opts = {}
 ) {
   const tempFilesToCleanup = [];
+  let tmpOut = null;
   // Handles safe unlink in the FFmpeg media conversion pipeline.
   const safeUnlink = (p) => {
     try {
@@ -703,7 +704,6 @@ export async function retagMediaFile(
     let canEmbedCover = false;
     let coverToUse = null;
     const coverOkFormats = new Set(["mp3", "flac", "m4a", "mp4", "ogg"]);
-    const preserveExistingCover = !coverPath && coverOkFormats.has(f);
     if (coverOkFormats.has(f)) {
       const metaCoverUrl = String(resolvedMeta?.coverUrl || "").trim();
       const useSpotifyCover = preferSpotifyCover && looksLikeSpotifyCoverUrl(metaCoverUrl);
@@ -734,11 +734,12 @@ export async function retagMediaFile(
         }
       }
     }
+    const preserveExistingCover = !canEmbedCover && coverOkFormats.has(f);
 
     const metaPairs = buildCommonMetaPairs(resolvedMeta, f);
     const ext = path.extname(absOutputPath) || `.${f}`;
     const base = absOutputPath.slice(0, -ext.length);
-    const tmpOut = `${base}.retag.${crypto.randomBytes(4).toString("hex")}${ext}`;
+    tmpOut = `${base}.retag.${crypto.randomBytes(4).toString("hex")}${ext}`;
 
     await new Promise((resolve, reject) => {
       const args = ["-hide_banner", "-nostdin", "-y", "-i", absOutputPath];
@@ -781,6 +782,7 @@ export async function retagMediaFile(
 
       console.log("🏷️ FFmpeg retag args:", args.join(" "));
       const p = spawn(ffmpegBin, args);
+      try { opts?.onProcess?.(p); } catch {}
       let err = "";
       p.stderr.on("data", (d) => (err += d.toString()));
       p.on("close", (code) => {
@@ -815,7 +817,8 @@ export async function retagMediaFile(
   } catch (e) {
     console.warn("⚠️ retag warning:", e?.message || e);
     return null;
-    } finally {
+  } finally {
+    safeUnlink(tmpOut);
     for (const p of tempFilesToCleanup) {
       safeUnlink(p);
     }

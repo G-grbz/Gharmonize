@@ -127,14 +127,15 @@ export class FormatManager {
     // Handles toggle format specific options in the browser UI layer.
     toggleFormatSpecificOptions(format) {
         const isRingtoneMode = this.app.isRingtoneMode();
+        const isRetagMode = this.app.isRetagMode();
         const sampleRateGroup = document.querySelector('.form-group:has(#sampleRateSelect)');
         const lyricsGroup = document.getElementById('lyricsCheckboxContainer');
         const embedLyricsGroup = document.getElementById('embedLyricsCheckboxContainer');
         const formatGroup = document.getElementById('formatGroup');
-        const isVideoOutput = !isRingtoneMode && (format === 'mp4' || format === 'mkv');
-        const isEac3Ac3 = !isRingtoneMode && (format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts');
-        const isFlacWav = !isRingtoneMode && (format === 'flac' || format === 'wav');
-        const isFlac = !isRingtoneMode && format === 'flac';
+        const isVideoOutput = !isRingtoneMode && !isRetagMode && (format === 'mp4' || format === 'mkv');
+        const isEac3Ac3 = !isRingtoneMode && !isRetagMode && (format === 'eac3' || format === 'ac3' || format === 'aac' || format === 'dts');
+        const isFlacWav = !isRingtoneMode && !isRetagMode && (format === 'flac' || format === 'wav');
+        const isFlac = !isRingtoneMode && !isRetagMode && format === 'flac';
 
         const videoSettingsContainer = document.getElementById('videoSettingsContainer');
         if (videoSettingsContainer) {
@@ -149,19 +150,23 @@ export class FormatManager {
         }
 
         if (sampleRateGroup) {
-            sampleRateGroup.style.display = (isVideoOutput || isRingtoneMode) ? 'none' : '';
+            sampleRateGroup.style.display = (isVideoOutput || isRingtoneMode || isRetagMode) ? 'none' : '';
         }
 
         if (lyricsGroup) {
-            lyricsGroup.style.display = (isVideoOutput || isEac3Ac3 || isRingtoneMode) ? 'none' : '';
+            lyricsGroup.style.display = (isVideoOutput || isEac3Ac3 || isRingtoneMode || isRetagMode) ? 'none' : '';
         }
         if (embedLyricsGroup) {
-            const canShowLyrics = !(isVideoOutput || isEac3Ac3 || isRingtoneMode);
+            const canShowLyrics = !(isVideoOutput || isEac3Ac3 || isRingtoneMode || isRetagMode);
             embedLyricsGroup.style.display = canShowLyrics ? 'flex' : 'none';
         }
         if (formatGroup) {
-            formatGroup.style.display = isRingtoneMode ? 'none' : '';
+            formatGroup.style.display = (isRingtoneMode || isRetagMode) ? 'none' : '';
         }
+        const bitrateGroup = document.getElementById('bitrateGroup');
+        if (bitrateGroup) bitrateGroup.style.display = isRetagMode ? 'none' : '';
+        const volumeGainGroup = document.getElementById('volumeGainGroup');
+        if (volumeGainGroup) volumeGainGroup.style.display = isRetagMode ? 'none' : '';
         let bitDepthGroup = document.getElementById('bitDepthGroup');
 
         if (isFlacWav && !bitDepthGroup) {
@@ -231,6 +236,7 @@ export class FormatManager {
         const rawFormat = document.getElementById('formatSelect')?.value || 'mp3';
         const format = this.app.getEffectiveFormat(rawFormat);
         this.toggleRingtoneControls();
+        this.app.retagManager?.syncUi?.();
         this.app.updateQualityLabel(format);
         this.toggleFormatSpecificOptions(format);
 

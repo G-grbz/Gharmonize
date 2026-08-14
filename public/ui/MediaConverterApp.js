@@ -7,6 +7,7 @@ import { FormatManager } from './FormatManager.js';
 import { notificationManager } from './NotificationManager.js';
 import { modalManager } from './ModalManager.js';
 import { settingsManager } from './SettingsManager.js';
+import { RetagManager } from './RetagManager.js';
 
 export class MediaConverterApp {
     // Initializes class state and defaults for the browser UI layer.
@@ -29,6 +30,7 @@ export class MediaConverterApp {
         this.uploadManager = new UploadManager(this);
         this.autoCreateZip = true;
         this.formatManager = new FormatManager(this);
+        this.retagManager = new RetagManager(this);
         this.notificationManager = notificationManager;
         this.modalManager = modalManager;
         this.lastPreviewedPlaylistUrl = null;
@@ -56,6 +58,7 @@ export class MediaConverterApp {
 
         this.loadFfmpegCaps();
         this.loadOutputLocations();
+        this.retagManager.initialize();
         this.initializeEventListeners();
         this.jobManager.restoreSessionState();
 
@@ -176,6 +179,7 @@ export class MediaConverterApp {
 
     // Determines whether show auto zip for current UI state should run for the browser UI layer.
     shouldShowAutoZipForCurrentUI({ url, total = null } = {}) {
+        if (this.isRetagMode()) return false;
         const format = this.getEffectiveFormat(document.getElementById('formatSelect')?.value || 'mp3');
         const isVideo = (format === 'mp4' || format === 'mkv');
         if (isVideo) return false;
@@ -206,6 +210,11 @@ export class MediaConverterApp {
     // Checks whether ringtone mode is active for the browser UI layer.
     isRingtoneMode() {
         return this.getOutputMode() === 'ringtone';
+    }
+
+    // Checks whether in-place metadata rewriting is active.
+    isRetagMode() {
+        return this.getOutputMode() === 'retag';
     }
 
     // Returns ringtone target for the browser UI layer.
@@ -653,6 +662,7 @@ export class MediaConverterApp {
                 this.loadLocalFiles();
             }
             this.formatManager?.updateRingtoneHint?.();
+            this.retagManager?.syncUi?.();
             this.renderBinaryFooterLabel();
         });
 
@@ -687,6 +697,7 @@ export class MediaConverterApp {
         const startConvertBtn = document.getElementById('startConvertBtn');
         if (startConvertBtn) {
             startConvertBtn.addEventListener('click', (ev) => {
+                if (this.isRetagMode()) return;
                 const urlInput = document.getElementById('urlInput');
                 const url = urlInput?.value.trim();
                 const playlistCheckboxEl = document.getElementById('playlistCheckbox');
@@ -1303,6 +1314,10 @@ export class MediaConverterApp {
     // Handles handle URL submit in the browser UI layer.
     async handleUrlSubmit(e) {
     e.preventDefault();
+    if (this.isRetagMode()) {
+        await this.retagManager.start();
+        return;
+    }
     const url = document.getElementById('urlInput').value.trim();
     const outputSettings = this.resolveCurrentOutputSettings();
     const format = outputSettings.format;
@@ -1553,6 +1568,28 @@ export class MediaConverterApp {
     // Handles handle URL submit with spinner in the browser UI layer.
     async handleUrlSubmitWithSpinner(e) {
         e.preventDefault();
+
+        if (this.isRetagMode()) {
+            const retagStartButton = document.getElementById('startConvertBtn');
+            this.showButtonSpinner(
+                retagStartButton,
+                retagStartButton?.querySelector('.btn-spinner') || null,
+                retagStartButton?.querySelector('.btn-text') || null
+            );
+            try {
+                await this.retagManager.start();
+            } catch (error) {
+                console.error('Retag submission error:', error);
+                this.showNotification(`${this.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
+            } finally {
+                this.hideButtonSpinner(
+                    retagStartButton,
+                    retagStartButton?.querySelector('.btn-spinner') || null,
+                    retagStartButton?.querySelector('.btn-text') || null
+                );
+            }
+            return;
+        }
 
         const urlInput = document.getElementById('urlInput');
         const url = urlInput?.value.trim();

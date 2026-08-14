@@ -15,6 +15,7 @@ import ytliveDownloadListsRoute from './routes/ytliveDownloadLists.js'
 import jobsRoute from './routes/jobs.js'
 import downloadRoute from './routes/download.js'
 import trackExtractorRoute from './routes/trackExtractor.js'
+import retagRoute from './routes/retag.js'
 import { sendError } from './modules/utils.js'
 import discRouter from './routes/disc.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
@@ -364,6 +365,7 @@ app.use(playlistRoute)
 app.use(ytliveDownloadListsRoute)
 app.use(jobsRoute)
 app.use(trackExtractorRoute)
+app.use(retagRoute)
 app.use(discRouter)
 app.use(downloadRoute)
 app.use('/api', settingsRoute)

@@ -352,7 +352,7 @@ export class JobManager {
     // Computes raw prog for the browser UI layer.
     computeRawProg(job) {
     const source = job.metadata?.source || 'file';
-    const isLocalSource = source === 'local' || source === 'file';
+    const isLocalSource = source === 'local' || source === 'file' || source === 'retag';
 
     if (isLocalSource) {
         let convertProgress = Number(job.convertProgress) || 0;
@@ -429,7 +429,7 @@ export class JobManager {
 computeProg(job) {
     const id = job.id;
     const source = job.metadata?.source || 'file';
-    const isLocalSource = source === 'local' || source === 'file';
+    const isLocalSource = source === 'local' || source === 'file' || source === 'retag';
 
     const baseRaw = this.computeRawProg(job);
 
@@ -914,7 +914,7 @@ updateJobUI(job, batchId = null) {
 
     const currentPhaseText = phaseTexts[job.currentPhase] || job.currentPhase;
     const source = job.metadata?.source || 'file';
-    const isLocalSource = source === 'local' || source === 'file';
+    const isLocalSource = source === 'local' || source === 'file' || source === 'retag';
 
     if (isLocalSource) {
         const cvPctRaw =
@@ -1125,7 +1125,9 @@ updateJobUI(job, batchId = null) {
     const codecIcon = '⚡';
 
     let formatInnerEmoji = '⚡';
-    if (videoFormats.includes(fmt)) {
+    if (fmt === 'retag') {
+        formatInnerEmoji = '🏷️';
+    } else if (videoFormats.includes(fmt)) {
         formatInnerEmoji = '🎬';
     } else if (audioFormats.includes(fmt)) {
         formatInnerEmoji = '🎧';
@@ -1149,7 +1151,7 @@ updateJobUI(job, batchId = null) {
 
     const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
     const source = job.metadata?.source || 'file';
-    const isLocalSource = (source === 'local' || source === 'file');
+    const isLocalSource = (source === 'local' || source === 'file' || source === 'retag');
     const dlPct = Number(job.downloadProgress || 0) || 0;
     const showSourceQuality = !isLocalSource && job.bitrate && (phaseNorm === 'downloading' || dlPct > 0);
 
@@ -1311,6 +1313,20 @@ updateJobUI(job, batchId = null) {
     }
 
     const extraFeatures = [];
+    if (job.metadata?.source === 'retag' && job.metadata?.retagStats) {
+        const stats = job.metadata.retagStats;
+        extraFeatures.push(`<span class="info-feature">🏷️ ${Number(stats.tagged || 0)}/${Number(stats.total || 0)}</span>`);
+        extraFeatures.push(`<span class="info-feature">🌐 ${this.app.t('retag.stats.online')}: ${Number(stats.onlineMatched || 0)}</span>`);
+        extraFeatures.push(`<span class="info-feature">🗂️ ${this.app.t('retag.stats.existing')}: ${Number(stats.existingOnly || 0)}</span>`);
+        extraFeatures.push(`<span class="info-feature">🖼️ ${this.app.t('retag.stats.covers')}: ${Number(stats.coversUpdated || 0)}</span>`);
+        extraFeatures.push(`<span class="info-feature">✏️ ${this.app.t('retag.stats.renamed')}: ${Number(stats.renamed || 0)}</span>`);
+        if (Number(stats.nameCollisions || 0) > 0) {
+            extraFeatures.push(`<span class="info-feature">🛡️ ${this.app.t('retag.stats.nameCollisions')}: ${Number(stats.nameCollisions || 0)}</span>`);
+        }
+        if (Number(stats.failed || 0) > 0) {
+            extraFeatures.push(`<span class="info-feature">⚠️ ${Number(stats.failed || 0)}</span>`);
+        }
+    }
     if (job.metadata?.includeLyrics) {
         extraFeatures.push(`<span class="info-feature">🎼 ${this.app.t('label.includeLyrics2') || 'Lyrics'}</span>`);
     }

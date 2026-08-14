@@ -167,10 +167,10 @@
       </form>
     </div>
     <div class="card">
-        <h2 data-i18n="section.url">🔗 Convert from URL</h2>
-        <small class="comment" data-i18n="ph.urlcomment"></small>
+        <h2 id="urlSectionTitle" data-i18n="section.url">🔗 Convert from URL</h2>
+        <small id="urlSectionComment" class="comment" data-i18n="ph.urlcomment"></small>
         <form id="urlForm">
-          <div class="form-group">
+          <div class="form-group" id="urlInputGroup">
             <input type="url" id="urlInput" data-i18n-ph="ph.url" placeholder="YouTube URL or direct media link" required />
           </div>
 
@@ -250,7 +250,18 @@
           <select id="outputModeSelect">
             <option value="standard" data-i18n="option.output.normal">Standard file</option>
             <option value="ringtone" data-i18n="option.output.ringtone">Phone ringtone</option>
+            <option value="retag" data-i18n="option.output.retag">Retag</option>
           </select>
+        </div>
+        <div id="retagSettingsContainer" class="retag-settings" style="display:none;">
+          <div class="form-group">
+            <label data-i18n="label.retagDirectory">Music directory:</label>
+            <button type="button" class="btn-outline" id="retagChooseDirectoryBtn">
+              📁 <span data-i18n="btn.retagChooseDirectory">Select directory</span>
+            </button>
+            <code id="retagSelectedDirectory" class="retag-selected-directory is-empty" data-i18n="ui.retagNoDirectory">No directory selected</code>
+          </div>
+          <small class="muted" data-i18n="ui.retagHint">Rewrites MP3, FLAC, and M4A tags and embedded covers in place without downloading music.</small>
         </div>
         <div id="ringtoneSettingsContainer" class="ringtone-settings" style="display:none;">
           <div class="form-group">
@@ -301,11 +312,11 @@
           <label for="formatSelect" data-i18n="label.format">Format:</label>
           <select id="formatSelect"></select>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="bitrateGroup">
           <label for="bitrateSelect" data-i18n="label.audioBitrate">Audio Bitrate:</label>
           <select id="bitrateSelect"></select>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="sampleRateGroup">
           <label for="sampleRateSelect" data-i18n="label.sampleRate">Sample Rate:</label>
           <select id="sampleRateSelect">
             <option value="44100" data-i18n="quality.44100">44.1 kHz (CD Quality)</option>
