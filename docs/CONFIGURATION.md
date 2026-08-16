@@ -472,6 +472,13 @@ FFMPEG_BIN=/usr/local/bin/ffmpeg
 FFMPEG_BIN=C:\ffmpeg\bin\ffmpeg.exe
 ```
 
+### `GHARMONIZE_FFMPEG_CHANNEL`
+Selects the BtbN channel used by the automatic FFmpeg manager. `stable` is the default and selects the newest release-branch build. `master` is available only as an explicit opt-in. New candidates are runtime-tested before activation and a last-known-good pair is preserved for rollback.
+
+```dotenv
+GHARMONIZE_FFMPEG_CHANNEL=stable
+```
+
 ---
 
 ## Leaving Binary Paths Empty (Auto-Managed)

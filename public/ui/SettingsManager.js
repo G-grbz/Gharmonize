@@ -235,6 +235,15 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
+                <label for="f_GHARMONIZE_FFMPEG_CHANNEL" class="settings-field-label">GHARMONIZE_FFMPEG_CHANNEL</label>
+                <div class="settings-field-hint muted" data-i18n="settings.ffmpegChannel"></div>
+                <select id="f_GHARMONIZE_FFMPEG_CHANNEL">
+                    <option value="stable" data-i18n="settings.ffmpegChannelStable">stable (recommended)</option>
+                    <option value="master" data-i18n="settings.ffmpegChannelMaster">master (development)</option>
+                </select>
+                </div>
+
+                <div class="form-group">
                 <label for="f_MEDIA_COMMENT" class="settings-field-label">MEDIA_COMMENT</label>
                 <div class="settings-field-hint muted" data-i18n="settings.mediaComment"></div>
                 <input id="f_MEDIA_COMMENT" type="text" placeholder="Gharmonize" data-i18n-ph="ph.mediaComment">
@@ -873,6 +882,7 @@ export class SettingsManager {
             document.getElementById('f_ENRICH_SPOTIFY_FOR_YT').value = s.ENRICH_SPOTIFY_FOR_YT || '1';
             document.getElementById('f_MEDIA_COMMENT').value = s.MEDIA_COMMENT || 'Gharmonize';
             document.getElementById('f_FFMPEG_BIN').value = s.FFMPEG_BIN || '';
+            document.getElementById('f_GHARMONIZE_FFMPEG_CHANNEL').value = s.GHARMONIZE_FFMPEG_CHANNEL === 'master' ? 'master' : 'stable';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
             document.getElementById('f_FRONTEND_UI').value = s.FRONTEND_UI === 'ytlive' ? 'ytlive' : 'classic';
@@ -934,6 +944,7 @@ export class SettingsManager {
                 MEDIA_COMMENT: document.getElementById('f_MEDIA_COMMENT').value.trim(),
                 YTDLP_BIN: document.getElementById('f_YTDLP_BIN').value.trim(),
                 FFMPEG_BIN: document.getElementById('f_FFMPEG_BIN').value.trim(),
+                GHARMONIZE_FFMPEG_CHANNEL: document.getElementById('f_GHARMONIZE_FFMPEG_CHANNEL').value,
                 UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
                 FRONTEND_UI: document.getElementById('f_FRONTEND_UI').value,
                 YOUTUBE_QUICK_ADD_LIMIT: document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value.trim(),

@@ -1987,15 +1987,21 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       if (!lines.length) return "";
 
       const preferredPatterns = [
+        /Driver does not support the required nvenc API version/i,
+        /minimum required Nvidia driver/i,
+        /required nvenc API/i,
+        /NVENC API/i,
+        /nvEncOpenEncodeSessionEx/i,
+        /libnvidia-encode/i,
+        /Cannot load libcuda/i,
         /cuInit/i,
         /CUDA_ERROR/i,
         /Device creation failed/i,
-        /Error while opening encoder/i,
-        /Could not open encoder/i,
         /No capable devices/i,
-        /Cannot load libcuda/i,
         /Permission denied/i,
-        /Operation not permitted/i
+        /Operation not permitted/i,
+        /Could not open encoder/i,
+        /Error while opening encoder/i
       ];
 
       for (const pattern of preferredPatterns) {

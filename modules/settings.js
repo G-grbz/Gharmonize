@@ -34,6 +34,7 @@ const ALLOWED_KEYS = [
   'MEDIA_COMMENT',
   'YTDLP_BIN',
   'FFMPEG_BIN',
+  'GHARMONIZE_FFMPEG_CHANNEL',
   'UPLOAD_MAX_BYTES',
   'TRACK_EXTRACTOR_SHELL_INTEGRATION',
   'FRONTEND_UI',
@@ -210,6 +211,7 @@ router.get('/settings', authMiddleware, (req, res) => {
     let val = env.get(k) ?? ''
     if (k === 'SPOTIFY_CLIENT_SECRET' && val) val = '••••••••'
     if (k === 'HOMEPAGE_WIDGET_KEY' && val) val = '••••••••'
+    if (k === 'GHARMONIZE_FFMPEG_CHANNEL') val = getEnv(k) === 'master' ? 'master' : 'stable'
     data[k] = val
   }
   res.json({ settings: data })
@@ -233,6 +235,11 @@ router.post('/settings', authMiddleware, express.json(), (req, res) => {
 
     if (k === 'HOMEPAGE_WIDGET_KEY') {
       updates[k] = (!v || v === '••••••••') ? (env.get(k) || '') : String(v)
+      continue
+    }
+
+    if (k === 'GHARMONIZE_FFMPEG_CHANNEL') {
+      updates[k] = String(v || '').trim().toLowerCase() === 'master' ? 'master' : 'stable'
       continue
     }
 

@@ -9,9 +9,18 @@ Gharmonize supports two binary workflows for its runtime dependencies: **ffmpeg*
 - Default behavior outside Docker, unless you explicitly disable it
 - Enabled in the provided Docker deployment through `GHARMONIZE_WEB_BINARIES_IN_DOCKER=1`
 - Checks and refreshes **ffmpeg**, **ffprobe**, **mkvmerge**, **yt-dlp**, and **deno** at startup
-- Keeps the current resolved binaries as a fallback if a refresh fails
+- Uses BtbN **release-branch/stable** FFmpeg builds by default instead of `master-latest`
+- Stages a new FFmpeg/ffprobe pair as a candidate, validates it, and only then promotes it
+- Preserves a **last-known-good** FFmpeg pair and rolls back when a candidate regresses a previously working NVENC runtime
+- Rejects explicit NVENC API/driver mismatches (for example, a build requiring a newer NVIDIA driver) and keeps a compatible fallback when available
 
 This means manual setup is no longer required in the common case — on first launch (with internet access), Gharmonize fetches what it needs automatically.
+
+The default FFmpeg channel is `stable`. Advanced users can explicitly opt into BtbN master snapshots with:
+
+```dotenv
+GHARMONIZE_FFMPEG_CHANNEL=master
+```
 
 ---
 

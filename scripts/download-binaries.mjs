@@ -195,12 +195,14 @@ async function findFileRecursive(dir, fileName) {
 const DEFAULTS = {
   linux: {
     ffmpeg: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz',
+      url: null,
+      source: 'btbn-stable',
       type: 'tar',
       find: 'ffmpeg'
     },
     ffprobe: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz',
+      url: null,
+      source: 'btbn-stable',
       type: 'tar',
       find: 'ffprobe'
     },
@@ -223,12 +225,14 @@ const DEFAULTS = {
 
   win32: {
     ffmpeg: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+      url: null,
+      source: 'btbn-stable',
       type: 'zip',
       find: 'ffmpeg.exe'
     },
     ffprobe: {
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+      url: null,
+      source: 'btbn-stable',
       type: 'zip',
       find: 'ffprobe.exe'
     },
@@ -251,6 +255,80 @@ const DEFAULTS = {
 };
 
 const TOOL_ORDER = ['ffmpeg', 'ffprobe', 'mkvmerge', 'ytdlp', 'deno'];
+
+
+const BTBN_STABLE_TARGETS = {
+  linux: {
+    x64: { token: 'linux64', extension: '.tar.xz' },
+    arm64: { token: 'linuxarm64', extension: '.tar.xz' }
+  },
+  win32: {
+    x64: { token: 'win64', extension: '.zip' },
+    arm64: { token: 'winarm64', extension: '.zip' }
+  }
+};
+
+let btbnStableUrlPromise = null;
+
+function compareNumericVersionsDesc(a, b) {
+  const aa = String(a || '').split('.').map((n) => Number(n) || 0);
+  const bb = String(b || '').split('.').map((n) => Number(n) || 0);
+  const len = Math.max(aa.length, bb.length);
+  for (let i = 0; i < len; i += 1) {
+    const diff = (bb[i] || 0) - (aa[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+async function resolveBtbnStableArchiveUrl() {
+  if (btbnStableUrlPromise) return btbnStableUrlPromise;
+
+  btbnStableUrlPromise = (async () => {
+    const target = BTBN_STABLE_TARGETS?.[PLATFORM]?.[ARCH];
+    if (!target) {
+      throw new Error(`No BtbN stable FFmpeg target for ${PLATFORM}/${ARCH}`);
+    }
+
+    const res = await fetch('https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest', {
+      headers: {
+        'User-Agent': 'Gharmonize-Binary-Downloader',
+        'Accept': 'application/vnd.github+json'
+      }
+    });
+    if (!res.ok) {
+      throw new Error(`BtbN GitHub API failed (${res.status} ${res.statusText})`);
+    }
+
+    const release = await res.json();
+    const escapedToken = target.token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedExt = target.extension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(
+      `^ffmpeg-n(\\d+(?:\\.\\d+)+)-latest-${escapedToken}-gpl(?:-[0-9.]+)?${escapedExt}$`,
+      'i'
+    );
+
+    const candidates = (Array.isArray(release?.assets) ? release.assets : [])
+      .map((asset) => {
+        const name = String(asset?.name || '');
+        if (/shared/i.test(name)) return null;
+        const match = name.match(re);
+        if (!match || !asset?.browser_download_url) return null;
+        return { version: match[1], url: asset.browser_download_url, name };
+      })
+      .filter(Boolean)
+      .sort((a, b) => compareNumericVersionsDesc(a.version, b.version));
+
+    if (!candidates.length) {
+      throw new Error('BtbN stable/release-branch FFmpeg asset was not found');
+    }
+
+    log(`BtbN stable FFmpeg selected: ${candidates[0].name}`);
+    return candidates[0].url;
+  })();
+
+  return btbnStableUrlPromise;
+}
 const downloadCache = new Map();
 const extractCache = new Map();
 
@@ -265,7 +343,12 @@ async function processTool(tool) {
   const envVarName = `GHARMONIZE_${tool.toUpperCase()}_URL`;
   const envUrl = process.env[envVarName];
 
-  const url = envUrl || defaults.url;
+  const url = envUrl || defaults.url ||
+    (defaults.source === 'btbn-stable' ? await resolveBtbnStableArchiveUrl() : null);
+
+  if (!url) {
+    throw new Error(`${tool}: no download URL could be resolved`);
+  }
 
   const outName =
     PLATFORM === 'win32'

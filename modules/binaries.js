@@ -69,16 +69,24 @@ const DENO_ASSETS = {
   }
 };
 
-const FFMPEG_ARCHIVE_ASSETS = {
+const FFMPEG_RELEASE_TARGETS = {
   linux: {
-    x64: /ffmpeg-.*-linux64-gpl\.tar\.xz$/i,
-    arm64: /ffmpeg-.*-linuxarm64-gpl\.tar\.xz$/i
+    x64: { token: "linux64", extension: ".tar.xz" },
+    arm64: { token: "linuxarm64", extension: ".tar.xz" }
   },
   win32: {
-    x64: /ffmpeg-.*-win64-gpl\.zip$/i,
-    arm64: /ffmpeg-.*-winarm64-gpl\.zip$/i
+    x64: { token: "win64", extension: ".zip" },
+    arm64: { token: "winarm64", extension: ".zip" }
   }
 };
+
+// Stable/release builds are the default. Read the channel dynamically so a
+// value saved from Settings is honored by a manual binary refresh immediately.
+function getFfmpegChannel() {
+  return String(process.env.GHARMONIZE_FFMPEG_CHANNEL || "stable")
+    .trim()
+    .toLowerCase() === "master" ? "master" : "stable";
+}
 
 const WINDOWS_7Z_EXTRACTORS = [
   ["tar", ["-xf"]],
@@ -675,6 +683,317 @@ function resolveReleaseAsset(release, matcher) {
   return assets.find((asset) => String(asset?.name || "") === String(matcher)) || null;
 }
 
+
+// Compares dotted numeric versions such as 8.1 and 7.1.
+function compareNumericVersionsDesc(a, b) {
+  const aa = String(a || "").split(".").map((n) => Number(n) || 0);
+  const bb = String(b || "").split(".").map((n) => Number(n) || 0);
+  const len = Math.max(aa.length, bb.length);
+  for (let i = 0; i < len; i += 1) {
+    const diff = (bb[i] || 0) - (aa[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+// Selects the newest BtbN release-branch asset for the current platform.
+// Unlike the old broad matcher, this deliberately excludes "master-latest".
+function resolveStableFfmpegAsset(release) {
+  const target = FFMPEG_RELEASE_TARGETS?.[process.platform]?.[process.arch];
+  if (!target) return null;
+
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const escapedToken = target.token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedExt = target.extension.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const releaseRe = new RegExp(
+    `^ffmpeg-n(\\d+(?:\\.\\d+)+)-latest-${escapedToken}-gpl(?:-[0-9.]+)?${escapedExt}$`,
+    "i"
+  );
+
+  const candidates = assets
+    .map((asset) => {
+      const name = String(asset?.name || "");
+      if (/shared/i.test(name)) return null;
+      const match = name.match(releaseRe);
+      if (!match) return null;
+      return { asset, version: match[1] };
+    })
+    .filter(Boolean)
+    .sort((a, b) => compareNumericVersionsDesc(a.version, b.version));
+
+  return candidates[0]?.asset || null;
+}
+
+// Selects BtbN master only when the user explicitly opts in.
+function resolveMasterFfmpegAsset(release) {
+  const target = FFMPEG_RELEASE_TARGETS?.[process.platform]?.[process.arch];
+  if (!target) return null;
+  const expected = `ffmpeg-master-latest-${target.token}-gpl${target.extension}`.toLowerCase();
+  return (Array.isArray(release?.assets) ? release.assets : [])
+    .find((asset) => String(asset?.name || "").toLowerCase() === expected) || null;
+}
+
+function resolvePreferredFfmpegAsset(release, channel = getFfmpegChannel()) {
+  if (channel === "master") {
+    return resolveMasterFfmpegAsset(release);
+  }
+  return resolveStableFfmpegAsset(release);
+}
+
+// Runs a binary while preserving stderr even for non-zero exits.
+async function execFileCapture(binaryPath, args = [], timeout = 8000) {
+  try {
+    const { stdout, stderr } = await execFileAsync(binaryPath, args, {
+      timeout,
+      windowsHide: true,
+      env: getBinaryRuntimeEnv(),
+      maxBuffer: 4 * 1024 * 1024
+    });
+    return { code: 0, stdout: String(stdout || ""), stderr: String(stderr || "") };
+  } catch (error) {
+    return {
+      code: Number.isInteger(error?.code) ? error.code : 1,
+      stdout: String(error?.stdout || ""),
+      stderr: String(error?.stderr || error?.message || "")
+    };
+  }
+}
+
+function summarizeNvencProbeDetail(detail) {
+  const lines = String(detail || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return "";
+
+  const preferredPatterns = [
+    /Driver does not support the required nvenc API version/i,
+    /minimum required Nvidia driver/i,
+    /required nvenc API/i,
+    /Cannot load libnvidia-encode/i,
+    /Cannot load libcuda/i,
+    /CUDA_ERROR/i,
+    /No capable devices/i,
+    /Error while opening encoder/i
+  ];
+
+  for (const pattern of preferredPatterns) {
+    const line = lines.find((item) => pattern.test(item));
+    if (line) return line;
+  }
+  return lines[lines.length - 1];
+}
+
+function isNvencApiCompatibilityFailure(detail) {
+  return /Driver does not support the required nvenc API version|minimum required Nvidia driver|required nvenc API/i
+    .test(String(detail || ""));
+}
+
+// Lightweight hardware validation used only for FFmpeg activation/rollback.
+// h264_nvenc is a good canary because every NVENC-capable NVIDIA generation
+// supported by Gharmonize exposes H.264 encode even when HEVC/AV1 differs.
+async function probeH264Nvenc(ffmpegPath) {
+  const encoders = await execFileCapture(ffmpegPath, ["-hide_banner", "-encoders"], 8000);
+  if (encoders.code !== 0) {
+    return {
+      listed: false,
+      ok: false,
+      code: encoders.code,
+      detail: summarizeNvencProbeDetail(encoders.stderr)
+    };
+  }
+
+  const encoderText = `${encoders.stdout}\n${encoders.stderr}`;
+  if (!/\bh264_nvenc\b/i.test(encoderText)) {
+    return { listed: false, ok: false, code: 0, detail: "h264_nvenc is not listed" };
+  }
+
+  const probe = await execFileCapture(ffmpegPath, [
+    "-hide_banner",
+    "-loglevel", "verbose",
+    "-f", "lavfi",
+    "-i", "color=c=black:s=128x128:r=30:d=0.1",
+    "-an",
+    "-c:v", "h264_nvenc",
+    "-t", "0.1",
+    "-f", "null",
+    "-"
+  ], 10000);
+
+  return {
+    listed: true,
+    ok: probe.code === 0,
+    code: probe.code,
+    detail: summarizeNvencProbeDetail(probe.stderr),
+    rawDetail: String(probe.stderr || "").split(/\r?\n/).slice(-24).join("\n").trim()
+  };
+}
+
+async function inspectFfmpegPair(ffmpegPath, ffprobePath) {
+  const result = {
+    basic: false,
+    nvenc: { listed: false, ok: false, code: null, detail: "" }
+  };
+
+  if (!isExecutable(ffmpegPath) || !isExecutable(ffprobePath)) {
+    return result;
+  }
+
+  try {
+    await verifyVersionedBinary(ffmpegPath, "ffmpeg", ["-version"]);
+    await verifyVersionedBinary(ffprobePath, "ffprobe", ["-version"]);
+    result.basic = true;
+  } catch (error) {
+    result.basicError = String(error?.message || error);
+    return result;
+  }
+
+  result.nvenc = await probeH264Nvenc(ffmpegPath);
+  return result;
+}
+
+function activeFfmpegPairFromMeta(meta) {
+  if (!meta?.ffmpeg?.path || !meta?.ffprobe?.path) return null;
+  return {
+    ffmpegPath: meta.ffmpeg.path,
+    ffprobePath: meta.ffprobe.path,
+    tag: meta.ffmpeg.tag || meta.ffprobe.tag || "",
+    source: meta.ffmpeg.source || "legacy",
+    assetName: meta.ffmpeg.assetName || "",
+    validation: meta.ffmpeg.validation || null
+  };
+}
+
+function lastKnownGoodPairFromMeta(meta) {
+  const lkg = meta?.ffmpegLastKnownGood;
+  if (!lkg?.ffmpegPath || !lkg?.ffprobePath) return null;
+  return { ...lkg };
+}
+
+function pairPathsDiffer(a, b) {
+  if (!a || !b) return true;
+  return path.resolve(String(a.ffmpegPath)) !== path.resolve(String(b.ffmpegPath)) ||
+    path.resolve(String(a.ffprobePath)) !== path.resolve(String(b.ffprobePath));
+}
+
+function validationAllowsActivation(candidateValidation, baselineValidation = null) {
+  if (!candidateValidation?.basic) {
+    return { ok: false, reason: candidateValidation?.basicError || "basic FFmpeg validation failed" };
+  }
+
+  if (baselineValidation?.nvenc?.ok && !candidateValidation?.nvenc?.ok) {
+    return {
+      ok: false,
+      reason: `NVENC regression: ${candidateValidation?.nvenc?.detail || "h264_nvenc runtime probe failed"}`
+    };
+  }
+
+  // On a first install/migration there may be no LKG yet. An explicit NVENC
+  // API/driver mismatch means we know this candidate is incompatible with the
+  // NVIDIA runtime that is actually present, so do not activate it.
+  if (
+    candidateValidation?.nvenc?.listed &&
+    !candidateValidation?.nvenc?.ok &&
+    isNvencApiCompatibilityFailure(
+      `${candidateValidation?.nvenc?.detail || ""}\n${candidateValidation?.nvenc?.rawDetail || ""}`
+    )
+  ) {
+    return {
+      ok: false,
+      reason: candidateValidation?.nvenc?.detail || "NVENC API/driver compatibility failure"
+    };
+  }
+
+  return { ok: true, reason: "" };
+}
+
+async function inspectPairMaybe(pair) {
+  if (!pair?.ffmpegPath || !pair?.ffprobePath) return null;
+  const validation = await inspectFfmpegPair(pair.ffmpegPath, pair.ffprobePath);
+  return { ...pair, validation };
+}
+
+async function findCompatibleLocalFfmpegPair(excludePaths = []) {
+  const excluded = new Set(excludePaths.filter(Boolean).map((p) => path.resolve(String(p))));
+  const candidates = [];
+
+  const addPair = (ffmpegPath, ffprobePath, source) => {
+    if (!ffmpegPath || !ffprobePath) return;
+    const resolved = path.resolve(String(ffmpegPath));
+    if (excluded.has(resolved)) return;
+    if (candidates.some((item) => path.resolve(String(item.ffmpegPath)) === resolved)) return;
+    candidates.push({ ffmpegPath, ffprobePath, tag: source, source });
+  };
+
+  if (PACKAGED_BIN_DIR) {
+    addPair(
+      path.join(PACKAGED_BIN_DIR, pickExeName("ffmpeg")),
+      path.join(PACKAGED_BIN_DIR, pickExeName("ffprobe")),
+      "packaged"
+    );
+  }
+
+  addPair(
+    path.join(DEV_BIN_DIR, pickExeName("ffmpeg")),
+    path.join(DEV_BIN_DIR, pickExeName("ffprobe")),
+    "development"
+  );
+
+  addPair(
+    findOnPath(pickExeName("ffmpeg")),
+    findOnPath(pickExeName("ffprobe")),
+    "system"
+  );
+
+  for (const pair of candidates) {
+    if (!isExecutable(pair.ffmpegPath) || !isExecutable(pair.ffprobePath)) continue;
+    const inspected = await inspectPairMaybe(pair);
+    if (inspected?.validation?.basic && inspected?.validation?.nvenc?.ok) {
+      return inspected;
+    }
+  }
+
+  return null;
+}
+
+function setActiveFfmpegMetadata(meta, pair, validation, extra = {}) {
+  setMetaEntry(meta, "ffmpeg", {
+    tag: pair.tag,
+    path: pair.ffmpegPath,
+    source: pair.source || "btbn-stable",
+    assetName: pair.assetName || "",
+    validation,
+    ...extra
+  });
+  setMetaEntry(meta, "ffprobe", {
+    tag: pair.tag,
+    path: pair.ffprobePath,
+    source: pair.source || "btbn-stable",
+    assetName: pair.assetName || "",
+    ...extra
+  });
+}
+
+function setLastKnownGoodMetadata(meta, pair, validation) {
+  if (!pair?.ffmpegPath || !pair?.ffprobePath || !validation?.basic) return;
+  meta.ffmpegLastKnownGood = {
+    tag: pair.tag || "",
+    ffmpegPath: pair.ffmpegPath,
+    ffprobePath: pair.ffprobePath,
+    source: pair.source || "unknown",
+    assetName: pair.assetName || "",
+    validation,
+    savedAt: Date.now()
+  };
+}
+
+async function pruneFfmpegCache(meta) {
+  const active = activeFfmpegPairFromMeta(meta);
+  const lkg = lastKnownGoodPairFromMeta(meta);
+  await pruneVersionedFiles("ffmpeg-", [active?.ffmpegPath, lkg?.ffmpegPath]);
+  await pruneVersionedFiles("ffprobe-", [active?.ffprobePath, lkg?.ffprobePath]);
+}
+
 // Updates metadata entry for web binary cache.
 function setMetaEntry(meta, key, value) {
   meta[key] = {
@@ -884,44 +1203,93 @@ async function ensureLatestDeno(meta, options = {}) {
   }
 }
 
-// Ensures latest ffmpeg and ffprobe binaries from the shared FFmpeg archive.
+// Ensures a tested BtbN FFmpeg release build and preserves a last-known-good pair.
 async function ensureLatestFfmpegTools(meta, options = {}) {
   const force = !!options.force;
-  const assetMatcher = pickReleaseAsset(FFMPEG_ARCHIVE_ASSETS);
-  if (!assetMatcher) return null;
+  const ffmpegChannel = getFfmpegChannel();
+  const currentPair = activeFfmpegPairFromMeta(meta);
+  const lkgPair = lastKnownGoodPairFromMeta(meta);
 
-  const currentFfmpeg = meta?.ffmpeg;
-  const currentFfprobe = meta?.ffprobe;
+  const currentInspected = currentPair && isExecutable(currentPair.ffmpegPath) && isExecutable(currentPair.ffprobePath)
+    ? await inspectPairMaybe(currentPair)
+    : null;
+  const lkgInspected = lkgPair && isExecutable(lkgPair.ffmpegPath) && isExecutable(lkgPair.ffprobePath)
+    ? await inspectPairMaybe(lkgPair)
+    : null;
+
+  const baselineValidation =
+    currentInspected?.validation?.nvenc?.ok ? currentInspected.validation :
+    lkgInspected?.validation?.nvenc?.ok ? lkgInspected.validation :
+    currentInspected?.validation?.basic ? currentInspected.validation :
+    lkgInspected?.validation?.basic ? lkgInspected.validation :
+    null;
+
+  const currentSource = String(currentPair?.source || "");
+  const currentStoredNvencWasGood = !!currentPair?.validation?.nvenc?.ok;
+  const currentHasRuntimeRegression =
+    currentStoredNvencWasGood && !currentInspected?.validation?.nvenc?.ok;
+  const currentHasApiMismatch = isNvencApiCompatibilityFailure(
+    `${currentInspected?.validation?.nvenc?.detail || ""}\n${currentInspected?.validation?.nvenc?.rawDetail || ""}`
+  );
+
+  // A stable build that already passed validation remains active until TTL.
+  // We still run the tiny NVENC canary so a driver downgrade/runtime regression
+  // can trigger rollback instead of silently switching the user's encoder.
   if (
     !force &&
-    currentFfmpeg?.path &&
-    currentFfprobe?.path &&
-    isExecutable(currentFfmpeg.path) &&
-    isExecutable(currentFfprobe.path) &&
-    isFresh(currentFfmpeg) &&
-    isFresh(currentFfprobe)
+    currentInspected?.validation?.basic &&
+    currentSource === "btbn-stable" &&
+    isFresh(meta?.ffmpeg) &&
+    isFresh(meta?.ffprobe) &&
+    !currentHasRuntimeRegression &&
+    !currentHasApiMismatch
   ) {
-    await pruneVersionedFiles("ffmpeg-", currentFfmpeg.path);
-    await pruneVersionedFiles("ffprobe-", currentFfprobe.path);
+    // Refresh the cached runtime result without extending checkedAt; otherwise
+    // opening the app frequently would postpone the next update forever.
+    if (meta?.ffmpeg) {
+      meta.ffmpeg.validation = currentInspected.validation;
+    }
+    await pruneFfmpegCache(meta);
     return {
-      ffmpegPath: currentFfmpeg.path,
-      ffprobePath: currentFfprobe.path
+      ffmpegPath: currentPair.ffmpegPath,
+      ffprobePath: currentPair.ffprobePath,
+      source: currentSource,
+      validation: currentInspected.validation
+    };
+  }
+
+  // If the latest candidate was rejected recently, keep the known-good fallback
+  // without downloading the same large archive on every application start.
+  if (
+    !force &&
+    currentInspected?.validation?.basic &&
+    meta?.ffmpegRejected?.checkedAt &&
+    (Date.now() - Number(meta.ffmpegRejected.checkedAt)) < WEB_TTL_MS
+  ) {
+    await pruneFfmpegCache(meta);
+    return {
+      ffmpegPath: currentPair.ffmpegPath,
+      ffprobePath: currentPair.ffprobePath,
+      source: currentSource || "fallback",
+      validation: currentInspected.validation,
+      rejectedCandidate: meta.ffmpegRejected
     };
   }
 
   const release = await fetchLatestRelease("BtbN/FFmpeg-Builds");
-  const asset = resolveReleaseAsset(release, assetMatcher);
+  const asset = resolvePreferredFfmpegAsset(release, ffmpegChannel);
   if (!asset?.browser_download_url) {
-    throw new Error("FFmpeg latest release asset was not found");
+    throw new Error(
+      ffmpegChannel === "master"
+        ? "FFmpeg master release asset was not found"
+        : "FFmpeg stable/release-branch asset was not found"
+    );
   }
 
-  const versionTag = sanitizeTag(
-    release?.published_at ||
-    asset?.updated_at ||
-    asset?.name ||
-    release?.tag_name ||
-    `ffmpeg-${Date.now()}`
-  );
+  const assetName = String(asset.name || "");
+  const branchName = assetName.match(/^ffmpeg-(n[0-9.]+|master)-latest-/i)?.[1] || ffmpegChannel;
+  const releaseStamp = release?.published_at || asset?.updated_at || release?.tag_name || Date.now();
+  const versionTag = sanitizeTag(`${branchName}-${releaseStamp}`);
   const ffmpegFinalPath = path.join(
     WEB_CACHE_DIR,
     process.platform === "win32" ? `ffmpeg-${versionTag}.exe` : `ffmpeg-${versionTag}`
@@ -931,59 +1299,165 @@ async function ensureLatestFfmpegTools(meta, options = {}) {
     process.platform === "win32" ? `ffprobe-${versionTag}.exe` : `ffprobe-${versionTag}`
   );
 
+  const candidatePair = {
+    ffmpegPath: ffmpegFinalPath,
+    ffprobePath: ffprobeFinalPath,
+    tag: versionTag,
+    source: ffmpegChannel === "master" ? "btbn-master" : "btbn-stable",
+    assetName
+  };
+
+  // Avoid re-downloading an already staged candidate, but never trust it until
+  // both the basic executable checks and the runtime hardware probe pass.
+  let candidateValidation = null;
   if (isExecutable(ffmpegFinalPath) && isExecutable(ffprobeFinalPath)) {
-    try {
-      await verifyBinary(ffmpegFinalPath, ["-version"]);
-      await verifyBinary(ffprobeFinalPath, ["-version"]);
-      setMetaEntry(meta, "ffmpeg", { tag: versionTag, path: ffmpegFinalPath });
-      setMetaEntry(meta, "ffprobe", { tag: versionTag, path: ffprobeFinalPath });
-      await pruneVersionedFiles("ffmpeg-", ffmpegFinalPath);
-      await pruneVersionedFiles("ffprobe-", ffprobeFinalPath);
-      return {
-        ffmpegPath: ffmpegFinalPath,
-        ffprobePath: ffprobeFinalPath
-      };
-    } catch {
+    candidateValidation = await inspectFfmpegPair(ffmpegFinalPath, ffprobeFinalPath);
+    if (!candidateValidation.basic) {
       await fs.promises.rm(ffmpegFinalPath, { force: true }).catch(() => {});
       await fs.promises.rm(ffprobeFinalPath, { force: true }).catch(() => {});
+      candidateValidation = null;
     }
   }
 
   const archivePath = path.join(
     WEB_CACHE_DIR,
-    `ffmpeg-${versionTag}${archiveSuffixFromName(asset.name)}`
+    `ffmpeg-candidate-${versionTag}${archiveSuffixFromName(asset.name)}`
   );
   const tmpArchivePath = `${archivePath}.download`;
-  const extractDir = path.join(WEB_CACHE_DIR, `ffmpeg-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-
-  await fs.promises.rm(tmpArchivePath, { force: true }).catch(() => {});
-  await fs.promises.rm(extractDir, { recursive: true, force: true }).catch(() => {});
+  const extractDir = path.join(
+    WEB_CACHE_DIR,
+    `ffmpeg-candidate-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
 
   try {
-    startDynamicBinaryTask("ffmpeg", "downloading", "Downloading ffmpeg / ffprobe");
-    await downloadToFile(asset.browser_download_url, tmpArchivePath);
-    await fs.promises.rename(tmpArchivePath, archivePath);
-    await fs.promises.mkdir(extractDir, { recursive: true });
-    await extractArchive(archivePath, extractDir);
+    if (!candidateValidation) {
+      await fs.promises.rm(tmpArchivePath, { force: true }).catch(() => {});
+      await fs.promises.rm(extractDir, { recursive: true, force: true }).catch(() => {});
 
-    const extractedFfmpeg = await findFileRecursive(extractDir, pickExeName("ffmpeg"));
-    const extractedFfprobe = await findFileRecursive(extractDir, pickExeName("ffprobe"));
-    await copyExecutable(extractedFfmpeg, ffmpegFinalPath);
-    await copyExecutable(extractedFfprobe, ffprobeFinalPath);
-    await verifyBinary(ffmpegFinalPath, ["-version"]);
-    await verifyBinary(ffprobeFinalPath, ["-version"]);
-    setMetaEntry(meta, "ffmpeg", { tag: versionTag, path: ffmpegFinalPath });
-    setMetaEntry(meta, "ffprobe", { tag: versionTag, path: ffprobeFinalPath });
-    await pruneVersionedFiles("ffmpeg-", ffmpegFinalPath);
-    await pruneVersionedFiles("ffprobe-", ffprobeFinalPath);
+      startDynamicBinaryTask(
+        "ffmpeg",
+        "downloading",
+        ffmpegChannel === "master"
+          ? "Downloading ffmpeg master candidate"
+          : "Downloading ffmpeg stable candidate"
+      );
+      await downloadToFile(asset.browser_download_url, tmpArchivePath);
+      await fs.promises.rename(tmpArchivePath, archivePath);
+      await fs.promises.mkdir(extractDir, { recursive: true });
+      await extractArchive(archivePath, extractDir);
+
+      const extractedFfmpeg = await findFileRecursive(extractDir, pickExeName("ffmpeg"));
+      const extractedFfprobe = await findFileRecursive(extractDir, pickExeName("ffprobe"));
+      await copyExecutable(extractedFfmpeg, ffmpegFinalPath);
+      await copyExecutable(extractedFfprobe, ffprobeFinalPath);
+      candidateValidation = await inspectFfmpegPair(ffmpegFinalPath, ffprobeFinalPath);
+    }
+
+    const decision = validationAllowsActivation(candidateValidation, baselineValidation);
+    if (!decision.ok) {
+      console.warn(`[binaries] FFmpeg candidate rejected: ${decision.reason}`);
+      meta.ffmpegRejected = {
+        tag: versionTag,
+        assetName,
+        channel: ffmpegChannel,
+        reason: decision.reason,
+        validation: candidateValidation,
+        checkedAt: Date.now()
+      };
+
+      // Remove only a newly staged candidate. If this exact pair is already
+      // active (for example after a driver downgrade), deleting it would leave
+      // the degraded fallback metadata pointing at missing files.
+      const candidateIsCurrent = currentPair && !pairPathsDiffer(candidatePair, currentPair);
+      const candidateIsLkg = lkgPair && !pairPathsDiffer(candidatePair, lkgPair);
+      if (!candidateIsCurrent && !candidateIsLkg) {
+        await fs.promises.rm(ffmpegFinalPath, { force: true }).catch(() => {});
+        await fs.promises.rm(ffprobeFinalPath, { force: true }).catch(() => {});
+      }
+
+      // Prefer the current working pair, then the saved LKG, then a packaged/
+      // system FFmpeg whose NVENC canary is actually healthy on this machine.
+      let fallback = null;
+      if (currentInspected?.validation?.basic && currentInspected?.validation?.nvenc?.ok) {
+        fallback = currentInspected;
+      } else if (lkgInspected?.validation?.basic && lkgInspected?.validation?.nvenc?.ok) {
+        fallback = lkgInspected;
+      } else {
+        fallback = await findCompatibleLocalFfmpegPair([
+          currentPair?.ffmpegPath,
+          lkgPair?.ffmpegPath,
+          ffmpegFinalPath
+        ]);
+      }
+
+      if (fallback) {
+        setActiveFfmpegMetadata(meta, fallback, fallback.validation, {
+          channel: "fallback"
+        });
+        setLastKnownGoodMetadata(meta, fallback, fallback.validation);
+        await pruneFfmpegCache(meta);
+        return {
+          ffmpegPath: fallback.ffmpegPath,
+          ffprobePath: fallback.ffprobePath,
+          source: fallback.source || "fallback",
+          validation: fallback.validation,
+          rejectedCandidate: meta.ffmpegRejected
+        };
+      }
+
+      // No NVENC-compatible rollback target exists. Keep an already runnable
+      // FFmpeg pair rather than breaking the entire application; media.js will
+      // still fall back to software/VAAPI and the updater will retry after TTL.
+      if (currentInspected?.validation?.basic) {
+        setActiveFfmpegMetadata(meta, currentInspected, currentInspected.validation, {
+          channel: "degraded-fallback"
+        });
+        await pruneFfmpegCache(meta);
+        return {
+          ffmpegPath: currentInspected.ffmpegPath,
+          ffprobePath: currentInspected.ffprobePath,
+          source: currentInspected.source || "degraded-fallback",
+          validation: currentInspected.validation,
+          rejectedCandidate: meta.ffmpegRejected
+        };
+      }
+
+      throw new Error(`FFmpeg candidate rejected and no compatible rollback target exists: ${decision.reason}`);
+    }
+
+    // Preserve the previous good active pair before promoting the candidate.
+    if (
+      currentInspected?.validation?.basic &&
+      pairPathsDiffer(currentInspected, candidatePair) &&
+      !isNvencApiCompatibilityFailure(
+        `${currentInspected.validation?.nvenc?.detail || ""}\n${currentInspected.validation?.nvenc?.rawDetail || ""}`
+      )
+    ) {
+      setLastKnownGoodMetadata(meta, currentInspected, currentInspected.validation);
+    } else if (lkgInspected?.validation?.basic) {
+      setLastKnownGoodMetadata(meta, lkgInspected, lkgInspected.validation);
+    }
+
+    setActiveFfmpegMetadata(meta, candidatePair, candidateValidation, {
+      channel: ffmpegChannel === "master" ? "master" : "stable"
+    });
+
+    // On the first successful managed install the active pair itself is the
+    // first known-good checkpoint. A later successful update will move the old
+    // active pair into this slot before promotion.
+    if (!lastKnownGoodPairFromMeta(meta)) {
+      setLastKnownGoodMetadata(meta, candidatePair, candidateValidation);
+    }
+
+    delete meta.ffmpegRejected;
+    await pruneFfmpegCache(meta);
+
     return {
       ffmpegPath: ffmpegFinalPath,
-      ffprobePath: ffprobeFinalPath
+      ffprobePath: ffprobeFinalPath,
+      source: candidatePair.source,
+      validation: candidateValidation
     };
-  } catch (err) {
-    await fs.promises.rm(ffmpegFinalPath, { force: true }).catch(() => {});
-    await fs.promises.rm(ffprobeFinalPath, { force: true }).catch(() => {});
-    throw err;
   } finally {
     await fs.promises.rm(tmpArchivePath, { force: true }).catch(() => {});
     await fs.promises.rm(archivePath, { force: true }).catch(() => {});
@@ -1312,7 +1786,26 @@ export async function initializeDynamicBinaries(options = {}) {
               result.ffprobePath = FFPROBE_BIN;
             }
             shouldSaveMeta = true;
-            finishDynamicBinaryTask("ffmpeg", "ready", "ffmpeg / ffprobe ready");
+            if (latestFfmpegTools.rejectedCandidate) {
+              const rollbackSource = String(latestFfmpegTools.source || "fallback");
+              console.warn(
+                `[binaries] FFmpeg candidate rejected; keeping ${rollbackSource}: ` +
+                `${latestFfmpegTools.rejectedCandidate.reason || "runtime validation failed"}`
+              );
+              finishDynamicBinaryTask(
+                "ffmpeg",
+                "ready",
+                `FFmpeg candidate rejected; using ${rollbackSource}`
+              );
+            } else {
+              finishDynamicBinaryTask(
+                "ffmpeg",
+                "ready",
+                latestFfmpegTools.source === "btbn-master"
+                  ? "ffmpeg / ffprobe master ready"
+                  : "ffmpeg / ffprobe stable ready"
+              );
+            }
           } else {
             finishDynamicBinaryTask("ffmpeg", "skipped", "Using existing ffmpeg / ffprobe");
           }
