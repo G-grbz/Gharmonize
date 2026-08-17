@@ -172,12 +172,12 @@ jobs:
           #   dosya.zip
           #
           # İkinci build:
-          #   dosya.fix.exe
-          #   dosya.fix.zip
+          #   dosya.hotfix.exe
+          #   dosya.hotfix.zip
           #
           # Sonraki build'ler:
-          #   dosya.fix2.exe
-          #   dosya.fix2.zip
+          #   dosya.hotfix2.exe
+          #   dosya.hotfix2.zip
 
           $revision = 0
 
@@ -185,9 +185,9 @@ jobs:
             if ($revision -eq 0) {
               $suffix = ""
             } elseif ($revision -eq 1) {
-              $suffix = ".fix"
+              $suffix = ".hotfix"
             } else {
-              $suffix = ".fix$revision"
+              $suffix = ".hotfix$revision"
             }
 
             $setupName = "Gharmonize-x64.Setup.Version.v$version$suffix.exe"
