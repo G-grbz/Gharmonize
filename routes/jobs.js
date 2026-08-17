@@ -25,7 +25,8 @@ import {
 } from "../modules/deezer.js";
 import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
 import { resolveMarket } from "../modules/market.js";
-import { requireAuth } from "../modules/settings.js";
+import { requireAuth } from "../modules/settings.js"
+import { rateLimit } from "../modules/rateLimit.js";
 import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modules/probe.js";
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
 import { getFfmpegCaps } from "../modules/ffmpegCaps.js";
@@ -546,7 +547,7 @@ router.get("/api/ffmpeg/caps", async (req, res) => {
   }
 });
 
-router.post("/api/probe/file", upload.single("file"), async (req, res) => {
+router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "File is required" });
@@ -580,7 +581,7 @@ router.post("/api/probe/file", upload.single("file"), async (req, res) => {
   }
 });
 
- router.post("/api/probe/local", requireAuth, async (req, res) => {
+ router.post("/api/probe/local", requireAuth, rateLimit(10, 60_000), async (req, res) => {
    try {
      const { localPath } = req.body;
 
@@ -651,7 +652,7 @@ router.post("/api/probe/cleanup", async (req, res) => {
   }
 });
 
-router.post('/api/upload/chunk/cancel', async (req, res) => {
+router.post('/api/upload/chunk/cancel', rateLimit(30, 60_000), async (req, res) => {
   try {
     const { uploadId } = req.body;
 
@@ -810,7 +811,7 @@ router.post("/api/jobs/:id/cancel", (req, res) => {
   return sendOk(res, { id, status: "canceled" });
 });
 
-router.post("/api/debug/lyrics", async (req, res) => {
+router.post("/api/debug/lyrics", rateLimit(10, 60_000), async (req, res) => {
   try {
     const { artist, title } = req.body;
 
@@ -845,7 +846,7 @@ router.post("/api/debug/lyrics", async (req, res) => {
 
 const chunkStorage = new Map();
 
-router.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
+router.post('/api/upload/chunk', rateLimit(200, 60_000), upload.single('chunk'), async (req, res) => {
   let chunk;
 
   try {
@@ -1014,7 +1015,7 @@ router.post('/api/upload/chunk', upload.single('chunk'), async (req, res) => {
   }
 });
 
-router.post("/api/jobs", upload.single("file"), async (req, res) => {
+router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (req, res) => {
   try {
     const body = req.body || {};
     console.log("📦 RAW req.body.youtubeConcurrency:", body.youtubeConcurrency, "typeof:", typeof body.youtubeConcurrency);

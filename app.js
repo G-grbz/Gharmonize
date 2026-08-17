@@ -6,7 +6,7 @@ import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
-import { exec } from 'child_process'
+import { execFile } from 'child_process'
 import formatsRoute from './routes/formats.js'
 import { getBinariesInfo, clearBinariesInfoCache } from './modules/binariesInfo.js';
 import spotifyRoute from './routes/spotify.js'
@@ -79,6 +79,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const PUBLIC_DIR = path.join(__dirname, 'public')
 const app = express()
+app.set('trust proxy', 1)
 
 for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, LOCAL_INPUTS_DIR, CACHE_DIR, COOKIE_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -217,7 +218,7 @@ function checkDependencies() {
     ]
 
     Promise.all(checks.map((check) => new Promise((done) => {
-      exec(`"${check.cmd}" ${check.args}`, (error, stdout, stderr) => {
+      execFile(check.cmd, check.args.split(' ').filter(Boolean), (error, stdout, stderr) => {
         const out = stdout || ''
         const errText = stderr || ''
         if (!error && check.ok(out, errText)) {
@@ -245,9 +246,9 @@ async function runStartupDiagnostics() {
   console.log(`📂 Working Directory: ${process.cwd()}`)
   console.log(`🐳 Running Inside Docker: ${inDocker ? 'YES' : 'NO'}`)
 
-  const execPromise = (cmd) =>
+  const execPromise = (cmd, args = []) =>
     new Promise((resolve) => {
-      exec(cmd, (err, stdout, stderr) => {
+      execFile(cmd, args, (err, stdout, stderr) => {
         resolve({ err, stdout: stdout || '', stderr: stderr || '' })
       })
     })
@@ -263,7 +264,7 @@ async function runStartupDiagnostics() {
 
   // Handles check bin in application bootstrap and route wiring.
   const checkBin = async (name, bin, args = '--version') => {
-    const { err, stdout, stderr } = await execPromise(`"${bin}" ${args}`)
+    const { err, stdout, stderr } = await execPromise(bin, args.split(' ').filter(Boolean))
     if (err) {
       console.log(`❌ ${name} NOT FOUND at ${bin}`)
       if (stderr.trim()) console.log(`   ↳ stderr: ${stderr.trim().split('\n')[0]}`)
@@ -285,7 +286,7 @@ async function runStartupDiagnostics() {
   console.log('\n🎛 FFmpeg Hardware Encoder Support')
   console.log('────────────────────────────────────────────────')
 
-  const enc = await execPromise(`"${bins.ffmpeg}" -hide_banner -encoders`)
+  const enc = await execPromise(bins.ffmpeg, ['-hide_banner', '-encoders'])
   if (enc.err) {
     console.log('⚠️  Unable to retrieve encoder list.')
   } else {
@@ -301,7 +302,7 @@ async function runStartupDiagnostics() {
   console.log('\n🖥 VAAPI / GPU Check (vainfo)')
   console.log('────────────────────────────────────────────────')
 
-  const vainfo = await execPromise('vainfo')
+  const vainfo = await execPromise('vainfo', [])
   if (vainfo.err) {
     console.log('ℹ️ vainfo unavailable or not supported.')
     if (vainfo.stderr.trim()) {
