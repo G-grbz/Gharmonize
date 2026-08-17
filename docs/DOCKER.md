@@ -33,18 +33,13 @@ Generate a random `APP_SECRET` with:
 openssl rand -hex 32
 ```
 
-### 4. Choose the Docker image tag
+### 4. Docker image
 
-The default compose file in this branch uses:
+The default compose file uses the published Gharmonize image:
 
 ```yaml
 image: ggrbz/gharmonize:latest
 ```
-
-Available tags:
-
-- `ggrbz/gharmonize:latest` — the regular published image
-- `ggrbz/gharmonize:testing` — the test-stage image
 
 ### 5. Start the stack
 
@@ -55,8 +50,8 @@ docker compose up -d
 
 ### 6. Open the UI
 
-- `http://localhost:5174` — classic Web UI
-- `http://localhost:5174/ytlive.html` — YTLive music UI (see [YTLIVE.md](YTLIVE.md))
+* `http://localhost:5174` — classic Web UI
+* `http://localhost:5174/ytlive.html` — YTLive music UI (see [YTLIVE.md](YTLIVE.md))
 
 To use the classic UI's in-place **Retag** output mode for MP3, FLAC, and M4A files, set `MUSIC_DIR` to the host music directory before starting Compose. The directory is mounted read/write at `/music`; Gharmonize's web directory picker is restricted to that mount.
 
@@ -70,13 +65,11 @@ Because retagging replaces metadata and embedded cover art in the original files
 
 The provided `docker-compose.yml` enables runtime binary management inside the container:
 
-- Gharmonize checks binaries automatically when the app starts
-- Missing or outdated tools can be downloaded / refreshed automatically
-- Downloaded runtime binaries are cached under `/opt/gharmonize/cache`
+* Gharmonize checks binaries automatically when the app starts
+* Missing or outdated tools can be downloaded / refreshed automatically
+* Downloaded runtime binaries are cached under `/opt/gharmonize/cache`
 
 If a refresh fails, Gharmonize keeps the currently resolved binaries as a fallback instead of hard-failing the whole app. See [BINARY_MANAGEMENT.md](BINARY_MANAGEMENT.md) for details.
-
-> `docker-compose.yml` uses `ggrbz/gharmonize:latest` by default. Switch it to `ggrbz/gharmonize:testing` if you want the test-stage image.
 
 ---
 
@@ -86,12 +79,12 @@ If you want NVENC inside Docker, install the NVIDIA driver and the NVIDIA Contai
 
 Then update `docker-compose.yml`:
 
-- Comment out or remove `user: "${PUID:-1000}:${PGID:-1000}"`
-- Enable `user: "0:0"`
-- Enable `privileged: true`
-- Enable `runtime: nvidia`
-- Enable `NVIDIA_VISIBLE_DEVICES=all`
-- Enable `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`
+* Comment out or remove `user: "${PUID:-1000}:${PGID:-1000}"`
+* Enable `user: "0:0"`
+* Enable `privileged: true`
+* Enable `runtime: nvidia`
+* Enable `NVIDIA_VISIBLE_DEVICES=all`
+* Enable `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`
 
 Relevant compose section:
 
@@ -171,8 +164,6 @@ docker run -d \
   -v /run/media:/run/media:ro \
   ggrbz/gharmonize:latest
 ```
-
-To use the test-stage image, replace the final image reference with `ggrbz/gharmonize:testing`.
 
 ### 3. NVIDIA / NVENC Variant
 
