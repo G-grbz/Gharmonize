@@ -79,6 +79,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const PUBLIC_DIR = path.join(__dirname, 'public')
 const app = express()
+app.set('trust proxy', 1)
 
 for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, LOCAL_INPUTS_DIR, CACHE_DIR, COOKIE_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -359,29 +360,11 @@ export const upload = multer({
   limits: { fileSize: 1000 * 1024 * 1024 }
 })
 
-const _rlMap = new Map()
-function rateLimit(max, windowMs) {
-  return (req, res, next) => {
-    const key = req.ip
-    const now = Date.now()
-    let entry = _rlMap.get(key)
-    if (!entry || now - entry.start > windowMs) {
-      entry = { count: 0, start: now }
-    }
-    entry.count++
-    _rlMap.set(key, entry)
-    if (entry.count > max) {
-      return res.status(429).json({ error: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded' })
-    }
-    next()
-  }
-}
-
 app.use(formatsRoute)
 app.use(spotifyRoute)
 app.use(playlistRoute)
 app.use(ytliveDownloadListsRoute)
-app.use(rateLimit(20, 60 * 1000), jobsRoute)
+app.use(jobsRoute)
 app.use(trackExtractorRoute)
 app.use(retagRoute)
 app.use(discRouter)
