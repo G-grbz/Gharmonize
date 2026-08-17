@@ -499,6 +499,30 @@ export class JobsPanelManager {
                             j.format?.toLowerCase() === 'webm' ||
                             (j.videoSettings && j.videoSettings.transcodeEnabled);
 
+        if (j.metadata?.isPlaylist) {
+            const status = this.norm(j.status);
+            if (status === 'completed') return 100;
+
+            const counters = j.counters || {};
+            const playlistTotal = Math.max(
+                0,
+                Number(j.playlist?.total || 0),
+                Number(counters.dlTotal || 0),
+                Number(counters.cvTotal || 0),
+                Array.isArray(j.metadata?.frozenEntries) ? j.metadata.frozenEntries.length : 0
+            );
+
+            if (playlistTotal > 0) {
+                const dlTotal = Number(counters.dlTotal) > 0 ? Number(counters.dlTotal) : playlistTotal;
+                const cvTotal = Number(counters.cvTotal) > 0 ? Number(counters.cvTotal) : playlistTotal;
+                const dlDone = Math.max(0, Math.min(dlTotal, Number(counters.dlDone || j.playlist?.downloaded || 0)));
+                const cvDone = Math.max(0, Math.min(cvTotal, Number(counters.cvDone || j.playlist?.converted || j.playlist?.done || 0)));
+                const dlPct = (dlDone / dlTotal) * 100;
+                const cvPct = (cvDone / cvTotal) * 100;
+                return Math.floor((dlPct + cvPct) / 2);
+            }
+        }
+
         if (typeof j.progress === 'number' && Number.isFinite(j.progress)) {
             return j.progress;
         }
@@ -577,7 +601,7 @@ export class JobsPanelManager {
         const isVideoTranscode = j.format?.toLowerCase() === 'mp4' ||
                             (j.videoSettings && j.videoSettings.transcodeEnabled);
 
-        if (isVideoTranscode) {
+        if (isVideoTranscode && !j.metadata?.isPlaylist) {
             next = Math.floor((Number(j.downloadProgress || 0) + Number(j.convertProgress || 0)) / 2);
         }
 

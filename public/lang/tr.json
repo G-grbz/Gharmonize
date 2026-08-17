@@ -581,6 +581,7 @@
   "settings.enrichSpforYy": "Yt indirmelerinde etiketlerini sp'da ara (1 = evet)",
   "settings.mediaComment": "Yorum etiketine ne yazılsın ?",
   "settings.ffmpegBin": "Ffmpeg yolu (.exe dahil) ( exe, appimage veya docker yada `npm run download:binaries` komutunu kullanıyorsanız boş bırakın )",
+  "settings.trustProxy": "İstemci IP tespiti ve istek sınırlaması için reverse proxy güveni. Doğrudan/LAN/Electron kullanımında 0 bırakın; yalnızca Gharmonize güvenilir reverse proxy arkasındaysa pozitif bir hop sayısı girin.",
   "settings.ffmpegChannel": "FFmpeg güncelleme kanalı. stable en güncel kararlı sürüm dalını takip eder ve önerilir; master geliştirme anlık sürümlerini takip eder. Seçim bir sonraki binary güncellemesinde veya yeniden başlatmada kullanılır.",
   "settings.ffmpegChannelStable": "stable (önerilen)",
   "settings.ffmpegChannelMaster": "master (geliştirme)",

@@ -114,6 +114,27 @@ function bump(obj, key, inc = 1) {
   obj[key] = (obj[key] || 0) + inc;
 }
 
+// Tracks aggregate conversion progress for concurrently processed playlist items.
+// Playlist item indexes are not completion order, so deriving progress from an
+// item's stable index can jump forward when a later track finishes first.
+function updateParallelConversionProgress(job, progressByIndex, index, itemProgress, totalItems) {
+  const total = Math.max(1, Number(totalItems) || 1);
+  const idx = Math.max(0, Number(index) || 0);
+  const pct = Math.max(0, Math.min(100, Number(itemProgress) || 0));
+
+  progressByIndex.set(idx, pct);
+
+  let sum = 0;
+  for (const value of progressByIndex.values()) {
+    sum += Math.max(0, Math.min(100, Number(value) || 0));
+  }
+
+  job.convertProgress = Math.max(0, Math.min(100, Math.floor(sum / total)));
+  job.progress = Math.floor(
+    (Math.max(0, Math.min(100, Number(job.downloadProgress) || 0)) + job.convertProgress) / 2
+  );
+}
+
 // Handles clean name dynamic in core application logic.
 function cleanNameDynamic(name) {
   if (!name) return "";
@@ -811,6 +832,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       job.counters.cvTotal = selectedIds.length;
       const convertPromisesSpotify = [];
       const scheduledMappedFiles = new Set();
+      const mappedConvertProgressByIndex = new Map();
 
       const resolveMappedStableIndex = (filePath, playlistIndex = null, fileId = null, fallbackIndex = null) => {
         const id = fileId || parseIdFromPath(filePath);
@@ -905,12 +927,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             r = {
               outputPath: toDownloadPathSafe(existingOut)
             };
-            const fileProgress = (i / totalForConvert) * 100;
-            job.convertProgress = Math.floor(
-              fileProgress + 100 / totalForConvert
-            );
-            job.progress = Math.floor(
-              (job.downloadProgress + job.convertProgress) / 2
+            updateParallelConversionProgress(
+              job,
+              mappedConvertProgressByIndex,
+              i,
+              100,
+              totalForConvert
             );
           } else {
             r = await convertMedia(
@@ -919,19 +941,17 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               bitrate,
               `${jobId}_${i}`,
               (progress, details) => {
-                const baseProgress = (i / totalForConvert) * 100;
-                const currentFileProgress =
-                  (progress / 100) * (100 / totalForConvert);
-                job.convertProgress = Math.floor(
-                  baseProgress + currentFileProgress
+                updateParallelConversionProgress(
+                  job,
+                  mappedConvertProgressByIndex,
+                  i,
+                  progress,
+                  totalForConvert
                 );
 
                 if (job.playlist) {
                   job.playlist.current = i;
                 }
-                job.progress = Math.floor(
-                  (job.downloadProgress + job.convertProgress) / 2
-                );
 
                 if (isVideoFormat(format)) {
                   const label = [entry?.uploader || entry?.artist || "", title]
@@ -984,6 +1004,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           }
 
           results[i] = r;
+          updateParallelConversionProgress(
+            job,
+            mappedConvertProgressByIndex,
+            i,
+            100,
+            totalForConvert
+          );
           bump(job.counters, "cvDone", 1);
           if (job.playlist) job.playlist.done = job.counters.cvDone;
           updateLyricsStatsLive(job.playlist.done);
@@ -1320,6 +1347,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         const youtubeConvertLimiter = createLimiter(youtubeConcurrency);
         const convertPromisesYouTube = [];
         const scheduledFilePaths = new Set();
+        const youtubeConvertProgressByIndex = new Map();
 
         // Resolves playlist item slot for core application logic.
         function resolveYouTubePlaylistSlot(filePath, playlistIndex = null, fileId = null) {
@@ -1704,12 +1732,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             r = {
               outputPath: toDownloadPathSafe(existingOut)
             };
-            const fileProgress = (stableIndex / totalTracks) * 100;
-            job.convertProgress = Math.floor(
-              fileProgress + 100 / totalTracks
-            );
-            job.progress = Math.floor(
-              (job.downloadProgress + job.convertProgress) / 2
+            updateParallelConversionProgress(
+              job,
+              youtubeConvertProgressByIndex,
+              stableIndex,
+              100,
+              totalTracks
             );
             if (job.canceled) throw new Error("CANCELED");
           } else {
@@ -1720,18 +1748,16 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 bitrate,
                 `${jobId}_${stableIndex}`,
                 (progress, details) => {
-                  const baseProgress = (stableIndex / totalTracks) * 100
-                  const currentFileProgress =
-                    (progress / 100) * (100 / totalTracks);
-                  job.convertProgress = Math.floor(
-                    baseProgress + currentFileProgress
+                  updateParallelConversionProgress(
+                    job,
+                    youtubeConvertProgressByIndex,
+                    stableIndex,
+                    progress,
+                    totalTracks
                   );
                   if (job.playlist) {
                     job.playlist.current = stableIndex;
                   }
-                  job.progress = Math.floor(
-                    (job.downloadProgress + job.convertProgress) / 2
-                  );
 
                   if (isVideoFormat(format)) {
                     const label = [
@@ -1795,6 +1821,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           }
 
           results[stableIndex] = r;
+          updateParallelConversionProgress(
+            job,
+            youtubeConvertProgressByIndex,
+            stableIndex,
+            100,
+            totalTracks
+          );
           bump(job.counters, "cvDone", 1);
           if (job.playlist) {
             job.playlist.done = (job.playlist.done || 0) + 1;

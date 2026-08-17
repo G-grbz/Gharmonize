@@ -580,6 +580,7 @@
   "settings.enrichSpforYy": "Bei YouTube-Downloads Tags auf Spotify suchen (1 = ja)",
   "settings.mediaComment": "Was soll im Kommentar-Tag stehen?",
   "settings.ffmpegBin": "ffmpeg-Pfad (inkl. .exe). Leer lassen bei exe, AppImage, Docker oder `npm run download:binaries`",
+  "settings.trustProxy": "Vertrauen in Reverse-Proxys für Client-IP-Erkennung und Rate-Limiting. Bei direkter/LAN/Electron-Nutzung 0 beibehalten; nur bei bewusst eingesetzten vertrauenswürdigen Reverse-Proxys eine positive Hop-Anzahl setzen.",
   "settings.ffmpegChannel": "FFmpeg-Aktualisierungskanal. stable folgt dem neuesten Release-Zweig und wird empfohlen; master folgt Entwicklungs-Snapshots. Die Auswahl wird bei der nächsten Binäraktualisierung oder nach einem Neustart verwendet.",
   "settings.ffmpegChannelStable": "stable (empfohlen)",
   "settings.ffmpegChannelMaster": "master (Entwicklung)",

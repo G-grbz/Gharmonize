@@ -580,6 +580,7 @@
   "settings.enrichSpforYy": "Rechercher les tags sur Spotify lors des téléchargements YouTube (1 = oui)",
   "settings.mediaComment": "Que doit contenir le tag commentaire ?",
   "settings.ffmpegBin": "Chemin ffmpeg (incluant .exe). Laisser vide si exe, AppImage, Docker ou `npm run download:binaries` est utilisé",
+  "settings.trustProxy": "Confiance du proxy inverse utilisée pour la détection de l’IP cliente et la limitation des requêtes. Gardez 0 pour un usage direct/LAN/Electron ; définissez un nombre de sauts positif uniquement si Gharmonize est volontairement derrière des proxys inverses de confiance.",
   "settings.ffmpegChannel": "Canal de mise à jour FFmpeg. stable suit la dernière branche de version et est recommandé ; master suit les instantanés de développement. La sélection est utilisée lors de la prochaine mise à jour des binaires ou après un redémarrage.",
   "settings.ffmpegChannelStable": "stable (recommandé)",
   "settings.ffmpegChannelMaster": "master (développement)",

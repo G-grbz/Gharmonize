@@ -35,6 +35,7 @@ const ALLOWED_KEYS = [
   'YTDLP_BIN',
   'FFMPEG_BIN',
   'GHARMONIZE_FFMPEG_CHANNEL',
+  'TRUST_PROXY',
   'UPLOAD_MAX_BYTES',
   'TRACK_EXTRACTOR_SHELL_INTEGRATION',
   'FRONTEND_UI',
@@ -212,6 +213,10 @@ router.get('/settings', authMiddleware, (req, res) => {
     if (k === 'SPOTIFY_CLIENT_SECRET' && val) val = '••••••••'
     if (k === 'HOMEPAGE_WIDGET_KEY' && val) val = '••••••••'
     if (k === 'GHARMONIZE_FFMPEG_CHANNEL') val = getEnv(k) === 'master' ? 'master' : 'stable'
+    if (k === 'TRUST_PROXY') {
+      const hops = Number(getEnv(k))
+      val = Number.isInteger(hops) && hops > 0 ? String(Math.min(hops, 16)) : '0'
+    }
     data[k] = val
   }
   res.json({ settings: data })
@@ -240,6 +245,12 @@ router.post('/settings', authMiddleware, express.json(), (req, res) => {
 
     if (k === 'GHARMONIZE_FFMPEG_CHANNEL') {
       updates[k] = String(v || '').trim().toLowerCase() === 'master' ? 'master' : 'stable'
+      continue
+    }
+
+    if (k === 'TRUST_PROXY') {
+      const hops = Number(String(v ?? '').trim())
+      updates[k] = Number.isInteger(hops) && hops > 0 ? String(Math.min(hops, 16)) : '0'
       continue
     }
 

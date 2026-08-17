@@ -79,7 +79,29 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const PUBLIC_DIR = path.join(__dirname, 'public')
 const app = express()
-app.set('trust proxy', 1)
+
+// TRUST_PROXY is disabled by default. Set it to the number of trusted reverse-proxy hops
+// (for example 1 for a single nginx/Traefik proxy) only when that topology is intentional.
+function normalizeTrustProxy(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return false
+  const hops = Number(raw)
+  if (!Number.isInteger(hops) || hops <= 0) return false
+  return Math.min(hops, 16)
+}
+
+function applyTrustProxySetting(value = process.env.TRUST_PROXY) {
+  const trustProxy = normalizeTrustProxy(value)
+  app.set('trust proxy', trustProxy)
+  console.log(`🔐 Trust proxy: ${trustProxy === false ? 'disabled' : `${trustProxy} hop(s)`}`)
+}
+
+applyTrustProxySetting()
+process.on('gharmonize:settings-updated', ({ updates } = {}) => {
+  if (updates && Object.prototype.hasOwnProperty.call(updates, 'TRUST_PROXY')) {
+    applyTrustProxySetting(updates.TRUST_PROXY)
+  }
+})
 
 for (const dir of [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, LOCAL_INPUTS_DIR, CACHE_DIR, COOKIE_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })

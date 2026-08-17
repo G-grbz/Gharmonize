@@ -26,7 +26,7 @@ import {
 import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth } from "../modules/settings.js"
-import { rateLimit } from "../modules/rateLimit.js";
+import { rateLimit, concurrencyLimit } from "../modules/rateLimit.js";
 import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modules/probe.js";
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
 import { getFfmpegCaps } from "../modules/ffmpegCaps.js";
@@ -846,7 +846,7 @@ router.post("/api/debug/lyrics", rateLimit(10, 60_000), async (req, res) => {
 
 const chunkStorage = new Map();
 
-router.post('/api/upload/chunk', rateLimit(200, 60_000), upload.single('chunk'), async (req, res) => {
+router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), async (req, res) => {
   let chunk;
 
   try {

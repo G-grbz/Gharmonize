@@ -379,6 +379,32 @@ export class JobManager {
                            job.format?.toLowerCase() === 'webm' ||
                            (job.videoSettings && job.videoSettings.transcodeEnabled);
 
+    // For playlists, counters represent actual completed items and are immune to
+    // out-of-order concurrent processing. Treat download + conversion as two
+    // equal stages so 96 downloaded / 94 converted of 199 is ~48%, not a jump
+    // caused by whichever high-index track happens to finish first.
+    if (job.metadata?.isPlaylist) {
+        const status = this.normalizeStatus(job.status);
+        if (status === 'completed') return 100;
+
+        const { dlDone, cvDone, dlTotal, cvTotal } = this.getDlCvCounts(job);
+        const playlistTotal = Math.max(
+            0,
+            Number(job.playlist?.total || 0),
+            Number(dlTotal || 0),
+            Number(cvTotal || 0),
+            Array.isArray(job.metadata?.frozenEntries) ? job.metadata.frozenEntries.length : 0
+        );
+
+        if (playlistTotal > 0) {
+            const effectiveDlTotal = Number(dlTotal) > 0 ? Number(dlTotal) : playlistTotal;
+            const effectiveCvTotal = Number(cvTotal) > 0 ? Number(cvTotal) : playlistTotal;
+            const dlPct = Math.max(0, Math.min(100, (Number(dlDone || 0) / effectiveDlTotal) * 100));
+            const cvPct = Math.max(0, Math.min(100, (Number(cvDone || 0) / effectiveCvTotal) * 100));
+            return Math.floor((dlPct + cvPct) / 2);
+        }
+    }
+
     if (typeof job.progress === 'number' && Number.isFinite(job.progress)) {
         return job.progress;
     }
@@ -454,7 +480,7 @@ computeProg(job) {
         const isVideoTranscode = job.format?.toLowerCase() === 'mp4' ||
                                (job.videoSettings && job.videoSettings.transcodeEnabled);
 
-        if (isVideoTranscode) {
+        if (isVideoTranscode && !job.metadata?.isPlaylist) {
             next = Math.floor((Number(job.downloadProgress || 0) + Number(job.convertProgress || 0)) / 2);
         }
         if (status !== 'completed') {

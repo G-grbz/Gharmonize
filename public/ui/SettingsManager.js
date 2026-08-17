@@ -244,6 +244,12 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
+                <label for="f_TRUST_PROXY" class="settings-field-label">TRUST_PROXY</label>
+                <div class="settings-field-hint muted" data-i18n="settings.trustProxy"></div>
+                <input id="f_TRUST_PROXY" type="number" min="0" max="16" step="1" value="0" placeholder="0">
+                </div>
+
+                <div class="form-group">
                 <label for="f_MEDIA_COMMENT" class="settings-field-label">MEDIA_COMMENT</label>
                 <div class="settings-field-hint muted" data-i18n="settings.mediaComment"></div>
                 <input id="f_MEDIA_COMMENT" type="text" placeholder="Gharmonize" data-i18n-ph="ph.mediaComment">
@@ -883,6 +889,7 @@ export class SettingsManager {
             document.getElementById('f_MEDIA_COMMENT').value = s.MEDIA_COMMENT || 'Gharmonize';
             document.getElementById('f_FFMPEG_BIN').value = s.FFMPEG_BIN || '';
             document.getElementById('f_GHARMONIZE_FFMPEG_CHANNEL').value = s.GHARMONIZE_FFMPEG_CHANNEL === 'master' ? 'master' : 'stable';
+            document.getElementById('f_TRUST_PROXY').value = s.TRUST_PROXY || '0';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
             document.getElementById('f_FRONTEND_UI').value = s.FRONTEND_UI === 'ytlive' ? 'ytlive' : 'classic';
@@ -945,6 +952,7 @@ export class SettingsManager {
                 YTDLP_BIN: document.getElementById('f_YTDLP_BIN').value.trim(),
                 FFMPEG_BIN: document.getElementById('f_FFMPEG_BIN').value.trim(),
                 GHARMONIZE_FFMPEG_CHANNEL: document.getElementById('f_GHARMONIZE_FFMPEG_CHANNEL').value,
+                TRUST_PROXY: document.getElementById('f_TRUST_PROXY').value,
                 UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
                 FRONTEND_UI: document.getElementById('f_FRONTEND_UI').value,
                 YOUTUBE_QUICK_ADD_LIMIT: document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value.trim(),

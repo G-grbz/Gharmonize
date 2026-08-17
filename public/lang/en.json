@@ -581,6 +581,7 @@
   "settings.enrichSpforYy": "Search Spotify for tags during YouTube downloads (1 = yes)",
   "settings.mediaComment": "What should be written in the comment tag?",
   "settings.ffmpegBin": "ffmpeg path (including .exe). Leave empty if using exe, AppImage, Docker, or `npm run download:binaries`",
+  "settings.trustProxy": "Reverse-proxy trust used for client IP detection and rate limiting. Keep 0 for direct/LAN/Electron use; set a positive hop count only when Gharmonize is intentionally behind trusted reverse proxy(s).",
   "settings.ffmpegChannel": "FFmpeg update channel. stable follows the latest release branch and is recommended; master follows development snapshots. The selection is used on the next binary refresh or restart.",
   "settings.ffmpegChannelStable": "stable (recommended)",
   "settings.ffmpegChannelMaster": "master (development)",
