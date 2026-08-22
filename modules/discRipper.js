@@ -245,6 +245,8 @@ async function estimateDvdTitleSize(videoTsPath, titleIndex) {
       const stats = await fs.stat(f);
       total += stats.size;
     } catch (err) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn("Failed to read VOB size:", sanitizeLogValue(f), sanitizeLogValue(err?.message));
     }
   }
@@ -500,6 +502,8 @@ async function ripDvdTitle(
     const inputSource = vobFiles[0];
     args.push(inputSource);
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log("DVD rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" ")));
 
     if (progressCallback) progressCallback(30, { __i18n: true, key: "disc.progress.creatingMkv", vars: {} });
@@ -638,6 +642,8 @@ async function ripBluRayTitle(
         }
       });
     } catch (err) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn(
         "Blu-ray track ID analysis failed, all tracks will be included:",
         sanitizeLogValue(err?.message)
@@ -682,6 +688,8 @@ async function ripBluRayTitle(
 
     args.push(playlistPath);
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log("Blu-ray rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" ")));
 
     let expectedSizeBytes = 0;
@@ -797,6 +805,8 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
           const stats = await fs.stat(fullPath);
           total += stats.size;
         } catch (err) {
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
           console.warn("Failed to read M2TS size:", sanitizeLogValue(fullPath), sanitizeLogValue(err?.message));
         }
       }
@@ -832,6 +842,8 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
           const stats = await fs.stat(fullPath);
           legacyTotal += stats.size;
         } catch (err) {
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
           console.warn(
             "Failed to read M2TS size (legacy):",
             sanitizeLogValue(fullPath),
@@ -852,6 +864,8 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
     console.log("Blu-ray size could not be estimated, returning 0");
     return 0;
   } catch (err) {
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.warn("Blu-ray size estimation error:", sanitizeLogValue(err?.message));
     return 0;
   }
@@ -894,6 +908,8 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
     const info = parseCommandJson(stdout, `mkvmerge ${path.basename(sampleVob)}`);
     return parseTracks(info);
   } catch (error) {
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log(
       "DVD track analysis error, using fallback defaults:",
       sanitizeLogValue(error?.message)

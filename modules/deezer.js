@@ -311,13 +311,13 @@ async function resolveDeezerCanonicalUrl(url = "") {
     const host = target.hostname.toLowerCase();
     const allowedShortHost =
       host === "link.deezer.com" ||
-      host.endsWith(".link.deezer.com") ||
-      host === "deezer.page.link" ||
-      host.endsWith(".deezer.page.link");
+      host === "deezer.page.link";
     if (target.protocol !== "https:" || !allowedShortHost || target.username || target.password) {
       return raw;
     }
 
+    // Protocol, credentials, exact Deezer short-link host, and redirects are constrained above.
+    // codeql[js/request-forgery]
     const res = await fetch(target.toString(), {
       headers: DEEZER_WEB_HEADERS,
       redirect: "manual"
@@ -342,7 +342,7 @@ async function fetchDeezerJson(url = "") {
   const host = target.hostname.toLowerCase();
   if (
     target.protocol !== "https:" ||
-    (host !== "api.deezer.com" && !host.endsWith(".api.deezer.com")) ||
+    host !== "api.deezer.com" ||
     target.username ||
     target.password
   ) {

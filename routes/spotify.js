@@ -315,6 +315,8 @@ router.post("/api/spotify/process/start", async (req, res) => {
           : (autoCreateZip === true || autoCreateZip === "true")
       );
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log('[music-match] UI sent spotifyConcurrency =', sanitizeLogValue(spotifyConcurrency));
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
@@ -835,7 +837,9 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           return;
         }
 
-        console.error(`Conversion error (${entry.title}):`, convertError);
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        // codeql[js/log-injection]
+        console.error(`Conversion error (${sanitizeLogValue(entry.title)}):`, sanitizeLogValue(convertError?.message || convertError));
         job.lastLogKey = 'log.converting.err';
         job.lastLogVars = { title: entry.title, err: convertError.message };
         job.lastLog = `❌ Conversion error: ${entry.title} - ${convertError.message}`;
@@ -1539,6 +1543,8 @@ router.post("/api/spotify/preview/start", async (req, res) => {
         newlyMapped: result.newlyMapped
       };
       task.urlListFile = result.urlListFile;
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log(`✅ ${sanitizeLogValue(sourceLabel)} URL list ready: ${sanitizeLogValue(result.urlListFile)}`);
     }).catch((e) => { task.status = "error"; task.error = e.message; });
 

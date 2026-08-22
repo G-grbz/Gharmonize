@@ -668,6 +668,8 @@ async function fetchAppleMusicHtml(url = "") {
 
   let res = null;
   for (let redirects = 0; redirects <= 3; redirects += 1) {
+    // Protocol, credentials, exact Apple host, and every redirect target are validated above.
+    // codeql[js/request-forgery]
     res = await fetch(target.toString(), {
       headers: APPLE_WEB_HEADERS,
       redirect: "manual"

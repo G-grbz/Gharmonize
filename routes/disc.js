@@ -103,6 +103,8 @@ function broadcastProgress(payload) {
   }
 }
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/disc/stream", requireAuth, rateLimit(30, 60_000), (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -173,6 +175,8 @@ async function removeOutputFile(filePath) {
   await fs.promises.rm(filePath, { force: true }).catch(() => {});
 }
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/disc/scan", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => {
   try {
     const { sourcePath } = req.body || {};
@@ -195,11 +199,15 @@ router.post("/api/disc/scan", requireAuth, rateLimit(20, 60_000), express.json()
       return res.status(499).json({ error: "Scan cancelled" });
     }
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.error("[disc] scan error:", sanitizeLogValue(error?.message || error));
     res.status(getDiscErrorStatus(error)).json(serializeDiscError(error));
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/disc/cancel-scan", requireAuth, rateLimit(60, 60_000), (req, res) => {
   try {
     sendScanLog({
@@ -214,6 +222,8 @@ router.post("/api/disc/cancel-scan", requireAuth, rateLimit(60, 60_000), (req, r
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => {
   try {
     const {
@@ -299,6 +309,8 @@ router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(),
             metadata
           );
         } catch (metaErr) {
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
           console.warn("[disc] metadata warning:", sanitizeLogValue(metaErr?.message));
         }
 
@@ -329,6 +341,8 @@ router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(),
           ripResult
         });
       } catch (error) {
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        // codeql[js/log-injection]
         console.error("[disc] rip error:", sanitizeLogValue(error?.message || error));
 
         if (error.message === "RIP_CANCELLED") {
@@ -367,11 +381,15 @@ router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(),
       }
     })();
   } catch (error) {
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.error("[disc] rip request error:", sanitizeLogValue(error?.message || error));
     res.status(500).json({ error: error.message });
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/disc/cancel-rip", requireAuth, rateLimit(60, 60_000), (req, res) => {
   try {
     cancelRip();
@@ -385,6 +403,8 @@ router.post("/api/disc/cancel-rip", requireAuth, rateLimit(60, 60_000), (req, re
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/disc/metadata", requireAuth, rateLimit(30, 60_000), express.json(), async (req, res) => {
   try {
     const { titleInfo, outputPath } = req.body || {};

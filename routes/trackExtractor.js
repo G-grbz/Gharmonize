@@ -1,4 +1,5 @@
 import express from "express";
+import { sanitizeLogValue } from "../modules/security.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -61,7 +62,9 @@ router.post("/api/track-extractor/probe", requireDesktopBridge, async (req, res)
     const inspected = await inspectTrackSource(sourcePath);
     return sendOk(res, inspected);
   } catch (error) {
-    console.error("[track-extractor/probe] failed:", error);
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
+    console.error("[track-extractor/probe] failed:", sanitizeLogValue(error?.message || error));
     return sendError(
       res,
       "TRACK_EXTRACTOR_PROBE_FAILED",
@@ -124,7 +127,9 @@ router.post("/api/track-extractor/extract", requireDesktopBridge, async (req, re
       source: "track_extractor"
     });
   } catch (error) {
-    console.error("[track-extractor/extract] failed:", error);
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
+    console.error("[track-extractor/extract] failed:", sanitizeLogValue(error?.message || error));
     return sendError(
       res,
       "TRACK_EXTRACTOR_START_FAILED",

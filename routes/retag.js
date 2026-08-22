@@ -87,6 +87,8 @@ function directoryLabel(directoryPath) {
   return path.basename(directoryPath) || directoryPath;
 }
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/retag/directories", requireRetagAccess, rateLimit(60, 60_000), (req, res) => {
   try {
     if (req.retagDesktopAccess) {
@@ -136,6 +138,8 @@ router.get("/api/retag/directories", requireRetagAccess, rateLimit(60, 60_000), 
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/retag/jobs", requireRetagAccess, rateLimit(20, 60_000), (req, res) => {
   try {
     const directoryPath = resolveRequestedDirectory(req, req.body?.directoryPath);

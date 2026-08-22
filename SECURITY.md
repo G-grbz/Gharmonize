@@ -20,6 +20,11 @@ Include the affected version, deployment mode (desktop, native web, or Docker), 
 - Runtime binary downloads are restricted to trusted HTTPS origins; GitHub release asset SHA-256 digests are verified when supplied by GitHub.
 - Electron uses context isolation, renderer sandboxing, navigation restrictions, IPC sender validation, and denies unexpected permission requests.
 
+
+## Code scanning triage
+
+Gharmonize keeps CodeQL security queries enabled. Project-local controls such as the custom rate limiter, log sanitizer, process allowlist, and path-boundary helpers may not always be modeled by CodeQL. A source-level `codeql[...]` suppression is used only for a reviewed sink where the corresponding security control is immediately present and covered by regression tests. Query-wide exclusions are not used for these cases, so newly introduced unprotected code remains visible to CodeQL.
+
 ## Release verification
 
 Official tagged releases publish `SHA256SUMS`, a CycloneDX SBOM, and GitHub artifact attestations. Verify a downloaded artifact with:

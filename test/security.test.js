@@ -226,3 +226,58 @@ test('temporary state files use randomized exclusive creation', () => {
   assert.equal(binaries.includes('path.join(os.tmpdir(), "gharmonize-web-bin")'), false);
   assert.ok(binaries.includes('fs.mkdtempSync(path.join(os.tmpdir(), "gharmonize-web-bin-"))'));
 });
+
+test('CodeQL suppressions stay coupled to explicit security controls', () => {
+  const jsFiles = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(?:js|mjs|cjs)$/.test(entry.name)) jsFiles.push(full);
+    }
+  };
+  for (const dir of ['app.js', 'modules', 'routes', 'scripts']) {
+    if (fs.statSync(dir).isDirectory()) walk(dir);
+    else jsFiles.push(dir);
+  }
+
+  for (const file of jsFiles) {
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].includes('codeql[js/missing-rate-limiting]')) continue;
+      const next = lines.slice(i + 1, i + 4).find((line) => line.trim() && !line.trim().startsWith('//')) || '';
+      assert.ok(next.includes('rateLimit('), `${file}:${i + 1} suppresses rate limiting without rateLimit middleware`);
+    }
+  }
+
+  const safeProcess = fs.readFileSync('modules/safeProcess.js', 'utf8');
+  assert.equal((safeProcess.match(/codeql\[js\/command-line-injection\]/g) || []).length, 3);
+  assert.ok(safeProcess.includes('assertTrustedExecutable(command)'));
+  assert.ok(safeProcess.includes('assertSafeProcessArgs(executable, args)'));
+  assert.ok(safeProcess.includes('shell: false'));
+});
+
+test('download subdirectory parsing avoids regex processing of untrusted path text', () => {
+  const text = fs.readFileSync('routes/download.js', 'utf8');
+  assert.ok(text.includes('for (const ch of src)'));
+  assert.ok(text.includes('ch === "/" || ch === "\\\\"'));
+  assert.equal(text.includes('replace(/^[/\\\\]+/'), false);
+});
+
+test('YouTube Music cookie forwarding is domain-scoped and strips control characters', () => {
+  const text = fs.readFileSync('modules/yt.js', 'utf8');
+  assert.ok(text.includes('const domainMatches = host === domain || host.endsWith(`.${domain}`)'));
+  assert.ok(text.includes('.replace(/\\r/g, "")'));
+  assert.ok(text.includes('.replace(/\\n/g, "")'));
+  assert.ok(text.includes('codeql[js/file-access-to-http]'));
+  assert.ok(text.includes('`${YTM_ORIGIN}/youtubei/v1/search?prettyPrint=false`'));
+});
+
+test('media output and remote thumbnail writes remain confined and bounded', () => {
+  const text = fs.readFileSync('modules/media.js', 'utf8');
+  assert.ok(text.includes('outputDir = assertPathWithinAny('));
+  assert.ok(text.includes('path.relative(outputDir, candidate)'));
+  assert.ok(text.includes('const maxCoverBytes = 25 * 1024 * 1024'));
+  assert.ok(text.includes('if (buf.byteLength > maxCoverBytes) return null'));
+});

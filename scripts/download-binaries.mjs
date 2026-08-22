@@ -20,7 +20,10 @@ const TARGET_DIR = path.join(__dirname, '..', 'build', 'bin');
 
 function sanitizeLogValue(value, maxLength = 1000) {
   return String(value ?? '')
-    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+    .replace(/\r/g, ' ')
+    .replace(/\n/g, ' ')
+    .replace(/\u2028/g, ' ')
+    .replace(/\u2029/g, ' ')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '?')
     .slice(0, Math.max(1, Number(maxLength) || 1000));
 }
@@ -93,6 +96,8 @@ function log(...a) {
 }
 // Handles log error in project setup tooling.
 function logError(...a) {
+  // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+  // codeql[js/log-injection]
   console.error('[download-binaries][ERROR]', ...a.map((value) => sanitizeLogValue(value?.message || value)));
 }
 

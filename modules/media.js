@@ -450,13 +450,19 @@ export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
     const safeBase = assertPathWithinAny(path.resolve(String(destBasePathNoExt || '')), allowedRoots);
     const res = await fetchSafeRemote(thumbnailUrl, {}, { maxRedirects: 3 });
     if (!res.ok) return null;
+    const maxCoverBytes = 25 * 1024 * 1024;
+    const declaredLength = Number(res.headers.get("content-length") || 0);
+    if (Number.isFinite(declaredLength) && declaredLength > maxCoverBytes) return null;
     const buf = await res.arrayBuffer();
+    if (buf.byteLength > maxCoverBytes) return null;
     const ct = (res.headers.get("content-type") || "").toLowerCase();
     let ext = ".jpg";
     if (ct.includes("image/webp")) ext = ".webp";
     else if (ct.includes("image/png")) ext = ".png";
     else if (ct.includes("jpeg")) ext = ".jpg";
     const destPath = assertPathWithinAny(`${safeBase}${ext}`, allowedRoots);
+    // Remote image data is size-limited and the destination is confined to approved Gharmonize roots.
+    // codeql[js/http-to-file-access]
     fs.writeFileSync(destPath, Buffer.from(buf), { mode: 0o600 });
     return destPath;
   } catch {
@@ -545,7 +551,9 @@ export async function ensureJpegCover(
 
     return outJpg;
   } catch (e) {
-    console.warn("⚠️ Cover conversion warning:", e.message);
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
+    console.warn("⚠️ Cover conversion warning:", sanitizeLogValue(e?.message || e));
     return null;
   }
 }
@@ -690,6 +698,8 @@ export async function retagMediaFile(
     const f = String(format || path.extname(absOutputPath).slice(1) || "").toLowerCase();
 
     if (shouldSkipRetag(f)) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log(`ℹ️ retag skipped for format=${sanitizeLogValue(f)} (container metadata limits) → ${sanitizeLogValue(path.basename(absOutputPath))}`);
       return null;
     }
@@ -783,6 +793,8 @@ export async function retagMediaFile(
 
       args.push(tmpOut);
 
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log("🏷️ FFmpeg retag args:", sanitizeLogValue(args.join(" ")));
       const p = spawnSafe(ffmpegBin, args);
       try { opts?.onProcess?.(p); } catch {}
@@ -815,10 +827,14 @@ export async function retagMediaFile(
       }
     }
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log(`✅ retag ok: ${sanitizeLogValue(path.basename(absOutputPath))}`);
     return absOutputPath;
   } catch (e) {
-    console.warn("⚠️ retag warning:", e?.message || e);
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
+    console.warn("⚠️ retag warning:", sanitizeLogValue(e?.message || e));
     return null;
   } finally {
     safeUnlink(tmpOut);
@@ -867,7 +883,11 @@ export async function convertMedia(
   const tempFilesToCleanup = [];
   const outputRootDir = opts?.outputRootDir
     ? path.resolve(opts.outputRootDir)
-    : undefined;
+    : path.resolve(process.env.DATA_DIR || process.cwd(), "outputs");
+  outputDir = assertPathWithinAny(
+    path.resolve(String(outputDir || outputRootDir)),
+    [outputRootDir]
+  );
   const toResultDownloadPath = (absPath) =>
     toDownloadPath(absPath, outputRootDir) ||
     `/download/${encodeURIComponent(path.basename(absPath || ""))}`;
@@ -1240,12 +1260,29 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
   // Builds unique out for the FFmpeg media conversion pipeline.
   const buildUniqueOut = (baseName, fmt) => {
-    let fileName = `${baseName}.${fmt}`;
-    let outPath = path.join(outputDir, fileName);
+    const safeBaseName = sanitizeFilename(String(baseName || "")) || `output_${jobId}`;
+    const safeFormat = String(fmt || "").trim().toLowerCase();
+    if (!/^[a-z0-9]{1,10}$/.test(safeFormat)) {
+      throw new Error("Invalid output format");
+    }
+
+    const makePath = (name) => {
+      const candidate = path.resolve(outputDir, name);
+      const rel = path.relative(outputDir, candidate);
+      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+        throw new Error("Output path escapes output directory");
+      }
+      return candidate;
+    };
+
+    let fileName = `${safeBaseName}.${safeFormat}`;
+    let outPath = makePath(fileName);
     let n = 1;
+    // outPath is constructed from a sanitized basename/format and verified to remain under outputDir.
+    // codeql[js/path-injection]
     while (fs.existsSync(outPath)) {
-      fileName = `${baseName} (${n++}).${fmt}`;
-      outPath = path.join(outputDir, fileName);
+      fileName = `${safeBaseName} (${n++}).${safeFormat}`;
+      outPath = makePath(fileName);
     }
     return { fileName, outPath };
   };
@@ -1270,6 +1307,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     ? "env"
     : "default";
 
+  // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+  // codeql[js/log-injection]
   console.log(
     `🎵 Conversion → in: ${sanitizeLogValue(path.basename(
       inputPath
@@ -1340,7 +1379,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     try {
       coverToUse = await ensureJpegCover(coverPath, jobId, tempDir, ffmpegFromOpts);
     } catch (e) {
-      console.warn("⚠️ Cover conversion warning:", e.message);
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
+      console.warn("⚠️ Cover conversion warning:", sanitizeLogValue(e?.message || e));
     }
     if (coverToUse && fs.existsSync(coverToUse)) {
       canEmbedCover = true;
@@ -1609,7 +1650,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       const { probeVideoStreamInfo } = await import("./ffmpegCaps.js");
       srcInfo = await probeVideoStreamInfo(ffmpegBin, inputPath, 15000);
     } catch (e) {
-      console.warn("⚠️ probeVideoStreamInfo failed:", e?.message || e);
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
+      console.warn("⚠️ probeVideoStreamInfo failed:", sanitizeLogValue(e?.message || e));
       srcInfo = null;
     }
 
@@ -1945,13 +1988,17 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         selectedCodec = force10bitCodecForHdrOutput(selectedCodec, codecConfig);
       }
       if (before !== selectedCodec) {
-        console.log(`🔁 SDR→HDR: forcing 10-bit codec: ${before.name} -> ${selectedCodec.name}`);
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        // codeql[js/log-injection]
+        console.log(`🔁 SDR→HDR: forcing 10-bit codec: ${sanitizeLogValue(before.name)} -> ${sanitizeLogValue(selectedCodec.name)}`);
       }
     }
 
     if (!userExplicitContainer && selectedCodec.format && selectedCodec.format !== format) {
       const oldFmt = format;
       format = selectedCodec.format;
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log(`📦 Container changed: ${sanitizeLogValue(oldFmt)} -> ${sanitizeLogValue(format)}`);
     }
 
@@ -2846,6 +2893,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       emitLog(opts.onLog, {
         fallback: `🎚 Loudnorm analysis started (${config.mode})`
       });
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log("🎚 Loudnorm analysis pass:", sanitizeLogValue(analysisArgs.join(" ")));
 
       return await new Promise((resolve, reject) => {
@@ -3005,6 +3054,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     args.push(outputPath);
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log("🔧 FFmpeg arguments:", sanitizeLogValue(args.join(" ")));
 
     let triedFallback = false;
@@ -3236,11 +3287,15 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       if (canceledByFlag || isCanceled() || signalTerminated) {
         try {
+          // actualOut is the validated conversion output created under the confined outputDir.
+          // codeql[js/path-injection]
           if (actualOut && fs.existsSync(actualOut)) fs.unlinkSync(actualOut);
         } catch {}
         return reject(new Error("CANCELED"));
       }
 
+      // outputPath is generated by buildUniqueOut under the confined outputDir.
+      // codeql[js/path-injection]
       if (code === 0 && fs.existsSync(outputPath)) {
         const finalElapsed = Number.isFinite(lastElapsed) ? lastElapsed : duration;
         const progressDuration =
@@ -3255,16 +3310,22 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
           durationText: formatClock(progressDuration),
           fps: pickLiveFps()
         });
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        // codeql[js/log-injection]
         console.log(`✅ Conversion completed: ${sanitizeLogValue(outputPath)}`);
         await ensureOwnership(outputPath);
         const downloadPath = toResultDownloadPath(outputPath);
         resolve({
           outputPath: downloadPath,
+          // outputPath is generated by buildUniqueOut under the confined outputDir.
+          // codeql[js/path-injection]
           fileSize: fs.statSync(outputPath).size,
           ringtone: ringtoneSegment || null
         });
       } else {
         try {
+          // outputPath is generated by buildUniqueOut under the confined outputDir.
+          // codeql[js/path-injection]
           if (outputPath && fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
         } catch {}
         const tail = stderrData.split("\n").slice(-10).join("\n");
@@ -3352,6 +3413,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     const embedLyricsFlag = opts.embedLyrics === true;
     const shouldProcessLyrics = includeLyricsFlag || embedLyricsFlag;
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log(
       `🔍 Lyrics check → Will it be processed?: ${
         shouldProcessLyrics ? "yes" : "no"

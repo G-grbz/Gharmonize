@@ -2456,14 +2456,25 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     job.counters.cvTotal = 1;
 
     const transcodeEnabled = job.videoSettings?.transcodeEnabled === true;
+    const directMoveInputAbs =
+      typeof actualInputPath === "string" ? path.resolve(actualInputPath) : "";
+    const directMoveRel = directMoveInputAbs
+      ? path.relative(path.resolve(TEMP_DIR), directMoveInputAbs)
+      : "";
+    const directMoveInsideTemp =
+      !!directMoveRel &&
+      directMoveRel !== ".." &&
+      !directMoveRel.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(directMoveRel);
     const canDirectMovePlatformMp4 =
       isVideoFormatFlag &&
       format === "mp4" &&
       job.metadata?.source === "platform" &&
       !transcodeEnabled &&
-      typeof actualInputPath === "string" &&
-      isPathInside(TEMP_DIR, actualInputPath) &&
-      fs.existsSync(actualInputPath);
+      directMoveInsideTemp &&
+      // directMoveInputAbs is normalized and verified with path.relative to remain under TEMP_DIR.
+      // codeql[js/path-injection]
+      fs.existsSync(directMoveInputAbs);
 
     const existingSingle = findExistingOutput(jobId, format, outputDir);
     const r = existingSingle
@@ -2472,16 +2483,18 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         }
       : canDirectMovePlatformMp4
       ? (() => {
-          const extRaw = path.extname(actualInputPath);
+          const extRaw = path.extname(directMoveInputAbs);
           const ext = extRaw ? extRaw.toLowerCase() : ".mp4";
-          const baseRaw = path.basename(actualInputPath, extRaw);
+          const baseRaw = path.basename(directMoveInputAbs, extRaw);
           const base = sanitizeFilename(baseRaw) || jobId;
           const targetAbs = buildUniqueOutputPath(outputDir, `${base}${ext}`);
 
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
           console.log(
-            `🎬 Platform MP4 transcode disabled - direct move: ${sanitizeLogValue(actualInputPath)} -> ${sanitizeLogValue(targetAbs)}`
+            `🎬 Platform MP4 transcode disabled - direct move: ${sanitizeLogValue(directMoveInputAbs)} -> ${sanitizeLogValue(targetAbs)}`
           );
-          safeMoveFileSync(actualInputPath, targetAbs);
+          safeMoveFileSync(directMoveInputAbs, targetAbs);
           queueOwnershipFix(targetAbs);
 
           job.convertProgress = 100;
@@ -2756,7 +2769,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       }
     }
     if (!isCanceled) {
-      console.error("Job error:", error);
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
+      console.error("Job error:", sanitizeLogValue(error?.message || error));
     }
     try {
       killJobProcesses(jobId);

@@ -1075,6 +1075,8 @@ async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = 
       body.params = YTM_SEARCH_TYPE_PARAMS[searchType];
     }
 
+    // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
+    // codeql[js/file-access-to-http]
     const response = await fetch(`${YTM_ORIGIN}/youtubei/v1/search?prettyPrint=false`, {
       method: "POST",
       headers,
@@ -1659,6 +1661,8 @@ async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, t
   const postBrowse = async (payload) => {
     let response;
     try {
+      // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
+      // codeql[js/file-access-to-http]
       response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
         method: "POST",
         headers,
@@ -3355,7 +3359,13 @@ function parseNetscapeCookieFile(cookieFile, targetHost = "music.youtube.com") {
     const host = targetHost.toLowerCase();
     const domainMatches = host === domain || host.endsWith(`.${domain}`);
 
-    if (!domainMatches || !name) continue;
+    const safeName = String(name || "").trim();
+    const safeValue = String(value || "")
+      .replace(/\r/g, "")
+      .replace(/\n/g, "")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .slice(0, 8192);
+    if (!domainMatches || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}$/.test(safeName)) continue;
     if (expires && Number.isFinite(expires) && expires < nowSec) continue;
 
     cookies.push({
@@ -3363,8 +3373,8 @@ function parseNetscapeCookieFile(cookieFile, targetHost = "music.youtube.com") {
       path: cookiePath || "/",
       secure: /^true$/i.test(String(secure || "")),
       expires,
-      name,
-      value
+      name: safeName,
+      value: safeValue
     });
   }
 
@@ -3449,6 +3459,8 @@ async function fetchYtmBootstrapConfig(cookieHeader, timeoutMs = 6000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
+    // codeql[js/file-access-to-http]
     const response = await fetch(`${YTM_ORIGIN}/`, {
       headers: {
         "Accept": "text/html,application/xhtml+xml",
@@ -4099,6 +4111,8 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
   const postBrowse = async (payload) => {
     let response;
     try {
+      // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
+      // codeql[js/file-access-to-http]
       response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
         method: "POST",
         headers,

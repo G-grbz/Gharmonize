@@ -35,10 +35,22 @@ function resolveOpenRootDir() {
 // Resolves output subdirectory safely against root.
 function resolveOutputSubdirAbs(rawSubdir = "", outputRootDir = OUTPUT_DIR) {
   const root = path.resolve(outputRootDir || OUTPUT_DIR);
-  const src = String(rawSubdir || "").trim().replace(/^[/\\]+/, "").replace(/[/\\]+$/, "");
+  const src = String(rawSubdir || "").trim();
   if (!src) return root;
 
-  const parts = src.split(/[\\/]+/).filter(Boolean);
+  const parts = [];
+  let current = "";
+  for (const ch of src) {
+    if (ch === "/" || ch === "\\") {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) parts.push(current);
   if (!parts.length) return root;
   if (parts.some((p) => p === "." || p === "..")) return null;
 
@@ -159,15 +171,21 @@ function handleDownload(req, res) {
   fs.stat(abs, (statErr, stat) => {
     if (statErr) {
       if (statErr.code === "ENOENT" || statErr.code === "ENOTDIR") {
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        // codeql[js/log-injection]
         console.warn("[download] Not found:", sanitizeLogValue(abs));
         return res.status(404).send("Not found");
       }
 
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn("[download] Stat failed:", sanitizeLogValue(abs), sanitizeLogValue(statErr?.message || statErr));
       return res.status(500).send("Unable to read file");
     }
 
     if (!stat.isFile()) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn("[download] Not a file:", sanitizeLogValue(abs));
       return res.status(404).send("Not found");
     }
@@ -181,6 +199,8 @@ function handleDownload(req, res) {
     const stream = fs.createReadStream(abs);
 
     stream.once("error", (sendErr) => {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn("[download] Send failed:", sanitizeLogValue(abs), sanitizeLogValue(sendErr?.message || sendErr));
 
       if (!res.headersSent) {
@@ -198,6 +218,8 @@ function handleDownload(req, res) {
   });
 }
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => {
   const isWindows = process.platform === "win32";
   const linuxPath = isWindows ? OUTPUTS_DISPLAY_DIR.replace(/\\/g, "/") : OUTPUTS_DISPLAY_DIR;
@@ -211,6 +233,8 @@ router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => {
   });
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => {
   const rawPath = req.query.path || req.query.url || "";
   const abs = resolveOutputPath(rawPath);
@@ -218,6 +242,8 @@ router.get("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => {
   res.json({ exists });
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/outputs/open", rateLimit(30, 60_000), async (req, res) => {
   try {
     const openRoot = resolveOpenRootDir();
@@ -245,7 +271,11 @@ router.post("/api/outputs/open", rateLimit(30, 60_000), async (req, res) => {
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.head("/download/*filePath", rateLimit(120, 60_000), handleDownload);
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/download/*filePath", rateLimit(120, 60_000), handleDownload);
 
 export default router;

@@ -424,6 +424,8 @@ function requireWidgetKey(req, res, next) {
   return next();
 }
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/homepage", requireWidgetKey, rateLimit(120, 60_000), (req, res) => {
   try {
     const lang = pickLang(req);
@@ -501,6 +503,8 @@ router.get("/api/homepage", requireWidgetKey, rateLimit(120, 60_000), (req, res)
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/local-files", requireAuth, rateLimit(60, 60_000), (req, res) => {
   try {
     const allowedExts = [
@@ -547,6 +551,8 @@ router.get("/api/local-files", requireAuth, rateLimit(60, 60_000), (req, res) =>
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/ffmpeg/caps", rateLimit(60, 60_000), async (req, res) => {
   try {
     const ffmpegBin = BINARY_FFMPEG_BIN;
@@ -566,6 +572,8 @@ router.get("/api/ffmpeg/caps", rateLimit(60, 60_000), async (req, res) => {
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -589,7 +597,9 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
       defaultSelection
     });
   } catch (error) {
-    console.error("Probe error:", error);
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
+    console.error("Probe error:", sanitizeLogValue(error?.message || error));
 
     if (req.file) {
       try {
@@ -607,6 +617,8 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
   }
 });
 
+ // Custom Gharmonize rateLimit middleware is applied on this route.
+ // codeql[js/missing-rate-limiting]
  router.post("/api/probe/local", requireAuth, rateLimit(10, 60_000), async (req, res) => {
    try {
      const { localPath } = req.body;
@@ -643,7 +655,9 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
        defaultSelection
      });
    } catch (error) {
-     console.error("Local probe error:", error);
+     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+     // codeql[js/log-injection]
+     console.error("Local probe error:", sanitizeLogValue(error?.message || error));
      res.status(500).json({
        success: false,
        error: error.message
@@ -651,6 +665,8 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
    }
  });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/probe/cleanup", rateLimit(30, 60_000), async (req, res) => {
   try {
     const { finalPath } = req.body || {};
@@ -660,15 +676,29 @@ router.post("/api/probe/cleanup", rateLimit(30, 60_000), async (req, res) => {
     }
 
     const abs = path.resolve(finalPath);
-    if (!isPathInsideRoot(UPLOAD_DIR, abs)) {
+    const rel = path.relative(path.resolve(UPLOAD_DIR), abs);
+    const insideUpload =
+      !!rel &&
+      rel !== ".." &&
+      !rel.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(rel);
+    if (!insideUpload) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn("[probe/cleanup] Attempt to delete outside UPLOAD_DIR:", sanitizeLogValue(abs));
       return res.status(400).json({ error: "Invalid path" });
     }
 
     try {
+      // abs is normalized and verified with path.relative to remain under UPLOAD_DIR.
+      // codeql[js/path-injection]
       fs.rmSync(abs, { force: true });
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log(`[probe/cleanup] Removed probed file if present: ${sanitizeLogValue(abs)}`);
     } catch (e) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.error("[probe/cleanup] remove failed:", sanitizeLogValue(e?.message || e));
       return res.status(500).json({ error: e.message || "remove failed" });
     }
@@ -680,6 +710,8 @@ router.post("/api/probe/cleanup", rateLimit(30, 60_000), async (req, res) => {
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post('/api/upload/chunk/cancel', rateLimit(30, 60_000), async (req, res) => {
   try {
     const uploadId = normalizeUploadId(req.body?.uploadId);
@@ -757,12 +789,16 @@ router.post('/api/upload/chunk/cancel', rateLimit(30, 60_000), async (req, res) 
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/jobs/:id", rateLimit(120, 60_000), (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return sendError(res, ERR.JOB_NOT_FOUND, "Job not found", 404);
   return sendOk(res, job);
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/queue/status", rateLimit(120, 60_000), (_req, res) => {
   const terminal = new Set(["completed", "error", "canceled"]);
   const activeJobs = Array.from(jobs.values())
@@ -787,6 +823,8 @@ router.get("/api/queue/status", rateLimit(120, 60_000), (_req, res) => {
   });
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/stream/:id", rateLimit(120, 60_000), (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "Job not found" });
@@ -819,6 +857,8 @@ router.get("/api/stream/:id", rateLimit(120, 60_000), (req, res) => {
   req.on("close", () => clearInterval(interval));
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/jobs/:id/cancel", rateLimit(60, 60_000), (req, res) => {
   const id = req.params.id;
   const job = jobs.get(id);
@@ -839,6 +879,8 @@ router.post("/api/jobs/:id/cancel", rateLimit(60, 60_000), (req, res) => {
   return sendOk(res, { id, status: "canceled" });
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/debug/lyrics", rateLimit(10, 60_000), async (req, res) => {
   try {
     const { artist, title } = req.body;
@@ -847,6 +889,8 @@ router.post("/api/debug/lyrics", rateLimit(10, 60_000), async (req, res) => {
       return res.status(400).json({ error: "Artist and title are required" });
     }
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log(`🔍 Test lyrics search: "${sanitizeLogValue(artist)}" - "${sanitizeLogValue(title)}"`);
 
     const lyricsPath = await lyricsFetcher.downloadLyrics(
@@ -874,6 +918,8 @@ router.post("/api/debug/lyrics", rateLimit(10, 60_000), async (req, res) => {
 
 const chunkStorage = new Map();
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), upload.single('chunk'), async (req, res) => {
   let chunk;
 
@@ -909,11 +955,15 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
         }
         fs.renameSync(oldPath, newPath);
         chunk.path = newPath;
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        // codeql[js/log-injection]
         console.log(`📝 Chunk temp renamed: ${sanitizeLogValue(oldPath)} -> ${sanitizeLogValue(newPath)}`);
       } else {
         chunk.path = oldPath;
       }
     } catch (e) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn('Chunk temp rename failed:', sanitizeLogValue(e?.message || e));
       return res.status(400).json({ error: "Invalid chunk path" });
     }
@@ -983,6 +1033,8 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
     try {
       fs.rmSync(safeChunkPath, { force: true });
     } catch (err) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn('Temporary chunk could not be deleted:', sanitizeLogValue(chunk?.path), sanitizeLogValue(err?.message || err));
     }
 
@@ -995,6 +1047,8 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
       uploadData.writeStream.end();
       if (purpose === 'probe') {
         uploadData.writeStream.on('finish', async () => {
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
           console.log(`✅ All chunks merged (probe): ${sanitizeLogValue(uploadData.finalPath)}`);
           await queueOwnershipFix(uploadData.finalPath);
           try {
@@ -1010,7 +1064,9 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
               mode: 'probe'
             });
           } catch (err) {
-            console.error('Probe after chunk error:', err);
+            // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+            // codeql[js/log-injection]
+            console.error('Probe after chunk error:', sanitizeLogValue(err?.message || err));
             return res.status(500).json({
               success: false,
               error: err.message
@@ -1024,6 +1080,8 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
       }
 
       uploadData.writeStream.on('finish', async () => {
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        // codeql[js/log-injection]
         console.log(`✅ All chunks merged: ${sanitizeLogValue(uploadData.finalPath)}`);
         await queueOwnershipFix(uploadData.finalPath);
       });
@@ -1061,10 +1119,14 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
         const failedChunkPath = path.resolve(String(chunk.path));
         if (isPathInsideRoot(UPLOAD_DIR, failedChunkPath)) {
           fs.rmSync(failedChunkPath, { force: true });
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
           console.log(`🧹 Removed failed chunk file if present: ${sanitizeLogValue(failedChunkPath)}`);
         }
       }
     } catch (e) {
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.warn('Failed to delete failed chunk file:', sanitizeLogValue(chunk?.path), sanitizeLogValue(e?.message || e));
     }
 
@@ -1072,9 +1134,13 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (req, res) => {
   try {
     const body = req.body || {};
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log("📦 RAW req.body.youtubeConcurrency:", sanitizeLogValue(body.youtubeConcurrency), "typeof:", typeof body.youtubeConcurrency);
     const metadata = {};
     const plTitleRaw = String(body.plTitle ?? body.playlistTitle ?? "").trim();
@@ -1221,6 +1287,8 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
       youtubeConcurrency
     );
 
+    // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+    // codeql[js/log-injection]
     console.log("🎛️ UI youtubeConcurrency:", sanitizeLogValue(youtubeConcurrency));
     console.log("🎛️ Normalized concurrency:", youtubeConcurrencyNormalized);
 
@@ -1286,6 +1354,8 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
         try {
           return JSON.parse(raw);
         } catch {
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
           console.warn("Failed to parse videoSettings JSON:", sanitizeLogValue(raw));
           return null;
         }
@@ -1465,11 +1535,17 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
 
       console.log("=== MEDIA DEBUG ===");
       console.log("platform:", isYouTubeSource ? "youtube" : "dailymotion");
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log("URL:", sanitizeLogValue(normalized));
       console.log("isPlaylist:", metadata.isPlaylist);
       console.log("isAutomix:", metadata.isAutomix);
       console.log("selectedIndices:", sel);
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log("req.body.selectedIds:", sanitizeLogValue(JSON.stringify(req.body.selectedIds ?? null)));
+      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+      // codeql[js/log-injection]
       console.log("metadata.selectedIds (after merge):", sanitizeLogValue(JSON.stringify(metadata.selectedIds ?? null)));
       console.log("================================");
 
@@ -1490,7 +1566,9 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
             metadata.album_artist = albumArtist;
           }
         }
-        console.log("📌 YT frozenEntries attached from client. len =", metadata.frozenEntries.length);
+        // Only a numeric length is logged; no user-controlled text reaches the log sink.
+        // codeql[js/log-injection]
+        console.log("📌 YT frozenEntries attached from client. len =", Number(metadata.frozenEntries.length) || 0);
       }
 
       if (metadata.isAutomix &&
@@ -1505,10 +1583,14 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
             metadata.selectedIds = automixData.ids;
             metadata.frozenEntries = automixData.entries;
             metadata.frozenTitle = automixData.title;
+            // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+            // codeql[js/log-injection]
             console.log("selectedIds fetched from API:", sanitizeLogValue(JSON.stringify(metadata.selectedIds ?? null)));
           }
         } catch (error) {
-          console.warn("Could not retrieve Automix IDs:", error.message);
+          // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+          // codeql[js/log-injection]
+          console.warn("Could not retrieve Automix IDs:", sanitizeLogValue(error?.message || error));
         }
       }
     }
@@ -1603,6 +1685,8 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/jobs", requireAuth, rateLimit(120, 60_000), (req, res) => {
   try {
     cleanupCompletedJobsWithoutOutputs();
@@ -1668,6 +1752,8 @@ router.get("/api/jobs", requireAuth, rateLimit(120, 60_000), (req, res) => {
   }
 });
 
+// Custom Gharmonize rateLimit middleware is applied on this route.
+// codeql[js/missing-rate-limiting]
 router.get("/api/stream", requireAuth, rateLimit(120, 60_000), (req, res) => {
   cleanupCompletedJobsWithoutOutputs();
 
