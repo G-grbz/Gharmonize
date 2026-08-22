@@ -15,6 +15,8 @@ const OUTPUTS_DISPLAY_DIR = OUTPUTS_DISPLAY_DIR_RAW
       ? path.resolve(OUTPUTS_DISPLAY_DIR_RAW)
       : path.resolve(BASE_DIR, OUTPUTS_DISPLAY_DIR_RAW))
   : OUTPUT_DIR;
+const MAX_OUTPUT_EXISTENCE_PATHS = 250;
+const MAX_OUTPUT_PATH_LENGTH = 4096;
 
 // Resolves safest existing output root for open-folder operations.
 function resolveOpenRootDir() {
@@ -112,6 +114,14 @@ async function openDirectoryInFileManager(absDir) {
 // Resolves output absolute path from download path-like input.
 function resolveOutputPath(rawPath) {
   return resolveDownloadPathToAbs(rawPath, OUTPUT_DIR);
+}
+
+// Checks a bounded output path without disclosing its resolved filesystem path.
+function outputPathExists(rawPath) {
+  const value = String(rawPath || "").trim();
+  if (!value || value.length > MAX_OUTPUT_PATH_LENGTH) return false;
+  const abs = resolveOutputPath(value);
+  return !!(abs && fs.existsSync(abs));
 }
 
 function encodeRfc5987Value(value) {
@@ -231,9 +241,34 @@ router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => {
 // Custom Gharmonize rateLimit middleware is applied on this route.
 router.get("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => {
   const rawPath = req.query.path || req.query.url || "";
-  const abs = resolveOutputPath(rawPath);
-  const exists = !!(abs && fs.existsSync(abs));
-  res.json({ exists });
+  res.json({ exists: outputPathExists(rawPath) });
+});
+
+// Checks many restored output paths with one request so SSE refreshes cannot
+// exhaust the global API quota with hundreds of individual existence probes.
+router.post("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => {
+  const paths = req.body?.paths;
+  if (!Array.isArray(paths)) {
+    return res.status(400).json({ error: "paths must be an array" });
+  }
+  if (paths.length > MAX_OUTPUT_EXISTENCE_PATHS) {
+    return res.status(413).json({
+      error: `A maximum of ${MAX_OUTPUT_EXISTENCE_PATHS} paths can be checked at once`
+    });
+  }
+
+  const uniquePaths = Array.from(new Set(
+    paths
+      .filter((value) => typeof value === "string")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  ));
+  const items = uniquePaths.map((path) => ({
+    path,
+    exists: outputPathExists(path)
+  }));
+
+  return res.json({ items });
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.

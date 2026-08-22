@@ -1,3 +1,5 @@
+import { collectJobOutputPaths, outputExistenceClient } from './OutputExistenceClient.js';
+
 export class JobManager {
     // Initializes class state and defaults for the browser UI layer.
     constructor(app) {
@@ -12,6 +14,7 @@ export class JobManager {
             : 'gharmonize_job_session';
         this.progressCache = new Map();
         this.lastSessionSavedAt = 0;
+        this.restoreSessionInFlight = false;
 
         if (typeof window !== 'undefined') {
             // Handles do restore in the browser UI layer.
@@ -2120,19 +2123,7 @@ updateJobUI(job, batchId = null) {
         async checkOutputExists(rawPath) {
             const path = String(rawPath || '').trim();
             if (!path) return false;
-
-            try {
-                const resp = await fetch(`/api/outputs/exists?path=${encodeURIComponent(path)}`, {
-                    cache: 'no-store'
-                });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-                const data = await resp.json();
-                return !!data?.exists;
-            } catch (e) {
-                console.warn('[JobManager] output existence check failed:', e);
-                return true;
-            }
+            return outputExistenceClient.check(path);
         }
 
         // Handles prune playlist data outputs in the browser UI layer.
@@ -2144,21 +2135,20 @@ updateJobUI(job, batchId = null) {
                 return true;
             }
 
-            const keptResults = [];
+            const candidates = job.resultPath
+                .filter((result) => result && !result.error)
+                .map((result) => ({ result, path: result.outputPath || result.path }))
+                .filter((candidate) => candidate.path);
+            const paths = candidates.map((candidate) => candidate.path);
+            if (job.zipPath) paths.push(job.zipPath);
+            const existence = await outputExistenceClient.checkMany(paths);
 
-            for (const r of job.resultPath) {
-                if (!r || r.error) continue;
-
-                let raw = r.outputPath || r.path;
-                if (!raw) continue;
-
-                if (await this.checkOutputExists(raw)) {
-                    keptResults.push(r);
-                }
-            }
+            const keptResults = candidates
+                .filter((candidate) => existence.get(String(candidate.path).trim()))
+                .map((candidate) => candidate.result);
 
             if (job.zipPath) {
-                if (!(await this.checkOutputExists(job.zipPath))) {
+                if (!existence.get(String(job.zipPath).trim())) {
                     job.zipPath = null;
                 }
             }
@@ -2173,6 +2163,9 @@ updateJobUI(job, batchId = null) {
 
         // Handles restore session state in the browser UI layer.
         async restoreSessionState({ persist = true } = {}) {
+            if (this.restoreSessionInFlight) return;
+            this.restoreSessionInFlight = true;
+
             try {
                 const raw = localStorage.getItem(this.storageKey);
                 if (!raw) return;
@@ -2184,6 +2177,10 @@ updateJobUI(job, batchId = null) {
                 this.sessionSectionsInitialized = false;
 
                 const allJobs = data.jobs || [];
+                const completedOutputPaths = allJobs
+                    .filter((job) => this.normalizeStatus(job?.status) === 'completed')
+                    .flatMap((job) => collectJobOutputPaths(job));
+                await outputExistenceClient.checkMany(completedOutputPaths);
 
                 const validJobs = [];
                 const validIds = new Set();
@@ -2241,6 +2238,8 @@ updateJobUI(job, batchId = null) {
             } catch (e) {
                 console.warn('[JobManager] restoreSessionState error:', e);
                 try { localStorage.removeItem(this.storageKey); } catch (_) {}
+            } finally {
+                this.restoreSessionInFlight = false;
             }
         }
 

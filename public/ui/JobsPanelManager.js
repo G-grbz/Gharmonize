@@ -1,3 +1,5 @@
+import { collectJobOutputPaths, outputExistenceClient } from './OutputExistenceClient.js';
+
 export class JobsPanelManager {
     // Initializes class state and defaults for the browser UI layer.
     constructor() {
@@ -19,8 +21,6 @@ export class JobsPanelManager {
         this.progressCache = new Map();
         this.completedAtCache = new Map();
         this.storageKey = 'gharmonize_jobs_panel_state';
-        this.outputExistenceCache = new Map();
-        this.outputExistenceCacheTtlMs = 15000;
     }
 
     // Initializes startup state for the browser UI layer.
@@ -327,50 +327,11 @@ export class JobsPanelManager {
         return v === 'cancelled' ? 'canceled' : v;
     }
 
-    // Gets cached output existence if cache item is still fresh.
-    getCachedOutputExistence(url) {
-        const cached = this.outputExistenceCache.get(url);
-        if (!cached) return null;
-
-        const checkedAt = Number(cached.checkedAt || 0);
-        const age = Date.now() - checkedAt;
-        if (!Number.isFinite(checkedAt) || age > this.outputExistenceCacheTtlMs) {
-            this.outputExistenceCache.delete(url);
-            return null;
-        }
-        return cached;
-    }
-
-    // Caches output existence state.
-    setOutputExistence(url, exists) {
-        this.outputExistenceCache.set(url, { exists: !!exists, checkedAt: Date.now() });
-    }
-
     // Checks whether output exists without triggering /download 404 noise.
     async checkOutputExistsPanel(rawUrl) {
         const url = String(rawUrl || '').trim();
         if (!url) return false;
-
-        const cached = this.getCachedOutputExistence(url);
-        if (cached) {
-            return cached.exists;
-        }
-
-        try {
-            const resp = await fetch(`/api/outputs/exists?path=${encodeURIComponent(url)}`, {
-                cache: 'no-store'
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-            const data = await resp.json();
-            const exists = !!data?.exists;
-            this.setOutputExistence(url, exists);
-            return exists;
-        } catch (_e) {
-            // Fail-open: avoid removing completed jobs on transient network issues.
-            this.setOutputExistence(url, true);
-            return true;
-        }
+        return outputExistenceClient.check(url);
     }
 
     // Checks whether newer version metadata fallback is valid for the browser UI layer.
@@ -697,24 +658,20 @@ export class JobsPanelManager {
 
             if (!Array.isArray(job.resultPath)) return true;
 
-            const keptResults = [];
+            const candidates = job.resultPath
+                .filter((result) => result && !result.error)
+                .map((result) => ({ result, path: result.outputPath || result.path }))
+                .filter((candidate) => candidate.path);
+            const paths = candidates.map((candidate) => candidate.path);
+            if (job.zipPath) paths.push(job.zipPath);
+            const existence = await outputExistenceClient.checkMany(paths);
 
-            for (const r of job.resultPath) {
-                if (!r || r.error) continue;
-
-                let raw = r.outputPath || r.path;
-                if (!raw) continue;
-
-                const url = raw;
-                const exists = await this.checkOutputExistsPanel(url);
-                if (exists) {
-                    keptResults.push(r);
-                }
-            }
+            const keptResults = candidates
+                .filter((candidate) => existence.get(String(candidate.path).trim()))
+                .map((candidate) => candidate.result);
 
             if (job.zipPath) {
-                const zipUrl = job.zipPath;
-                const zipExists = await this.checkOutputExistsPanel(zipUrl);
+                const zipExists = existence.get(String(job.zipPath).trim());
                 if (!zipExists) {
                     job.zipPath = null;
                 }
@@ -730,9 +687,15 @@ export class JobsPanelManager {
 
     // Cleans up server items for the browser UI layer.
     async cleanupServerItems(items) {
+        const safeItems = Array.isArray(items) ? items : [];
+        await outputExistenceClient.checkMany(
+            safeItems
+                .filter((job) => this.norm(job?.status) === 'completed')
+                .flatMap((job) => collectJobOutputPaths(job))
+        );
         const cleaned = [];
 
-        for (const job of items || []) {
+        for (const job of safeItems) {
             const status = this.norm(job.status);
 
             if (status === 'completed') {
@@ -773,6 +736,14 @@ export class JobsPanelManager {
             safeIncoming
                 .map(j => j?.id ?? j?._id)
                 .filter(Boolean)
+        );
+        await outputExistenceClient.checkMany(
+            safeExisting
+                .filter((job) => {
+                    const id = job?.id ?? job?._id;
+                    return id && !incomingIds.has(id);
+                })
+                .flatMap((job) => collectJobOutputPaths(job))
         );
 
         const result = [];
