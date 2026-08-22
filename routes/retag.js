@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { createJob } from "../modules/store.js";
@@ -17,7 +18,10 @@ const LOCAL_INPUT_DIR = process.env.LOCAL_INPUT_DIR
 function hasDesktopAccess(req) {
   const expected = String(process.env.GHARMONIZE_DESKTOP_TOKEN || "").trim();
   const provided = String(req.get("x-gharmonize-desktop-token") || "").trim();
-  return !!expected && provided === expected;
+  if (!expected) return false;
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  return providedBuf.length === expectedBuf.length && crypto.timingSafeEqual(providedBuf, expectedBuf);
 }
 
 function requireRetagAccess(req, res, next) {

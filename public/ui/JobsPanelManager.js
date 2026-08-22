@@ -1069,10 +1069,10 @@ export class JobsPanelManager {
                     ${isActive ? this.t('jobsPanel.emptyDescriptionActive') : this.t('jobsPanel.emptyDescriptionAll')}
                 </div>
                 <div class="jobs-panel__empty-actions">
-                    <button class="jobs-panel__empty-action" onclick="focusUrlInputAndClose()">
+                    <button class="jobs-panel__empty-action" data-action="focus-url-close">
                         ${this.t('jobsPanel.addUrl')}
                     </button>
-                    <button class="jobs-panel__empty-action jobs-panel__empty-action--outline" onclick="focusFileInputAndClose()">
+                    <button class="jobs-panel__empty-action jobs-panel__empty-action--outline" data-action="focus-file-close">
                         ${this.t('section.file')}
                     </button>
                 </div>

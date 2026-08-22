@@ -14,6 +14,7 @@ import {
   DENO_BIN,
   initializeDynamicBinaries
 } from '../modules/binaries.js';
+import { isSafeExternalUrl } from '../modules/security.js';
 
 const execFileAsync = promisify(execFile);
 const HOST = '127.0.0.1'
@@ -858,7 +859,7 @@ function buildAndShowContextMenu(win, params) {
   if (hasLink) {
     template.push({
       label: t('contextMenu.openLinkInBrowser', 'Open link in browser'),
-      click: () => shell.openExternal(params.linkURL)
+      click: () => safeOpenExternal(params.linkURL).catch(() => {})
     });
     template.push({ type: 'separator' });
   }
@@ -915,8 +916,8 @@ function createAppMenu(win) {
         }
       },
       { type: 'separator' },
-      { label: 'Open License Details', click: () => shell.openExternal(licenseUrl) },
-      { label: 'Open GitHub (Project Page)', click: () => shell.openExternal(projectUrl) }
+      { label: 'Open License Details', click: () => safeOpenExternal(licenseUrl).catch(() => {}) },
+      { label: 'Open GitHub (Project Page)', click: () => safeOpenExternal(projectUrl).catch(() => {}) }
     ]
   });
 
@@ -931,6 +932,26 @@ async function shouldStartHidden() {
   if (auto && prefs.startMinimized) return true;
 
   return false;
+}
+
+function isTrustedRendererUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl || ''));
+    return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1'].includes(url.hostname) && String(url.port || '80') === String(PORT);
+  } catch {
+    return false;
+  }
+}
+
+function assertTrustedIpcSender(event) {
+  const sourceUrl = event?.senderFrame?.url || event?.sender?.getURL?.() || '';
+  if (!isTrustedRendererUrl(sourceUrl)) throw new Error('Untrusted IPC sender');
+}
+
+async function safeOpenExternal(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!isSafeExternalUrl(value)) throw new Error('Blocked unsafe external URL');
+  await shell.openExternal(value);
 }
 
 // Creates window for the Electron runtime bridge.
@@ -948,7 +969,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       enableRemoteModule: false,
-      sandbox: false,
+      sandbox: true,
       preload: path.join(path.dirname(fileURLToPath(import.meta.url)), 'preload.mjs')
     },
     show: false
@@ -1000,39 +1021,17 @@ function createWindow() {
   createAppMenu(win);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isSafeExternalUrl(url)) void safeOpenExternal(url).catch((error) => console.warn('External URL blocked:', error.message));
     return { action: 'deny' };
   });
 
-  win.webContents.on('did-finish-load', () => {
-    rendererTrackExtractorReady = false;
-    win.webContents.executeJavaScript(`
-      const originalSetLang = window.i18n?.setLang;
-      if (originalSetLang) {
-        window.i18n.setLang = async function(lang) {
-          const result = await originalSetLang.call(this, lang);
-          if (window.electronAPI) {
-            window.electronAPI.updateLanguage(lang);
-          }
-          return result;
-        };
-      }
-
-      setTimeout(() => {
-        const currentLang = localStorage.getItem('lang') || 'en';
-        if (window.electronAPI) {
-          window.electronAPI.updateLanguage(currentLang);
-        }
-      }, 500);
-
-      document.addEventListener('i18n:applied', (event) => {
-        const lang = event.detail?.lang;
-        if (lang && window.electronAPI) {
-          window.electronAPI.updateLanguage(lang);
-        }
-      });
-    `).catch(console.error);
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isTrustedRendererUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) void safeOpenExternal(url).catch(() => {});
   });
+
+
 
   win.loadURL(`http://${HOST}:${PORT}`).catch(console.error);
 
@@ -1040,6 +1039,7 @@ function createWindow() {
 }
 
 ipcMain.handle('update-language', async (_event, lang) => {
+  assertTrustedIpcSender(_event);
   try {
     if (!['en', 'tr', 'de', 'fr'].includes(lang)) {
       throw new Error(`Unsupported language: ${lang}`);
@@ -1063,6 +1063,7 @@ ipcMain.handle('update-language', async (_event, lang) => {
 });
 
 ipcMain.handle('select-directory', async (_event, defaultPath = '') => {
+  assertTrustedIpcSender(_event);
   try {
     const raw = String(defaultPath || '').trim();
     let suggestedPath;
@@ -1102,6 +1103,7 @@ ipcMain.handle('select-directory', async (_event, defaultPath = '') => {
 });
 
 ipcMain.handle('select-video-file', async (_event, defaultPath = '') => {
+  assertTrustedIpcSender(_event);
   try {
     const raw = String(defaultPath || '').trim();
     let suggestedPath;
@@ -1148,6 +1150,7 @@ ipcMain.handle('select-video-file', async (_event, defaultPath = '') => {
 });
 
 ipcMain.handle('open-output-folder', async (_event, subdir = '') => {
+  assertTrustedIpcSender(_event);
   try {
     const rootDir = resolveOutputOpenRootDir();
     const targetDir = resolveOutputOpenDir(subdir, rootDir);
@@ -1167,15 +1170,18 @@ ipcMain.handle('open-output-folder', async (_event, subdir = '') => {
   }
 });
 
-ipcMain.handle('get-current-language', async () => {
+ipcMain.handle('get-current-language', async (_event) => {
+  assertTrustedIpcSender(_event);
   return { language: currentLanguage };
 });
 
-ipcMain.handle('get-desktop-bridge-token', async () => {
+ipcMain.handle('get-desktop-bridge-token', async (_event) => {
+  assertTrustedIpcSender(_event);
   return { token: DESKTOP_BRIDGE_TOKEN };
 });
 
-ipcMain.handle('track-extractor-ready', async () => {
+ipcMain.handle('track-extractor-ready', async (_event) => {
+  assertTrustedIpcSender(_event);
   rendererTrackExtractorReady = true;
   flushPendingTrackExtractorFiles();
   return { success: true, token: DESKTOP_BRIDGE_TOKEN };
@@ -1205,6 +1211,8 @@ if (!gotLock) {
 }
 
 app.whenReady().then(async () => {
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
   await cleanupWindowsRunEntries();
   await initializeLanguage();
   await applyAutoStartFromPrefs();

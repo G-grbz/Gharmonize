@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { sendError, sendOk, ERR } from "../modules/utils.js";
@@ -30,7 +31,10 @@ function requireDesktopBridge(req, res, next) {
     );
   }
 
-  if (getDesktopToken(req) !== expected) {
+  const received = getDesktopToken(req);
+  const expectedBuf = Buffer.from(expected);
+  const receivedBuf = Buffer.from(received);
+  if (receivedBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(receivedBuf, expectedBuf)) {
     return sendError(res, "DESKTOP_BRIDGE_FORBIDDEN", "Forbidden", 403);
   }
 

@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import multer from "multer";
-import { sendOk, sendError, ERR, isDirectMediaUrl } from "../modules/utils.js";
+import { sendOk, sendError, ERR, isDirectMediaUrl, sanitizeFilename } from "../modules/utils.js";
 import {
   jobs,
   spotifyMapTasks,
@@ -78,6 +78,23 @@ fs.mkdirSync(TEMP_DIR, { recursive: true });
 console.log('[jobs] BASE_DIR:', BASE_DIR);
 console.log('[jobs] UPLOAD_DIR:', UPLOAD_DIR);
 console.log('[jobs] LOCAL_INPUT_DIR:', LOCAL_INPUT_DIR);
+
+function isPathInsideRoot(root, candidate) {
+  const base = path.resolve(root);
+  const abs = path.resolve(candidate);
+  const rel = path.relative(base, abs);
+  return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
+}
+
+function normalizeUploadId(value) {
+  const id = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{8,128}$/.test(id) ? id : "";
+}
+
+function safeUploadOriginalName(value) {
+  const safe = sanitizeFilename(path.basename(String(value || "upload.bin"))) || "upload.bin";
+  return safe.slice(0, 180);
+}
 
 function safeRmTempTarget(targetPath) {
   try {
@@ -241,7 +258,8 @@ const storage = multer.diskStorage({
   destination: UPLOAD_DIR,
   filename: (req, file, cb) => {
     const origUtf8 = toUtf8Filename(file.originalname);
-    cb(null, `${crypto.randomBytes(8).toString("hex")}_${origUtf8}`);
+    const safeName = safeUploadOriginalName(origUtf8);
+    cb(null, `${crypto.randomBytes(8).toString("hex")}_${safeName}`);
   }
 });
 
@@ -628,7 +646,7 @@ router.post("/api/probe/cleanup", async (req, res) => {
     }
 
     const abs = path.resolve(finalPath);
-    if (!abs.startsWith(UPLOAD_DIR)) {
+    if (!isPathInsideRoot(UPLOAD_DIR, abs)) {
       console.warn("[probe/cleanup] Attempt to delete outside UPLOAD_DIR:", abs);
       return res.status(400).json({ error: "Invalid path" });
     }
@@ -654,10 +672,10 @@ router.post("/api/probe/cleanup", async (req, res) => {
 
 router.post('/api/upload/chunk/cancel', rateLimit(30, 60_000), async (req, res) => {
   try {
-    const { uploadId } = req.body;
+    const uploadId = normalizeUploadId(req.body?.uploadId);
 
     if (!uploadId) {
-      return res.status(400).json({ error: 'uploadId is required' });
+      return res.status(400).json({ error: 'Invalid uploadId' });
     }
 
     console.log(`🧹 Cancelling upload: ${uploadId}`);
@@ -850,11 +868,20 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
   let chunk;
 
   try {
-    const { chunkIndex, totalChunks, uploadId, originalName, purpose } = req.body;
+    const { chunkIndex, totalChunks, uploadId: rawUploadId, originalName, purpose } = req.body;
     chunk = req.file;
 
+    const uploadId = normalizeUploadId(rawUploadId);
+    const totalChunksNum = Number.parseInt(totalChunks, 10);
+    const chunkIndexNum = Number.parseInt(chunkIndex, 10);
+    const safeOriginalName = safeUploadOriginalName(originalName);
+
     if (!chunk || !uploadId) {
-      return res.status(400).json({ error: 'Missing parameters' });
+      return res.status(400).json({ error: 'Invalid or missing upload parameters' });
+    }
+    if (!Number.isInteger(totalChunksNum) || totalChunksNum < 1 || totalChunksNum > 100000 ||
+        !Number.isInteger(chunkIndexNum) || chunkIndexNum < 0 || chunkIndexNum >= totalChunksNum) {
+      return res.status(400).json({ error: 'Invalid chunk range' });
     }
 
     try {
@@ -874,9 +901,9 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
 
     if (!chunkStorage.has(uploadId)) {
       chunkStorage.set(uploadId, {
-        chunks: new Array(parseInt(totalChunks, 10)),
-        originalName,
-        totalChunks: parseInt(totalChunks, 10),
+        chunks: new Array(totalChunksNum),
+        originalName: safeOriginalName,
+        totalChunks: totalChunksNum,
         createdAt: Date.now(),
         writeStream: null,
         finalPath: null,
@@ -886,7 +913,6 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
     }
 
     const uploadData = chunkStorage.get(uploadId);
-    const chunkIndexNum = parseInt(chunkIndex, 10);
 
     if (uploadData.canceled) {
       try {
@@ -896,8 +922,11 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
     }
 
     if (chunkIndexNum === 0 && !uploadData.writeStream) {
-      const finalPath = path.join(UPLOAD_DIR, `${uploadId}_${originalName}`);
-      const ws = fs.createWriteStream(finalPath);
+      const finalPath = path.resolve(UPLOAD_DIR, `${uploadId}_${safeOriginalName}`);
+      if (!isPathInsideRoot(UPLOAD_DIR, finalPath)) {
+        return res.status(400).json({ error: 'Invalid upload path' });
+      }
+      const ws = fs.createWriteStream(finalPath, { mode: 0o600 });
 
       ws.on('error', (err) => {
         console.warn(`Write stream error for ${uploadId}:`, err);
@@ -1027,11 +1056,17 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
     const localPath = body.localPath;
     let inputPath = null;
 
-    if (finalUploadPath && fs.existsSync(finalUploadPath)) {
-      inputPath = finalUploadPath;
-      queueOwnershipFix(finalUploadPath);
-      metadata.source = metadata.source || "file";
-      metadata.originalName = metadata.originalName || path.basename(finalUploadPath).replace(/^[^_]+_/, '');
+    if (finalUploadPath) {
+      const candidate = path.resolve(String(finalUploadPath));
+      if (!isPathInsideRoot(UPLOAD_DIR, candidate)) {
+        return sendError(res, "INVALID_UPLOAD_PATH", "Invalid finalUploadPath", 400);
+      }
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        inputPath = candidate;
+        queueOwnershipFix(candidate);
+        metadata.source = metadata.source || "file";
+        metadata.originalName = metadata.originalName || path.basename(candidate).replace(/^[^_]+_/, '');
+      }
     } else if (req.file) {
       inputPath = req.file.path;
       queueOwnershipFix(req.file.path);

@@ -26,13 +26,8 @@ cd Gharmonize
 
 ## 2. Create or edit `.env`
 
-To use the UI configuration flow, set `ADMIN_PASSWORD` and `APP_SECRET`.
+On first start, Gharmonize generates a random admin password, stores only its scrypt hash, and writes the one-time password to `INITIAL_ADMIN_PASSWORD.txt` with restrictive permissions. Change it after first login.
 
-Generate `APP_SECRET` with:
-
-```bash
-openssl rand -hex 32
-```
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full list of available environment variables.
 
@@ -75,7 +70,7 @@ These paths are used only by AppImage / `.exe` builds when the app creates its d
 | Windows | `%appdata%\Gharmonize` |
 | Linux | `~/.config/Gharmonize/` |
 
-**Default password:** `123456`
+**There is no shared default password.** On first start, read the generated password from `INITIAL_ADMIN_PASSWORD.txt` in the application data directory, then change it from Settings.
 
 You can edit environment variables later from the **Settings** panel.
 

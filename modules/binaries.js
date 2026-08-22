@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
+import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { execFile } from "node:child_process";
@@ -415,22 +416,60 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = WEB_TIMEOUT_MS) {
   }
 }
 
-// Downloads url to path for web binary cache.
-async function downloadToFile(url, filePath, headers = HTTP_HEADERS) {
-  const res = await fetchWithTimeout(url, {
-    headers,
-    redirect: "follow"
-  });
+const TRUSTED_BINARY_HOSTS = new Set([
+  "github.com", "api.github.com", "objects.githubusercontent.com",
+  "github-releases.githubusercontent.com", "release-assets.githubusercontent.com",
+  "mkvtoolnix.download"
+]);
+const MAX_BINARY_DOWNLOAD_BYTES = Math.max(10 * 1024 * 1024, Number(process.env.GHARMONIZE_BINARY_MAX_BYTES || 2 * 1024 * 1024 * 1024));
 
-  if (!res.ok || !res.body) {
-    throw new Error(`Download failed (${res.status} ${res.statusText})`);
+function normalizeSha256Digest(raw) {
+  const value = String(raw || "").trim().toLowerCase().replace(/^sha256:/, "");
+  return /^[0-9a-f]{64}$/.test(value) ? value : "";
+}
+
+async function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  const stream = fs.createReadStream(filePath);
+  for await (const chunk of stream) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+function assertTrustedBinaryUrl(rawUrl) {
+  const parsed = new URL(String(rawUrl || ""));
+  if (parsed.protocol !== "https:") throw new Error("Runtime binaries must be downloaded over HTTPS");
+  if (!TRUSTED_BINARY_HOSTS.has(parsed.hostname) && process.env.GHARMONIZE_ALLOW_UNVERIFIED_BINARY_URLS !== "1") {
+    throw new Error(`Untrusted runtime binary host: ${parsed.hostname}`);
   }
+}
+
+// Downloads a runtime binary/archive with origin, size and optional SHA-256 verification.
+async function downloadToFile(url, filePath, headers = HTTP_HEADERS, expectedDigest = "") {
+  assertTrustedBinaryUrl(url);
+  const res = await fetchWithTimeout(url, { headers, redirect: "follow" });
+  if (!res.ok || !res.body) throw new Error(`Download failed (${res.status} ${res.statusText})`);
+  assertTrustedBinaryUrl(res.url || url);
+
+  const declared = Number(res.headers.get("content-length") || 0);
+  if (declared > MAX_BINARY_DOWNLOAD_BYTES) throw new Error(`Runtime binary exceeds download size limit (${declared} bytes)`);
 
   await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-  await pipeline(
-    Readable.fromWeb(res.body),
-    fs.createWriteStream(filePath)
-  );
+  let downloaded = 0;
+  const source = Readable.fromWeb(res.body);
+  source.on("data", (chunk) => {
+    downloaded += chunk.length;
+    if (downloaded > MAX_BINARY_DOWNLOAD_BYTES) source.destroy(new Error("Runtime binary exceeds download size limit"));
+  });
+  await pipeline(source, fs.createWriteStream(filePath, { mode: 0o600 }));
+
+  const expected = normalizeSha256Digest(expectedDigest);
+  if (expected) {
+    const actual = await sha256File(filePath);
+    if (actual !== expected) {
+      await fs.promises.rm(filePath, { force: true }).catch(() => {});
+      throw new Error(`SHA-256 mismatch for runtime binary (expected ${expected}, got ${actual})`);
+    }
+  }
 }
 
 // Returns latest release payload from GitHub for web binary cache.
@@ -1100,7 +1139,11 @@ async function ensureLatestYtDlp(meta, options = {}) {
     return current.path;
   }
 
-  const tag = await fetchLatestTag("yt-dlp/yt-dlp");
+  const release = await fetchLatestRelease("yt-dlp/yt-dlp");
+  const tag = String(release?.tag_name || "").trim();
+  if (!tag) throw new Error("yt-dlp release tag is missing");
+  const releaseAsset = resolveReleaseAsset(release, asset);
+  if (!releaseAsset?.browser_download_url) throw new Error(`yt-dlp release asset not found: ${asset}`);
   const safeTag = sanitizeTag(tag);
   const outName = process.platform === "win32"
     ? `yt-dlp-${safeTag}.exe`
@@ -1119,12 +1162,12 @@ async function ensureLatestYtDlp(meta, options = {}) {
   }
 
   const tmpPath = `${finalPath}.download`;
-  const url = `https://github.com/yt-dlp/yt-dlp/releases/download/${tag}/${asset}`;
+  const url = releaseAsset.browser_download_url;
 
   await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
   try {
     startDynamicBinaryTask("ytdlp", "downloading", "Downloading yt-dlp");
-    await downloadToFile(url, tmpPath);
+    await downloadToFile(url, tmpPath, HTTP_HEADERS, releaseAsset.digest);
     await fs.promises.rename(tmpPath, finalPath);
     if (process.platform !== "win32") {
       await fs.promises.chmod(finalPath, 0o755).catch(() => {});
@@ -1153,7 +1196,11 @@ async function ensureLatestDeno(meta, options = {}) {
     return current.path;
   }
 
-  const tag = await fetchLatestTag("denoland/deno");
+  const release = await fetchLatestRelease("denoland/deno");
+  const tag = String(release?.tag_name || "").trim();
+  if (!tag) throw new Error("Deno release tag is missing");
+  const releaseAsset = resolveReleaseAsset(release, asset);
+  if (!releaseAsset?.browser_download_url) throw new Error(`Deno release asset not found: ${asset}`);
   const safeTag = sanitizeTag(tag);
   const outName = process.platform === "win32"
     ? `deno-${safeTag}.exe`
@@ -1174,14 +1221,14 @@ async function ensureLatestDeno(meta, options = {}) {
   const zipPath = path.join(WEB_CACHE_DIR, `deno-${safeTag}.zip`);
   const tmpZipPath = `${zipPath}.download`;
   const extractDir = path.join(WEB_CACHE_DIR, `deno-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-  const url = `https://github.com/denoland/deno/releases/download/${tag}/${asset}`;
+  const url = releaseAsset.browser_download_url;
 
   await fs.promises.rm(tmpZipPath, { force: true }).catch(() => {});
   await fs.promises.rm(extractDir, { recursive: true, force: true }).catch(() => {});
 
   try {
     startDynamicBinaryTask("deno", "downloading", "Downloading deno");
-    await downloadToFile(url, tmpZipPath);
+    await downloadToFile(url, tmpZipPath, HTTP_HEADERS, releaseAsset.digest);
     await fs.promises.rename(tmpZipPath, zipPath);
     await fs.promises.mkdir(extractDir, { recursive: true });
     await extractZip(zipPath, extractDir);
@@ -1341,7 +1388,7 @@ async function ensureLatestFfmpegTools(meta, options = {}) {
           ? "Downloading ffmpeg master candidate"
           : "Downloading ffmpeg stable candidate"
       );
-      await downloadToFile(asset.browser_download_url, tmpArchivePath);
+      await downloadToFile(asset.browser_download_url, tmpArchivePath, HTTP_HEADERS, asset.digest);
       await fs.promises.rename(tmpArchivePath, archivePath);
       await fs.promises.mkdir(extractDir, { recursive: true });
       await extractArchive(archivePath, extractDir);
@@ -1561,7 +1608,7 @@ async function ensureLatestMkvmerge(meta, options = {}) {
 
     try {
       startDynamicBinaryTask("mkvmerge", "downloading", "Downloading mkvmerge");
-      await downloadToFile(url, tmpAppImagePath);
+      await downloadToFile(url, tmpAppImagePath, HTTP_HEADERS, process.env.GHARMONIZE_MKVMERGE_SHA256);
       await fs.promises.rename(tmpAppImagePath, appImagePath);
       await fs.promises.chmod(appImagePath, 0o755).catch(() => {});
       await writeMkvToolNixLinuxWrapper(wrapperPath, appImagePath, "mkvmerge");
@@ -1639,7 +1686,7 @@ async function ensureLatestMkvmerge(meta, options = {}) {
     try {
       startDynamicBinaryTask("mkvmerge", "downloading", "Downloading mkvmerge");
 	  console.log("[binaries] mkvmerge url:", url);
-      await downloadToFile(url, tmpArchivePath);
+      await downloadToFile(url, tmpArchivePath, HTTP_HEADERS, process.env.GHARMONIZE_MKVMERGE_SHA256);
       await fs.promises.rename(tmpArchivePath, archivePath);
       await fs.promises.mkdir(extractDir, { recursive: true });
       await extractArchive(archivePath, extractDir);

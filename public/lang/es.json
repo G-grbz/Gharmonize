@@ -1051,7 +1051,7 @@
   "errors.BAD_PASSWORD2": "La contraseña actual es incorrecta.",
   "errors.UNAUTHORIZED": "Operación no autorizada.",
   "errors.PASSWORD_MISMATCH": "Las nuevas contraseñas no coinciden.",
-  "errors.PASSWORD_TOO_SHORT": "La nueva contraseña debe tener al menos 6 caracteres.",
+  "errors.PASSWORD_TOO_SHORT": "La nueva contraseña debe tener al menos 8 caracteres e incluir al menos una letra, una mayúscula y un número.",
   "errors.FIELDS_REQUIRED": "Todos los campos son obligatorios.",
   "errors.PASSWORD_SAVE_FAILED": "No se pudo guardar la contraseña.",
   "errors.changePasswordFailed": "No se pudo cambiar la contraseña.",

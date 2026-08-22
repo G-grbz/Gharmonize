@@ -2,6 +2,9 @@ services:
   web:
     image: ggrbz/gharmonize:latest
     container_name: Gharmonize
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777
     # user: "0:0"
     # privileged: true
     # runtime: nvidia
@@ -13,6 +16,9 @@ services:
       # - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - NODE_ENV=production
       - PORT=${PORT:-5174}
+      - GHARMONIZE_HOST=0.0.0.0
+      - GHARMONIZE_MASTER_KEY_FILE=/usr/src/app/cache/.gharmonize-key
+      - GHARMONIZE_INITIAL_ADMIN_PASSWORD_FILE=/usr/src/app/cache/INITIAL_ADMIN_PASSWORD.txt
       - YTDLP_EXTRA=--force-ipv4
       - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
       - GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries

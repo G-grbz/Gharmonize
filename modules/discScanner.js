@@ -1,11 +1,9 @@
-import { exec as _exec } from "child_process";
-import { promisify } from "util";
+import { execFile } from "child_process";
 import { constants as fsConstants } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { FFPROBE_BIN, MKVMERGE_BIN } from "./binaries.js";
 
-const execAsync = promisify(_exec);
 
 let currentScanProcess = null;
 let scanCancelled = false;
@@ -548,13 +546,14 @@ async function analyzeBluRayPlaylist(playlistPath) {
   let sizeBytes = 0;
 
   try {
-    const ffprobeCmd =
-      `"${FFPROBE_BIN}" -v error -playlist ${playlistNumber} ` +
-      `-show_entries format=duration -of json "bluray:${discRoot}"`;
+    const ffprobeArgs = [
+      "-v", "error", "-playlist", String(playlistNumber),
+      "-show_entries", "format=duration", "-of", "json", `bluray:${discRoot}`
+    ];
 
     sendScanLogKey("disc.log.runningFfprobe", { file: playlistFileName });
 
-    const { stdout } = await runScanCommand(ffprobeCmd);
+    const { stdout } = await runScanCommand(FFPROBE_BIN, ffprobeArgs);
     const probeData = parseCommandJson(stdout, `ffprobe ${playlistFileName}`);
 
     if (probeData.format && probeData.format.duration) {
@@ -573,7 +572,7 @@ async function analyzeBluRayPlaylist(playlistPath) {
   }
 
   try {
-    const { stdout } = await runScanCommand(`"${MKVMERGE_BIN}" -J "${playlistPath}"`);
+    const { stdout } = await runScanCommand(MKVMERGE_BIN, ["-J", playlistPath]);
     const info = parseCommandJson(stdout, `mkvmerge ${playlistFileName}`);
     const props = info.container?.properties || {};
 
@@ -722,7 +721,7 @@ async function analyzeWithMkvmerge(playlistPath) {
       return { duration, audioTracks, subtitleTracks };
     };
 
-    const { stdout } = await runScanCommand(`"${MKVMERGE_BIN}" -J "${playlistPath}"`);
+    const { stdout } = await runScanCommand(MKVMERGE_BIN, ["-J", playlistPath]);
     const trackInfo = parseCommandJson(
       stdout,
       `mkvmerge ${path.basename(playlistPath)}`
@@ -822,8 +821,9 @@ async function scanDVDManual(sourcePath) {
             });
           }
 
-          const cmd = `"${FFPROBE_BIN}" -v quiet -print_format json -show_format "${vobPath}"`;
-          const { stdout } = await runScanCommand(cmd);
+          const { stdout } = await runScanCommand(FFPROBE_BIN, [
+            "-v", "quiet", "-print_format", "json", "-show_format", vobPath
+          ]);
           const probeData = parseCommandJson(
             stdout,
             `ffprobe ${path.basename(vobPath)}`
@@ -858,8 +858,9 @@ async function scanDVDManual(sourcePath) {
           sendScanLogKey("disc.log.vobTrackFallback", { error: e.message });
 
           try {
-            const cmdTracks = `"${FFPROBE_BIN}" -v quiet -print_format json -show_streams "${trackProbeVob}"`;
-            const { stdout: s2 } = await runScanCommand(cmdTracks);
+            const { stdout: s2 } = await runScanCommand(FFPROBE_BIN, [
+              "-v", "quiet", "-print_format", "json", "-show_streams", trackProbeVob
+            ]);
             const data = parseCommandJson(
               s2,
               `ffprobe ${path.basename(trackProbeVob)} streams`
@@ -988,7 +989,7 @@ async function scanDVDManual(sourcePath) {
 }
 
 // Runs scan progress command for disc scanning and ripping.
-function runScanCommand(cmd) {
+function runScanCommand(command, args = []) {
   return new Promise((resolve, reject) => {
     if (scanCancelled) {
       const cancelled = new Error("SCAN_CANCELLED");
@@ -996,16 +997,14 @@ function runScanCommand(cmd) {
       return reject(cancelled);
     }
 
-    const child = _exec(
-      cmd,
-      { maxBuffer: 1024 * 1024 * 1024 },
+    const child = execFile(
+      command,
+      args,
+      { maxBuffer: 1024 * 1024 * 1024, windowsHide: true },
       (error, stdout, stderr) => {
-        if (currentScanProcess === child) {
-          currentScanProcess = null;
-        }
-
+        if (currentScanProcess === child) currentScanProcess = null;
         if (error) {
-          if (error.killed) {
+          if (error.killed || scanCancelled) {
             const cancelled = new Error("SCAN_CANCELLED");
             cancelled.killed = true;
             return reject(cancelled);
@@ -1013,7 +1012,6 @@ function runScanCommand(cmd) {
           error.stderr = stderr;
           return reject(error);
         }
-
         resolve({ stdout, stderr });
       }
     );

@@ -1,4 +1,4 @@
-import { exec as _exec, spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import { MKVMERGE_BIN } from "./binaries.js";
@@ -61,25 +61,19 @@ function parseCommandJson(rawOutput, label = "command output") {
 }
 
 // Handles exec json unlimited in disc scanning and ripping.
-function execJsonUnlimited(cmd, progressCallback = null) {
-    if (progressCallback) {
-      progressCallback(0, { __i18n: true, key: "disc.progress.analyzingTracks", vars: {} });
-    }
+function execJsonUnlimited(command, args = [], progressCallback = null) {
+  if (progressCallback) {
+    progressCallback(0, { __i18n: true, key: "disc.progress.analyzingTracks", vars: {} });
+  }
   return new Promise((resolve, reject) => {
-    _exec(
-      cmd,
-      {
-        maxBuffer: 1024 * 1024 * 1024
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          error.stdout = stdout;
-          error.stderr = stderr;
-          return reject(error);
-        }
-        resolve({ stdout, stderr });
+    execFile(command, args, { maxBuffer: 1024 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        return reject(error);
       }
-    );
+      resolve({ stdout, stderr });
+    });
   });
 }
 
@@ -592,7 +586,7 @@ async function ripBluRayTitle(
 
     try {
       const { stdout: tracksJson } = await execJsonUnlimited(
-        `"${MKVMERGE_BIN}" -J "${playlistPath}"`, progressCallback
+        MKVMERGE_BIN, ["-J", playlistPath], progressCallback
       );
       const info = parseCommandJson(
         tracksJson,
@@ -854,7 +848,7 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
 
     const sampleVob = vobFiles[0];
     const { stdout } = await execJsonUnlimited(
-      `"${MKVMERGE_BIN}" -J "${sampleVob}"`, null
+      MKVMERGE_BIN, ["-J", sampleVob], null
     );
     const info = parseCommandJson(stdout, `mkvmerge ${path.basename(sampleVob)}`);
     return parseTracks(info);

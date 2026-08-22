@@ -16,7 +16,8 @@ import jobsRoute from './routes/jobs.js'
 import downloadRoute from './routes/download.js'
 import trackExtractorRoute from './routes/trackExtractor.js'
 import retagRoute from './routes/retag.js'
-import { sendError } from './modules/utils.js'
+import { sendError, sanitizeFilename } from './modules/utils.js'
+import { assertSafeRemoteUrl, createTrustedProxyPredicate } from './modules/security.js'
 import discRouter from './routes/disc.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
 import {
@@ -80,26 +81,23 @@ const __dirname = path.dirname(__filename)
 const PUBLIC_DIR = path.join(__dirname, 'public')
 const app = express()
 
-// TRUST_PROXY is disabled by default. Set it to the number of trusted reverse-proxy hops
-// (for example 1 for a single nginx/Traefik proxy) only when that topology is intentional.
-function normalizeTrustProxy(value) {
-  const raw = String(value ?? '').trim()
-  if (!raw) return false
-  const hops = Number(raw)
-  if (!Number.isInteger(hops) || hops <= 0) return false
-  return Math.min(hops, 16)
+// Forwarded headers are trusted only when proxy support is explicitly enabled AND
+// the direct peer is in TRUSTED_PROXY_CIDRS.
+function isTrustProxyEnabled(value = process.env.TRUST_PROXY) {
+  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase())
 }
 
-function applyTrustProxySetting(value = process.env.TRUST_PROXY) {
-  const trustProxy = normalizeTrustProxy(value)
-  app.set('trust proxy', trustProxy)
-  console.log(`🔐 Trust proxy: ${trustProxy === false ? 'disabled' : `${trustProxy} hop(s)`}`)
+function applyTrustProxySetting() {
+  const enabled = isTrustProxyEnabled()
+  const predicate = createTrustedProxyPredicate(process.env.TRUSTED_PROXY_CIDRS)
+  app.set('trust proxy', enabled ? predicate : false)
+  console.log(`🔐 Trust proxy: ${enabled ? `enabled for ${process.env.TRUSTED_PROXY_CIDRS || '127.0.0.1/32,::1/128'}` : 'disabled'}`)
 }
 
 applyTrustProxySetting()
 process.on('gharmonize:settings-updated', ({ updates } = {}) => {
-  if (updates && Object.prototype.hasOwnProperty.call(updates, 'TRUST_PROXY')) {
-    applyTrustProxySetting(updates.TRUST_PROXY)
+  if (updates && (Object.prototype.hasOwnProperty.call(updates, 'TRUST_PROXY') || Object.prototype.hasOwnProperty.call(updates, 'TRUSTED_PROXY_CIDRS'))) {
+    applyTrustProxySetting()
   }
 })
 
@@ -341,6 +339,65 @@ async function runStartupDiagnostics() {
 
 app.use(express.json({ limit: '10mb' }))
 
+app.disable('x-powered-by')
+app.use((req, res, next) => {
+  const isHttps = Boolean(req.secure)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()')
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin')
+  if (isHttps) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "script-src 'self'",
+    "script-src-attr 'none'",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "connect-src 'self' https://api.github.com https://*.spotify.com https://*.youtube.com https://music.youtube.com https://i.ytimg.com https://*.googlevideo.com",
+    "worker-src 'self' blob:"
+  ].join('; '))
+  next()
+})
+
+// Same-origin browser requests get cookie auth; reject cross-site state changes.
+app.use((req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
+  if ((req.get('authorization') || '').startsWith('Bearer ')) return next()
+  const origin = String(req.get('origin') || '').trim()
+  if (!origin) return next()
+  try {
+    const parsed = new URL(origin)
+    const expectedHost = String(req.get('host') || '').toLowerCase()
+    if (parsed.host.toLowerCase() !== expectedHost) {
+      return res.status(403).json({ error: { code: 'CROSS_SITE_REQUEST_BLOCKED', message: 'Cross-site state-changing request blocked' } })
+    }
+  } catch {
+    return res.status(403).json({ error: { code: 'CROSS_SITE_REQUEST_BLOCKED', message: 'Invalid request origin' } })
+  }
+  next()
+})
+
+// Guard obvious remote URL inputs against SSRF. Set GHARMONIZE_ALLOW_PRIVATE_URLS=1 only for intentional LAN media sources.
+app.use('/api', async (req, res, next) => {
+  try {
+    const candidates = []
+    const add = (value) => { if (typeof value === 'string' && /^https?:\/\//i.test(value.trim())) candidates.push(value.trim()) }
+    add(req.query?.url); add(req.query?.sourceUrl); add(req.body?.url); add(req.body?.sourceUrl)
+    if (Array.isArray(req.body?.urls)) req.body.urls.slice(0, 100).forEach(add)
+    for (const value of candidates) await assertSafeRemoteUrl(value)
+    next()
+  } catch (error) {
+    res.status(400).json({ error: { code: 'UNSAFE_REMOTE_URL', message: error.message } })
+  }
+})
+
 function getSelectedFrontendUi() {
   return String(process.env.FRONTEND_UI || '').trim().toLowerCase() === 'ytlive'
     ? 'ytlive'
@@ -375,7 +432,7 @@ app.use('/api', async (req, res, next) => {
 const storage = multer.diskStorage({
   destination: UPLOAD_DIR,
   filename: (req, file, cb) =>
-    cb(null, `${crypto.randomBytes(8).toString('hex')}_${file.originalname}`)
+    cb(null, `${crypto.randomBytes(8).toString('hex')}_${sanitizeFilename(path.basename(file.originalname || 'upload.bin')) || 'upload.bin'}`)
 })
 export const upload = multer({
   storage,
@@ -449,9 +506,10 @@ app.use((err, req, res, next) => {
 })
 
 const PORT = Number(process.env.PORT || 5174)
+const HOST = String(process.env.GHARMONIZE_HOST || '127.0.0.1').trim() || '127.0.0.1'
 
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`)
+const server = app.listen(PORT, HOST, () => {
+  console.log(`🚀 Server running at http://${HOST}:${PORT}`)
   console.log(`📁 Base Directory: ${BASE_DIR}`)
   console.log(`📁 Uploads: ${UPLOAD_DIR}`)
   console.log(`📁 Outputs: ${OUTPUT_DIR}`)

@@ -1,5 +1,5 @@
 import https from 'https';
-import http from 'http';
+import crypto from 'crypto';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
@@ -17,6 +17,68 @@ const args = process.argv.slice(2);
 const NO_PATH = args.includes('--no-path');
 
 const TARGET_DIR = path.join(__dirname, '..', 'build', 'bin');
+
+const TRUSTED_BINARY_HOSTS = new Set([
+  'github.com',
+  'api.github.com',
+  'objects.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'mkvtoolnix.download'
+]);
+const MAX_DOWNLOAD_BYTES = Number(process.env.GHARMONIZE_BINARY_MAX_BYTES || 2 * 1024 * 1024 * 1024);
+
+function normalizeSha256(value) {
+  const raw = String(value || '').trim().replace(/^sha256:/i, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(raw) ? raw : '';
+}
+
+function assertTrustedDownloadUrl(rawUrl) {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'https:') throw new Error(`Only HTTPS binary downloads are allowed: ${parsed.protocol}`);
+  if (!TRUSTED_BINARY_HOSTS.has(parsed.hostname.toLowerCase()) && process.env.GHARMONIZE_ALLOW_UNVERIFIED_BINARY_URLS !== '1') {
+    throw new Error(`Untrusted binary download host: ${parsed.hostname}`);
+  }
+  return parsed;
+}
+
+async function sha256File(filePath) {
+  return await new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+async function resolveGithubAssetDigest(downloadUrl) {
+  try {
+    const parsed = new URL(downloadUrl);
+    if (parsed.hostname !== 'github.com') return '';
+    const match = parsed.pathname.match(/^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\/(.+)$/);
+    if (!match) return '';
+    const [, owner, repo, tag, assetNameEncoded] = match;
+    const assetName = decodeURIComponent(assetNameEncoded);
+    const api = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/tags/${encodeURIComponent(tag)}`;
+    const res = await fetch(api, {
+      headers: {
+        'User-Agent': 'Gharmonize-Binary-Downloader',
+        'Accept': 'application/vnd.github+json'
+      }
+    });
+    if (!res.ok) throw new Error(`GitHub release API failed (${res.status} ${res.statusText})`);
+    const release = await res.json();
+    const asset = (Array.isArray(release?.assets) ? release.assets : []).find((item) => String(item?.name || '') === assetName);
+    return normalizeSha256(asset?.digest);
+  } catch (error) {
+    if (process.env.GHARMONIZE_ALLOW_UNVERIFIED_BINARY_URLS === '1') {
+      log(`Digest lookup skipped: ${error.message}`);
+      return '';
+    }
+    throw error;
+  }
+}
 
 // Handles log in project setup tooling.
 function log(...a) {
@@ -54,10 +116,9 @@ function downloadFileWithRedirect(url, dest, onProgress = null, maxRedirects = 5
     function doRequest(currentUrl, redirectsLeft) {
       visited.push(currentUrl);
 
-      const urlObj = new URL(currentUrl);
-      const lib = urlObj.protocol === 'http:' ? http : https;
+      const urlObj = assertTrustedDownloadUrl(currentUrl);
 
-      const req = lib.get(urlObj, (res) => {
+      const req = https.get(urlObj, (res) => {
         const { statusCode, headers } = res;
 
         if (statusCode >= 300 && statusCode < 400 && headers.location) {
@@ -68,6 +129,7 @@ function downloadFileWithRedirect(url, dest, onProgress = null, maxRedirects = 5
             );
           }
           const nextUrl = new URL(headers.location, currentUrl).toString();
+          assertTrustedDownloadUrl(nextUrl);
           res.resume();
           log(`Redirected: ${currentUrl} -> ${nextUrl}`);
           return doRequest(nextUrl, redirectsLeft - 1);
@@ -81,6 +143,10 @@ function downloadFileWithRedirect(url, dest, onProgress = null, maxRedirects = 5
         }
 
         const contentLength = parseInt(headers['content-length'], 10);
+        if (Number.isFinite(contentLength) && contentLength > MAX_DOWNLOAD_BYTES) {
+          res.resume();
+          return reject(new Error(`Binary download exceeds size limit (${contentLength} bytes)`));
+        }
         let downloaded = 0;
         let progressReported = 0;
 
@@ -88,6 +154,12 @@ function downloadFileWithRedirect(url, dest, onProgress = null, maxRedirects = 5
 
         res.on('data', (chunk) => {
           downloaded += chunk.length;
+          if (downloaded > MAX_DOWNLOAD_BYTES) {
+            req.destroy(new Error(`Binary download exceeds size limit (${MAX_DOWNLOAD_BYTES} bytes)`));
+            try { file.destroy(); } catch {}
+            try { fs.unlinkSync(dest); } catch {}
+            return;
+          }
           if (onProgress && contentLength) {
             const percent = Math.round((downloaded / contentLength) * 100);
             if (percent > progressReported) {
@@ -314,7 +386,7 @@ async function resolveBtbnStableArchiveUrl() {
         if (/shared/i.test(name)) return null;
         const match = name.match(re);
         if (!match || !asset?.browser_download_url) return null;
-        return { version: match[1], url: asset.browser_download_url, name };
+        return { version: match[1], url: asset.browser_download_url, name, digest: normalizeSha256(asset?.digest) };
       })
       .filter(Boolean)
       .sort((a, b) => compareNumericVersionsDesc(a.version, b.version));
@@ -324,7 +396,7 @@ async function resolveBtbnStableArchiveUrl() {
     }
 
     log(`BtbN stable FFmpeg selected: ${candidates[0].name}`);
-    return candidates[0].url;
+    return candidates[0];
   })();
 
   return btbnStableUrlPromise;
@@ -341,13 +413,23 @@ async function processTool(tool) {
   }
 
   const envVarName = `GHARMONIZE_${tool.toUpperCase()}_URL`;
+  const envDigestName = `GHARMONIZE_${tool.toUpperCase()}_SHA256`;
   const envUrl = process.env[envVarName];
-
-  const url = envUrl || defaults.url ||
-    (defaults.source === 'btbn-stable' ? await resolveBtbnStableArchiveUrl() : null);
+  const btbnAsset = !envUrl && !defaults.url && defaults.source === 'btbn-stable'
+    ? await resolveBtbnStableArchiveUrl()
+    : null;
+  const url = envUrl || defaults.url || btbnAsset?.url || null;
 
   if (!url) {
     throw new Error(`${tool}: no download URL could be resolved`);
+  }
+  assertTrustedDownloadUrl(url);
+  let expectedDigest = normalizeSha256(process.env[envDigestName]) || normalizeSha256(btbnAsset?.digest);
+  if (!expectedDigest && new URL(url).hostname === 'github.com') {
+    expectedDigest = await resolveGithubAssetDigest(url);
+    if (!expectedDigest && process.env.GHARMONIZE_ALLOW_UNVERIFIED_BINARY_URLS !== '1') {
+      throw new Error(`${tool}: GitHub release asset has no SHA-256 digest; refusing unverified download`);
+    }
   }
 
   const outName =
@@ -383,6 +465,16 @@ async function processTool(tool) {
     try {
       const progressBar = createProgressBar(tool);
       await downloadFileWithRedirect(url, tmpFile, progressBar);
+      if (expectedDigest) {
+        const actualDigest = await sha256File(tmpFile);
+        if (actualDigest !== expectedDigest) {
+          try { await fsp.unlink(tmpFile); } catch {}
+          throw new Error(`${tool}: SHA-256 mismatch (expected ${expectedDigest}, got ${actualDigest})`);
+        }
+        log(`${tool}: SHA-256 verified`);
+      } else {
+        log(`${tool}: warning: no SHA-256 digest is available for this trusted vendor download`);
+      }
       downloadCache.set(url, tmpFile);
     } catch (err) {
       logError(`${tool}: download failed: ${err.message}`);

@@ -100,7 +100,7 @@ function broadcastProgress(payload) {
   }
 }
 
-router.get("/api/disc/stream", (req, res) => {
+router.get("/api/disc/stream", requireAuth, (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
@@ -170,7 +170,7 @@ async function removeOutputFile(filePath) {
   await fs.promises.rm(filePath, { force: true }).catch(() => {});
 }
 
-router.post("/api/disc/scan", express.json(), async (req, res) => {
+router.post("/api/disc/scan", requireAuth, express.json(), async (req, res) => {
   try {
     const { sourcePath } = req.body || {};
     if (!sourcePath) {
@@ -196,7 +196,7 @@ router.post("/api/disc/scan", express.json(), async (req, res) => {
   }
 });
 
-router.post("/api/disc/cancel-scan", (req, res) => {
+router.post("/api/disc/cancel-scan", requireAuth, (req, res) => {
   try {
     sendScanLog({
       __i18n: true,
@@ -210,7 +210,7 @@ router.post("/api/disc/cancel-scan", (req, res) => {
   }
 });
 
-router.post("/api/disc/rip", express.json(), async (req, res) => {
+router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
   try {
     const {
       sourcePath,
@@ -360,7 +360,7 @@ router.post("/api/disc/rip", express.json(), async (req, res) => {
   }
 });
 
-router.post("/api/disc/cancel-rip", (req, res) => {
+router.post("/api/disc/cancel-rip", requireAuth, (req, res) => {
   try {
     cancelRip();
     broadcastProgress({
@@ -373,7 +373,7 @@ router.post("/api/disc/cancel-rip", (req, res) => {
   }
 });
 
-router.post("/api/disc/metadata", express.json(), async (req, res) => {
+router.post("/api/disc/metadata", requireAuth, express.json(), async (req, res) => {
   try {
     const { titleInfo, outputPath } = req.body || {};
     if (!titleInfo || !outputPath) {

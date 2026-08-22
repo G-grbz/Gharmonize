@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: Gharmonize
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777
     user: "${PUID:-1000}:${PGID:-1000}"
     group_add:
       - "${RUN_MEDIA_GID:-65534}"
@@ -13,6 +16,9 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - NODE_ENV=production
       - PORT=${PORT:-5174}
+      - GHARMONIZE_HOST=0.0.0.0
+      - GHARMONIZE_MASTER_KEY_FILE=/usr/src/app/cache/.gharmonize-key
+      - GHARMONIZE_INITIAL_ADMIN_PASSWORD_FILE=/usr/src/app/cache/INITIAL_ADMIN_PASSWORD.txt
       - YT_FORCE_IPV4=1
       - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
       - GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries

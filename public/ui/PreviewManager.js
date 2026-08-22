@@ -370,15 +370,16 @@ export class PreviewManager {
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
-                <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
+                <img class="preview-thumb" src="${this.app.escapeHtml(item.thumbnail || '')}" alt="thumb" />
                 <div>
                     <div class="preview-title">${item.index}. ${this.app.escapeHtml(titleForRow)}</div>
                     <div class="muted">${this.app.escapeHtml(artistName)}</div>
                 </div>
-                <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
+                <div class="row-right muted">${this.app.escapeHtml(item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-'))}</div>
                 <div class="row-right"><input type="checkbox" data-index="${item.index}" /></div>
             `;
             listEl.appendChild(row);
+            row.querySelector('.preview-thumb')?.addEventListener('error', (e) => { e.currentTarget.style.display = 'none'; });
             const chk = row.querySelector('input[type="checkbox"]');
             chk.checked = this.currentPreview.selected.has(item.index);
             chk.addEventListener('change', (e) => {
@@ -499,15 +500,16 @@ export class PreviewManager {
             const row = document.createElement('div');
             row.className = 'preview-row';
             row.innerHTML = `
-                <img class="preview-thumb" src="${item.thumbnail || ''}" alt="thumb" onerror="this.style.display='none'" />
+                <img class="preview-thumb" src="${this.app.escapeHtml(item.thumbnail || '')}" alt="thumb" />
                 <div>
                     <div class="preview-title">${item.index}. ${this.app.escapeHtml(titleForRow)}</div>
                     <div class="muted">${this.app.escapeHtml(artistName)}</div>
                 </div>
-                <div class="row-right muted">${item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-')}</div>
+                <div class="row-right muted">${this.app.escapeHtml(item.duration_string || (item.duration ? this.app.formatSeconds(item.duration) : '-'))}</div>
                 <div class="row-right"><input type="checkbox" data-index="${item.index}" /></div>
             `;
             listEl.appendChild(row);
+            row.querySelector('.preview-thumb')?.addEventListener('error', (e) => { e.currentTarget.style.display = 'none'; });
         });
 
         listEl.querySelectorAll('input[type="checkbox"]').forEach((chk) => {

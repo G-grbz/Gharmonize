@@ -1052,7 +1052,7 @@
   "errors.BAD_PASSWORD2": "Old password is incorrect.",
   "errors.UNAUTHORIZED": "Unauthorized action.",
   "errors.PASSWORD_MISMATCH": "New passwords do not match.",
-  "errors.PASSWORD_TOO_SHORT": "New password must be at least 6 characters.",
+  "errors.PASSWORD_TOO_SHORT": "New password must be at least 8 characters and contain at least one letter, one uppercase letter, and one number.",
   "errors.FIELDS_REQUIRED": "All fields are required.",
   "errors.PASSWORD_SAVE_FAILED": "Failed to save password.",
   "errors.changePasswordFailed": "Password change failed.",

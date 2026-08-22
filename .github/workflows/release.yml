@@ -1,0 +1,146 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          test "$GITHUB_REF_NAME" = "v$VERSION"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm audit --audit-level=high
+      - run: npm run check:version
+  windows:
+    needs: verify
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx electron-builder --win nsis portable --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Package Windows release artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $setup = Get-ChildItem dist -File -Filter '*.exe' | Where-Object { $_.Name -match 'Setup' } | Select-Object -First 1
+          $portable = Get-ChildItem dist -File -Filter '*.exe' | Where-Object { $_.Name -notmatch 'Setup' } | Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $setup) { throw 'NSIS installer not found' }
+          if (-not $portable) { throw 'Portable EXE not found' }
+          Copy-Item $setup.FullName "release/Gharmonize-x64.Setup.v$env:VERSION.exe"
+          Copy-Item $portable.FullName "release/Gharmonize-x64.Portable.v$env:VERSION.exe"
+          if (Test-Path 'dist/win-unpacked') {
+            Compress-Archive -Path 'dist/win-unpacked/*' -DestinationPath "release/Gharmonize-x64.Portable.Folder.v$env:VERSION.zip" -CompressionLevel Optimal
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: release/*
+          if-no-files-found: error
+  linux:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:build:appimage
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Package AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          APPIMAGE="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$APPIMAGE"
+          cp "$APPIMAGE" "release/Gharmonize-x86_64.v${VERSION}.AppImage"
+          chmod +x "release/Gharmonize-x86_64.v${VERSION}.AppImage"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: release/*
+          archive: false
+          if-no-files-found: error
+  publish:
+    needs: [verify, windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Create source archive and SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix="Gharmonize-v${VERSION}/" -o "release/Gharmonize-v${VERSION}-source.zip" "$GITHUB_SHA"
+          npm sbom --sbom-format cyclonedx > "release/Gharmonize-v${VERSION}.sbom.cdx.json"
+          cd release
+          sha256sum Gharmonize-* > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Attest release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: 'release/Gharmonize-*'
+      - name: Attach SBOM attestation to source archive
+        uses: actions/attest@v4
+        with:
+          subject-path: release/Gharmonize-v${{ env.VERSION }}-source.zip
+          sbom-path: release/Gharmonize-v${{ env.VERSION }}.sbom.cdx.json
+      - name: Publish immutable GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite published assets." >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes --title "Gharmonize $GITHUB_REF_NAME"

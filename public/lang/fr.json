@@ -1051,7 +1051,7 @@
   "errors.BAD_PASSWORD2": "Ancien mot de passe incorrect.",
   "errors.UNAUTHORIZED": "Action non autorisée.",
   "errors.PASSWORD_MISMATCH": "Les nouveaux mots de passe ne correspondent pas.",
-  "errors.PASSWORD_TOO_SHORT": "Le nouveau mot de passe doit comporter au moins 6 caractères.",
+  "errors.PASSWORD_TOO_SHORT": "Le nouveau mot de passe doit comporter au moins 8 caractères, avec au moins une lettre, une majuscule et un chiffre.",
   "errors.FIELDS_REQUIRED": "Tous les champs sont obligatoires.",
   "errors.PASSWORD_SAVE_FAILED": "Échec de l’enregistrement du mot de passe.",
   "errors.changePasswordFailed": "Échec du changement de mot de passe.",

@@ -582,7 +582,7 @@ export class SettingsManager {
 
                 <div class="form-group">
                     <label for="f_ADMIN_NEW" class="settings-field-label" data-i18n="settings.newPassword">Yeni Şifre</label>
-                    <input id="f_ADMIN_NEW" type="password" placeholder="En az 6 karakter" data-i18n-ph="settings.newPassword" autocomplete="new-password" />
+                    <input id="f_ADMIN_NEW" type="password" placeholder="En az 8 karakter, büyük harf ve rakam" data-i18n-ph="settings.newPassword" autocomplete="new-password" />
                 </div>
 
                 <div class="form-group">
@@ -830,6 +830,7 @@ export class SettingsManager {
 
     // Handles do logout in the browser UI layer.
     async doLogout() {
+        try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
         localStorage.removeItem(this.tokenKey);
         this.triggerGlobalLogout();
         this.showLogin();
@@ -1035,7 +1036,7 @@ export class SettingsManager {
             return;
         }
 
-        if (String(newPassword).length < 6) {
+        if (String(newPassword).length < 8 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[A-Za-z]/.test(newPassword)) {
             modalManager.showAlert({
                 title: this.t('settings.title') || 'Ayarlar',
                 message: this.t('settings.errors.passwordTooShort') || 'Password must be at least 6 characters.',
@@ -1061,6 +1062,7 @@ export class SettingsManager {
                     BAD_PASSWORD: 'errors.BAD_PASSWORD2',
                     PASSWORD_MISMATCH: 'errors.PASSWORD_MISMATCH',
                     PASSWORD_TOO_SHORT: 'errors.PASSWORD_TOO_SHORT',
+                    PASSWORD_POLICY: 'errors.PASSWORD_TOO_SHORT',
                     FIELDS_REQUIRED: 'errors.FIELDS_REQUIRED',
                     PASSWORD_SAVE_FAILED: 'errors.PASSWORD_SAVE_FAILED',
                     UNAUTHORIZED: 'errors.UNAUTHORIZED'

@@ -20,18 +20,14 @@ The commands below use `/opt/gharmonize`. If you prefer another location, update
 ```bash
 sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cache,cookies,local-inputs}
 sudo touch /opt/gharmonize/.env
-sudo chmod -R a+rw /opt/gharmonize
+sudo chown -R ${PUID:-1000}:${PGID:-1000} /opt/gharmonize
+sudo chmod 700 /opt/gharmonize
 ```
 
 ### 3. Configure `.env`
 
-Set at least `ADMIN_PASSWORD` and `APP_SECRET` inside `/opt/gharmonize/.env`. See [CONFIGURATION.md](CONFIGURATION.md) for the full variable reference.
+Gharmonize creates a random initial admin credential on first start. The supplied Compose files keep the application root filesystem read-only and place both the master key and one-time credential in the writable cache volume. Read `/opt/gharmonize/cache/INITIAL_ADMIN_PASSWORD.txt` once, change the password from Settings, and then remove that file.
 
-Generate a random `APP_SECRET` with:
-
-```bash
-openssl rand -hex 32
-```
 
 ### 4. Docker image
 
@@ -130,7 +126,8 @@ docker compose up -d
 ```bash
 sudo mkdir -p /opt/gharmonize/{uploads,outputs,temp,cache,cookies,local-inputs}
 sudo touch /opt/gharmonize/.env
-sudo chmod -R a+rw /opt/gharmonize
+sudo chown -R ${PUID:-1000}:${PGID:-1000} /opt/gharmonize
+sudo chmod 700 /opt/gharmonize
 ```
 
 ### 2. Run the container
@@ -202,4 +199,4 @@ docker run -d \
   ggrbz/gharmonize:latest
 ```
 
-> Do not forget to set `ADMIN_PASSWORD` and `APP_SECRET` in `/opt/gharmonize/.env`.
+> Do not publish `.env`, `.gharmonize-key`, cookie files, or `INITIAL_ADMIN_PASSWORD.txt`. For remote access, terminate HTTPS at a trusted reverse proxy and configure `TRUSTED_PROXY_CIDRS`.

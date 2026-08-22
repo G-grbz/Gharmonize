@@ -4,26 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="google" content="notranslate" />
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script>
-    (function() {
-    try {
-        var saved = localStorage.getItem('theme');
-        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        var theme = saved || (prefersDark ? 'dark' : 'light');
-        var docEl = document.documentElement;
-        docEl.setAttribute('data-theme', theme);
-        docEl.classList.add('no-theme-transition');
-        var meta = document.createElement('meta');
-        meta.name = 'color-scheme';
-        meta.content = 'light dark';
-        document.head.appendChild(meta);
-        requestAnimationFrame(function() {
-            docEl.classList.remove('no-theme-transition');
-        });
-    } catch(e) {}
-})();
-  </script>
+  <script src="/ui/theme-bootstrap.js"></script>
 
   <title>🎵 Gharmonize</title>
   <link rel="stylesheet" href="style.css" />
@@ -439,8 +420,8 @@
                 <h3 class="jobs-empty-title" data-i18n="jobsPanel.emptyActive"></h3>
                 <p class="jobs-empty-subtitle" data-i18n="jobs.emptySubtitle"></p>
                 <div class="jobs-empty-actions">
-                  <button class="jobs-empty-action" onclick="focusUrlInput()" data-i18n="jobs.startWithUrl">Start with URL</button>
-                  <button class="jobs-empty-action jobs-empty-action--outline" onclick="focusFileInput()" data-i18n="section.file">Upload File</button>
+                  <button id="jobsEmptyUrlAction" class="jobs-empty-action" data-i18n="jobs.startWithUrl">Start with URL</button>
+                  <button id="jobsEmptyFileAction" class="jobs-empty-action jobs-empty-action--outline" data-i18n="section.file">Upload File</button>
                 </div>
               </div>
             </div>
@@ -484,45 +465,14 @@
         <div class="jobs-panel__empty-title"></div>
         <div class="jobs-panel__empty-subtitle"></div>
         <div class="jobs-panel__empty-actions">
-          <button class="jobs-panel__empty-action" onclick="focusUrlInputAndClose()"></button>
-          <button class="jobs-panel__empty-action jobs-panel__empty-action--outline" onclick="focusFileInputAndClose()"></button>
+          <button class="jobs-panel__empty-action" data-action="focus-url-close"></button>
+          <button class="jobs-panel__empty-action jobs-panel__empty-action--outline" data-action="focus-file-close"></button>
         </div>
       </div>
     </div>
   </aside>
   <div id="jobsOverlay" class="jobs-overlay" hidden></div>
-
-  <script>
-    let domReady = false;
-    document.addEventListener('DOMContentLoaded', function(e) {
-      if (!domReady) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-      }
-    }, true);
-  </script>
-
-  <script src="/i18n.js"></script>
-  <script>
-    window.i18nInit().then(() => {
-      domReady = true;
-
-      const loadingScreen = document.getElementById('loading-screen');
-      const mainContent = document.querySelector('.main-content');
-
-      if (loadingScreen) loadingScreen.style.display = 'none';
-      if (mainContent) mainContent.style.display = 'block';
-
-      document.dispatchEvent(new Event('DOMContentLoaded'));
-
-    }).catch(error => {
-      console.error('i18n failed to load:', error);
-      domReady = true;
-      document.getElementById('loading-screen').style.display = 'none';
-      document.querySelector('.main-content').style.display = 'block';
-      document.dispatchEvent(new Event('DOMContentLoaded'));
-    });
-  </script>
+<script src="/i18n.js"></script>
 
   <script type="module" src="./ui/main.js" defer></script>
 

@@ -6,6 +6,14 @@ import { modalManager } from './ModalManager.js';
 import { versionManager } from './VersionManager.js';
 import { TrackExtractorManager } from './TrackExtractorManager.js';
 
+
+if (typeof window !== 'undefined' && window.electronAPI?.updateLanguage) {
+  document.addEventListener('i18n:applied', (event) => {
+    const lang = event?.detail?.lang;
+    if (lang) window.electronAPI.updateLanguage(lang).catch?.(() => {});
+  });
+}
+
 window.focusUrlInput = function() {
     const urlInput = document.getElementById('urlInput');
     if (urlInput) {
@@ -42,6 +50,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.i18n?.apply) {
         window.i18n.apply(document.body);
     }
+
+    const loadingScreen = document.getElementById('loading-screen');
+    const mainContent = document.querySelector('.main-content');
+    if (loadingScreen) loadingScreen.style.display = 'none';
+    if (mainContent) mainContent.style.display = 'block';
+
+    document.getElementById('jobsEmptyUrlAction')?.addEventListener('click', () => window.focusUrlInput());
+    document.getElementById('jobsEmptyFileAction')?.addEventListener('click', () => window.focusFileInput());
+    document.addEventListener('click', (event) => {
+        const action = event.target?.closest?.('[data-action]')?.dataset?.action;
+        if (action === 'focus-url-close') window.focusUrlInputAndClose();
+        if (action === 'focus-file-close') window.focusFileInputAndClose();
+    });
 
     await settingsManager.initialize();
     await versionManager.initialize();

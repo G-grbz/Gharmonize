@@ -1,5 +1,6 @@
 import "dotenv/config";
 import os from "os";
+import { parseSafeYtDlpExtra } from "./security.js";
 
 // Handles bool in core application logic.
 const bool = (v, def = false) => {
@@ -55,7 +56,7 @@ export function addGeoArgs(
 // Returns extra args used for core application logic.
 export function getExtraArgs() {
   const raw = process.env.YTDLP_ARGS_EXTRA || process.env.YTDLP_EXTRA;
-  return raw ? raw.split(/\s+/).filter(Boolean) : [];
+  return parseSafeYtDlpExtra(raw);
 }
 
 // Returns locale config used for core application logic.

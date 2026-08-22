@@ -1052,7 +1052,7 @@
   "errors.BAD_PASSWORD2": "Eski şifre hatalı.",
   "errors.UNAUTHORIZED": "Yetkisiz işlem.",
   "errors.PASSWORD_MISMATCH": "Yeni şifreler eşleşmiyor.",
-  "errors.PASSWORD_TOO_SHORT": "Yeni şifre en az 6 karakter olmalıdır.",
+  "errors.PASSWORD_TOO_SHORT": "Yeni şifre en az 8 karakter olmalı; en az bir harf, bir büyük harf ve bir rakam içermelidir.",
   "errors.FIELDS_REQUIRED": "Tüm alanlar zorunludur.",
   "errors.PASSWORD_SAVE_FAILED": "Şifre kaydedilemedi.",
   "errors.changePasswordFailed": "Şifre değiştirilemedi.",

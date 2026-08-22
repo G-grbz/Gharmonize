@@ -1,0 +1,36 @@
+# Runtime configuration and secrets
+.env
+.env.*
+!.env.default
+!env(example)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+.gharmonize-key
+INITIAL_ADMIN_PASSWORD.txt
+cookies/
+
+# Runtime data
+uploads/
+outputs/
+temp/
+cache/
+local-inputs/
+*.db
+*.db-wal
+*.db-shm
+
+# Dependencies and builds
+node_modules/
+dist/
+build/bin/*
+!build/bin/.gitkeep
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

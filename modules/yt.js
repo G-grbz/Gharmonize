@@ -12,6 +12,7 @@ import {
   FFMPEG_BIN as BINARY_FFMPEG_BIN,
   getBinaryRuntimeEnv
 } from "./binaries.js";
+import { parseSafeYtDlpExtra } from "./security.js";
 import {
   normalizeYtMusicAlbumEntry,
   normalizeYtMusicAlbumMeta,
@@ -4809,7 +4810,7 @@ if (opts.video) {
 
     const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
     if (extraEnv) {
-      args.push(...extraEnv.split(/\s+/).filter(Boolean));
+      args.push(...parseSafeYtDlpExtra(extraEnv));
     }
   }
   const cookieSourceUrl = opts?.sourceUrl || urls?.[0] || "";
@@ -5068,7 +5069,7 @@ async function downloadSelectedIdsParallel(
 
       const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
       if (extraEnv) {
-        args.push(...extraEnv.split(/\s+/).filter(Boolean));
+        args.push(...parseSafeYtDlpExtra(extraEnv));
       }
     }
 
@@ -5315,7 +5316,7 @@ async function downloadStandard(
 
     const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
     if (extraEnv) {
-      args.push(...extraEnv.split(/\s+/).filter(Boolean));
+      args.push(...parseSafeYtDlpExtra(extraEnv));
     }
     if (shouldAttachCookies(opts?.sourceUrl || url, !!opts?.forceCookies)) {
       addCookieArgs(args, { ui: !!opts?.forceCookies });
@@ -5374,7 +5375,7 @@ async function downloadStandard(
 
     const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
     if (extraEnv) {
-      args.push(...extraEnv.split(/\s+/).filter(Boolean));
+      args.push(...parseSafeYtDlpExtra(extraEnv));
     }
     if (shouldAttachCookies(opts?.sourceUrl || url, !!opts?.forceCookies)) {
       addCookieArgs(args, { ui: !!opts?.forceCookies });

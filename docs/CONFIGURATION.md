@@ -2,7 +2,7 @@
 
 Create a `.env` file in the project root. All variables below are optional unless noted otherwise — sensible defaults are used when a variable is left empty.
 
-For Docker setups, at minimum set `ADMIN_PASSWORD` and `APP_SECRET` (see [DOCKER.md](DOCKER.md)).
+For Docker setups, Gharmonize generates an initial random admin credential on first start. Preserve the application master key and use HTTPS/reverse-proxy hardening for remote access (see [DOCKER.md](DOCKER.md)).
 
 ---
 
@@ -325,21 +325,28 @@ CLEAN_PARENS=official,topic
 
 ---
 
-## Authentication & App Secret
+## Authentication & Secret Storage
 
-### `ADMIN_PASSWORD`
-Password for the admin panel / protected endpoints. Keep this out of logs and public repositories. For production, use a long, random, strong password.
+### Admin password
+On first start, Gharmonize generates a strong random admin password, stores only a **scrypt** hash, and writes the one-time credential to `INITIAL_ADMIN_PASSWORD.txt` with restrictive permissions. Change it from Settings after the first login and remove the one-time file when no longer needed.
+
+`ADMIN_PASSWORD` is accepted only as a legacy migration input. Do not add a plaintext admin password to new deployments. `APP_SECRET` is no longer used for session signing.
+
+### Encryption master key
+Sensitive settings are encrypted at rest with AES-256-GCM. By default Gharmonize creates `.gharmonize-key` under `DATA_DIR` with mode `0600`. For production, keep the key separate from the database/configuration using either:
 
 ```dotenv
-ADMIN_PASSWORD=change_this_in_production
+GHARMONIZE_MASTER_KEY=<32-byte key encoded as hex/base64>
+# or
+GHARMONIZE_MASTER_KEY_FILE=/secure/path/gharmonize.key
 ```
 
-### `APP_SECRET`
-Global secret key for the application. May be used for JWT signing, session cookies, CSRF tokens, etc. Must be long, random, and kept private.
+Preserve this key in backups. Encrypted settings cannot be recovered if it is lost.
+
+For read-only/container deployments, the one-time initial credential file can be redirected to a writable protected volume:
 
 ```dotenv
-# DO NOT reuse this exact string
-APP_SECRET=your_super_long_random_hex_or_base64_value
+GHARMONIZE_INITIAL_ADMIN_PASSWORD_FILE=/secure/runtime/INITIAL_ADMIN_PASSWORD.txt
 ```
 
 ---
@@ -495,3 +502,17 @@ DENO_BIN=
 ```
 
 If you set these variables to explicit host paths, Gharmonize will prefer those paths instead. See [BINARY_MANAGEMENT.md](BINARY_MANAGEMENT.md) for the full picture.
+
+
+### Security and reverse proxy settings
+
+```env
+GHARMONIZE_HOST=127.0.0.1
+TRUST_PROXY=0
+TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+GHARMONIZE_MASTER_KEY_FILE=/secure/path/gharmonize.key
+GHARMONIZE_ALLOW_PRIVATE_URLS=0
+GHARMONIZE_ALLOW_UNSAFE_YTDLP_ARGS=0
+```
+
+`GHARMONIZE_HOST` defaults to loopback. Docker explicitly sets `0.0.0.0`. Enable `TRUST_PROXY` only when the direct reverse proxy is listed in `TRUSTED_PROXY_CIDRS`. Sensitive Settings values are encrypted at rest with AES-256-GCM using the Gharmonize master key. Keep the key separate from broadly accessible backups.
