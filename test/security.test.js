@@ -144,3 +144,11 @@ test('Linux tray stays on Electron 42 and fails safe on broken Electron 43 runti
   assert.ok(main.includes("start-minimized requested, but tray is unavailable; showing the main window instead"));
   assert.ok(dependabot.includes('versions: ["43.x"]'));
 });
+
+
+test('release workflow preserves Linux artifact name for publish collection', () => {
+  const workflow = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
+  assert.ok(workflow.includes('name: release-linux'));
+  assert.ok(workflow.includes('pattern: release-*'));
+  assert.equal(workflow.includes('archive: false'), false);
+});

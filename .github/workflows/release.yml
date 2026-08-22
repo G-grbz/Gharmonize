@@ -95,7 +95,6 @@ jobs:
         with:
           name: release-linux
           path: release/*
-          archive: false
           if-no-files-found: error
   publish:
     needs: [verify, windows, linux]
