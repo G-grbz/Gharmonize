@@ -3,6 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { uniqueId } from "./utils.js";
+import { normalizeYtMusicByline } from "./ytMusicMetadata.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const DEFAULT_CACHE_DIR = path.resolve(BASE_DIR, "cache");
@@ -67,13 +68,14 @@ function normalizeItem(raw = {}, fallbackIndex = 0) {
   const sourceIdentity = sourceProvider
     ? [sourceProvider, sourceItemId || sourceItemUrl || url].filter(Boolean).join(":")
     : "";
+  const uploader = safeString(normalizeYtMusicByline(raw.uploader || raw.artist || raw.channel), 300);
   const key = itemKey([
     sourceIdentity,
     type,
     id,
     url,
     title,
-    safeString(raw.uploader || raw.artist, 300)
+    uploader
   ].join("|"));
 
   return {
@@ -82,7 +84,7 @@ function normalizeItem(raw = {}, fallbackIndex = 0) {
     index: Number(raw.index || raw.playlist_index || fallbackIndex + 1) || fallbackIndex + 1,
     id: id || null,
     title,
-    uploader: safeString(raw.uploader || raw.artist || raw.channel, 300),
+    uploader,
     duration: Number.isFinite(Number(raw.duration)) ? Number(raw.duration) : null,
     duration_string: safeString(raw.duration_string, 80) || null,
     thumbnail: safeString(raw.thumbnail || raw.thumbnails?.[0]?.url, 1500) || null,

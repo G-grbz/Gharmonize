@@ -56,8 +56,7 @@ export async function generateMetadata(titleInfo, outputPath) {
   const safeOutputPath = safeDiscOutputPath(outputPath);
   const metadataPath = safeDiscOutputPath(safeOutputPath.replace(/\.mkv$/i, ".json"));
   // The sidecar path is derived only from a disc output path confined to the allowed output roots.
-  // codeql[js/http-to-file-access]
-  await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), { mode: 0o600 });
+  await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), { mode: 0o600 }); // codeql[js/http-to-file-access]
 
   return metadata;
 }
@@ -82,8 +81,7 @@ export async function writeMetadataToMKV(mkvPath, metadata) {
     return { success: true };
   } catch (error) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.warn("Metadata write error:", sanitizeLogValue(error?.message || error));
+    console.warn("Metadata write error:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
     return { success: false, error: error.message };
   }
 }

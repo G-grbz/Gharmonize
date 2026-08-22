@@ -167,8 +167,7 @@ function writeJsonAtomic(filePath, payload) {
   const tmp = atomicCacheTempPath(filePath);
   try {
     // Cache destination is fixed under CACHE_DIR and uses randomized exclusive temporary creation.
-    // codeql[js/http-to-file-access]
-    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" }); // codeql[js/http-to-file-access]
     fs.renameSync(tmp, filePath);
   } finally {
     try { fs.rmSync(tmp, { force: true }); } catch {}

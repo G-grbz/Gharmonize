@@ -18,6 +18,7 @@ import {
   verifyPassword
 } from '../modules/security.js';
 import { assertSafeProcessArgs, assertTrustedExecutable } from '../modules/safeProcess.js';
+import { rateLimit } from '../modules/rateLimit.js';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gharmonize-security-'));
 process.env.DATA_DIR = temp;
@@ -168,6 +169,29 @@ test('log sanitizer removes line breaks and control characters', () => {
   assert.equal(sanitizeLogValue('safe\nFORGED\rline\u0000'), 'safe FORGED line?');
 });
 
+test('custom rate limiter allows the configured quota and rejects the next request', () => {
+  const limiter = rateLimit(2, 60_000);
+  const request = { ip: 'codeql-test-client' };
+  const responses = Array.from({ length: 3 }, () => ({
+    headers: new Map(),
+    statusCode: 200,
+    body: null,
+    setHeader(name, value) { this.headers.set(name, value); },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; }
+  }));
+  let allowed = 0;
+
+  limiter(request, responses[0], () => { allowed += 1; });
+  limiter(request, responses[1], () => { allowed += 1; });
+  limiter(request, responses[2], () => { allowed += 1; });
+
+  assert.equal(allowed, 2);
+  assert.equal(responses[2].statusCode, 429);
+  assert.equal(responses[2].body?.error, 'TOO_MANY_REQUESTS');
+  assert.equal(responses[2].headers.get('RateLimit-Remaining'), '0');
+});
+
 test('safe process layer rejects dangerous arguments and unknown executables', () => {
   assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--exec=touch /tmp/pwned']));
   assert.throws(() => assertSafeProcessArgs('ffmpeg', ['ok\n--evil']));
@@ -246,8 +270,17 @@ test('CodeQL suppressions stay coupled to explicit security controls', () => {
     const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
     for (let i = 0; i < lines.length; i += 1) {
       if (!lines[i].includes('codeql[js/missing-rate-limiting]')) continue;
-      const next = lines.slice(i + 1, i + 4).find((line) => line.trim() && !line.trim().startsWith('//')) || '';
-      assert.ok(next.includes('rateLimit('), `${file}:${i + 1} suppresses rate limiting without rateLimit middleware`);
+      assert.ok(lines[i].includes('rateLimit('), `${file}:${i + 1} suppresses rate limiting without inline rateLimit middleware`);
+    }
+  }
+
+  for (const file of jsFiles) {
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    for (let i = 0; i < lines.length; i += 1) {
+      const markerAt = lines[i].indexOf('codeql[js/');
+      if (markerAt < 0) continue;
+      const executablePrefix = lines[i].slice(0, markerAt).replace(/\/\/\s*$/, '').trim();
+      assert.ok(executablePrefix, `${file}:${i + 1} has a detached CodeQL suppression`);
     }
   }
 

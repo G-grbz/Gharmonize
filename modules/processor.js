@@ -2473,8 +2473,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       !transcodeEnabled &&
       directMoveInsideTemp &&
       // directMoveInputAbs is normalized and verified with path.relative to remain under TEMP_DIR.
-      // codeql[js/path-injection]
-      fs.existsSync(directMoveInputAbs);
+      fs.existsSync(directMoveInputAbs); // codeql[js/path-injection]
 
     const existingSingle = findExistingOutput(jobId, format, outputDir);
     const r = existingSingle
@@ -2490,10 +2489,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           const targetAbs = buildUniqueOutputPath(outputDir, `${base}${ext}`);
 
           // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-          // codeql[js/log-injection]
-          console.log(
-            `🎬 Platform MP4 transcode disabled - direct move: ${sanitizeLogValue(directMoveInputAbs)} -> ${sanitizeLogValue(targetAbs)}`
-          );
+          const directMoveLog = `🎬 Platform MP4 transcode disabled - direct move: ${sanitizeLogValue(directMoveInputAbs)} -> ${sanitizeLogValue(targetAbs)}`;
+          console.log(directMoveLog); // codeql[js/log-injection]
           safeMoveFileSync(directMoveInputAbs, targetAbs);
           queueOwnershipFix(targetAbs);
 
@@ -2770,8 +2767,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     }
     if (!isCanceled) {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      // codeql[js/log-injection]
-      console.error("Job error:", sanitizeLogValue(error?.message || error));
+      console.error("Job error:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
     }
     try {
       killJobProcesses(jobId);

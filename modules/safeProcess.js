@@ -79,8 +79,7 @@ export function spawnSafe(command, args = [], options = {}) {
   const executable = assertTrustedExecutable(command);
   const safeArgs = assertSafeProcessArgs(executable, args);
   // Trusted executable allowlist, argument validation, and shell:false are enforced above.
-  // codeql[js/command-line-injection]
-  return spawn(executable, safeArgs, {
+  return spawn(executable, safeArgs, { // codeql[js/command-line-injection]
     ...options,
     shell: false
   });
@@ -91,10 +90,8 @@ export function execFileSafe(command, args = [], options = {}, callback) {
   const safeArgs = assertSafeProcessArgs(executable, args);
   if (typeof options === "function") {
     // Trusted executable allowlist, argument validation, and shell:false are enforced above.
-    // codeql[js/command-line-injection]
-    return execFile(executable, safeArgs, { shell: false }, options);
+    return execFile(executable, safeArgs, { shell: false }, options); // codeql[js/command-line-injection]
   }
   // Trusted executable allowlist, argument validation, and shell:false are enforced above.
-  // codeql[js/command-line-injection]
-  return execFile(executable, safeArgs, { ...options, shell: false }, callback);
+  return execFile(executable, safeArgs, { ...options, shell: false }, callback); // codeql[js/command-line-injection]
 }

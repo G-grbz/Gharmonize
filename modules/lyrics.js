@@ -11,8 +11,7 @@ const LYRICS_CACHE_TTL = 24 * 60 * 60 * 1000;
 // Handles emit log in core application logic.
 function emitLog(onLog, payload) {
   // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-  // codeql[js/log-injection]
-  if (payload?.fallback) console.log(sanitizeLogValue(payload.fallback));
+  if (payload?.fallback) console.log(sanitizeLogValue(payload.fallback)); // codeql[js/log-injection]
   if (onLog) onLog(payload);
 }
 
@@ -205,8 +204,7 @@ export class LyricsFetcher {
       emitLog(onLog, savingLogMsg);
 
       // Lyrics content is remote data, but the destination is confined to approved Gharmonize roots.
-      // codeql[js/http-to-file-access]
-      fs.writeFileSync(lrcPath, lyricsContent, "utf8");
+      fs.writeFileSync(lrcPath, lyricsContent, "utf8"); // codeql[js/http-to-file-access]
 
       const savedLogMsg = {
         logKey: "log.lyrics.saved",

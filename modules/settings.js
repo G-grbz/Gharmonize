@@ -318,8 +318,7 @@ function isRateLimited(req) {
 function clearRateLimit(req) { loginAttempts.delete(clientKey(req)) }
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post('/auth/login', rateLimit(10, 60_000), express.json(), (req, res) => {
+router.post('/auth/login', rateLimit(10, 60_000), express.json(), (req, res) => { // codeql[js/missing-rate-limiting]
   if (isRateLimited(req)) return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Try again later.' } })
   const { password } = req.body || {}
   const currentHash = getAdminPasswordHash()
@@ -332,8 +331,7 @@ router.post('/auth/login', rateLimit(10, 60_000), express.json(), (req, res) => 
 })
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post('/auth/logout', rateLimit(30, 60_000), (_req, res) => { clearSessionCookie(res); res.json({ ok: true }) })
+router.post('/auth/logout', rateLimit(30, 60_000), (_req, res) => { clearSessionCookie(res); res.json({ ok: true }) }) // codeql[js/missing-rate-limiting]
 
 router.get('/ui-config', (_req, res) => {
   const frontendUi = getEnv('FRONTEND_UI') === 'ytlive' ? 'ytlive' : 'classic'
@@ -343,12 +341,10 @@ router.get('/ui-config', (_req, res) => {
 })
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.get('/auth/verify', authMiddleware, rateLimit(120, 60_000), (_req, res) => res.json({ valid: true, message: 'Session is valid' }))
+router.get('/auth/verify', authMiddleware, rateLimit(120, 60_000), (_req, res) => res.json({ valid: true, message: 'Session is valid' })) // codeql[js/missing-rate-limiting]
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.get('/settings', authMiddleware, rateLimit(60, 60_000), (_req, res) => {
+router.get('/settings', authMiddleware, rateLimit(60, 60_000), (_req, res) => { // codeql[js/missing-rate-limiting]
   const env = parseEnv(); const data = {}
   for (const k of ALLOWED_KEYS) {
     let val = env.get(k) ?? getEnv(k) ?? ''
@@ -361,8 +357,7 @@ router.get('/settings', authMiddleware, rateLimit(60, 60_000), (_req, res) => {
 })
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), (req, res) => {
+router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), (req, res) => { // codeql[js/missing-rate-limiting]
   const incoming = (req.body && req.body.settings) || {}; const env = parseEnv(); const updates = {}
   for (const k of ALLOWED_KEYS) {
     if (!(k in incoming)) continue
@@ -379,8 +374,7 @@ router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), 
 })
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post('/auth/change-password', authMiddleware, rateLimit(10, 60_000), express.json(), (req, res) => {
+router.post('/auth/change-password', authMiddleware, rateLimit(10, 60_000), express.json(), (req, res) => { // codeql[js/missing-rate-limiting]
   const { oldPassword, newPassword, newPassword2 } = req.body || {}
   const fail = (code, message) => res.status(400).json({ error: { code, message } })
   if (!oldPassword || !newPassword || !newPassword2) return fail('FIELDS_REQUIRED', 'All fields are required.')
@@ -394,8 +388,7 @@ router.post('/auth/change-password', authMiddleware, rateLimit(10, 60_000), expr
 
 function generateHomepageWidgetKey() { return `hwk_${crypto.randomBytes(32).toString('base64url')}` }
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post('/settings/homepage-widget-key', authMiddleware, rateLimit(10, 60_000), express.json(), (req, res) => {
+router.post('/settings/homepage-widget-key', authMiddleware, rateLimit(10, 60_000), express.json(), (req, res) => { // codeql[js/missing-rate-limiting]
   const { rotate = true, reveal = false } = req.body || {}; const env = parseEnv(); const existing = (env.get('HOMEPAGE_WIDGET_KEY') || '').trim()
   if (!rotate && existing) return res.json({ ok: true, rotated: false, key: reveal ? existing : undefined })
   const next = generateHomepageWidgetKey(); writeEnv({ HOMEPAGE_WIDGET_KEY: next }, ['HOMEPAGE_WIDGET_KEY']); process.env.HOMEPAGE_WIDGET_KEY = next
@@ -403,8 +396,7 @@ router.post('/settings/homepage-widget-key', authMiddleware, rateLimit(10, 60_00
 })
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post('/settings/refresh-binaries', authMiddleware, rateLimit(5, 60_000), async (_req, res) => {
+router.post('/settings/refresh-binaries', authMiddleware, rateLimit(5, 60_000), async (_req, res) => { // codeql[js/missing-rate-limiting]
   try {
     const refresh = await initializeDynamicBinaries({ force: true }); clearBinariesInfoCache(); const binaries = await getBinariesInfo({ force: true })
     return res.json({ ok: true, refresh, binaries })

@@ -316,8 +316,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
       );
 
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.log('[music-match] UI sent spotifyConcurrency =', sanitizeLogValue(spotifyConcurrency));
+    console.log('[music-match] UI sent spotifyConcurrency =', sanitizeLogValue(spotifyConcurrency)); // codeql[js/log-injection]
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
     const loudnormFlag = isEnabledFlag(loudnorm);
@@ -838,8 +837,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         }
 
         // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-        // codeql[js/log-injection]
-        console.error(`Conversion error (${sanitizeLogValue(entry.title)}):`, sanitizeLogValue(convertError?.message || convertError));
+        console.error(`Conversion error (${sanitizeLogValue(entry.title)}):`, sanitizeLogValue(convertError?.message || convertError)); // codeql[js/log-injection]
         job.lastLogKey = 'log.converting.err';
         job.lastLogVars = { title: entry.title, err: convertError.message };
         job.lastLog = `❌ Conversion error: ${entry.title} - ${convertError.message}`;
@@ -1544,8 +1542,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
       };
       task.urlListFile = result.urlListFile;
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      // codeql[js/log-injection]
-      console.log(`✅ ${sanitizeLogValue(sourceLabel)} URL list ready: ${sanitizeLogValue(result.urlListFile)}`);
+      console.log(`✅ ${sanitizeLogValue(sourceLabel)} URL list ready: ${sanitizeLogValue(result.urlListFile)}`); // codeql[js/log-injection]
     }).catch((e) => { task.status = "error"; task.error = e.message; });
 
     return sendOk(res, { mapId: id, title: task.title, total: task.total, source, concurrency: effectiveMapConcurrency });

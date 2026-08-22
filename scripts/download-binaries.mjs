@@ -97,8 +97,7 @@ function log(...a) {
 // Handles log error in project setup tooling.
 function logError(...a) {
   // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-  // codeql[js/log-injection]
-  console.error('[download-binaries][ERROR]', ...a.map((value) => sanitizeLogValue(value?.message || value)));
+  console.error('[download-binaries][ERROR]', ...a.map((value) => sanitizeLogValue(value?.message || value))); // codeql[js/log-injection]
 }
 
 // Handles which in project setup tooling.

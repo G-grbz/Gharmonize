@@ -410,8 +410,7 @@ function getSelectedFrontendUi() {
 }
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-app.get('/', rateLimit(120, 60_000), (_req, res, next) => {
+app.get('/', rateLimit(120, 60_000), (_req, res, next) => { // codeql[js/missing-rate-limiting]
   const selectedUi = getSelectedFrontendUi()
   const fileName = selectedUi === 'ytlive' ? 'ytlive.html' : 'index.html'
 
@@ -458,8 +457,7 @@ app.use(downloadRoute)
 app.use('/api', settingsRoute)
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-app.get('/api/version', rateLimit(120, 60_000), (req, res) => {
+app.get('/api/version', rateLimit(120, 60_000), (req, res) => { // codeql[js/missing-rate-limiting]
   try {
     const packagePath = path.resolve(__dirname, 'package.json');
     const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));

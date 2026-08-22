@@ -31,6 +31,46 @@ function foldText(value = "") {
     .trim();
 }
 
+const YTM_BYLINE_TYPE_RE = /^(?:song|songs|track|tracks|video|videos|album|albums|single|ep|playlist|playlists|artist|artists|podcast|episode|şarkı|şarkılar|sarki|sarkilar|parça|parca|albüm|albümler|albumler|çalma listesi|calma listesi|sanatçı|sanatci|bölüm|bolum)$/i;
+const YTM_BYLINE_DURATION_RE = /^\d{1,3}:\d{2}(?::\d{2})?$/;
+const YTM_BYLINE_YEAR_RE = /^(?:19|20)\d{2}$/;
+const YTM_BYLINE_STAT_WORDS = "views?|plays?|listeners?|subscribers?|songs?|tracks?|görüntüleme|goruntuleme|izlenme|dinlenme|dinlendi|kez\\s+dinlendi|abone|şarkı|şarkılar|sarki|sarkilar|parça|parca|içerik|icerik";
+const YTM_BYLINE_STAT_RE = new RegExp(
+  `^\\d[\\d.,\\s]*(?:k|m|b|mn|bin|milyon|milyar|million|billion)?\\s*(?:kez\\s+)?(?:${YTM_BYLINE_STAT_WORDS})\\b`,
+  "i"
+);
+const YTM_BYLINE_INLINE_STAT_RE = new RegExp(
+  `\\s+[-–—]\\s+\\d[\\d.,\\s]*(?:k|m|b|mn|bin|milyon|milyar|million|billion)?\\s*(?:kez\\s+)?(?:${YTM_BYLINE_STAT_WORDS})\\b.*$`,
+  "i"
+);
+
+function isYtMusicBylineStat(value = "") {
+  const text = cleanText(value);
+  return !text || YTM_BYLINE_DURATION_RE.test(text) || YTM_BYLINE_YEAR_RE.test(text) || YTM_BYLINE_STAT_RE.test(text);
+}
+
+// YouTube Music subtitles mix the content type, creator, counters and duration in one field.
+// Keep only the creator portion so UI metadata cannot leak into tags and output filenames.
+export function normalizeYtMusicByline(value = "") {
+  const text = cleanText(value);
+  if (!text) return "";
+
+  const strippedInlineStats = cleanText(text.replace(YTM_BYLINE_INLINE_STAT_RE, ""));
+  const parts = strippedInlineStats
+    .split(/\s*[•·]\s*/)
+    .map(cleanText)
+    .filter(Boolean);
+  const hasTypePrefix = parts.length > 1 && YTM_BYLINE_TYPE_RE.test(parts[0]);
+  const hasMetadataSuffix = parts.some((part, index) => index > 0 && isYtMusicBylineStat(part));
+  const inlineStatsRemoved = strippedInlineStats !== text;
+
+  if (!hasTypePrefix && !hasMetadataSuffix && !inlineStatsRemoved) return text;
+
+  const candidates = (hasTypePrefix ? parts.slice(1) : parts)
+    .filter((part) => !isYtMusicBylineStat(part) && !YTM_BYLINE_TYPE_RE.test(part));
+  return cleanText(candidates[0] || "");
+}
+
 export function isGenericYtMusicAlbumLabel(value = "") {
   const folded = foldText(value);
   return folded === "album" || folded === "albums" || folded === "albumler" || folded === "albumleri";
@@ -132,20 +172,26 @@ export function normalizeYtMusicAlbumTitle(value = "", context = {}) {
 }
 
 export function normalizeYtMusicAlbumEntry(entry = {}, context = {}) {
+  const normalizedEntry = {
+    ...entry,
+    uploader: normalizeYtMusicByline(entry?.uploader || entry?.channel || ""),
+    artist: normalizeYtMusicByline(entry?.artist || entry?.artist_uploader || ""),
+    album_artist: normalizeYtMusicByline(entry?.album_artist || "")
+  };
   const parentMeta = context?.parentMeta || {};
   const sourceUrl = context?.sourceUrl || parentMeta?.webpage_url || parentMeta?.url || "";
-  const isAlbum = context?.force || isYtMusicAlbumContext(parentMeta, sourceUrl) || isYtMusicAlbumContext(entry, sourceUrl);
-  if (!isAlbum && !hasYtMusicAlbumPrefix(entry?.title) && !isGenericYtMusicAlbumLabel(entry?.uploader || entry?.artist)) {
-    return entry;
+  const isAlbum = context?.force || isYtMusicAlbumContext(parentMeta, sourceUrl) || isYtMusicAlbumContext(normalizedEntry, sourceUrl);
+  if (!isAlbum && !hasYtMusicAlbumPrefix(normalizedEntry?.title) && !isGenericYtMusicAlbumLabel(normalizedEntry?.uploader || normalizedEntry?.artist)) {
+    return normalizedEntry;
   }
 
   const parentTitle = context?.playlistTitle || parentMeta?.album || parentMeta?.title || parentMeta?.playlist_title || "";
-  const albumArtist = cleanText(context?.albumArtist) || pickYtMusicAlbumArtist(entry, parentMeta);
-  const title = normalizeAlbumText(entry?.track || entry?.title || entry?.alt_title || entry?.name || "", "");
-  const album = normalizeAlbumText(entry?.album || "", parentTitle);
-  let uploader = cleanText(entry?.uploader || entry?.channel || "");
-  let artist = cleanText(entry?.artist || entry?.artist_uploader || uploader || "");
-  let albumArtistOut = cleanText(entry?.album_artist || "");
+  const albumArtist = normalizeYtMusicByline(context?.albumArtist) || pickYtMusicAlbumArtist(normalizedEntry, parentMeta);
+  const title = normalizeAlbumText(normalizedEntry?.track || normalizedEntry?.title || normalizedEntry?.alt_title || normalizedEntry?.name || "", "");
+  const album = normalizeAlbumText(normalizedEntry?.album || "", parentTitle);
+  let uploader = cleanText(normalizedEntry?.uploader || normalizedEntry?.channel || "");
+  let artist = cleanText(normalizedEntry?.artist || normalizedEntry?.artist_uploader || uploader || "");
+  let albumArtistOut = cleanText(normalizedEntry?.album_artist || "");
 
   if (isGenericYtMusicAlbumLabel(uploader)) uploader = "";
   if (isGenericYtMusicAlbumLabel(artist)) artist = "";
@@ -156,9 +202,9 @@ export function normalizeYtMusicAlbumEntry(entry = {}, context = {}) {
   if (!albumArtistOut && (albumArtist || artist)) albumArtistOut = albumArtist || artist;
 
   return {
-    ...entry,
-    title: title || cleanText(entry?.title || ""),
-    track: title || cleanText(entry?.track || entry?.title || ""),
+    ...normalizedEntry,
+    title: title || cleanText(normalizedEntry?.title || ""),
+    track: title || cleanText(normalizedEntry?.track || normalizedEntry?.title || ""),
     uploader,
     artist,
     album,

@@ -17,6 +17,7 @@ import {
   normalizeYtMusicAlbumEntry,
   normalizeYtMusicAlbumMeta,
   normalizeYtMusicAlbumTitle,
+  normalizeYtMusicByline,
   pickYtMusicAlbumArtist,
   isYtMusicAlbumContext
 } from "./ytMusicMetadata.js";
@@ -1076,10 +1077,9 @@ async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = 
     }
 
     // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
-    // codeql[js/file-access-to-http]
     const response = await fetch(`${YTM_ORIGIN}/youtubei/v1/search?prettyPrint=false`, {
       method: "POST",
-      headers,
+      headers, // codeql[js/file-access-to-http]
       signal: controller.signal,
       body: JSON.stringify(body)
     });
@@ -1662,10 +1662,9 @@ async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, t
     let response;
     try {
       // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
-      // codeql[js/file-access-to-http]
       response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
         method: "POST",
-        headers,
+        headers, // codeql[js/file-access-to-http]
         signal: controller.signal,
         body: JSON.stringify({ context, ...payload })
       });
@@ -3460,9 +3459,8 @@ async function fetchYtmBootstrapConfig(cookieHeader, timeoutMs = 6000) {
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
-    // codeql[js/file-access-to-http]
     const response = await fetch(`${YTM_ORIGIN}/`, {
-      headers: {
+      headers: { // codeql[js/file-access-to-http]
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
         "Cookie": cookieHeader,
@@ -3877,7 +3875,7 @@ function normalizeYtmRendererItem(value = {}, index = 0) {
     title: title || item.id,
     duration: null,
     duration_string: getYtmRendererDuration(renderer) || null,
-    uploader: getYtmRendererSubtitle(renderer),
+    uploader: normalizeYtMusicByline(getYtmRendererSubtitle(renderer)),
     searchableText,
     webpage_url: item.webpage_url,
     url: item.webpage_url,
@@ -4112,10 +4110,9 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
     let response;
     try {
       // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
-      // codeql[js/file-access-to-http]
       response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
         method: "POST",
-        headers,
+        headers, // codeql[js/file-access-to-http]
         signal: controller.signal,
         body: JSON.stringify({ context, ...payload })
       });

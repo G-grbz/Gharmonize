@@ -24,8 +24,7 @@ function warnOnce(key, message) {
   if (warnedKeys.has(key)) return;
   warnedKeys.add(key);
   // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-  // codeql[js/log-injection]
-  console.warn(sanitizeLogValue(message));
+  console.warn(sanitizeLogValue(message)); // codeql[js/log-injection]
 }
 
 function normalizeTargetPath(targetPath) {

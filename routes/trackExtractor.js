@@ -63,8 +63,7 @@ router.post("/api/track-extractor/probe", requireDesktopBridge, async (req, res)
     return sendOk(res, inspected);
   } catch (error) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.error("[track-extractor/probe] failed:", sanitizeLogValue(error?.message || error));
+    console.error("[track-extractor/probe] failed:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
     return sendError(
       res,
       "TRACK_EXTRACTOR_PROBE_FAILED",
@@ -128,8 +127,7 @@ router.post("/api/track-extractor/extract", requireDesktopBridge, async (req, re
     });
   } catch (error) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.error("[track-extractor/extract] failed:", sanitizeLogValue(error?.message || error));
+    console.error("[track-extractor/extract] failed:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
     return sendError(
       res,
       "TRACK_EXTRACTOR_START_FAILED",

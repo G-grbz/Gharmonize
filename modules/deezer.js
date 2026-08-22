@@ -317,8 +317,7 @@ async function resolveDeezerCanonicalUrl(url = "") {
     }
 
     // Protocol, credentials, exact Deezer short-link host, and redirects are constrained above.
-    // codeql[js/request-forgery]
-    const res = await fetch(target.toString(), {
+    const res = await fetch(target.toString(), { // codeql[js/request-forgery]
       headers: DEEZER_WEB_HEADERS,
       redirect: "manual"
     });

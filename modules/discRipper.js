@@ -246,8 +246,7 @@ async function estimateDvdTitleSize(videoTsPath, titleIndex) {
       total += stats.size;
     } catch (err) {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      // codeql[js/log-injection]
-      console.warn("Failed to read VOB size:", sanitizeLogValue(f), sanitizeLogValue(err?.message));
+      console.warn("Failed to read VOB size:", sanitizeLogValue(f), sanitizeLogValue(err?.message)); // codeql[js/log-injection]
     }
   }
   return total;
@@ -503,8 +502,7 @@ async function ripDvdTitle(
     args.push(inputSource);
 
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.log("DVD rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" ")));
+    console.log("DVD rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" "))); // codeql[js/log-injection]
 
     if (progressCallback) progressCallback(30, { __i18n: true, key: "disc.progress.creatingMkv", vars: {} });
 
@@ -643,10 +641,9 @@ async function ripBluRayTitle(
       });
     } catch (err) {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      // codeql[js/log-injection]
       console.warn(
         "Blu-ray track ID analysis failed, all tracks will be included:",
-        sanitizeLogValue(err?.message)
+        sanitizeLogValue(err?.message) // codeql[js/log-injection]
       );
     }
 
@@ -689,8 +686,7 @@ async function ripBluRayTitle(
     args.push(playlistPath);
 
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.log("Blu-ray rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" ")));
+    console.log("Blu-ray rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" "))); // codeql[js/log-injection]
 
     let expectedSizeBytes = 0;
     if (mkvmergeInfo) {
@@ -806,8 +802,7 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
           total += stats.size;
         } catch (err) {
           // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-          // codeql[js/log-injection]
-          console.warn("Failed to read M2TS size:", sanitizeLogValue(fullPath), sanitizeLogValue(err?.message));
+          console.warn("Failed to read M2TS size:", sanitizeLogValue(fullPath), sanitizeLogValue(err?.message)); // codeql[js/log-injection]
         }
       }
 
@@ -843,12 +838,7 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
           legacyTotal += stats.size;
         } catch (err) {
           // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-          // codeql[js/log-injection]
-          console.warn(
-            "Failed to read M2TS size (legacy):",
-            sanitizeLogValue(fullPath),
-            sanitizeLogValue(err?.message)
-          );
+          console.warn("Failed to read M2TS size (legacy):", sanitizeLogValue(fullPath), sanitizeLogValue(err?.message)); // codeql[js/log-injection]
         }
       }
     }
@@ -865,8 +855,7 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
     return 0;
   } catch (err) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.warn("Blu-ray size estimation error:", sanitizeLogValue(err?.message));
+    console.warn("Blu-ray size estimation error:", sanitizeLogValue(err?.message)); // codeql[js/log-injection]
     return 0;
   }
 }
@@ -909,11 +898,7 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
     return parseTracks(info);
   } catch (error) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.log(
-      "DVD track analysis error, using fallback defaults:",
-      sanitizeLogValue(error?.message)
-    );
+    console.log("DVD track analysis error, using fallback defaults:", sanitizeLogValue(error?.message)); // codeql[js/log-injection]
     return {
       audioCount: 3,
       subtitleCount: 3,

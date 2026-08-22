@@ -104,8 +104,7 @@ function broadcastProgress(payload) {
 }
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.get("/api/disc/stream", requireAuth, rateLimit(30, 60_000), (req, res) => {
+router.get("/api/disc/stream", requireAuth, rateLimit(30, 60_000), (req, res) => { // codeql[js/missing-rate-limiting]
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
@@ -176,8 +175,7 @@ async function removeOutputFile(filePath) {
 }
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post("/api/disc/scan", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => {
+router.post("/api/disc/scan", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => { // codeql[js/missing-rate-limiting]
   try {
     const { sourcePath } = req.body || {};
     if (!sourcePath) {
@@ -200,15 +198,13 @@ router.post("/api/disc/scan", requireAuth, rateLimit(20, 60_000), express.json()
     }
 
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.error("[disc] scan error:", sanitizeLogValue(error?.message || error));
+    console.error("[disc] scan error:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
     res.status(getDiscErrorStatus(error)).json(serializeDiscError(error));
   }
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post("/api/disc/cancel-scan", requireAuth, rateLimit(60, 60_000), (req, res) => {
+router.post("/api/disc/cancel-scan", requireAuth, rateLimit(60, 60_000), (req, res) => { // codeql[js/missing-rate-limiting]
   try {
     sendScanLog({
       __i18n: true,
@@ -223,8 +219,7 @@ router.post("/api/disc/cancel-scan", requireAuth, rateLimit(60, 60_000), (req, r
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => {
+router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => { // codeql[js/missing-rate-limiting]
   try {
     const {
       sourcePath,
@@ -310,8 +305,7 @@ router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(),
           );
         } catch (metaErr) {
           // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-          // codeql[js/log-injection]
-          console.warn("[disc] metadata warning:", sanitizeLogValue(metaErr?.message));
+          console.warn("[disc] metadata warning:", sanitizeLogValue(metaErr?.message)); // codeql[js/log-injection]
         }
 
         broadcastProgress({
@@ -342,8 +336,7 @@ router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(),
         });
       } catch (error) {
         // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-        // codeql[js/log-injection]
-        console.error("[disc] rip error:", sanitizeLogValue(error?.message || error));
+        console.error("[disc] rip error:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
 
         if (error.message === "RIP_CANCELLED") {
           broadcastProgress({
@@ -382,15 +375,13 @@ router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(),
     })();
   } catch (error) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    // codeql[js/log-injection]
-    console.error("[disc] rip request error:", sanitizeLogValue(error?.message || error));
+    console.error("[disc] rip request error:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
     res.status(500).json({ error: error.message });
   }
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post("/api/disc/cancel-rip", requireAuth, rateLimit(60, 60_000), (req, res) => {
+router.post("/api/disc/cancel-rip", requireAuth, rateLimit(60, 60_000), (req, res) => { // codeql[js/missing-rate-limiting]
   try {
     cancelRip();
     broadcastProgress({
@@ -404,8 +395,7 @@ router.post("/api/disc/cancel-rip", requireAuth, rateLimit(60, 60_000), (req, re
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-// codeql[js/missing-rate-limiting]
-router.post("/api/disc/metadata", requireAuth, rateLimit(30, 60_000), express.json(), async (req, res) => {
+router.post("/api/disc/metadata", requireAuth, rateLimit(30, 60_000), express.json(), async (req, res) => { // codeql[js/missing-rate-limiting]
   try {
     const { titleInfo, outputPath } = req.body || {};
     if (!titleInfo || !outputPath) {
