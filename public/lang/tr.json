@@ -1047,7 +1047,7 @@
   "settings.passwordChanged": "Şifre güncellendi. Lütfen yeniden giriş yapın.",
   "settings.errors.fieldsRequired": "Tüm alanlar zorunludur.",
   "settings.errors.passwordMismatch": "Yeni şifreler eşleşmiyor.",
-  "settings.errors.passwordTooShort": "Yeni şifre en az 6 karakter olmalıdır.",
+  "settings.errors.passwordTooShort": "Yeni şifre en az 8 karakter olmalı; en az bir harf, bir büyük harf ve bir rakam içermelidir.",
   "errors.BAD_PASSWORD": "Hatalı Şifre",
   "errors.BAD_PASSWORD2": "Eski şifre hatalı.",
   "errors.UNAUTHORIZED": "Yetkisiz işlem.",

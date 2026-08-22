@@ -1046,7 +1046,7 @@
   "settings.passwordChanged": "Contraseña actualizada. Por favor, vuelve a iniciar sesión.",
   "settings.errors.fieldsRequired": "Todos los campos son obligatorios.",
   "settings.errors.passwordMismatch": "Las nuevas contraseñas no coinciden.",
-  "settings.errors.passwordTooShort": "La nueva contraseña debe tener al menos 6 caracteres.",
+  "settings.errors.passwordTooShort": "La nueva contraseña debe tener al menos 8 caracteres e incluir al menos una letra, una mayúscula y un número.",
   "errors.BAD_PASSWORD": "Contraseña incorrecta",
   "errors.BAD_PASSWORD2": "La contraseña actual es incorrecta.",
   "errors.UNAUTHORIZED": "Operación no autorizada.",

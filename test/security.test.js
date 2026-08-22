@@ -86,7 +86,7 @@ test('default env ships without a known admin password', () => {
 });
 test('CSP contains core anti-XSS directives', () => {
   const text = fs.readFileSync('app.js','utf8');
-  for (const directive of ["script-src 'self'","script-src-attr 'none'","object-src 'none'","frame-ancestors 'none'"]) assert.ok(text.includes(directive));
+  for (const directive of ["script-src 'self' https://www.youtube.com https://s.ytimg.com","script-src-attr 'none'","object-src 'none'","frame-ancestors 'none'","frame-src https://www.youtube.com https://www.youtube-nocookie.com"]) assert.ok(text.includes(directive));
 });
 test('chunk and completed upload paths are constrained to the upload root', () => {
   const text = fs.readFileSync('routes/jobs.js', 'utf8');
@@ -117,4 +117,30 @@ test('forwarded protocol is honored only through Express trusted-proxy resolutio
   const settings = fs.readFileSync('modules/settings.js', 'utf8');
   assert.equal(app.includes("req.get('x-forwarded-proto') === 'https'"), false);
   assert.equal(settings.includes("req.get('x-forwarded-proto') === 'https'"), false);
+});
+
+
+test('sandboxed Electron preload uses CommonJS and stays bridged', () => {
+  const main = fs.readFileSync(path.join('electron', 'main.mjs'), 'utf8');
+  const preload = fs.readFileSync(path.join('electron', 'preload.cjs'), 'utf8');
+  assert.ok(main.includes("sandbox: true"));
+  assert.ok(main.includes("preload.cjs"));
+  assert.ok(preload.includes("require('electron')"));
+  assert.ok(preload.includes("contextBridge.exposeInMainWorld('electronAPI'"));
+  assert.equal(fs.existsSync(path.join('electron', 'preload.mjs')), false);
+});
+
+test('Linux tray stays on Electron 42 and fails safe on broken Electron 43 runtime', () => {
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+  const main = fs.readFileSync(path.join('electron', 'main.mjs'), 'utf8');
+  const dependabot = fs.readFileSync(path.join('.github', 'dependabot.yml'), 'utf8');
+
+  assert.equal(pkg.devDependencies.electron, '^42.5.0');
+  assert.equal(lock.packages['node_modules/electron'].version, '42.9.3');
+  assert.ok(main.includes('function hasKnownBrokenLinuxTrayRuntime()'));
+  assert.ok(main.includes("return major === 43;"));
+  assert.ok(main.includes("[tray] unavailable; closing Gharmonize instead of leaving a hidden background process"));
+  assert.ok(main.includes("start-minimized requested, but tray is unavailable; showing the main window instead"));
+  assert.ok(dependabot.includes('versions: ["43.x"]'));
 });

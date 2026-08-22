@@ -119,6 +119,14 @@ function resolveTrayIcon() {
     : path.join(process.resourcesPath, 'icon.png');
 }
 
+// Electron 43.x currently has a Linux StatusNotifierItem/AppIndicator regression
+// that can leave tray-based apps invisible and effectively uncloseable.
+function hasKnownBrokenLinuxTrayRuntime() {
+  if (process.platform !== 'linux') return false;
+  const major = Number.parseInt(String(process.versions.electron || '').split('.')[0], 10);
+  return major === 43;
+}
+
 // Shows main window in the Electron runtime bridge.
 function showMainWindow(win) {
   if (!win || win.isDestroyed()) return;
@@ -614,24 +622,38 @@ async function ensureTray(win) {
 
   mainWindowRef = win;
 
-  tray = new Tray(resolveTrayIcon());
-  tray.setToolTip('Gharmonize');
+  if (hasKnownBrokenLinuxTrayRuntime()) {
+    console.warn(`[tray] disabled on Electron ${process.versions.electron} for Linux because of the upstream StatusNotifierItem regression`);
+    return null;
+  }
 
-  await refreshTrayMenu();
+  const iconPath = resolveTrayIcon();
+  try {
+    tray = new Tray(iconPath);
+    tray.setToolTip('Gharmonize');
 
-  tray.on('click', () => {
-    if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
-    if (mainWindowRef.isVisible()) mainWindowRef.hide();
-    else showMainWindow(mainWindowRef);
-  });
+    await refreshTrayMenu();
 
-  tray.on('double-click', () => showMainWindow(mainWindowRef));
-  tray.on('right-click', () => tray.popUpContextMenu());
-  tray.on('mouse-up', (event) => {
-    if (event.button === 2) tray.popUpContextMenu();
-  });
+    tray.on('click', () => {
+      if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
+      if (mainWindowRef.isVisible()) mainWindowRef.hide();
+      else showMainWindow(mainWindowRef);
+    });
 
-  return tray;
+    tray.on('double-click', () => showMainWindow(mainWindowRef));
+    tray.on('right-click', () => tray?.popUpContextMenu());
+    tray.on('mouse-up', (event) => {
+      if (event.button === 2) tray?.popUpContextMenu();
+    });
+
+    console.log('[tray] ready:', iconPath);
+    return tray;
+  } catch (error) {
+    tray = null;
+    trayMenu = null;
+    console.error('[tray] creation failed:', error?.stack || error?.message || error);
+    return null;
+  }
 }
 
 // Resolves icon for the Electron runtime bridge.
@@ -970,7 +992,7 @@ function createWindow() {
       nodeIntegration: false,
       enableRemoteModule: false,
       sandbox: true,
-      preload: path.join(path.dirname(fileURLToPath(import.meta.url)), 'preload.mjs')
+      preload: path.join(path.dirname(fileURLToPath(import.meta.url)), 'preload.cjs')
     },
     show: false
   });
@@ -989,11 +1011,14 @@ function createWindow() {
       const prefs = await loadPrefs();
 
       if (prefs.alwaysMinimizeToTray) {
-        isHidingToTray = true;
-        await ensureTray(win);
-        win.hide();
-        isHidingToTray = false;
-        return;
+        const trayInstance = await ensureTray(win);
+        if (trayInstance) {
+          isHidingToTray = true;
+          win.hide();
+          isHidingToTray = false;
+          return;
+        }
+        console.warn('[tray] unavailable; closing Gharmonize instead of leaving a hidden background process');
       }
       isQuitting = true;
       app.quit();
@@ -1005,12 +1030,15 @@ function createWindow() {
   });
 
   win.once('ready-to-show', async () => {
-    await ensureTray(win);
+    const trayInstance = await ensureTray(win);
 
     const startHidden = await shouldStartHidden();
-    if (startHidden) {
+    if (startHidden && trayInstance) {
       win.hide();
     } else {
+      if (startHidden && !trayInstance) {
+        console.warn('[tray] start-minimized requested, but tray is unavailable; showing the main window instead');
+      }
       win.show();
       win.focus();
       win.setMenuBarVisibility(true);

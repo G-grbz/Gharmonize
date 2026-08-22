@@ -1,5 +1,7 @@
 <div align="center">
 
+[![CI](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml) [![CodeQL](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml)
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" alt="logo" width="200" style="background: transparent; display: inline-block;" />
 </p>

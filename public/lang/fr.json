@@ -1046,7 +1046,7 @@
   "settings.passwordChanged": "Mot de passe mis à jour. Veuillez vous reconnecter.",
   "settings.errors.fieldsRequired": "Tous les champs sont obligatoires.",
   "settings.errors.passwordMismatch": "Les nouveaux mots de passe ne correspondent pas.",
-  "settings.errors.passwordTooShort": "Le nouveau mot de passe doit comporter au moins 6 caractères.",
+  "settings.errors.passwordTooShort": "Le nouveau mot de passe doit comporter au moins 8 caractères, avec au moins une lettre, une majuscule et un chiffre.",
   "errors.BAD_PASSWORD": "Mot de passe incorrect",
   "errors.BAD_PASSWORD2": "Ancien mot de passe incorrect.",
   "errors.UNAUTHORIZED": "Action non autorisée.",

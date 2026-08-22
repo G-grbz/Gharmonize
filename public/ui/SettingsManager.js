@@ -1039,7 +1039,7 @@ export class SettingsManager {
         if (String(newPassword).length < 8 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[A-Za-z]/.test(newPassword)) {
             modalManager.showAlert({
                 title: this.t('settings.title') || 'Ayarlar',
-                message: this.t('settings.errors.passwordTooShort') || 'Password must be at least 6 characters.',
+                message: this.t('settings.errors.passwordTooShort') || 'Password must be at least 8 characters and contain at least one letter, one uppercase letter, and one number.',
                 type: 'warning'
             });
             return;

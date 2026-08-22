@@ -1047,7 +1047,7 @@
   "settings.passwordChanged": "Password updated. Please log in again.",
   "settings.errors.fieldsRequired": "All fields are required.",
   "settings.errors.passwordMismatch": "New passwords do not match.",
-  "settings.errors.passwordTooShort": "New password must be at least 6 characters.",
+  "settings.errors.passwordTooShort": "New password must be at least 8 characters and contain at least one letter, one uppercase letter, and one number.",
   "errors.BAD_PASSWORD": "Incorrect Password",
   "errors.BAD_PASSWORD2": "Old password is incorrect.",
   "errors.UNAUTHORIZED": "Unauthorized action.",

@@ -354,12 +354,13 @@ app.use((req, res, next) => {
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    "script-src 'self'",
+    "script-src 'self' https://www.youtube.com https://s.ytimg.com",
     "script-src-attr 'none'",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob: https:",
+    "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
     "connect-src 'self' https://api.github.com https://*.spotify.com https://*.youtube.com https://music.youtube.com https://i.ytimg.com https://*.googlevideo.com",
     "worker-src 'self' blob:"
   ].join('; '))

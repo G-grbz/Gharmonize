@@ -1046,7 +1046,7 @@
   "settings.passwordChanged": "Passwort aktualisiert. Bitte melde dich erneut an.",
   "settings.errors.fieldsRequired": "Alle Felder sind erforderlich.",
   "settings.errors.passwordMismatch": "Neue Passwörter stimmen nicht überein.",
-  "settings.errors.passwordTooShort": "Das neue Passwort muss mindestens 6 Zeichen lang sein.",
+  "settings.errors.passwordTooShort": "Das neue Passwort muss mindestens 8 Zeichen lang sein und mindestens einen Buchstaben, einen Großbuchstaben und eine Zahl enthalten.",
   "errors.BAD_PASSWORD": "Falsches Passwort",
   "errors.BAD_PASSWORD2": "Altes Passwort ist falsch.",
   "errors.UNAUTHORIZED": "Unbefugte Aktion.",

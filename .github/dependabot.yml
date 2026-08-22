@@ -5,6 +5,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Electron 43.x currently has a Linux StatusNotifierItem/AppIndicator regression.
+    # Keep receiving 42.x updates while the upstream tray regression is unresolved.
+    ignore:
+      - dependency-name: electron
+        versions: ["43.x"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
