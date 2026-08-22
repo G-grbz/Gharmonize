@@ -1,9 +1,8 @@
-import { spawn } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import os from "os";
-import fetch from "node-fetch";
 import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
 import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
@@ -13,6 +12,7 @@ import { ensureOwnership } from "./fsOwnership.js";
 import "dotenv/config";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 import { getFfmpegCaps } from "./ffmpegCaps.js";
+import { assertPathWithinAny, fetchSafeRemote, sanitizeLogValue } from "./security.js";
 import {
   describeRingtone,
   isRingtoneEnabled,
@@ -435,8 +435,8 @@ function cleanTitleForTags(t) {
   let s = String(t).trim();
 
   s = s.replace(/\s*_\s*/g, " ");
-  s = s.replace(/\s*(?:_+\s*)+$/, "");
-  s = s.replace(/\s*(?:[-–—•]\s*)+$/, "");
+  s = s.replace(/[\s_]+$/, "");
+  s = s.replace(/[\s\-–—•]+$/, "");
   s = s.replace(/\s{2,}/g, " ").trim();
   return s;
 }
@@ -445,7 +445,10 @@ function cleanTitleForTags(t) {
 export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
   if (!thumbnailUrl) return null;
   try {
-    const res = await fetch(thumbnailUrl);
+    const baseDir = path.resolve(process.env.DATA_DIR || process.cwd());
+    const allowedRoots = [path.join(baseDir, 'outputs'), path.join(baseDir, 'temp'), path.join(baseDir, 'uploads')];
+    const safeBase = assertPathWithinAny(path.resolve(String(destBasePathNoExt || '')), allowedRoots);
+    const res = await fetchSafeRemote(thumbnailUrl, {}, { maxRedirects: 3 });
     if (!res.ok) return null;
     const buf = await res.arrayBuffer();
     const ct = (res.headers.get("content-type") || "").toLowerCase();
@@ -453,8 +456,8 @@ export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
     if (ct.includes("image/webp")) ext = ".webp";
     else if (ct.includes("image/png")) ext = ".png";
     else if (ct.includes("jpeg")) ext = ".jpg";
-    const destPath = `${destBasePathNoExt}${ext}`;
-    fs.writeFileSync(destPath, Buffer.from(buf));
+    const destPath = assertPathWithinAny(`${safeBase}${ext}`, allowedRoots);
+    fs.writeFileSync(destPath, Buffer.from(buf), { mode: 0o600 });
     return destPath;
   } catch {
     return null;
@@ -527,7 +530,7 @@ export async function ensureJpegCover(
 
     await new Promise((resolve, reject) => {
       const args = ["-y", "-hide_banner", "-loglevel", "error", "-i", coverPath, outJpg];
-      const p = spawn(ffmpegBin, args);
+      const p = spawnSafe(ffmpegBin, args);
       let err = "";
       p.stderr.on("data", (d) => (err += d.toString()));
       p.on("close", (code) =>
@@ -687,7 +690,7 @@ export async function retagMediaFile(
     const f = String(format || path.extname(absOutputPath).slice(1) || "").toLowerCase();
 
     if (shouldSkipRetag(f)) {
-      console.log(`ℹ️ retag skipped for format=${f} (container metadata limits) → ${path.basename(absOutputPath)}`);
+      console.log(`ℹ️ retag skipped for format=${sanitizeLogValue(f)} (container metadata limits) → ${sanitizeLogValue(path.basename(absOutputPath))}`);
       return null;
     }
 
@@ -780,8 +783,8 @@ export async function retagMediaFile(
 
       args.push(tmpOut);
 
-      console.log("🏷️ FFmpeg retag args:", args.join(" "));
-      const p = spawn(ffmpegBin, args);
+      console.log("🏷️ FFmpeg retag args:", sanitizeLogValue(args.join(" ")));
+      const p = spawnSafe(ffmpegBin, args);
       try { opts?.onProcess?.(p); } catch {}
       let err = "";
       p.stderr.on("data", (d) => (err += d.toString()));
@@ -812,7 +815,7 @@ export async function retagMediaFile(
       }
     }
 
-    console.log(`✅ retag ok: ${path.basename(absOutputPath)}`);
+    console.log(`✅ retag ok: ${sanitizeLogValue(path.basename(absOutputPath))}`);
     return absOutputPath;
   } catch (e) {
     console.warn("⚠️ retag warning:", e?.message || e);
@@ -1268,9 +1271,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     : "default";
 
   console.log(
-    `🎵 Conversion → in: ${path.basename(
+    `🎵 Conversion → in: ${sanitizeLogValue(path.basename(
       inputPath
-    )} | fmt=${format} | lyrics=${
+    ))} | fmt=${sanitizeLogValue(format)} | lyrics=${
       opts.includeLyrics !== false ? "yes" : "no"
     } | embedLyrics=${opts.embedLyrics === true ? "yes" : "no"} | video=${isVideo ? "yes" : "no"} | sr=${SAMPLE_RATE}Hz (src=${srSrc}→${SR_NORM} ${SR_NOTE}) | stereo=${stereoConvert} | atempo=${atempoAdjust} | loudnorm=${loudnormEnabled ? loudnormConfig.mode : "off"}${ringtone ? ` | ringtone=${describeRingtone(ringtone)}` : ""}`
   );
@@ -1291,10 +1294,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   let basename = resolveTemplate(resolvedMeta, template) || `output_${jobId}`;
   basename = refineOutputBasename(basename);
   basename = sanitizeFilename(basename);
-  basename = basename.replace(/\s*(?:_+\s*)+$/, '').replace(/\s{2,}/g, ' ').trim();
+  basename = basename.replace(/[\s_]+$/, '').replace(/\s{2,}/g, ' ').trim();
   if (ringtone) {
     basename = sanitizeFilename(`${basename} - ringtone`)
-      .replace(/\s*(?:_+\s*)+$/, '')
+      .replace(/[\s_]+$/, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
   }
@@ -1949,7 +1952,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     if (!userExplicitContainer && selectedCodec.format && selectedCodec.format !== format) {
       const oldFmt = format;
       format = selectedCodec.format;
-      console.log(`📦 Container changed: ${oldFmt} -> ${format}`);
+      console.log(`📦 Container changed: ${sanitizeLogValue(oldFmt)} -> ${sanitizeLogValue(format)}`);
     }
 
     if (shouldTonemap && selectedCodec.bitDepth === 10) {
@@ -2843,10 +2846,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       emitLog(opts.onLog, {
         fallback: `🎚 Loudnorm analysis started (${config.mode})`
       });
-      console.log("🎚 Loudnorm analysis pass:", analysisArgs.join(" "));
+      console.log("🎚 Loudnorm analysis pass:", sanitizeLogValue(analysisArgs.join(" ")));
 
       return await new Promise((resolve, reject) => {
-        const analysisProc = spawn(ffmpegBin, analysisArgs);
+        const analysisProc = spawnSafe(ffmpegBin, analysisArgs);
         try {
           if (typeof opts.onProcess === "function") {
             opts.onProcess(analysisProc);
@@ -3002,10 +3005,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     args.push(outputPath);
 
-    console.log("🔧 FFmpeg arguments:", args.join(" "));
+    console.log("🔧 FFmpeg arguments:", sanitizeLogValue(args.join(" ")));
 
     let triedFallback = false;
-    let ffmpeg = spawn(ffmpegBin, args);
+    let ffmpeg = spawnSafe(ffmpegBin, args);
     try {
       if (typeof opts.onProcess === "function") {
         opts.onProcess(ffmpeg);
@@ -3252,7 +3255,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
           durationText: formatClock(progressDuration),
           fps: pickLiveFps()
         });
-        console.log(`✅ Conversion completed: ${outputPath}`);
+        console.log(`✅ Conversion completed: ${sanitizeLogValue(outputPath)}`);
         await ensureOwnership(outputPath);
         const downloadPath = toResultDownloadPath(outputPath);
         resolve({
@@ -3275,7 +3278,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       if (!triedFallback && /ENOENT/i.test(e.message)) {
         triedFallback = true;
         try {
-          ffmpeg = spawn(
+          ffmpeg = spawnSafe(
             process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
             args
           );
@@ -3352,11 +3355,12 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     console.log(
       `🔍 Lyrics check → Will it be processed?: ${
         shouldProcessLyrics ? "yes" : "no"
-      } | embed: ${embedLyricsFlag ? "yes" : "no"} | video: ${isVideo ? "yes" : "no"} | format: ${format} | meta: ${[
+      } | embed: ${embedLyricsFlag ? "yes" : "no"} | video: ${isVideo ? "yes" : "no"} | format: ${sanitizeLogValue(format)} | meta: ${[
         metadata.artist,
         metadata.title || metadata.track
       ]
         .filter(Boolean)
+        .map((value) => sanitizeLogValue(value))
         .join(" - ")}`
     );
 

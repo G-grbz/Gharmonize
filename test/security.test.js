@@ -13,8 +13,11 @@ import {
   isSafeExternalUrl,
   parseSafeYtDlpExtra,
   passwordPolicyError,
+  resolvePathInside,
+  sanitizeLogValue,
   verifyPassword
 } from '../modules/security.js';
+import { assertSafeProcessArgs, assertTrustedExecutable } from '../modules/safeProcess.js';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gharmonize-security-'));
 process.env.DATA_DIR = temp;
@@ -151,4 +154,75 @@ test('release workflow preserves Linux artifact name for publish collection', ()
   assert.ok(workflow.includes('name: release-linux'));
   assert.ok(workflow.includes('pattern: release-*'));
   assert.equal(workflow.includes('archive: false'), false);
+});
+
+
+test('filesystem boundary rejects traversal outside an allowed root', () => {
+  const root = path.join(temp, 'root');
+  fs.mkdirSync(root, { recursive: true });
+  assert.equal(resolvePathInside(root, 'a/b.txt'), path.join(root, 'a', 'b.txt'));
+  assert.throws(() => resolvePathInside(root, '../escape.txt'));
+});
+
+test('log sanitizer removes line breaks and control characters', () => {
+  assert.equal(sanitizeLogValue('safe\nFORGED\rline\u0000'), 'safe FORGED line?');
+});
+
+test('safe process layer rejects dangerous arguments and unknown executables', () => {
+  assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--exec=touch /tmp/pwned']));
+  assert.throws(() => assertSafeProcessArgs('ffmpeg', ['ok\n--evil']));
+  assert.throws(() => assertTrustedExecutable('/tmp/not-gharmonize-tool'));
+  assert.equal(assertTrustedExecutable('/usr/bin/ffmpeg'), '/usr/bin/ffmpeg');
+});
+
+test('critical process sinks are routed through the safe process layer', () => {
+  const files = [
+    'app.js', 'modules/yt.js', 'modules/sp.js', 'modules/media.js', 'modules/trackExtractor.js',
+    'modules/ringtone.js', 'modules/probe.js', 'modules/lyrics.js', 'modules/discScanner.js',
+    'modules/discRipper.js', 'modules/ffmpegCaps.js', 'modules/binaries.js', 'modules/binariesInfo.js'
+  ];
+  for (const file of files) {
+    const text = fs.readFileSync(file, 'utf8');
+    assert.equal(/from\s+["'](?:node:)?child_process["']/.test(text), false, `${file} bypasses safeProcess`);
+  }
+});
+
+test('provider fetches enforce fixed HTTPS origins and controlled redirects', () => {
+  const spotify = fs.readFileSync('modules/spotify.js', 'utf8');
+  const apple = fs.readFileSync('modules/apple.js', 'utf8');
+  const deezer = fs.readFileSync('modules/deezer.js', 'utf8');
+  assert.ok(spotify.includes('new URL("https://open.spotify.com/")'));
+  assert.ok(spotify.includes('redirect: "error"'));
+  assert.ok(apple.includes('host !== "music.apple.com" && host !== "embed.music.apple.com"'));
+  assert.ok(apple.includes('redirect: "manual"'));
+  assert.ok(deezer.includes('host !== "api.deezer.com"'));
+  assert.ok(deezer.includes('redirect: "manual"') || deezer.includes('redirect: "error"'));
+});
+
+test('browser URL handling avoids substring-host checks and javascript hrefs', () => {
+  const classic = fs.readFileSync('public/ui/MediaConverterApp.js', 'utf8');
+  const ytlive = fs.readFileSync('public/ui/YTLiveMusicApp.js', 'utf8');
+  assert.equal(/host\.includes\(['"][^'"]+\.(?:com|ly|am)['"]\)/.test(classic), false);
+  assert.equal(/host\.includes\(['"][^'"]+\.(?:com|ly|am)['"]\)/.test(ytlive), false);
+  assert.ok(ytlive.includes('function safeExternalHttpUrl'));
+  assert.ok(ytlive.includes("url.protocol !== 'https:' && url.protocol !== 'http:'"));
+});
+
+test('stream selection modal escapes probe-provided stream metadata', () => {
+  const upload = fs.readFileSync('public/ui/UploadManager.js', 'utf8');
+  assert.ok(upload.includes('const escapeHtml = (value)'));
+  assert.ok(upload.includes('escapeHtml(stream.codec_long)'));
+  assert.ok(upload.includes('escapeHtml(stream.title)'));
+  assert.ok(upload.includes("fileNameEl.textContent = displayFileName"));
+});
+
+test('temporary state files use randomized exclusive creation', () => {
+  for (const file of ['modules/store.js', 'modules/ytliveDownloadLists.js', 'modules/mappedMusicCache.js']) {
+    const text = fs.readFileSync(file, 'utf8');
+    assert.ok(text.includes('crypto.randomBytes'), `${file} lacks randomized temp names`);
+    assert.ok(text.includes("flag: \"wx\"") || text.includes("flag: 'wx'"), `${file} lacks exclusive temp creation`);
+  }
+  const binaries = fs.readFileSync('modules/binaries.js', 'utf8');
+  assert.equal(binaries.includes('path.join(os.tmpdir(), "gharmonize-web-bin")'), false);
+  assert.ok(binaries.includes('fs.mkdtempSync(path.join(os.tmpdir(), "gharmonize-web-bin-"))'));
 });

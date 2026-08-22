@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { sanitizeLogValue } from "./security.js";
 
 const parsedUid = Number(process.env.PUID);
 const parsedGid = Number(process.env.PGID);
@@ -22,7 +23,7 @@ const pendingJobs = new Map();
 function warnOnce(key, message) {
   if (warnedKeys.has(key)) return;
   warnedKeys.add(key);
-  console.warn(message);
+  console.warn(sanitizeLogValue(message));
 }
 
 function normalizeTargetPath(targetPath) {

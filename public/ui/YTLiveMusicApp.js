@@ -1,5 +1,29 @@
 import { settingsManager } from './SettingsManager.js';
 
+function isHostOrSubdomain(host, domain) {
+  const value = String(host || '').toLowerCase();
+  const expected = String(domain || '').toLowerCase();
+  return value === expected || value.endsWith(`.${expected}`);
+}
+
+function urlHasHost(value, domain) {
+  try {
+    return isHostOrSubdomain(new URL(String(value || '')).hostname, domain);
+  } catch {
+    return false;
+  }
+}
+
+function safeExternalHttpUrl(value) {
+  try {
+    const url = new URL(String(value || ''), window.location.origin);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
 class YTLiveMusicApp {
   constructor() {
     this.results = [];
@@ -1432,7 +1456,7 @@ class YTLiveMusicApp {
     if (provider === 'spotify') return 'SP';
     if (provider === 'apple_music') return 'AM';
     if (provider === 'deezer') return 'DZ';
-    if (String(track.webpage_url || track.url || '').includes('music.youtube.com')) return 'YTM';
+    if (urlHasHost(track.webpage_url || track.url || '', 'music.youtube.com')) return 'YTM';
     return 'YT';
   }
 
@@ -1511,7 +1535,7 @@ class YTLiveMusicApp {
     const addCurrent = document.getElementById('addCurrentBtn');
     const addCurrentToList = document.getElementById('addCurrentToListBtn');
     const openLink = document.getElementById('openCurrentLink');
-    const linkUrl = linkItem?.webpage_url || linkItem?.url || item.webpage_url || item.url || '';
+    const linkUrl = safeExternalHttpUrl(linkItem?.webpage_url || linkItem?.url || item.webpage_url || item.url || '');
 
     if (typeEl) typeEl.textContent = this.getItemTypeLabel(item);
     if (titleEl) titleEl.textContent = item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği');
@@ -4404,7 +4428,10 @@ class YTLiveMusicApp {
     const source = String(url || '').trim();
     if (!source) return '';
     if (source.startsWith('//')) return `https:${source}`;
-    if (/^https?:\/\//i.test(source)) return source;
+    try {
+      const parsed = new URL(source);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.toString();
+    } catch {}
     return source;
   }
 
@@ -4432,7 +4459,7 @@ class YTLiveMusicApp {
   isGoogleImageHost(rawUrl = '') {
     try {
       const host = new URL(rawUrl, window.location.origin).hostname.toLowerCase();
-      return /(^|\.)googleusercontent\.com$/.test(host) || /(^|\.)ggpht\.com$/.test(host);
+      return isHostOrSubdomain(host, 'googleusercontent.com') || isHostOrSubdomain(host, 'ggpht.com');
     } catch {
       return false;
     }
@@ -4446,10 +4473,16 @@ class YTLiveMusicApp {
 
     let path = match[1];
     const suffix = match[2] || '';
-    if (/=w\d+-h\d+(?:-[^/?#=]+)*$/i.test(path)) {
-      path = path.replace(/=w\d+-h\d+(?:-[^/?#=]+)*$/i, `=w${safeSize}-h${safeSize}-l90-rj`);
-    } else if (/=s\d+(?:-[^/?#=]+)*$/i.test(path)) {
-      path = path.replace(/=s\d+((?:-[^/?#=]+)*)$/i, `=s${safeSize}$1`);
+    const eqIndex = path.lastIndexOf('=');
+    const imageParams = eqIndex >= 0 ? path.slice(eqIndex + 1) : '';
+    const parts = imageParams.split('-').filter(Boolean);
+    const hasWidthHeight = /^w\d+$/i.test(parts[0] || '') && /^h\d+$/i.test(parts[1] || '');
+    const hasSquare = /^s\d+$/i.test(parts[0] || '');
+    if (eqIndex >= 0 && hasWidthHeight) {
+      path = `${path.slice(0, eqIndex)}=w${safeSize}-h${safeSize}-l90-rj`;
+    } else if (eqIndex >= 0 && hasSquare) {
+      const tail = parts.slice(1).map((part) => part.replace(/[^A-Za-z0-9_]/g, '')).filter(Boolean);
+      path = `${path.slice(0, eqIndex)}=s${safeSize}${tail.length ? `-${tail.join('-')}` : ''}`;
     } else {
       path = `${path}=w${safeSize}-h${safeSize}-l90-rj`;
     }
@@ -4684,7 +4717,7 @@ class YTLiveMusicApp {
       const host = parsed.hostname.toLowerCase();
       const parts = parsed.pathname.split('/').filter(Boolean).map((part) => part.toLowerCase());
 
-      if (host.includes('deezer.com')) {
+      if (isHostOrSubdomain(host, 'deezer.com')) {
         const type = parts.find((part) => ['track', 'album', 'playlist'].includes(part));
         if (type) return type;
       }
@@ -4709,7 +4742,7 @@ class YTLiveMusicApp {
       const parsed = new URL(value);
       const parts = parsed.pathname.split('/').filter(Boolean);
       const type = this.getMappedMusicUrlType(value);
-      if (type === 'track' && parsed.hostname.toLowerCase().includes('apple.com')) {
+      if (type === 'track' && isHostOrSubdomain(parsed.hostname, 'apple.com')) {
         return parsed.searchParams.get('i') || parts[parts.length - 1] || '';
       }
       const typeIndex = parts.findIndex((part) => ['track', 'album', 'playlist'].includes(String(part).toLowerCase()));
@@ -4721,7 +4754,10 @@ class YTLiveMusicApp {
 
   normalizePlayableUrl(rawUrl, fallbackId = '') {
     const source = String(rawUrl || '').trim();
-    if (/^https?:\/\//i.test(source)) return source;
+    try {
+      const parsed = new URL(source);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.toString();
+    } catch {}
     const id = String(fallbackId || source || '').trim();
     if (/^[A-Za-z0-9_-]{11}$/.test(id)) {
       return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
@@ -4735,7 +4771,7 @@ class YTLiveMusicApp {
     if (!id) return source;
     try {
       const url = new URL(source, window.location.origin);
-      const host = /music\.youtube\.com/i.test(url.hostname) ? 'https://music.youtube.com' : 'https://www.youtube.com';
+      const host = isHostOrSubdomain(url.hostname, 'music.youtube.com') ? 'https://music.youtube.com' : 'https://www.youtube.com';
       return `${host}/watch?v=${encodeURIComponent(id)}`;
     } catch {
       return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
@@ -4843,7 +4879,7 @@ class YTLiveMusicApp {
     const provider = item?.sourceProvider || this.getMappedMusicSource(item?.webpage_url || item?.url || '');
     if (provider) return this.getMappedMusicLabel(provider);
     if (this.isPlaylistLike(item)) return this.tt('ytlive.source.collection', 'Koleksiyon');
-    if (String(item?.webpage_url || item?.url || '').includes('music.youtube.com')) return 'YouTube Music';
+    if (urlHasHost(item?.webpage_url || item?.url || '', 'music.youtube.com')) return 'YouTube Music';
     return 'YouTube';
   }
 

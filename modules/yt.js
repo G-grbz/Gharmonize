@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs";
-import { spawn, execFile } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import { createHash } from "crypto";
 import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
@@ -233,13 +233,18 @@ export function normalizeYouTubeUrl(input) {
 
 // Checks whether you tube URL is valid for the yt-dlp YouTube download pipeline.
 export const isYouTubeUrl = (url) => {
-  const s = String(url || "");
-  return (
-    s.includes("youtube.com/") ||
-    s.includes("youtu.be/") ||
-    s.includes("youtube.com/watch") ||
-    s.includes("youtube.com/playlist")
-  );
+  const s = String(url || "").trim();
+  if (!s) return false;
+  try {
+    const parsed = new URL(s);
+    const host = parsed.hostname.toLowerCase();
+    return host === "youtube.com" ||
+      host.endsWith(".youtube.com") ||
+      host === "youtu.be" ||
+      host.endsWith(".youtu.be");
+  } catch {
+    return false;
+  }
 };
 
 // Checks whether dailymotion URL is valid for the yt-dlp YouTube download pipeline.
@@ -249,7 +254,7 @@ export const isDailymotionUrl = (url) => {
   try {
     const host = new URL(s).hostname.toLowerCase();
     return (
-      host.includes("dailymotion.com") ||
+      host === "dailymotion.com" || host.endsWith(".dailymotion.com") ||
       host === "dai.ly" ||
       host.endsWith(".dai.ly")
     );
@@ -327,14 +332,23 @@ function buildVideoFormatSelector(sourceUrl, maxHeight = 1080) {
 
 // Checks whether you tube playlist data is valid for the yt-dlp YouTube download pipeline.
 export const isYouTubePlaylist = (url) => {
-  const s = String(url || "");
-  return (
-    s.includes("list=") ||
-    s.includes("/playlist") ||
-    s.includes("&list=") ||
-    /music\.youtube\.com\/browse\/MPRE/i.test(s) ||
-    !!s.match(/youtube\.com.*[&?]list=/)
-  );
+  const s = String(url || "").trim();
+  if (!s) return false;
+  try {
+    const parsed = new URL(s);
+    const host = parsed.hostname.toLowerCase();
+    const isYoutubeHost =
+      host === "youtube.com" ||
+      host.endsWith(".youtube.com") ||
+      host === "youtu.be" ||
+      host.endsWith(".youtu.be");
+    if (!isYoutubeHost) return false;
+    if (parsed.searchParams.has("list")) return true;
+    if (parsed.pathname === "/playlist" || parsed.pathname.startsWith("/playlist/")) return true;
+    return host === "music.youtube.com" && /^\/browse\/MPRE[A-Za-z0-9_-]*$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
 };
 
 // Checks whether dailymotion playlist data is valid for the yt-dlp YouTube download pipeline.
@@ -563,7 +577,7 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
     const finalArgs = buildBaseArgs(args, { sourceUrl });
     let stdoutData = "", stderrData = "";
 
-    const process = spawn(YTDLP_BIN, finalArgs, {
+    const process = spawnSafe(YTDLP_BIN, finalArgs, {
       stdio: ["ignore", "pipe", "pipe"],
       env: getBinaryRuntimeEnv()
     });
@@ -799,8 +813,16 @@ function inferSearchEntryType(entry = {}, item = {}) {
 
   if (
     rawType.includes("album") ||
-    /^MPRE/i.test(id) ||
-    /music\.youtube\.com\/browse\/MPRE/i.test(url)
+    /^MPRE[A-Za-z0-9_-]*$/i.test(id) ||
+    (() => {
+      try {
+        const parsed = new URL(url);
+        return parsed.hostname.toLowerCase() === "music.youtube.com" &&
+          /^\/browse\/MPRE[A-Za-z0-9_-]*$/i.test(parsed.pathname);
+      } catch {
+        return false;
+      }
+    })()
   ) {
     return "album";
   }
@@ -3262,7 +3284,7 @@ function exportBrowserCookiesForMusicHome(timeoutMs = 12000) {
 
   return new Promise((resolve, reject) => {
     let stderrData = "";
-    const child = spawn(YTDLP_BIN, args, {
+    const child = spawnSafe(YTDLP_BIN, args, {
       stdio: ["ignore", "ignore", "pipe"],
       env: getBinaryRuntimeEnv()
     });
@@ -4547,7 +4569,7 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
 
       console.warn("[yt-meta-debug]", label, "args:", args.join(" "));
 
-      const child = spawn(YTDLP_BIN, args, {
+      const child = spawnSafe(YTDLP_BIN, args, {
         stdio: ["ignore", "pipe", "pipe"],
         env: getBinaryRuntimeEnv()
       });
@@ -4826,7 +4848,7 @@ if (opts.video) {
     let downloadedCount = 0;
     let activeDestinationIsMedia = false;
 
-    const child = spawn(ytDlpBin, args, getYtDlpJobSpawnOptions());
+    const child = spawnSafe(ytDlpBin, args, getYtDlpJobSpawnOptions());
     try { registerJobProcess(jobId, child); } catch {}
 
     // Handles abort if canceled in the yt-dlp YouTube download pipeline.
@@ -5085,7 +5107,7 @@ async function downloadSelectedIdsParallel(
       let mediaDestAbs = null;
       let emittedDone = false;
 
-      const child = spawn(ytDlpBin, args, getYtDlpJobSpawnOptions());
+      const child = spawnSafe(ytDlpBin, args, getYtDlpJobSpawnOptions());
       try { registerJobProcess(jobId, child); } catch {}
 
       // Handles abort if canceled in the yt-dlp YouTube download pipeline.
@@ -5387,7 +5409,7 @@ async function downloadStandard(
 
   const finalArgs = withDailymotionNoImpersonation(args, opts?.sourceUrl || url);
   return new Promise((resolve, reject) => {
-    const child = spawn(ytDlpBin, finalArgs, {
+    const child = spawnSafe(ytDlpBin, finalArgs, {
       ...getYtDlpJobSpawnOptions(),
       stdio: ["ignore", "pipe", "pipe"]
     });

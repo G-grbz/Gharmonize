@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { execFile } from "child_process";
+import { execFileSafe } from "./safeProcess.js";
 import { resolveYtDlp, withYT403Workarounds, isMusicEnabled } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
@@ -24,6 +24,25 @@ const YT_DOWNLOAD_RETRY_BACKOFF_MS = Math.max(
 );
 const _searchCache = new Map();
 const _SEARCH_CACHE_MAX = 800;
+
+
+function isYouTubeMusicUrl(value = "") {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return parsed.protocol === "https:" && parsed.hostname.toLowerCase() === "music.youtube.com";
+  } catch {
+    return false;
+  }
+}
+
+function toStandardYouTubeUrl(value = "") {
+  const parsed = new URL(String(value || "").trim());
+  if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "music.youtube.com") {
+    throw new Error("Not a YouTube Music URL");
+  }
+  parsed.hostname = "www.youtube.com";
+  return parsed.toString();
+}
 
 // Derives the parent job id from indexed file ids for core application logic.
 function deriveJobIdFromFileId(fileId = "") {
@@ -121,7 +140,7 @@ async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEA
   );
 
   return new Promise((resolve, reject) => {
-    execFile(
+    execFileSafe(
       YTDLP_BIN,
       args,
       { maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs },
@@ -504,7 +523,7 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
         return null;
       }
     };
-    const child = execFile(
+    const child = execFileSafe(
       YTDLP_BIN,
       finalArgs,
       {
@@ -522,9 +541,9 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
 
         const stderrStr = String(stderr || "");
         const is403 = /403|Forbidden/i.test(stderrStr);
-        const isMusic = /music\.youtube\.com/i.test(url);
+        const isMusic = isYouTubeMusicUrl(url);
         if (is403 && isMusic) {
-          const fallbackUrl = url.replace(/music\.youtube\.com/i, "www.youtube.com");
+          const fallbackUrl = toStandardYouTubeUrl(url);
           const retryArgs = finalArgs
             .map((x) => x)
             .filter((x) => x !== url)
@@ -535,7 +554,7 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
           if (idxExtr >= 0 && retryArgs[idxExtr + 1]) {
             retryArgs[idxExtr + 1] = "youtube:player_client=android,web";
           }
-          const child2 = execFile(
+          const child2 = execFileSafe(
             YTDLP_BIN,
             retryArgs,
             {

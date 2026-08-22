@@ -3,6 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { initializeDynamicBinaries } from './binaries.js'
+import { rateLimit } from './rateLimit.js'
+import { assertTrustedExecutable } from './safeProcess.js'
 import { getBinariesInfo, clearBinariesInfoCache } from './binariesInfo.js'
 import {
   decryptSecret,
@@ -38,6 +40,59 @@ const ALLOWED_KEYS = [
   'PLAYLIST_META_FALLBACK_TIMEOUT_MS','YT_UI_FORCE_COOKIES','YT_SEARCH_RESULTS','YT_SEARCH_TIMEOUT_MS',
   'YT_SEARCH_STAGGER_MS','HOMEPAGE_WIDGET_KEY'
 ]
+
+function applyAllowedEnvValue(key, value) {
+  const normalized = String(value ?? '')
+  switch (key) {
+    case 'SPOTIFY_CLIENT_ID': process.env.SPOTIFY_CLIENT_ID = value; return;
+    case 'SPOTIFY_CLIENT_SECRET': process.env.SPOTIFY_CLIENT_SECRET = value; return;
+    case 'SPOTIFY_MARKET': process.env.SPOTIFY_MARKET = value; return;
+    case 'SPOTIFY_FALLBACK_MARKETS': process.env.SPOTIFY_FALLBACK_MARKETS = value; return;
+    case 'YT_USE_MUSIC': process.env.YT_USE_MUSIC = value; return;
+    case 'PREFER_SPOTIFY_TAGS': process.env.PREFER_SPOTIFY_TAGS = value; return;
+    case 'TITLE_CLEAN_PIPE': process.env.TITLE_CLEAN_PIPE = value; return;
+    case 'YTDLP_UA': process.env.YTDLP_UA = value; return;
+    case 'YTDLP_COOKIES': process.env.YTDLP_COOKIES = value; return;
+    case 'YTDLP_COOKIES_FROM_BROWSER': process.env.YTDLP_COOKIES_FROM_BROWSER = value; return;
+    case 'YTDLP_EXTRA': process.env.YTDLP_EXTRA = value; return;
+    case 'YT_STRIP_COOKIES': process.env.YT_STRIP_COOKIES = value; return;
+    case 'YT_DEFAULT_REGION': process.env.YT_DEFAULT_REGION = value; return;
+    case 'YT_LANG': process.env.YT_LANG = value; return;
+    case 'YT_ACCEPT_LANGUAGE': process.env.YT_ACCEPT_LANGUAGE = value; return;
+    case 'YT_FORCE_IPV4': process.env.YT_FORCE_IPV4 = value; return;
+    case 'YT_403_WORKAROUNDS': process.env.YT_403_WORKAROUNDS = value; return;
+    case 'ENRICH_SPOTIFY_FOR_YT': process.env.ENRICH_SPOTIFY_FOR_YT = value; return;
+    case 'MEDIA_COMMENT': process.env.MEDIA_COMMENT = value; return;
+    case 'YTDLP_BIN': process.env.YTDLP_BIN = assertTrustedExecutable(value); return;
+    case 'FFMPEG_BIN': process.env.FFMPEG_BIN = assertTrustedExecutable(value); return;
+    case 'GHARMONIZE_FFMPEG_CHANNEL': process.env.GHARMONIZE_FFMPEG_CHANNEL = value; return;
+    case 'TRUST_PROXY': process.env.TRUST_PROXY = value; return;
+    case 'TRUSTED_PROXY_CIDRS': process.env.TRUSTED_PROXY_CIDRS = value; return;
+    case 'UPLOAD_MAX_BYTES': process.env.UPLOAD_MAX_BYTES = value; return;
+    case 'TRACK_EXTRACTOR_SHELL_INTEGRATION': process.env.TRACK_EXTRACTOR_SHELL_INTEGRATION = value; return;
+    case 'FRONTEND_UI': process.env.FRONTEND_UI = value; return;
+    case 'YOUTUBE_QUICK_ADD_LIMIT': process.env.YOUTUBE_QUICK_ADD_LIMIT = value; return;
+    case 'YTLIVE_MUSIC_TITLE': process.env.YTLIVE_MUSIC_TITLE = value; return;
+    case 'YTLIVE_MUSIC_SUBTITLE': process.env.YTLIVE_MUSIC_SUBTITLE = value; return;
+    case 'SPOTIFY_DEBUG_MARKET': process.env.SPOTIFY_DEBUG_MARKET = value; return;
+    case 'CLEAN_SUFFIXES': process.env.CLEAN_SUFFIXES = value; return;
+    case 'CLEAN_PHRASES': process.env.CLEAN_PHRASES = value; return;
+    case 'CLEAN_PARENS': process.env.CLEAN_PARENS = value; return;
+    case 'PREVIEW_MAX_ENTRIES': process.env.PREVIEW_MAX_ENTRIES = value; return;
+    case 'AUTOMIX_ALL_TIMEOUT_MS': process.env.AUTOMIX_ALL_TIMEOUT_MS = value; return;
+    case 'AUTOMIX_PAGE_TIMEOUT_MS': process.env.AUTOMIX_PAGE_TIMEOUT_MS = value; return;
+    case 'PLAYLIST_ALL_TIMEOUT_MS': process.env.PLAYLIST_ALL_TIMEOUT_MS = value; return;
+    case 'PLAYLIST_PAGE_TIMEOUT_MS': process.env.PLAYLIST_PAGE_TIMEOUT_MS = value; return;
+    case 'PLAYLIST_META_TIMEOUT_MS': process.env.PLAYLIST_META_TIMEOUT_MS = value; return;
+    case 'PLAYLIST_META_FALLBACK_TIMEOUT_MS': process.env.PLAYLIST_META_FALLBACK_TIMEOUT_MS = value; return;
+    case 'YT_UI_FORCE_COOKIES': process.env.YT_UI_FORCE_COOKIES = value; return;
+    case 'YT_SEARCH_RESULTS': process.env.YT_SEARCH_RESULTS = value; return;
+    case 'YT_SEARCH_TIMEOUT_MS': process.env.YT_SEARCH_TIMEOUT_MS = value; return;
+    case 'YT_SEARCH_STAGGER_MS': process.env.YT_SEARCH_STAGGER_MS = value; return;
+    case 'HOMEPAGE_WIDGET_KEY': process.env.HOMEPAGE_WIDGET_KEY = value; return;
+    default: return;
+  }
+}
 
 function parseEnvRaw() {
   const m = new Map()
@@ -81,7 +136,12 @@ function writeEnv(updates, extraAllowed = []) {
     rawMap.set(k, serializeEnvValue(k, v))
   }
 
-  const existing = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, 'utf8').split(/\r?\n/) : []
+  let existing = []
+  try {
+    existing = fs.readFileSync(ENV_PATH, 'utf8').split(/\r?\n/)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
   const seen = new Set()
   const out = existing.map(line => {
     const mm = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/)
@@ -102,9 +162,16 @@ function writeEnv(updates, extraAllowed = []) {
     }
   }
   const clean = out.filter((line, idx, arr) => idx === 0 || line.trim() !== '' || arr[idx - 1].trim() !== '')
-  fs.mkdirSync(path.dirname(ENV_PATH), { recursive: true, mode: 0o700 })
-  fs.writeFileSync(ENV_PATH, clean.join('\n').trim() + '\n', { encoding: 'utf8', mode: 0o600 })
-  try { fs.chmodSync(ENV_PATH, 0o600) } catch {}
+  const envDir = path.dirname(ENV_PATH)
+  fs.mkdirSync(envDir, { recursive: true, mode: 0o700 })
+  const tmpPath = path.join(envDir, `.gharmonize-env.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`)
+  try {
+    fs.writeFileSync(tmpPath, clean.join('\n').trim() + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    fs.renameSync(tmpPath, ENV_PATH)
+    try { fs.chmodSync(ENV_PATH, 0o600) } catch {}
+  } finally {
+    try { fs.rmSync(tmpPath, { force: true }) } catch {}
+  }
 }
 
 function getEnv(key) {
@@ -208,7 +275,7 @@ function getTokenFromReq(req) {
     const value = String(req.query.token)
     if (value.includes('.')) return value
   }
-  return parseCookieHeader(req.get('cookie') || '')[SESSION_COOKIE] || null
+  return parseCookieHeader(req.get('cookie') || '').get(SESSION_COOKIE) || null
 }
 
 function setSessionCookie(req, res, token) {
@@ -250,7 +317,7 @@ function isRateLimited(req) {
 }
 function clearRateLimit(req) { loginAttempts.delete(clientKey(req)) }
 
-router.post('/auth/login', express.json(), (req, res) => {
+router.post('/auth/login', rateLimit(10, 60_000), express.json(), (req, res) => {
   if (isRateLimited(req)) return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Try again later.' } })
   const { password } = req.body || {}
   const currentHash = getAdminPasswordHash()
@@ -262,7 +329,7 @@ router.post('/auth/login', express.json(), (req, res) => {
   res.json({ token: 'cookie', expiresInMs: SESSION_TTL_MS })
 })
 
-router.post('/auth/logout', (_req, res) => { clearSessionCookie(res); res.json({ ok: true }) })
+router.post('/auth/logout', rateLimit(30, 60_000), (_req, res) => { clearSessionCookie(res); res.json({ ok: true }) })
 
 router.get('/ui-config', (_req, res) => {
   const frontendUi = getEnv('FRONTEND_UI') === 'ytlive' ? 'ytlive' : 'classic'
@@ -271,9 +338,9 @@ router.get('/ui-config', (_req, res) => {
   res.json({ frontendUi, quickAddLimit, musicTitle: getEnv('YTLIVE_MUSIC_TITLE') || 'Gharmonize Music', musicSubtitle: getEnv('YTLIVE_MUSIC_SUBTITLE') })
 })
 
-router.get('/auth/verify', authMiddleware, (_req, res) => res.json({ valid: true, message: 'Session is valid' }))
+router.get('/auth/verify', authMiddleware, rateLimit(120, 60_000), (_req, res) => res.json({ valid: true, message: 'Session is valid' }))
 
-router.get('/settings', authMiddleware, (_req, res) => {
+router.get('/settings', authMiddleware, rateLimit(60, 60_000), (_req, res) => {
   const env = parseEnv(); const data = {}
   for (const k of ALLOWED_KEYS) {
     let val = env.get(k) ?? getEnv(k) ?? ''
@@ -285,7 +352,7 @@ router.get('/settings', authMiddleware, (_req, res) => {
   res.json({ settings: data })
 })
 
-router.post('/settings', authMiddleware, express.json(), (req, res) => {
+router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), (req, res) => {
   const incoming = (req.body && req.body.settings) || {}; const env = parseEnv(); const updates = {}
   for (const k of ALLOWED_KEYS) {
     if (!(k in incoming)) continue
@@ -296,12 +363,12 @@ router.post('/settings', authMiddleware, express.json(), (req, res) => {
     if (typeof v !== 'undefined' && v !== null) updates[k] = String(v)
   }
   writeEnv(updates)
-  for (const [k, v] of Object.entries(updates)) process.env[k] = v
+  for (const [k, v] of Object.entries(updates)) applyAllowedEnvValue(k, v)
   process.emit('gharmonize:settings-updated', { updates })
   res.json({ ok: true, appliedInMemory: true })
 })
 
-router.post('/auth/change-password', authMiddleware, express.json(), (req, res) => {
+router.post('/auth/change-password', authMiddleware, rateLimit(10, 60_000), express.json(), (req, res) => {
   const { oldPassword, newPassword, newPassword2 } = req.body || {}
   const fail = (code, message) => res.status(400).json({ error: { code, message } })
   if (!oldPassword || !newPassword || !newPassword2) return fail('FIELDS_REQUIRED', 'All fields are required.')
@@ -314,14 +381,14 @@ router.post('/auth/change-password', authMiddleware, express.json(), (req, res) 
 })
 
 function generateHomepageWidgetKey() { return `hwk_${crypto.randomBytes(32).toString('base64url')}` }
-router.post('/settings/homepage-widget-key', authMiddleware, express.json(), (req, res) => {
+router.post('/settings/homepage-widget-key', authMiddleware, rateLimit(10, 60_000), express.json(), (req, res) => {
   const { rotate = true, reveal = false } = req.body || {}; const env = parseEnv(); const existing = (env.get('HOMEPAGE_WIDGET_KEY') || '').trim()
   if (!rotate && existing) return res.json({ ok: true, rotated: false, key: reveal ? existing : undefined })
   const next = generateHomepageWidgetKey(); writeEnv({ HOMEPAGE_WIDGET_KEY: next }, ['HOMEPAGE_WIDGET_KEY']); process.env.HOMEPAGE_WIDGET_KEY = next
   res.json({ ok: true, rotated: true, key: reveal ? next : undefined })
 })
 
-router.post('/settings/refresh-binaries', authMiddleware, async (_req, res) => {
+router.post('/settings/refresh-binaries', authMiddleware, rateLimit(5, 60_000), async (_req, res) => {
   try {
     const refresh = await initializeDynamicBinaries({ force: true }); clearBinariesInfoCache(); const binaries = await getBinariesInfo({ force: true })
     return res.json({ ok: true, refresh, binaries })

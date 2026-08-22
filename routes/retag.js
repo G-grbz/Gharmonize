@@ -1,4 +1,5 @@
 import express from "express";
+import { rateLimit } from "../modules/rateLimit.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -86,7 +87,7 @@ function directoryLabel(directoryPath) {
   return path.basename(directoryPath) || directoryPath;
 }
 
-router.get("/api/retag/directories", requireRetagAccess, (req, res) => {
+router.get("/api/retag/directories", requireRetagAccess, rateLimit(60, 60_000), (req, res) => {
   try {
     if (req.retagDesktopAccess) {
       return sendOk(res, { desktop: true, roots: [], current: null, entries: [] });
@@ -135,7 +136,7 @@ router.get("/api/retag/directories", requireRetagAccess, (req, res) => {
   }
 });
 
-router.post("/api/retag/jobs", requireRetagAccess, (req, res) => {
+router.post("/api/retag/jobs", requireRetagAccess, rateLimit(20, 60_000), (req, res) => {
   try {
     const directoryPath = resolveRequestedDirectory(req, req.body?.directoryPath);
     fs.accessSync(directoryPath, fs.constants.R_OK | fs.constants.W_OK);

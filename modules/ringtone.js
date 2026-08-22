@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import { probeMediaFile } from "./probe.js";
 import { FFMPEG_BIN } from "./binaries.js";
 
@@ -135,7 +135,7 @@ async function decodeAudioEnvelope(
 
     args.push("-vn", "-ac", "1", "-ar", String(analysisRate), "-f", "f32le", "pipe:1");
 
-    const child = spawn(ffmpegBin, args, {
+    const child = spawnSafe(ffmpegBin, args, {
       stdio: ["ignore", "pipe", "pipe"]
     });
 

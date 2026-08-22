@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import fs from "fs";
 import { FFPROBE_BIN } from "./binaries.js";
 
@@ -7,7 +7,7 @@ export async function probeMediaFile(filePath) {
   return new Promise((resolve, reject) => {
     const ffprobeBin = FFPROBE_BIN || 'ffprobe';
 
-    const ffprobe = spawn(ffprobeBin, [
+    const ffprobe = spawnSafe(ffprobeBin, [
       '-v', 'quiet',
       '-print_format', 'json',
       '-show_format',

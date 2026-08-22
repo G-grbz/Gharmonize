@@ -234,7 +234,8 @@ function isDeezerShortHost(host = "") {
   return (
     value === "link.deezer.com" ||
     value.endsWith(".link.deezer.com") ||
-    value.endsWith("deezer.page.link")
+    value === "deezer.page.link" ||
+    value.endsWith(".deezer.page.link")
   );
 }
 
@@ -306,7 +307,18 @@ async function resolveDeezerCanonicalUrl(url = "") {
   if (!raw || !isDeezerShortUrl(raw)) return raw;
 
   try {
-    const res = await fetch(raw, {
+    const target = new URL(raw);
+    const host = target.hostname.toLowerCase();
+    const allowedShortHost =
+      host === "link.deezer.com" ||
+      host.endsWith(".link.deezer.com") ||
+      host === "deezer.page.link" ||
+      host.endsWith(".deezer.page.link");
+    if (target.protocol !== "https:" || !allowedShortHost || target.username || target.password) {
+      return raw;
+    }
+
+    const res = await fetch(target.toString(), {
       headers: DEEZER_WEB_HEADERS,
       redirect: "manual"
     });
@@ -326,8 +338,19 @@ async function resolveDeezerCanonicalUrl(url = "") {
 
 // Fetches Deezer JSON payloads with shared headers for Deezer metadata flow.
 async function fetchDeezerJson(url = "") {
-  const res = await fetch(url, {
-    headers: DEEZER_WEB_HEADERS
+  const target = new URL(String(url || ""));
+  const host = target.hostname.toLowerCase();
+  if (
+    target.protocol !== "https:" ||
+    (host !== "api.deezer.com" && !host.endsWith(".api.deezer.com")) ||
+    target.username ||
+    target.password
+  ) {
+    throw new Error("Unsafe Deezer API URL");
+  }
+  const res = await fetch(target.toString(), {
+    headers: DEEZER_WEB_HEADERS,
+    redirect: "error"
   });
 
   if (!res.ok) {

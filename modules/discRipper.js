@@ -1,10 +1,27 @@
-import { execFile, spawn } from "child_process";
+import { execFileSafe, spawnSafe } from "./safeProcess.js";
 import fs from "fs/promises";
 import path from "path";
 import { MKVMERGE_BIN } from "./binaries.js";
+import { sanitizeLogValue, assertAllowedDiscSource, assertPathWithinAny } from "./security.js";
 
 let currentRipProcess = null;
 let ripCancelled = false;
+
+function discOutputRoots() {
+  const baseDir = path.resolve(process.env.DATA_DIR || process.cwd());
+  const roots = [
+    path.resolve(baseDir, "outputs"),
+    path.resolve(baseDir, "temp"),
+    path.resolve(baseDir, process.env.LOCAL_INPUT_DIR || "local-inputs")
+  ];
+  const extra = String(process.env.DISC_OUTPUT_ROOTS || "")
+    .split(path.delimiter)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => path.resolve(value));
+  return [...roots, ...extra];
+}
+
 
 // Removes noisy AppImage extraction lines from MKVToolNix output.
 function sanitizeMkvToolNixOutput(rawOutput) {
@@ -66,7 +83,7 @@ function execJsonUnlimited(command, args = [], progressCallback = null) {
     progressCallback(0, { __i18n: true, key: "disc.progress.analyzingTracks", vars: {} });
   }
   return new Promise((resolve, reject) => {
-    execFile(command, args, { maxBuffer: 1024 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    execFileSafe(command, args, { maxBuffer: 1024 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         error.stdout = stdout;
         error.stderr = stderr;
@@ -87,7 +104,7 @@ function runRipCommand(
   ripCancelled = false;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(MKVMERGE_BIN, args, {
+    const child = spawnSafe(MKVMERGE_BIN, args, {
       stdio: ["ignore", "pipe", "pipe"]
     });
 
@@ -228,7 +245,7 @@ async function estimateDvdTitleSize(videoTsPath, titleIndex) {
       const stats = await fs.stat(f);
       total += stats.size;
     } catch (err) {
-      console.warn("Failed to read VOB size:", f, err.message);
+      console.warn("Failed to read VOB size:", sanitizeLogValue(f), sanitizeLogValue(err?.message));
     }
   }
   return total;
@@ -333,6 +350,26 @@ async function ripTitle(
     subtitleTracks = []
   } = options;
 
+  const safeTitleIndex = Number.parseInt(String(titleIndex), 10);
+  if (!Number.isInteger(safeTitleIndex) || safeTitleIndex < 0 || safeTitleIndex > 9999) {
+    throw new Error("Invalid disc title index");
+  }
+  const safePlaylistFile = playlistFile == null
+    ? null
+    : path.basename(String(playlistFile || ""));
+  if (safePlaylistFile && !/^\d{5}\.mpls$/i.test(safePlaylistFile)) {
+    throw new Error("Invalid Blu-ray playlist filename");
+  }
+  const normalizeTrackSelection = (values) =>
+    (Array.isArray(values) ? values : [])
+      .map((value) => Number.parseInt(String(value), 10))
+      .filter((value) => Number.isInteger(value) && value >= 0 && value <= 1024)
+      .slice(0, 256);
+  const safeAudioTracks = normalizeTrackSelection(audioTracks);
+  const safeSubtitleTracks = normalizeTrackSelection(subtitleTracks);
+  const safeSourcePath = await assertAllowedDiscSource(sourcePath);
+  const safeOutputPath = assertPathWithinAny(path.resolve(String(outputPath || "")), discOutputRoots());
+
   // Sends progress in disc scanning and ripping.
   const sendProgress = (percent, message = "") => {
     if (!progressCallback) return;
@@ -367,24 +404,24 @@ async function ripTitle(
 
   if (discType === "Blu-ray") {
     return ripBluRayTitle(
-      sourcePath,
-      titleIndex,
-      outputPath,
+      safeSourcePath,
+      safeTitleIndex,
+      safeOutputPath,
       {
-        playlistFile,
-        audioTracks,
-        subtitleTracks
+        playlistFile: safePlaylistFile,
+        audioTracks: safeAudioTracks,
+        subtitleTracks: safeSubtitleTracks
       },
       sendProgress
     );
   } else {
     return ripDvdTitle(
-      sourcePath,
-      titleIndex,
-      outputPath,
+      safeSourcePath,
+      safeTitleIndex,
+      safeOutputPath,
       {
-        audioTracks,
-        subtitleTracks
+        audioTracks: safeAudioTracks,
+        subtitleTracks: safeSubtitleTracks
       },
       sendProgress
     );
@@ -463,7 +500,7 @@ async function ripDvdTitle(
     const inputSource = vobFiles[0];
     args.push(inputSource);
 
-    console.log("DVD rip args:", [MKVMERGE_BIN, ...args].join(" "));
+    console.log("DVD rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" ")));
 
     if (progressCallback) progressCallback(30, { __i18n: true, key: "disc.progress.creatingMkv", vars: {} });
 
@@ -565,11 +602,10 @@ async function ripBluRayTitle(
       );
     }
 
-    const playlistPath = path.join(
-      sourcePath,
-      "BDMV",
-      "PLAYLIST",
-      playlistFile
+    const playlistRoot = path.resolve(sourcePath, "BDMV", "PLAYLIST");
+    const playlistPath = assertPathWithinAny(
+      path.resolve(playlistRoot, path.basename(playlistFile)),
+      [playlistRoot]
     );
 
     try {
@@ -604,7 +640,7 @@ async function ripBluRayTitle(
     } catch (err) {
       console.warn(
         "Blu-ray track ID analysis failed, all tracks will be included:",
-        err.message
+        sanitizeLogValue(err?.message)
       );
     }
 
@@ -646,7 +682,7 @@ async function ripBluRayTitle(
 
     args.push(playlistPath);
 
-    console.log("Blu-ray rip args:", [MKVMERGE_BIN, ...args].join(" "));
+    console.log("Blu-ray rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" ")));
 
     let expectedSizeBytes = 0;
     if (mkvmergeInfo) {
@@ -751,15 +787,17 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
 
     if (Array.isArray(props.playlist_file) && props.playlist_file.length > 0) {
       for (const filePath of props.playlist_file) {
-        const fullPath = path.isAbsolute(filePath)
-          ? filePath
-          : path.join(sourcePath, "BDMV", "STREAM", filePath);
+        const streamRoot = path.resolve(sourcePath, "BDMV", "STREAM");
+        const fullPath = assertPathWithinAny(
+          path.resolve(streamRoot, path.basename(String(filePath || ""))),
+          [streamRoot]
+        );
 
         try {
           const stats = await fs.stat(fullPath);
           total += stats.size;
         } catch (err) {
-          console.warn("Failed to read M2TS size:", fullPath, err.message);
+          console.warn("Failed to read M2TS size:", sanitizeLogValue(fullPath), sanitizeLogValue(err?.message));
         }
       }
 
@@ -786,15 +824,18 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
         const fileName = f.file_name || f.name || null;
         if (!fileName) continue;
 
-        const fullPath = path.join(streamPath, fileName);
+        const fullPath = assertPathWithinAny(
+          path.resolve(streamPath, path.basename(String(fileName || ""))),
+          [streamPath]
+        );
         try {
           const stats = await fs.stat(fullPath);
           legacyTotal += stats.size;
         } catch (err) {
           console.warn(
             "Failed to read M2TS size (legacy):",
-            fullPath,
-            err.message
+            sanitizeLogValue(fullPath),
+            sanitizeLogValue(err?.message)
           );
         }
       }
@@ -811,7 +852,7 @@ async function estimateBluRayTitleSize(sourcePath, mkvmergeInfo) {
     console.log("Blu-ray size could not be estimated, returning 0");
     return 0;
   } catch (err) {
-    console.warn("Blu-ray size estimation error:", err.message);
+    console.warn("Blu-ray size estimation error:", sanitizeLogValue(err?.message));
     return 0;
   }
 }
@@ -855,7 +896,7 @@ async function analyzeDvdTracks(videoTsPath, titleIndex) {
   } catch (error) {
     console.log(
       "DVD track analysis error, using fallback defaults:",
-      error.message
+      sanitizeLogValue(error?.message)
     );
     return {
       audioCount: 3,
@@ -889,7 +930,10 @@ async function getMainVOBFilesForTitle(videoTsPath, titleIndex) {
         );
         return numA - numB;
       })
-      .map((f) => path.join(videoTsPath, f));
+      .map((f) => assertPathWithinAny(
+        path.resolve(videoTsPath, path.basename(f)),
+        [videoTsPath]
+      ));
 
     return vobFiles;
   } catch (err) {

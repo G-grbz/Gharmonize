@@ -272,7 +272,6 @@ export function buildRichId3v2Tags(meta = {}) {
 export function writeRichId3v2Tag(filePath, meta = {}) {
   try {
     if (String(path.extname(filePath) || "").toLowerCase() !== ".mp3") return false;
-    if (!fs.existsSync(filePath)) return false;
 
     const tags = buildRichId3v2Tags(meta);
     if (!Object.keys(tags).length) return false;
@@ -289,7 +288,6 @@ export function writeRichId3v2Tag(filePath, meta = {}) {
 export function rewriteId3v11Tag(filePath, meta = {}) {
   try {
     if (String(path.extname(filePath) || "").toLowerCase() !== ".mp3") return false;
-    if (!fs.existsSync(filePath)) return false;
 
     const title = meta.track || meta.title || "";
     const artist = meta.artist || meta.album_artist || meta.uploader || "";
@@ -312,7 +310,8 @@ export function rewriteId3v11Tag(filePath, meta = {}) {
     tag[126] = trackNo;
     tag[127] = genre;
 
-    const fd = fs.openSync(filePath, "r+");
+    const openFlags = fs.constants.O_RDWR | (fs.constants.O_NOFOLLOW || 0);
+    const fd = fs.openSync(filePath, openFlags);
     try {
       const stat = fs.fstatSync(fd);
       let offset = stat.size;

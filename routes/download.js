@@ -1,8 +1,10 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { spawn } from "child_process";
+import { spawnSafe } from "../modules/safeProcess.js";
 import { resolveDownloadPathToAbs } from "../modules/outputPaths.js";
+import { sanitizeLogValue } from "../modules/security.js";
+import { rateLimit } from "../modules/rateLimit.js";
 
 const router = express.Router();
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
@@ -33,7 +35,7 @@ function resolveOpenRootDir() {
 // Resolves output subdirectory safely against root.
 function resolveOutputSubdirAbs(rawSubdir = "", outputRootDir = OUTPUT_DIR) {
   const root = path.resolve(outputRootDir || OUTPUT_DIR);
-  const src = String(rawSubdir || "").trim().replace(/^[/\\]+|[/\\]+$/g, "");
+  const src = String(rawSubdir || "").trim().replace(/^[/\\]+/, "").replace(/[/\\]+$/, "");
   if (!src) return root;
 
   const parts = src.split(/[\\/]+/).filter(Boolean);
@@ -50,7 +52,7 @@ function resolveOutputSubdirAbs(rawSubdir = "", outputRootDir = OUTPUT_DIR) {
 function spawnDetached(command, args) {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const child = spawn(command, args, {
+    const child = spawnSafe(command, args, {
       detached: true,
       stdio: "ignore"
     });
@@ -157,16 +159,16 @@ function handleDownload(req, res) {
   fs.stat(abs, (statErr, stat) => {
     if (statErr) {
       if (statErr.code === "ENOENT" || statErr.code === "ENOTDIR") {
-        console.warn("[download] Not found:", abs);
+        console.warn("[download] Not found:", sanitizeLogValue(abs));
         return res.status(404).send("Not found");
       }
 
-      console.warn("[download] Stat failed:", abs, statErr);
+      console.warn("[download] Stat failed:", sanitizeLogValue(abs), sanitizeLogValue(statErr?.message || statErr));
       return res.status(500).send("Unable to read file");
     }
 
     if (!stat.isFile()) {
-      console.warn("[download] Not a file:", abs);
+      console.warn("[download] Not a file:", sanitizeLogValue(abs));
       return res.status(404).send("Not found");
     }
 
@@ -179,7 +181,7 @@ function handleDownload(req, res) {
     const stream = fs.createReadStream(abs);
 
     stream.once("error", (sendErr) => {
-      console.warn("[download] Send failed:", abs, sendErr);
+      console.warn("[download] Send failed:", sanitizeLogValue(abs), sanitizeLogValue(sendErr?.message || sendErr));
 
       if (!res.headersSent) {
         clearDownloadHeaders(res);
@@ -196,7 +198,7 @@ function handleDownload(req, res) {
   });
 }
 
-router.get("/api/outputs/location", (_req, res) => {
+router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => {
   const isWindows = process.platform === "win32";
   const linuxPath = isWindows ? OUTPUTS_DISPLAY_DIR.replace(/\\/g, "/") : OUTPUTS_DISPLAY_DIR;
   const windowsPath = isWindows ? OUTPUTS_DISPLAY_DIR : OUTPUTS_DISPLAY_DIR.replace(/\//g, "\\");
@@ -209,14 +211,14 @@ router.get("/api/outputs/location", (_req, res) => {
   });
 });
 
-router.get("/api/outputs/exists", (req, res) => {
+router.get("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => {
   const rawPath = req.query.path || req.query.url || "";
   const abs = resolveOutputPath(rawPath);
   const exists = !!(abs && fs.existsSync(abs));
   res.json({ exists });
 });
 
-router.post("/api/outputs/open", async (req, res) => {
+router.post("/api/outputs/open", rateLimit(30, 60_000), async (req, res) => {
   try {
     const openRoot = resolveOpenRootDir();
     const subdir = req.body?.subdir || req.body?.outputSubdir || "";
@@ -243,7 +245,7 @@ router.post("/api/outputs/open", async (req, res) => {
   }
 });
 
-router.head("/download/*filePath", handleDownload);
-router.get("/download/*filePath", handleDownload);
+router.head("/download/*filePath", rateLimit(120, 60_000), handleDownload);
+router.get("/download/*filePath", rateLimit(120, 60_000), handleDownload);
 
 export default router;

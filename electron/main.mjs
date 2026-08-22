@@ -4,7 +4,6 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
-import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
   FFMPEG_BIN,
@@ -15,8 +14,9 @@ import {
   initializeDynamicBinaries
 } from '../modules/binaries.js';
 import { isSafeExternalUrl } from '../modules/security.js';
+import { execFileSafe } from '../modules/safeProcess.js';
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFileSafe);
 const HOST = '127.0.0.1'
 const APP_DISPLAY_NAME = 'Gharmonize';
 const LINUX_DESKTOP_ID = 'gharmonize';
@@ -292,7 +292,11 @@ function flushPendingTrackExtractorFiles() {
 }
 
 function shellCommandQuote(value) {
-  return `"${String(value || '').replace(/"/g, '\\"')}"`;
+  const raw = String(value || '').replace(/[\u0000\r\n]/g, '');
+  const escaped = raw
+    .replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/g, '$1$1');
+  return `"${escaped}"`;
 }
 
 function desktopExecQuote(value) {

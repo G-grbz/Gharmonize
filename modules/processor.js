@@ -23,6 +23,7 @@ import {
 import { downloadThumbnail, convertMedia, maybeCleanTitle } from "./media.js";
 import { buildId3FromYouTube } from "./tags.js";
 import { probeYoutubeMusicMeta } from "./yt.js";
+import { sanitizeLogValue, assertPathWithinAny, isPathInside } from "./security.js";
 import { findSpotifyMetaByQuery } from "./spotify.js";
 import { findAppleTrackMetaByQuery } from "./apple.js";
 import { findDeezerTrackMetaByQuery } from "./deezer.js";
@@ -41,6 +42,8 @@ import {
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
 const TEMP_DIR = path.resolve(BASE_DIR, "temp");
+const UPLOAD_DIR = path.resolve(BASE_DIR, "uploads");
+const LOCAL_INPUT_DIR = path.resolve(BASE_DIR, process.env.LOCAL_INPUT_DIR || "local-inputs");
 
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(TEMP_DIR, { recursive: true });
@@ -533,8 +536,10 @@ async function maybeRenamePlaylistOutputDir(job, currentDir, outputRootDir = OUT
 
 // Handles safe move file sync in core application logic.
 function safeMoveFileSync(src, dest) {
+  const safeSrc = assertPathWithinAny(path.resolve(String(src || "")), [TEMP_DIR, OUTPUT_DIR, UPLOAD_DIR, LOCAL_INPUT_DIR]);
+  const safeDest = assertPathWithinAny(path.resolve(String(dest || "")), [TEMP_DIR, OUTPUT_DIR, LOCAL_INPUT_DIR]);
   try {
-    fs.renameSync(src, dest);
+    fs.renameSync(safeSrc, safeDest);
     return;
   } catch (e) {
     if (!e || e.code !== "EXDEV") throw e;
@@ -542,24 +547,24 @@ function safeMoveFileSync(src, dest) {
 
   try {
     const flags = fs.constants?.COPYFILE_FICLONE || 0;
-    fs.copyFileSync(src, dest, flags);
+    fs.copyFileSync(safeSrc, safeDest, flags);
   } catch {
-    fs.copyFileSync(src, dest);
+    fs.copyFileSync(safeSrc, safeDest);
   }
 
   try {
-    const srcSize = fs.statSync(src).size;
-    const destSize = fs.statSync(dest).size;
+    const srcSize = fs.statSync(safeSrc).size;
+    const destSize = fs.statSync(safeDest).size;
     if (srcSize !== destSize) throw new Error("copy size mismatch");
   } catch (verifyErr) {
     try {
-      fs.unlinkSync(dest);
+      fs.rmSync(safeDest, { force: true });
     } catch {}
     throw verifyErr;
   }
 
   try {
-    fs.unlinkSync(src);
+    fs.rmSync(safeSrc, { force: true });
   } catch {}
 }
 
@@ -2186,8 +2191,9 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     const isEac3Ac3 =
       format === "eac3" || format === "ac3" || format === "aac";
     if (!coverPath && typeof actualInputPath === "string") {
-      const baseNoExt = actualInputPath.replace(/\.[^.]+$/, "");
-      const sidecar = `${baseNoExt}.jpg`;
+      const safeInput = assertPathWithinAny(path.resolve(actualInputPath), [TEMP_DIR, OUTPUT_DIR, UPLOAD_DIR, LOCAL_INPUT_DIR]);
+      const baseNoExt = safeInput.replace(/\.[^.]+$/, "");
+      const sidecar = assertPathWithinAny(`${baseNoExt}.jpg`, [TEMP_DIR, OUTPUT_DIR, UPLOAD_DIR, LOCAL_INPUT_DIR]);
       if (fs.existsSync(sidecar)) coverPath = sidecar;
     }
 
@@ -2456,7 +2462,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       job.metadata?.source === "platform" &&
       !transcodeEnabled &&
       typeof actualInputPath === "string" &&
-      actualInputPath.startsWith(TEMP_DIR + path.sep) &&
+      isPathInside(TEMP_DIR, actualInputPath) &&
       fs.existsSync(actualInputPath);
 
     const existingSingle = findExistingOutput(jobId, format, outputDir);
@@ -2473,7 +2479,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           const targetAbs = buildUniqueOutputPath(outputDir, `${base}${ext}`);
 
           console.log(
-            `🎬 Platform MP4 transcode disabled - direct move: ${actualInputPath} -> ${targetAbs}`
+            `🎬 Platform MP4 transcode disabled - direct move: ${sanitizeLogValue(actualInputPath)} -> ${sanitizeLogValue(targetAbs)}`
           );
           safeMoveFileSync(actualInputPath, targetAbs);
           queueOwnershipFix(targetAbs);
@@ -2837,57 +2843,36 @@ async function makeZipFromOutputs(
 // Cleans up temp files for core application logic.
 function cleanupTempFiles(jobId, originalInputPath, downloadedPath = null) {
   try {
-    if (
-      typeof originalInputPath === "string" &&
-      fs.existsSync(originalInputPath) &&
-      originalInputPath.includes(
-        path.resolve(process.cwd(), "uploads")
-      )
-    ) {
+    const removeGeneratedFile = (candidate, roots) => {
+      if (typeof candidate !== "string" || !candidate.trim()) return;
       try {
-        fs.unlinkSync(originalInputPath);
+        const safe = assertPathWithinAny(path.resolve(candidate), roots);
+        fs.rmSync(safe, { force: true });
       } catch {}
-    }
+    };
+
+    removeGeneratedFile(originalInputPath, [UPLOAD_DIR]);
 
     if (Array.isArray(downloadedPath)) {
-      downloadedPath.forEach((f) => {
-        try {
-          if (
-            typeof f === "string" &&
-            fs.existsSync(f) &&
-            f.startsWith(TEMP_DIR + path.sep)
-          ) {
-            fs.unlinkSync(f);
-          }
-        } catch {}
-      });
-      const playlistDir = path.join(TEMP_DIR, jobId);
-      if (fs.existsSync(playlistDir)) {
-        try {
-          fs.rmSync(playlistDir, { recursive: true, force: true });
-        } catch {}
+      for (const filePath of downloadedPath) {
+        removeGeneratedFile(filePath, [TEMP_DIR]);
       }
-    } else if (
-      typeof downloadedPath === "string" &&
-      fs.existsSync(downloadedPath) &&
-      downloadedPath.startsWith(TEMP_DIR + path.sep)
-    ) {
-      try {
-        fs.unlinkSync(downloadedPath);
-      } catch {}
+    } else {
+      removeGeneratedFile(downloadedPath, [TEMP_DIR]);
+    }
+
+    const safeJobId = String(jobId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128);
+    if (safeJobId) {
+      const playlistDir = assertPathWithinAny(path.resolve(TEMP_DIR, safeJobId), [TEMP_DIR]);
+      try { fs.rmSync(playlistDir, { recursive: true, force: true }); } catch {}
     }
 
     try {
-      const files = fs.readdirSync(TEMP_DIR);
-      files.forEach((f) => {
-        if (f.startsWith(jobId)) {
-          try {
-            fs.unlinkSync(path.join(TEMP_DIR, f));
-          } catch {}
-        }
-      });
+      for (const name of fs.readdirSync(TEMP_DIR)) {
+        if (!safeJobId || !String(name).includes(safeJobId)) continue;
+        const candidate = assertPathWithinAny(path.resolve(TEMP_DIR, path.basename(name)), [TEMP_DIR]);
+        try { fs.rmSync(candidate, { recursive: true, force: true }); } catch {}
+      }
     } catch {}
-  } catch (e) {
-    console.warn("Cleanup warning:", e.message);
-  }
+  } catch {}
 }

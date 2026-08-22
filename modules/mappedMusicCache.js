@@ -22,12 +22,20 @@ function sha1(value = "") {
     .digest("hex");
 }
 
+function trimUnderscoreEdges(value = "") {
+  const text = String(value || "");
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) === 95) start += 1;
+  while (end > start && text.charCodeAt(end - 1) === 95) end -= 1;
+  return text.slice(start, end);
+}
+
 function safeFilePart(value = "") {
-  const out = String(value || "")
+  const normalized = String(value || "")
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120);
+    .replace(/[^a-z0-9._-]+/g, "_");
+  const out = trimUnderscoreEdges(normalized).slice(0, 120);
   return out || "mapped_music";
 }
 
@@ -70,9 +78,21 @@ function ensureCacheDir() {
 
 function detectSource(url = "") {
   const raw = String(url || "").trim();
-  if (/^(?:spotify:|https?:\/\/open\.spotify\.com)/i.test(raw)) return "spotify";
-  if (/^(?:deezer:|https?:\/\/(?:[^/]+\.)?deezer\.com|https?:\/\/(?:[^/]+\.)?deezer\.page\.link)/i.test(raw)) return "deezer";
-  if (/^https?:\/\/(?:embed\.)?music\.apple\.com/i.test(raw)) return "apple_music";
+  if (/^spotify:/i.test(raw)) return "spotify";
+  if (/^deezer:/i.test(raw)) return "deezer";
+  try {
+    const parsed = new URL(raw);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "mapped_music";
+    const host = parsed.hostname.toLowerCase();
+    if (host === "open.spotify.com") return "spotify";
+    if (
+      host === "deezer.com" ||
+      host.endsWith(".deezer.com") ||
+      host === "deezer.page.link" ||
+      host.endsWith(".deezer.page.link")
+    ) return "deezer";
+    if (host === "music.apple.com" || host === "embed.music.apple.com") return "apple_music";
+  } catch {}
   return "mapped_music";
 }
 
@@ -135,18 +155,33 @@ function readJsonFile(filePath) {
   }
 }
 
+function atomicCacheTempPath(filePath) {
+  const target = path.resolve(filePath);
+  const dir = path.dirname(target);
+  if (dir !== path.resolve(CACHE_DIR)) throw new Error("Mapped music cache path escapes cache root");
+  return path.join(dir, `.${path.basename(target)}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`);
+}
+
 function writeJsonAtomic(filePath, payload) {
   ensureCacheDir();
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");
-  fs.renameSync(tmp, filePath);
+  const tmp = atomicCacheTempPath(filePath);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(tmp, filePath);
+  } finally {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
 }
 
 function writeTextAtomic(filePath, value = "") {
   ensureCacheDir();
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, String(value || ""), "utf8");
-  fs.renameSync(tmp, filePath);
+  const tmp = atomicCacheTempPath(filePath);
+  try {
+    fs.writeFileSync(tmp, String(value || ""), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(tmp, filePath);
+  } finally {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
 }
 
 function normalizeManifest(raw = {}, sourceKey = "") {

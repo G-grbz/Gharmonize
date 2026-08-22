@@ -14,7 +14,8 @@ function ensureWritableDir(dirPath) {
   const target = String(dirPath || "").trim();
   if (!target) return false;
   try {
-    fs.mkdirSync(target, { recursive: true });
+    fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(target, 0o700); } catch {}
     fs.accessSync(target, fs.constants.W_OK);
     return true;
   } catch {
@@ -26,14 +27,14 @@ function resolveStatePath() {
   const envDir = String(process.env.YTLIVE_DOWNLOAD_LISTS_DIR || process.env.CACHE_DIR || "").trim();
   const dirs = [
     envDir || null,
-    DEFAULT_CACHE_DIR,
-    path.join(os.tmpdir(), "gharmonize-cache")
+    DEFAULT_CACHE_DIR
   ].filter(Boolean);
   const uniqueDirs = Array.from(new Set(dirs));
-  const writableDir = uniqueDirs.find((dirPath) => ensureWritableDir(dirPath)) || DEFAULT_CACHE_DIR;
-  try {
-    fs.mkdirSync(writableDir, { recursive: true });
-  } catch {}
+  let writableDir = uniqueDirs.find((dirPath) => ensureWritableDir(dirPath)) || null;
+  if (!writableDir) {
+    writableDir = fs.mkdtempSync(path.join(os.tmpdir(), "gharmonize-ytlive-cache-"));
+    try { fs.chmodSync(writableDir, 0o700); } catch {}
+  }
   return path.join(writableDir, "ytlive-download-lists.json");
 }
 
@@ -141,10 +142,14 @@ function writeState(state) {
     updatedAt: nowIso(),
     lists: (Array.isArray(state?.lists) ? state.lists : []).map(normalizeList).slice(0, MAX_LISTS)
   };
-  const tmpFile = `${STATE_FILE}.tmp`;
-  fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
-  fs.renameSync(tmpFile, STATE_FILE);
+  const tmpFile = `${STATE_FILE}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true, mode: 0o700 });
+  try {
+    fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    fs.renameSync(tmpFile, STATE_FILE);
+  } finally {
+    try { fs.rmSync(tmpFile, { force: true }); } catch {}
+  }
   return payload;
 }
 

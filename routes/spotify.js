@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { sendOk, sendError, uniqueId } from "../modules/utils.js";
+import { sanitizeLogValue } from "../modules/security.js";
 import { createDownloadQueue } from "../modules/sp.js";
 import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
 import {
@@ -314,7 +315,7 @@ router.post("/api/spotify/process/start", async (req, res) => {
           : (autoCreateZip === true || autoCreateZip === "true")
       );
 
-    console.log('[music-match] UI sent spotifyConcurrency =', spotifyConcurrency);
+    console.log('[music-match] UI sent spotifyConcurrency =', sanitizeLogValue(spotifyConcurrency));
 
     const volumeGainNum = volumeGain != null ? Number(volumeGain) : null;
     const loudnormFlag = isEnabledFlag(loudnorm);
@@ -1538,7 +1539,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
         newlyMapped: result.newlyMapped
       };
       task.urlListFile = result.urlListFile;
-      console.log(`✅ ${sourceLabel} URL list ready: ${result.urlListFile}`);
+      console.log(`✅ ${sanitizeLogValue(sourceLabel)} URL list ready: ${sanitizeLogValue(result.urlListFile)}`);
     }).catch((e) => { task.status = "error"; task.error = e.message; });
 
     return sendOk(res, { mapId: id, title: task.title, total: task.total, source, concurrency: effectiveMapConcurrency });

@@ -2,6 +2,28 @@ import fs from "fs/promises";
 import path from "path";
 import { sanitizeFilename } from "./utils.js";
 import { MKVPROPEDIT_BIN } from "./binaries.js";
+import { assertPathWithinAny, sanitizeLogValue } from "./security.js";
+import { execFileSafe } from "./safeProcess.js";
+
+
+function discOutputRoots() {
+  const baseDir = path.resolve(process.env.DATA_DIR || process.cwd());
+  const roots = [
+    path.resolve(baseDir, "outputs"),
+    path.resolve(baseDir, "temp"),
+    path.resolve(baseDir, process.env.LOCAL_INPUT_DIR || "local-inputs")
+  ];
+  const extra = String(process.env.DISC_OUTPUT_ROOTS || "")
+    .split(path.delimiter)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => path.resolve(value));
+  return [...roots, ...extra];
+}
+
+function safeDiscOutputPath(value) {
+  return assertPathWithinAny(path.resolve(String(value || "")), discOutputRoots());
+}
 
 // Generates metadata for disc scanning and ripping.
 export async function generateMetadata(titleInfo, outputPath) {
@@ -31,8 +53,9 @@ export async function generateMetadata(titleInfo, outputPath) {
     creationDate: new Date().toISOString()
   };
 
-  const metadataPath = outputPath.replace(/\.mkv$/i, ".json");
-  await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
+  const safeOutputPath = safeDiscOutputPath(outputPath);
+  const metadataPath = safeDiscOutputPath(safeOutputPath.replace(/\.mkv$/i, ".json"));
+  await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), { mode: 0o600 });
 
   return metadata;
 }
@@ -50,14 +73,13 @@ export async function writeMetadataToMKV(mkvPath, metadata) {
   }
 
   try {
-    const { execFile } = await import("child_process");
-    const { promisify } = await import("util");
-    const execFileAsync = promisify(execFile);
-
-    await execFileAsync(MKVPROPEDIT_BIN, [mkvPath, ...args]);
+    const safeMkvPath = safeDiscOutputPath(mkvPath);
+    await new Promise((resolve, reject) => {
+      execFileSafe(MKVPROPEDIT_BIN, [safeMkvPath, ...args], (error) => error ? reject(error) : resolve());
+    });
     return { success: true };
   } catch (error) {
-    console.warn("Metadata write error:", error.message);
+    console.warn("Metadata write error:", sanitizeLogValue(error?.message || error));
     return { success: false, error: error.message };
   }
 }

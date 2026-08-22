@@ -1,8 +1,9 @@
-import { execFile } from "child_process";
+import { execFileSafe } from "./safeProcess.js";
 import { constants as fsConstants } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { FFPROBE_BIN, MKVMERGE_BIN } from "./binaries.js";
+import { assertAllowedDiscSource, assertPathWithinAny } from "./security.js";
 
 
 let currentScanProcess = null;
@@ -149,8 +150,8 @@ async function readBluRayMeta(rawPath) {
       return null;
     }
 
-    const fullPath = path.join(metaDir, xmlFile);
-    sendScanLogKey("disc.log.blurayMetaXmlFile", { file: xmlFile });
+    const fullPath = assertPathWithinAny(path.resolve(metaDir, path.basename(xmlFile)), [metaDir]);
+    sendScanLogKey("disc.log.blurayMetaXmlFile", { file: path.basename(xmlFile) });
 
     const xml = await fs.readFile(fullPath, "utf8");
     const discTitleMatch = xml.match(/<di:name>([^<]+)<\/di:name>/);
@@ -204,6 +205,8 @@ function cancelScan() {
 // Handles scan progress disc metadata in disc scanning and ripping.
 async function scanDisc(sourcePath) {
   scanCancelled = false;
+  const safeSourcePath = await assertAllowedDiscSource(sourcePath);
+  sourcePath = safeSourcePath;
 
   try {
     await fs.access(sourcePath, fsConstants.R_OK | fsConstants.X_OK);
@@ -596,9 +599,9 @@ async function analyzeBluRayPlaylist(playlistPath) {
       props.playlist_file.length > 0
     ) {
       for (const filePath of props.playlist_file) {
-        const fullPath = path.isAbsolute(filePath)
-          ? filePath
-          : path.join(discRoot, "BDMV", "STREAM", filePath);
+        const streamRoot = path.resolve(discRoot, "BDMV", "STREAM");
+        const relativeFile = path.basename(String(filePath || ""));
+        const fullPath = assertPathWithinAny(path.resolve(streamRoot, relativeFile), [streamRoot]);
 
         try {
           const st = await fs.stat(fullPath);
@@ -763,16 +766,17 @@ async function scanDVDManual(sourcePath) {
 
     const files = await fs.readdir(videoTsPath);
     const vobFiles = files.filter((f) => f.toUpperCase().endsWith(".VOB"));
-    const titleGroups = {};
+    const titleGroups = new Map();
 
     vobFiles.forEach((file) => {
-      const match = file.match(/VTS_(\d+)_\d+\.VOB/i);
+      const safeName = path.basename(file);
+      const match = safeName.match(/^VTS_(\d+)_\d+\.VOB$/i);
       if (match) {
-        const titleNum = parseInt(match[1], 10);
-        if (!titleGroups[titleNum]) {
-          titleGroups[titleNum] = [];
+        const titleNum = Number.parseInt(match[1], 10);
+        if (!titleGroups.has(titleNum)) {
+          titleGroups.set(titleNum, []);
         }
-        titleGroups[titleNum].push(file);
+        titleGroups.get(titleNum).push(safeName);
       }
     });
 
@@ -783,7 +787,7 @@ async function scanDVDManual(sourcePath) {
     const MIN_DURATION_SECONDS = 120;
     const MAX_DURATION_SECONDS = 240 * 60;
 
-    for (const [titleNum, groupFiles] of Object.entries(titleGroups)) {
+    for (const [titleNum, groupFiles] of titleGroups.entries()) {
       if (scanCancelled) {
         const cancelled = new Error("SCAN_CANCELLED");
         cancelled.killed = true;
@@ -795,7 +799,7 @@ async function scanDVDManual(sourcePath) {
       const nb = parseInt(b.match(/_(\d+)\.VOB$/i)?.[1] || "0", 10);
         return na - nb;
       });
-      const allVobs = sortedFiles.map((f) => path.join(videoTsPath, f));
+      const allVobs = sortedFiles.map((f) => assertPathWithinAny(path.resolve(videoTsPath, path.basename(f)), [videoTsPath]));
       const durationVobs = allVobs.filter(
       (p) => !path.basename(p).toUpperCase().includes("_0.VOB")
       );
@@ -997,7 +1001,7 @@ function runScanCommand(command, args = []) {
       return reject(cancelled);
     }
 
-    const child = execFile(
+    const child = execFileSafe(
       command,
       args,
       { maxBuffer: 1024 * 1024 * 1024, windowsHide: true },

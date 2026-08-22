@@ -1,10 +1,19 @@
 import { toNFC } from "./utils.js";
 
-const ALBUM_PREFIX_RE = /^\s*(album|albums|alb[üu]m(?:ler|leri|u|ü)?)\s*[-–—:|]\s*(.+?)\s*$/i;
 const YTM_ALBUM_ID_RE = /^MPRE[A-Za-z0-9_-]+$/i;
 
 function cleanText(value = "") {
   return toNFC(String(value || "").replace(/\s+/g, " ").trim());
+}
+
+function parseAlbumPrefix(value = "") {
+  const text = cleanText(value);
+  const match = text.match(/^(album|albums|alb[üu]m(?:ler|leri|u|ü)?)/i);
+  if (!match) return null;
+  const rest = text.slice(match[0].length).trimStart();
+  if (!rest || !"-–—:|".includes(rest[0])) return null;
+  const payload = rest.slice(1).trim();
+  return payload ? { prefix: match[0], payload } : null;
 }
 
 function foldText(value = "") {
@@ -29,12 +38,12 @@ export function isGenericYtMusicAlbumLabel(value = "") {
 
 export function stripYtMusicAlbumPrefix(value = "") {
   const text = cleanText(value);
-  const match = text.match(ALBUM_PREFIX_RE);
-  return match ? cleanText(match[2]) : text;
+  const parsed = parseAlbumPrefix(text);
+  return parsed ? cleanText(parsed.payload) : text;
 }
 
 export function hasYtMusicAlbumPrefix(value = "") {
-  return ALBUM_PREFIX_RE.test(cleanText(value));
+  return !!parseAlbumPrefix(value);
 }
 
 export function isYouTubeMusicAlbumUrl(value = "") {
@@ -44,7 +53,7 @@ export function isYouTubeMusicAlbumUrl(value = "") {
   try {
     const url = new URL(source);
     const browseId = url.pathname.split("/").filter(Boolean).at(-1) || "";
-    return /(^|\.)youtube\.com$/i.test(url.hostname) &&
+    return (url.hostname.toLowerCase() === "youtube.com" || url.hostname.toLowerCase().endsWith(".youtube.com")) &&
       url.pathname.includes("/browse/") &&
       YTM_ALBUM_ID_RE.test(browseId);
   } catch {

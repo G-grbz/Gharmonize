@@ -6,7 +6,7 @@ import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
-import { execFile } from 'child_process'
+import { execFileSafe } from './modules/safeProcess.js'
 import formatsRoute from './routes/formats.js'
 import { getBinariesInfo, clearBinariesInfoCache } from './modules/binariesInfo.js';
 import spotifyRoute from './routes/spotify.js'
@@ -18,6 +18,7 @@ import trackExtractorRoute from './routes/trackExtractor.js'
 import retagRoute from './routes/retag.js'
 import { sendError, sanitizeFilename } from './modules/utils.js'
 import { assertSafeRemoteUrl, createTrustedProxyPredicate } from './modules/security.js'
+import { rateLimit } from './modules/rateLimit.js'
 import discRouter from './routes/disc.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
 import {
@@ -91,7 +92,7 @@ function applyTrustProxySetting() {
   const enabled = isTrustProxyEnabled()
   const predicate = createTrustedProxyPredicate(process.env.TRUSTED_PROXY_CIDRS)
   app.set('trust proxy', enabled ? predicate : false)
-  console.log(`🔐 Trust proxy: ${enabled ? `enabled for ${process.env.TRUSTED_PROXY_CIDRS || '127.0.0.1/32,::1/128'}` : 'disabled'}`)
+  console.log(`🔐 Trust proxy: ${enabled ? 'enabled for configured trusted peers' : 'disabled'}`)
 }
 
 applyTrustProxySetting()
@@ -238,7 +239,7 @@ function checkDependencies() {
     ]
 
     Promise.all(checks.map((check) => new Promise((done) => {
-      execFile(check.cmd, check.args.split(' ').filter(Boolean), (error, stdout, stderr) => {
+      execFileSafe(check.cmd, check.args.split(' ').filter(Boolean), (error, stdout, stderr) => {
         const out = stdout || ''
         const errText = stderr || ''
         if (!error && check.ok(out, errText)) {
@@ -268,7 +269,7 @@ async function runStartupDiagnostics() {
 
   const execPromise = (cmd, args = []) =>
     new Promise((resolve) => {
-      execFile(cmd, args, (err, stdout, stderr) => {
+      execFileSafe(cmd, args, (err, stdout, stderr) => {
         resolve({ err, stdout: stdout || '', stderr: stderr || '' })
       })
     })
@@ -385,6 +386,9 @@ app.use((req, res, next) => {
   next()
 })
 
+// Global API limiter protects filesystem, authorization, and expensive media endpoints.
+app.use('/api', rateLimit(600, 60_000))
+
 // Guard obvious remote URL inputs against SSRF. Set GHARMONIZE_ALLOW_PRIVATE_URLS=1 only for intentional LAN media sources.
 app.use('/api', async (req, res, next) => {
   try {
@@ -405,7 +409,7 @@ function getSelectedFrontendUi() {
     : 'classic'
 }
 
-app.get('/', (_req, res, next) => {
+app.get('/', rateLimit(120, 60_000), (_req, res, next) => {
   const selectedUi = getSelectedFrontendUi()
   const fileName = selectedUi === 'ytlive' ? 'ytlive.html' : 'index.html'
 
@@ -451,7 +455,7 @@ app.use(discRouter)
 app.use(downloadRoute)
 app.use('/api', settingsRoute)
 
-app.get('/api/version', (req, res) => {
+app.get('/api/version', rateLimit(120, 60_000), (req, res) => {
   try {
     const packagePath = path.resolve(__dirname, 'package.json');
     const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));

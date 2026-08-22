@@ -10,7 +10,7 @@ import {
 import { sanitizeFilename, normalizeTitle, parseIdFromPath } from "./utils.js"
 import { convertMedia } from "./media.js";
 import "dotenv/config";
-import { spawn as spawnChild } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import { jobs, registerJobProcess, markJobCompleted } from "./store.js";
 import { toDownloadPath } from "./outputPaths.js";
 import { ensureOwnership } from "./fsOwnership.js";
@@ -101,7 +101,7 @@ function stripLeadingPrefix(basename, jobId) {
 async function probeVideoHeight(inputPath) {
   return await new Promise((resolve) => {
     try {
-      const p = spawnChild("ffprobe", [
+      const p = spawnSafe("ffprobe", [
         "-v",
         "error",
         "-select_streams",

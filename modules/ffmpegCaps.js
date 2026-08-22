@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import path from "path";
 
 const _cache = new Map();
@@ -6,7 +6,7 @@ const _cache = new Map();
 // Runs run for core application logic.
 function run(bin, args, timeoutMs = 4000) {
   return new Promise((resolve) => {
-    const p = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawnSafe(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
 
     let stdout = "";
     let stderr = "";

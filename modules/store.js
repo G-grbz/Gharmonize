@@ -1,7 +1,7 @@
 import fs from "fs";
-import os from "os";
+import crypto from "crypto";
 import path from "path";
-import { execFile } from "child_process";
+import { execFileSafe } from "./safeProcess.js";
 import { resolveDownloadPathToAbs } from "./outputPaths.js";
 import { uniqueId } from "./utils.js";
 
@@ -23,7 +23,8 @@ function ensureWritableDir(dirPath) {
   const target = String(dirPath || "").trim();
   if (!target) return false;
   try {
-    fs.mkdirSync(target, { recursive: true });
+    fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(target, 0o700); } catch {}
     fs.accessSync(target, fs.constants.W_OK);
     return true;
   } catch {
@@ -36,8 +37,7 @@ function buildJobsStateCandidates() {
   const envDir = String(process.env.JOBS_STATE_DIR || process.env.CACHE_DIR || "").trim();
   const dirs = [
     envDir || null,
-    DEFAULT_CACHE_DIR,
-    path.join(os.tmpdir(), "gharmonize-cache")
+    DEFAULT_CACHE_DIR
   ].filter(Boolean);
 
   return Array.from(new Set(dirs)).map((dirPath) => ({
@@ -247,9 +247,13 @@ function writePersistedJobs(force = false) {
       return;
     }
 
-    const tmpFile = `${JOBS_STATE_FILE}.tmp`;
-    fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2), "utf8");
-    fs.renameSync(tmpFile, JOBS_STATE_FILE);
+    const tmpFile = `${JOBS_STATE_FILE}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+    try {
+      fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" });
+      fs.renameSync(tmpFile, JOBS_STATE_FILE);
+    } finally {
+      try { fs.rmSync(tmpFile, { force: true }); } catch {}
+    }
     lastPersistedSnapshot = snapshot;
   } catch (error) {
     console.warn("[store] Failed to persist completed jobs:", error);
@@ -453,7 +457,7 @@ function signalJobChild(child, signal = "SIGTERM") {
 
   if (process.platform === "win32") {
     try {
-      execFile("taskkill", ["/pid", String(pid), "/T", signal === "SIGKILL" ? "/F" : ""].filter(Boolean), {
+      execFileSafe("taskkill", ["/pid", String(pid), "/T", signal === "SIGKILL" ? "/F" : ""].filter(Boolean), {
         windowsHide: true
       }, () => {});
       return true;

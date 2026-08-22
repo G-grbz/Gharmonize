@@ -163,9 +163,14 @@ export class UploadManager {
     const subtitleStreams = Array.isArray(streams.subtitle) ? streams.subtitle : [];
     const videoStreams = Array.isArray(streams.video) ? streams.video : [];
 
-    const safeFileName = fileName
-      ? (this.app.escapeHtml?.(fileName) || fileName)
-      : '';
+    const displayFileName = fileName ? String(fileName) : '';
+    const escapeHtml = (value) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+    const safeIndex = (value) => Number.isInteger(Number(value)) ? Number(value) : 0;
     const formatFps = (fps) => {
       const n = Number(fps);
       return Number.isFinite(n) && n > 0
@@ -217,11 +222,7 @@ export class UploadManager {
         <div class="custom-modal__header">
           <div class="custom-modal__icon">🎬</div>
           <div class="custom-modal__content">
-            ${fileName ? `
-              <h3 class="custom-modal__filename">
-                ${safeFileName}
-              </h3>
-            ` : ''}
+            ${fileName ? '<h3 class="custom-modal__filename" data-stream-file-name></h3>' : ''}
             <h4 class="custom-modal__subtitle">
               ${this.app.t('streamSelection.title') || 'Ses ve Altyazı Seçimi'}
             </h4>
@@ -281,14 +282,14 @@ export class UploadManager {
                     ${audioStreams.map(stream => `
                       <label class="stream-item">
                         <input type="checkbox"
-                              value="${stream.index}"
+                              value="${safeIndex(stream.index)}"
                               ${defaultSelection.audio.includes(stream.index) ? 'checked' : ''}
                               class="audio-stream-checkbox">
                         <span class="stream-info">
-                          <strong>${(stream.language || 'und').toUpperCase()}</strong> -
-                          ${stream.codec_long}
+                          <strong>${escapeHtml((stream.language || 'und').toUpperCase())}</strong> -
+                          ${escapeHtml(stream.codec_long)}
                           ${stream.channels ? `(${this.app.t('streamSelection.channels', {count: stream.channels}) || `${stream.channels} kanal`})` : ''}
-                          ${stream.title ? `- ${stream.title}` : ''}
+                          ${stream.title ? `- ${escapeHtml(stream.title)}` : ''}
                           ${stream.default ? ` [${this.app.t('streamSelection.default') || 'Varsayılan'}]` : ''}
                         </span>
                       </label>
@@ -304,13 +305,13 @@ export class UploadManager {
                     ${subtitleStreams.map(stream => `
                       <label class="stream-item">
                         <input type="checkbox"
-                            value="${stream.index}"
+                            value="${safeIndex(stream.index)}"
                             ${defaultSelection.subtitles.includes(stream.index) ? 'checked' : ''}
                             class="subtitle-stream-checkbox">
                         <span class="stream-info">
-                          <strong>${(stream.language || 'und').toUpperCase()}</strong> -
-                          ${stream.codec_long}
-                          ${stream.title ? `- ${stream.title}` : ''}
+                          <strong>${escapeHtml((stream.language || 'und').toUpperCase())}</strong> -
+                          ${escapeHtml(stream.codec_long)}
+                          ${stream.title ? `- ${escapeHtml(stream.title)}` : ''}
                           ${stream.default ? ` [${this.app.t('streamSelection.default') || 'Varsayılan'}]` : ''}
                           ${stream.forced ? ` [${this.app.t('streamSelection.forced') || 'Zorunlu'}]` : ''}
                         </span>
@@ -327,7 +328,7 @@ export class UploadManager {
                   <h4>${this.app.t('streamSelection.videoInfo') || 'Video Bilgisi'}</h4>
                   <div class="video-info">
                     ${videoStreams.map(video => `
-                      <div>${video.codec_long}${video.fps ? ` • ${formatFps(video.fps)} FPS` : ''}${video.bit_rate ? ` • ${(video.bit_rate / 1000).toFixed(0)} kbps` : ''}</div>
+                      <div>${escapeHtml(video.codec_long)}${video.fps ? ` • ${formatFps(video.fps)} FPS` : ''}${video.bit_rate ? ` • ${(video.bit_rate / 1000).toFixed(0)} kbps` : ''}</div>
                     `).join('')}
                   </div>
                 </div>
@@ -602,6 +603,9 @@ export class UploadManager {
 
       document.addEventListener('keydown', escHandler);
       backdrop.addEventListener('click', backdropHandler);
+
+      const fileNameEl = modal.querySelector('[data-stream-file-name]');
+      if (fileNameEl) fileNameEl.textContent = displayFileName;
 
       if (backdrop) {
         backdrop.style.display = 'flex';

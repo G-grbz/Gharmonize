@@ -106,9 +106,9 @@ export class MediaConverterApp {
             const url = new URL(s, window.location.origin);
             const host = url.hostname.toLowerCase();
             const isSpotifyHost =
-            host.includes('spotify.com') ||
-            host.includes('spotify.link') ||
-            host.includes('spotify.app.link');
+            (host === 'spotify.com' || host.endsWith('.spotify.com')) ||
+            (host === 'spotify.link' || host.endsWith('.spotify.link')) ||
+            (host === 'spotify.app.link' || host.endsWith('.spotify.app.link'));
             const isAppleHost =
             host === 'music.apple.com' ||
             host === 'embed.music.apple.com';
@@ -1214,11 +1214,11 @@ export class MediaConverterApp {
 
             const host = url.hostname.toLowerCase();
             const isYoutubeHost =
-                host.includes('youtube.com') ||
-                host.includes('youtu.be') ||
-                host.includes('music.youtube.com');
+                (host === 'youtube.com' || host.endsWith('.youtube.com')) ||
+                (host === 'youtu.be' || host.endsWith('.youtu.be')) ||
+                host === 'music.youtube.com';
             const isDailymotionHost =
-                host.includes('dailymotion.com') ||
+                (host === 'dailymotion.com' || host.endsWith('.dailymotion.com')) ||
                 host === 'dai.ly' ||
                 host.endsWith('.dai.ly');
 
@@ -1249,8 +1249,8 @@ export class MediaConverterApp {
             const url = new URL(s, window.location.origin);
             const host = url.hostname.toLowerCase();
             const isYoutubeHost =
-                host.includes('youtube.com') ||
-                host.includes('youtube-nocookie.com') ||
+                (host === 'youtube.com' || host.endsWith('.youtube.com')) ||
+                (host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com')) ||
                 host === 'youtu.be' ||
                 host.endsWith('.youtu.be');
 
@@ -1276,13 +1276,13 @@ export class MediaConverterApp {
             const host = String(parsed.hostname || '').toLowerCase();
 
             if (
-                host.includes('instagram.com') ||
-                host.includes('instagr.am') ||
-                host.includes('tiktok.com') ||
-                host.includes('facebook.com') ||
+                (host === 'instagram.com' || host.endsWith('.instagram.com')) ||
+                (host === 'instagr.am' || host.endsWith('.instagr.am')) ||
+                (host === 'tiktok.com' || host.endsWith('.tiktok.com')) ||
+                (host === 'facebook.com' || host.endsWith('.facebook.com')) ||
                 host === 'fb.watch' ||
                 host.endsWith('.fb.watch') ||
-                host.includes('twitter.com') ||
+                (host === 'twitter.com' || host.endsWith('.twitter.com')) ||
                 host === 'x.com' ||
                 host.endsWith('.x.com') ||
                 host === 't.co' ||

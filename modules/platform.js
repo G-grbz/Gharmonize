@@ -99,14 +99,14 @@ function extractVimeoProgressiveFromHtml(html) {
 export function detectPlatform(inputUrl) {
   try {
     const host = new URL(inputUrl).hostname.toLowerCase();
-    if (host.includes("vimeo.com")) return "vimeo";
-    if (host.includes("tiktok.com")) return "tiktok";
-    if (host.includes("instagram.com") || host.includes("instagr.am")) return "instagram";
-    if (host.includes("facebook.com") || host === "fb.watch" || host.endsWith(".fb.watch")) {
+    if (host === "vimeo.com" || host.endsWith(".vimeo.com")) return "vimeo";
+    if (host === "tiktok.com" || host.endsWith(".tiktok.com")) return "tiktok";
+    if (host === "instagram.com" || host.endsWith(".instagram.com") || host === "instagr.am" || host.endsWith(".instagr.am")) return "instagram";
+    if (host === "facebook.com" || host.endsWith(".facebook.com") || host === "fb.watch" || host.endsWith(".fb.watch")) {
       return "facebook";
     }
     if (
-      host.includes("twitter.com") ||
+      host === "twitter.com" || host.endsWith(".twitter.com") ||
       host === "x.com" ||
       host.endsWith(".x.com")
     ) {

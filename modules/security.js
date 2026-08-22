@@ -59,16 +59,28 @@ export function getMasterKey() {
   const configuredFile = String(process.env.GHARMONIZE_MASTER_KEY_FILE || '').trim();
   const keyFile = configuredFile ? path.resolve(configuredFile) : path.resolve(baseDir, '.gharmonize-key');
   try {
-    if (fs.existsSync(keyFile)) {
-      const key = normalizeKeyBytes(fs.readFileSync(keyFile, 'utf8'));
+    try {
+      const raw = fs.readFileSync(keyFile, 'utf8');
+      const key = normalizeKeyBytes(raw);
       if (!key) throw new Error('Invalid Gharmonize master key file');
       try { fs.chmodSync(keyFile, 0o600); } catch {}
       return key;
+    } catch (readError) {
+      if (readError?.code !== 'ENOENT') throw readError;
     }
+
     fs.mkdirSync(path.dirname(keyFile), { recursive: true, mode: 0o700 });
     const key = crypto.randomBytes(32);
-    fs.writeFileSync(keyFile, key.toString('base64'), { mode: 0o600, flag: 'wx' });
-    return key;
+    try {
+      fs.writeFileSync(keyFile, key.toString('base64'), { mode: 0o600, flag: 'wx' });
+      return key;
+    } catch (createError) {
+      if (createError?.code !== 'EEXIST') throw createError;
+      const existing = normalizeKeyBytes(fs.readFileSync(keyFile, 'utf8'));
+      if (!existing) throw new Error('Invalid Gharmonize master key file');
+      try { fs.chmodSync(keyFile, 0o600); } catch {}
+      return existing;
+    }
   } catch (error) {
     throw new Error(`Could not load/create Gharmonize master key: ${error.message}`);
   }
@@ -103,14 +115,14 @@ export function deriveSessionSecret() {
 }
 
 export function parseCookieHeader(header = '') {
-  const out = {};
+  const out = new Map();
   for (const part of String(header || '').split(';')) {
     const idx = part.indexOf('=');
     if (idx <= 0) continue;
     const key = part.slice(0, idx).trim();
     const value = part.slice(idx + 1).trim();
-    if (!key) continue;
-    try { out[key] = decodeURIComponent(value); } catch { out[key] = value; }
+    if (!key || key.length > 128 || !/^[A-Za-z0-9_.-]+$/.test(key)) continue;
+    try { out.set(key, decodeURIComponent(value)); } catch { out.set(key, value); }
   }
   return out;
 }
@@ -180,6 +192,96 @@ export async function assertSafeRemoteUrl(rawUrl, { allowPrivate = process.env.G
   const answers = await dns.lookup(host, { all: true, verbatim: true });
   if (!answers.length || answers.some((entry) => isPrivateIp(entry.address))) throw new Error('Local/private URLs are not allowed');
   return parsed.toString();
+}
+
+export async function fetchSafeRemote(rawUrl, init = {}, {
+  allowPrivate = process.env.GHARMONIZE_ALLOW_PRIVATE_URLS === '1',
+  maxRedirects = 3
+} = {}) {
+  let current = await assertSafeRemoteUrl(rawUrl, { allowPrivate });
+  const redirectStatuses = new Set([301, 302, 303, 307, 308]);
+  for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
+    const response = await fetch(current, { ...init, redirect: 'manual' });
+    if (!redirectStatuses.has(response.status)) return response;
+    if (redirects === maxRedirects) throw new Error('Too many redirects');
+    const location = response.headers.get('location');
+    if (!location) throw new Error('Redirect missing Location header');
+    current = await assertSafeRemoteUrl(new URL(location, current).toString(), { allowPrivate });
+  }
+  throw new Error('Remote request failed');
+}
+
+export function sanitizeLogValue(value, maxLength = 1000) {
+  return String(value ?? '')
+    .replace(/[\r\n\u2028\u2029]+/g, ' ')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '?')
+    .slice(0, Math.max(1, Number(maxLength) || 1000));
+}
+
+export function hostMatches(host, domain) {
+  const value = String(host || '').trim().toLowerCase().replace(/\.$/, '');
+  const expected = String(domain || '').trim().toLowerCase().replace(/\.$/, '');
+  return !!value && !!expected && (value === expected || value.endsWith(`.${expected}`));
+}
+
+export function isPathInside(rootDir, candidatePath) {
+  const root = path.resolve(String(rootDir || ''));
+  const candidate = path.resolve(String(candidatePath || ''));
+  const rel = path.relative(root, candidate);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+export function resolvePathInside(rootDir, relativePath = '') {
+  const root = path.resolve(String(rootDir || ''));
+  const candidate = path.resolve(root, String(relativePath || ''));
+  if (!isPathInside(root, candidate)) throw new Error('Path escapes allowed root');
+  return candidate;
+}
+
+export function assertPathWithinAny(candidatePath, roots = []) {
+  const candidate = path.resolve(String(candidatePath || ''));
+  const allowed = roots
+    .map((rootDir) => String(rootDir || '').trim())
+    .filter(Boolean)
+    .map((rootDir) => path.resolve(rootDir));
+  if (!allowed.some((rootDir) => isPathInside(rootDir, candidate))) {
+    throw new Error('Path is outside allowed roots');
+  }
+  return candidate;
+}
+
+export async function assertAllowedDiscSource(rawPath, { extraRoots = [] } = {}) {
+  const raw = String(rawPath || '').trim();
+  if (!raw || raw.includes('\0')) throw new Error('Invalid disc source path');
+
+  const configuredRoots = String(process.env.DISC_ALLOWED_ROOTS || '')
+    .split(path.delimiter)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const defaults = process.platform === 'win32'
+    ? []
+    : process.platform === 'darwin'
+      ? ['/Volumes', '/dev']
+      : ['/run/media', '/media', '/mnt', '/dev'];
+
+  const localInput = String(process.env.LOCAL_INPUT_DIR || '').trim();
+  const roots = [...configuredRoots, ...defaults, localInput, ...extraRoots].filter(Boolean);
+
+  let candidate = path.resolve(raw);
+  try {
+    candidate = await fs.promises.realpath(candidate);
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error('Disc source path does not exist');
+    throw error;
+  }
+
+  if (process.platform === 'win32') {
+    const parsed = path.parse(candidate);
+    if (parsed.root && isPathInside(parsed.root, candidate)) return candidate;
+  }
+
+  return assertPathWithinAny(candidate, roots);
 }
 
 const DANGEROUS_YTDLP_FLAGS = [

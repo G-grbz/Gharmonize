@@ -2,6 +2,9 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { scanDisc, cancelScan } from "../modules/discScanner.js";
+import { assertAllowedDiscSource, assertPathWithinAny, sanitizeLogValue } from "../modules/security.js";
+import { rateLimit } from "../modules/rateLimit.js";
+import { sanitizeFilename } from "../modules/utils.js";
 import { ripTitle, cancelRip } from "../modules/discRipper.js";
 import {
   generateMetadata,
@@ -100,7 +103,7 @@ function broadcastProgress(payload) {
   }
 }
 
-router.get("/api/disc/stream", requireAuth, (req, res) => {
+router.get("/api/disc/stream", requireAuth, rateLimit(30, 60_000), (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
@@ -170,16 +173,17 @@ async function removeOutputFile(filePath) {
   await fs.promises.rm(filePath, { force: true }).catch(() => {});
 }
 
-router.post("/api/disc/scan", requireAuth, express.json(), async (req, res) => {
+router.post("/api/disc/scan", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => {
   try {
     const { sourcePath } = req.body || {};
     if (!sourcePath) {
       return res.status(400).json({ error: "sourcePath gerekli" });
     }
 
+    const safeSourcePath = await assertAllowedDiscSource(sourcePath, { extraRoots: [LOCAL_INPUTS_DIR] });
     global.discScanLog = sendScanLog;
 
-    const discInfo = await scanDisc(sourcePath);
+    const discInfo = await scanDisc(safeSourcePath);
 
     delete global.discScanLog;
 
@@ -191,12 +195,12 @@ router.post("/api/disc/scan", requireAuth, express.json(), async (req, res) => {
       return res.status(499).json({ error: "Scan cancelled" });
     }
 
-    console.error("[disc] scan error:", error);
+    console.error("[disc] scan error:", sanitizeLogValue(error?.message || error));
     res.status(getDiscErrorStatus(error)).json(serializeDiscError(error));
   }
 });
 
-router.post("/api/disc/cancel-scan", requireAuth, (req, res) => {
+router.post("/api/disc/cancel-scan", requireAuth, rateLimit(60, 60_000), (req, res) => {
   try {
     sendScanLog({
       __i18n: true,
@@ -210,7 +214,7 @@ router.post("/api/disc/cancel-scan", requireAuth, (req, res) => {
   }
 });
 
-router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
+router.post("/api/disc/rip", requireAuth, rateLimit(20, 60_000), express.json(), async (req, res) => {
   try {
     const {
       sourcePath,
@@ -226,21 +230,29 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
         .json({ error: "sourcePath ve titleIndex gerekli" });
     }
 
-    let fileName = outputFileName;
+    const safeSourcePath = await assertAllowedDiscSource(sourcePath, { extraRoots: [LOCAL_INPUTS_DIR] });
+    const safeTitleIndex = Number.parseInt(String(titleIndex), 10);
+    if (!Number.isInteger(safeTitleIndex) || safeTitleIndex < 0 || safeTitleIndex > 9999) {
+      return res.status(400).json({ error: "Geçersiz titleIndex" });
+    }
+
+    let fileName = outputFileName ? sanitizeFilename(path.basename(String(outputFileName))) : "";
     if (!fileName) {
       fileName = generateDiscFilename(
         {
           ...titleInfo,
-          index: titleIndex,
-          sourcePath
+          index: safeTitleIndex,
+          sourcePath: safeSourcePath
         },
         "mkv"
       );
     }
 
-    const outputPath = path.join(LOCAL_INPUTS_DIR, fileName);
-    const safeOutputPath = path.resolve(outputPath);
-    if (!safeOutputPath.startsWith(LOCAL_INPUTS_DIR)) {
+    const outputPath = path.resolve(LOCAL_INPUTS_DIR, fileName);
+    let safeOutputPath;
+    try {
+      safeOutputPath = assertPathWithinAny(outputPath, [LOCAL_INPUTS_DIR]);
+    } catch {
       return res.status(400).json({ error: "Geçersiz output path" });
     }
 
@@ -248,7 +260,7 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
 
     broadcastProgress({
       type: "title_start",
-      titleIndex,
+      titleIndex: safeTitleIndex,
       message: `Title ${titleIndex} işleniyor...`,
       outputFile: fileName
     });
@@ -259,15 +271,15 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
     };
     res.status(202).json({
       accepted: true,
-      titleIndex,
+      titleIndex: safeTitleIndex,
       outputFile: fileName
     });
 
     void (async () => {
       try {
         const ripResult = await ripTitle(
-          sourcePath,
-          titleIndex,
+          safeSourcePath,
+          safeTitleIndex,
           safeOutputPath,
           options || {},
           progressCallback
@@ -278,7 +290,7 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
         try {
           const enrichedTitleInfo = {
             ...titleInfo,
-            sourcePath,
+            sourcePath: safeSourcePath,
             sourceType: options?.discType || titleInfo?.sourceType || "Unknown"
           };
           metadata = await generateMetadata(enrichedTitleInfo, safeOutputPath);
@@ -287,12 +299,12 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
             metadata
           );
         } catch (metaErr) {
-          console.warn("[disc] metadata warning:", metaErr.message);
+          console.warn("[disc] metadata warning:", sanitizeLogValue(metaErr?.message));
         }
 
         broadcastProgress({
           type: "progress",
-          titleIndex,
+          titleIndex: safeTitleIndex,
           percent: 99,
           __i18n: true,
           key: "disc.progress.finalizingOutput",
@@ -308,7 +320,7 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
 
         broadcastProgress({
           type: "title_complete",
-          titleIndex,
+          titleIndex: safeTitleIndex,
           message: `Title ${titleIndex} tamamlandı`,
           outputFile: fileName,
           downloadPath: buildDownloadPath(safeOutputPath),
@@ -317,12 +329,12 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
           ripResult
         });
       } catch (error) {
-        console.error("[disc] rip error:", error);
+        console.error("[disc] rip error:", sanitizeLogValue(error?.message || error));
 
         if (error.message === "RIP_CANCELLED") {
           broadcastProgress({
             type: "rip_cancelled",
-            titleIndex,
+            titleIndex: safeTitleIndex,
             message: "Rip işlemi iptal edildi"
           });
 
@@ -346,7 +358,7 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
 
         broadcastProgress({
           type: "title_error",
-          titleIndex,
+          titleIndex: safeTitleIndex,
           message: errorMessage,
           outputFile: fileName,
           preservedOutput: !!existingOutput,
@@ -355,12 +367,12 @@ router.post("/api/disc/rip", requireAuth, express.json(), async (req, res) => {
       }
     })();
   } catch (error) {
-    console.error("[disc] rip request error:", error);
+    console.error("[disc] rip request error:", sanitizeLogValue(error?.message || error));
     res.status(500).json({ error: error.message });
   }
 });
 
-router.post("/api/disc/cancel-rip", requireAuth, (req, res) => {
+router.post("/api/disc/cancel-rip", requireAuth, rateLimit(60, 60_000), (req, res) => {
   try {
     cancelRip();
     broadcastProgress({
@@ -373,7 +385,7 @@ router.post("/api/disc/cancel-rip", requireAuth, (req, res) => {
   }
 });
 
-router.post("/api/disc/metadata", requireAuth, express.json(), async (req, res) => {
+router.post("/api/disc/metadata", requireAuth, rateLimit(30, 60_000), express.json(), async (req, res) => {
   try {
     const { titleInfo, outputPath } = req.body || {};
     if (!titleInfo || !outputPath) {
@@ -381,7 +393,8 @@ router.post("/api/disc/metadata", requireAuth, express.json(), async (req, res) 
         .status(400)
         .json({ error: "titleInfo ve outputPath gerekli" });
     }
-    const metadata = await generateMetadata(titleInfo, outputPath);
+    const safeOutputPath = assertPathWithinAny(outputPath, [LOCAL_INPUTS_DIR]);
+    const metadata = await generateMetadata(titleInfo, safeOutputPath);
     res.json(metadata);
   } catch (error) {
     res.status(500).json({ error: error.message });

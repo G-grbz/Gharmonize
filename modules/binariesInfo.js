@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFileSafe } from './safeProcess.js';
 import { promisify } from 'node:util';
 import {
   FFMPEG_BIN,
@@ -10,7 +10,7 @@ import {
   getDynamicBinaryMetadata
 } from './binaries.js';
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFileSafe);
 
 let cache = null;
 let cacheTime = 0;

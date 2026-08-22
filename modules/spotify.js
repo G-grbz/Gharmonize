@@ -124,27 +124,50 @@ function _pickBestPublicImage(entity) {
   return pickBestImage([...visualImages, ...coverSources]);
 }
 
+const _SPOTIFY_PUBLIC_TYPES = new Set(["track", "album", "playlist", "artist"]);
+
+function _spotifyEntityParts(type, id) {
+  const safeType = String(type || "").trim().toLowerCase();
+  const safeId = String(id || "").trim();
+  if (!_SPOTIFY_PUBLIC_TYPES.has(safeType)) {
+    throw new Error("Unsupported Spotify entity type");
+  }
+  if (!/^[A-Za-z0-9]{1,64}$/.test(safeId)) {
+    throw new Error("Invalid Spotify entity id");
+  }
+  return { safeType, safeId };
+}
+
 function _spotifyPageUrl(type, id) {
-  return `https://open.spotify.com/${type}/${id}`;
+  const { safeType, safeId } = _spotifyEntityParts(type, id);
+  const target = new URL("https://open.spotify.com/");
+  target.pathname = `/${safeType}/${safeId}`;
+  return target.toString();
 }
 
 function _spotifyEmbedUrl(type, id) {
-  return `https://open.spotify.com/embed/${type}/${id}?utm_source=oembed`;
+  const { safeType, safeId } = _spotifyEntityParts(type, id);
+  const target = new URL("https://open.spotify.com/");
+  target.pathname = `/embed/${safeType}/${safeId}`;
+  target.searchParams.set("utm_source", "oembed");
+  return target.toString();
 }
 
-async function _fetchSpotifyHtml(url, cache) {
-  const cached = _cacheGet(cache, url);
+async function _fetchSpotifyHtml(type, id, cache, { embed = false } = {}) {
+  const target = embed ? _spotifyEmbedUrl(type, id) : _spotifyPageUrl(type, id);
+  const cached = _cacheGet(cache, target);
   if (cached !== undefined) return cached;
 
-  const res = await fetch(url, {
-    headers: _SPOTIFY_PUBLIC_FETCH_HEADERS
+  const res = await fetch(target, {
+    headers: _SPOTIFY_PUBLIC_FETCH_HEADERS,
+    redirect: "error"
   });
   if (!res.ok) {
     throw new Error(`Spotify public fetch failed (${res.status})`);
   }
 
   const html = await res.text();
-  _cacheSet(cache, url, html);
+  _cacheSet(cache, target, html);
   return html;
 }
 
@@ -208,7 +231,7 @@ async function _fetchSpotifyEmbedEntity(type, id) {
   const cached = _cacheGet(_spotifyPublicEmbedCache, cacheKey);
   if (cached !== undefined) return cached;
 
-  const html = await _fetchSpotifyHtml(_spotifyEmbedUrl(type, id), _spotifyPublicEmbedCache);
+  const html = await _fetchSpotifyHtml(type, id, _spotifyPublicEmbedCache, { embed: true });
   const nextData = _extractNextData(html);
   const entity = nextData?.props?.pageProps?.state?.data?.entity || null;
   _cacheSet(_spotifyPublicEmbedCache, cacheKey, entity);
@@ -216,8 +239,10 @@ async function _fetchSpotifyEmbedEntity(type, id) {
 }
 
 async function _fetchSpotifyEmbedStateFresh(type, id) {
-  const res = await fetch(_spotifyEmbedUrl(type, id), {
-    headers: _SPOTIFY_PUBLIC_FETCH_HEADERS
+  const target = _spotifyEmbedUrl(type, id);
+  const res = await fetch(target, {
+    headers: _SPOTIFY_PUBLIC_FETCH_HEADERS,
+    redirect: "error"
   });
   if (!res.ok) {
     throw new Error(`Spotify embed state fetch failed (${res.status})`);
@@ -229,7 +254,7 @@ async function _fetchSpotifyEmbedStateFresh(type, id) {
 }
 
 async function _fetchSpotifyPageHtml(type, id) {
-  return _fetchSpotifyHtml(_spotifyPageUrl(type, id), _spotifyPublicHtmlCache);
+  return _fetchSpotifyHtml(type, id, _spotifyPublicHtmlCache);
 }
 
 function _normalizeArtistList(value = "") {

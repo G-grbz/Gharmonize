@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import { FFMPEG_BIN } from "./binaries.js";
 import { probeMediaFile } from "./probe.js";
 import { queueOwnershipFix } from "./fsOwnership.js";
@@ -473,7 +473,7 @@ function runFfmpegExtract(job, sourcePath, track, outputPath) {
   return new Promise((resolve, reject) => {
     const ffmpegBin = FFMPEG_BIN || "ffmpeg";
     const args = buildFfmpegExtractArgs(sourcePath, track, outputPath);
-    const child = spawn(ffmpegBin, args, { windowsHide: true });
+    const child = spawnSafe(ffmpegBin, args, { windowsHide: true });
     registerJobProcess(job.id, child);
 
     let stderr = "";
@@ -522,7 +522,7 @@ function runFfmpegDumpAttachment(job, sourcePath, track, outputPath) {
       "null",
       "-"
     ];
-    const child = spawn(ffmpegBin, args, { windowsHide: true });
+    const child = spawnSafe(ffmpegBin, args, { windowsHide: true });
     registerJobProcess(job.id, child);
 
     let stderr = "";

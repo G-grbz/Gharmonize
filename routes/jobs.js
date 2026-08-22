@@ -4,6 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import multer from "multer";
 import { sendOk, sendError, ERR, isDirectMediaUrl, sanitizeFilename } from "../modules/utils.js";
+import { sanitizeLogValue } from "../modules/security.js";
 import {
   jobs,
   spotifyMapTasks,
@@ -226,7 +227,7 @@ const inFlightAutomix = new Map();
 
 // Parses cookie header for Express API request handling.
 function parseCookieHeader(raw) {
-  const out = {};
+  const out = new Map();
   const src = String(raw || "");
   if (!src) return out;
   const parts = src.split(";");
@@ -235,11 +236,11 @@ function parseCookieHeader(raw) {
     if (idx <= 0) continue;
     const k = part.slice(0, idx).trim();
     const v = part.slice(idx + 1).trim();
-    if (!k) continue;
+    if (!k || k.length > 128 || !/^[A-Za-z0-9_.-]+$/.test(k)) continue;
     try {
-      out[k] = decodeURIComponent(v);
+      out.set(k, decodeURIComponent(v));
     } catch {
-      out[k] = v;
+      out.set(k, v);
     }
   }
   return out;
@@ -321,7 +322,7 @@ function pickLang(req) {
     const raw = String(req.headers?.cookie || "");
     if (raw) {
       const parsed = parseCookieHeader(raw);
-      const c = String(parsed.lang || "").toLowerCase().trim();
+      const c = String(parsed.get("lang") || "").toLowerCase().trim();
       if (SUPPORTED.has(c)) return c;
     }
   } catch {}
@@ -423,7 +424,7 @@ function requireWidgetKey(req, res, next) {
   return next();
 }
 
-router.get("/api/homepage", requireWidgetKey, (req, res) => {
+router.get("/api/homepage", requireWidgetKey, rateLimit(120, 60_000), (req, res) => {
   try {
     const lang = pickLang(req);
     cleanupCompletedJobsWithoutOutputs();
@@ -500,7 +501,7 @@ router.get("/api/homepage", requireWidgetKey, (req, res) => {
   }
 });
 
-router.get("/api/local-files", requireAuth, (req, res) => {
+router.get("/api/local-files", requireAuth, rateLimit(60, 60_000), (req, res) => {
   try {
     const allowedExts = [
       ".mp3", ".flac", ".wav", ".ogg", ".m4a",
@@ -546,7 +547,7 @@ router.get("/api/local-files", requireAuth, (req, res) => {
   }
 });
 
-router.get("/api/ffmpeg/caps", async (req, res) => {
+router.get("/api/ffmpeg/caps", rateLimit(60, 60_000), async (req, res) => {
   try {
     const ffmpegBin = BINARY_FFMPEG_BIN;
     const caps = await getFfmpegCaps(ffmpegBin);
@@ -571,7 +572,11 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
       return res.status(400).json({ error: "File is required" });
     }
 
-    const finalPath = req.file.path;
+    const finalPath = path.resolve(String(req.file.path || ""));
+    if (!isPathInsideRoot(UPLOAD_DIR, finalPath)) {
+      try { fs.rmSync(finalPath, { force: true }); } catch {}
+      return res.status(400).json({ error: "Invalid upload path" });
+    }
     await queueOwnershipFix(finalPath);
     const probeData = await probeMediaFile(finalPath);
     const streams = parseStreams(probeData);
@@ -588,8 +593,11 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
 
     if (req.file) {
       try {
-        fs.unlinkSync(req.file.path);
-      } catch (e) {}
+        const failedPath = path.resolve(String(req.file.path || ""));
+        if (isPathInsideRoot(UPLOAD_DIR, failedPath)) {
+          fs.rmSync(failedPath, { force: true });
+        }
+      } catch {}
     }
 
     res.status(500).json({
@@ -611,12 +619,18 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
      relPath = relPath.replace(/^[/\\]+/, "");
      const abs = path.resolve(LOCAL_INPUT_DIR, relPath);
 
-     if (!abs.startsWith(LOCAL_INPUT_DIR)) {
+     if (!isPathInsideRoot(LOCAL_INPUT_DIR, abs)) {
        return res.status(400).json({ error: "Invalid localPath" });
      }
 
-     if (!fs.existsSync(abs)) {
+     let st;
+     try {
+       st = fs.statSync(abs);
+     } catch {
        return res.status(404).json({ error: "File not found" });
+     }
+     if (!st.isFile()) {
+       return res.status(400).json({ error: "localPath must reference a file" });
      }
 
      const probeData = await probeMediaFile(abs);
@@ -637,7 +651,7 @@ router.post("/api/probe/file", rateLimit(10, 60_000), upload.single("file"), asy
    }
  });
 
-router.post("/api/probe/cleanup", async (req, res) => {
+router.post("/api/probe/cleanup", rateLimit(30, 60_000), async (req, res) => {
   try {
     const { finalPath } = req.body || {};
 
@@ -647,20 +661,16 @@ router.post("/api/probe/cleanup", async (req, res) => {
 
     const abs = path.resolve(finalPath);
     if (!isPathInsideRoot(UPLOAD_DIR, abs)) {
-      console.warn("[probe/cleanup] Attempt to delete outside UPLOAD_DIR:", abs);
+      console.warn("[probe/cleanup] Attempt to delete outside UPLOAD_DIR:", sanitizeLogValue(abs));
       return res.status(400).json({ error: "Invalid path" });
     }
 
-    if (fs.existsSync(abs)) {
-      try {
-        fs.unlinkSync(abs);
-        console.log(`[probe/cleanup] Deleted probed file: ${abs}`);
-      } catch (e) {
-        console.error("[probe/cleanup] unlink failed:", e);
-        return res.status(500).json({ error: e.message || "unlink failed" });
-      }
-    } else {
-      console.log("[probe/cleanup] File already missing:", abs);
+    try {
+      fs.rmSync(abs, { force: true });
+      console.log(`[probe/cleanup] Removed probed file if present: ${sanitizeLogValue(abs)}`);
+    } catch (e) {
+      console.error("[probe/cleanup] remove failed:", sanitizeLogValue(e?.message || e));
+      return res.status(500).json({ error: e.message || "remove failed" });
     }
 
     return res.json({ success: true });
@@ -747,13 +757,13 @@ router.post('/api/upload/chunk/cancel', rateLimit(30, 60_000), async (req, res) 
   }
 });
 
-router.get("/api/jobs/:id", (req, res) => {
+router.get("/api/jobs/:id", rateLimit(120, 60_000), (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return sendError(res, ERR.JOB_NOT_FOUND, "Job not found", 404);
   return sendOk(res, job);
 });
 
-router.get("/api/queue/status", (_req, res) => {
+router.get("/api/queue/status", rateLimit(120, 60_000), (_req, res) => {
   const terminal = new Set(["completed", "error", "canceled"]);
   const activeJobs = Array.from(jobs.values())
     .filter((job) => job && !terminal.has(String(job.status || "").toLowerCase()))
@@ -777,7 +787,7 @@ router.get("/api/queue/status", (_req, res) => {
   });
 });
 
-router.get("/api/stream/:id", (req, res) => {
+router.get("/api/stream/:id", rateLimit(120, 60_000), (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: "Job not found" });
 
@@ -809,7 +819,7 @@ router.get("/api/stream/:id", (req, res) => {
   req.on("close", () => clearInterval(interval));
 });
 
-router.post("/api/jobs/:id/cancel", (req, res) => {
+router.post("/api/jobs/:id/cancel", rateLimit(60, 60_000), (req, res) => {
   const id = req.params.id;
   const job = jobs.get(id);
   if (!job) return sendError(res, ERR.JOB_NOT_FOUND, "Job not found", 404);
@@ -837,7 +847,7 @@ router.post("/api/debug/lyrics", rateLimit(10, 60_000), async (req, res) => {
       return res.status(400).json({ error: "Artist and title are required" });
     }
 
-    console.log(`🔍 Test lyrics search: "${artist}" - "${title}"`);
+    console.log(`🔍 Test lyrics search: "${sanitizeLogValue(artist)}" - "${sanitizeLogValue(title)}"`);
 
     const lyricsPath = await lyricsFetcher.downloadLyrics(
       artist,
@@ -864,7 +874,7 @@ router.post("/api/debug/lyrics", rateLimit(10, 60_000), async (req, res) => {
 
 const chunkStorage = new Map();
 
-router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), async (req, res) => {
+router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), upload.single('chunk'), async (req, res) => {
   let chunk;
 
   try {
@@ -885,18 +895,27 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
     }
 
     try {
-      const oldPath = chunk.path;
+      const oldPath = path.resolve(String(chunk.path || ""));
+      if (!isPathInsideRoot(UPLOAD_DIR, oldPath)) {
+        return res.status(400).json({ error: "Invalid chunk path" });
+      }
       const dir = path.dirname(oldPath);
       const base = path.basename(oldPath);
       if (!base.includes(uploadId)) {
         const newName = `${uploadId}_${base}`;
-        const newPath = path.join(dir, newName);
+        const newPath = path.resolve(dir, newName);
+        if (!isPathInsideRoot(UPLOAD_DIR, newPath)) {
+          return res.status(400).json({ error: "Invalid chunk destination" });
+        }
         fs.renameSync(oldPath, newPath);
         chunk.path = newPath;
-        console.log(`📝 Chunk temp renamed: ${oldPath} -> ${newPath}`);
+        console.log(`📝 Chunk temp renamed: ${sanitizeLogValue(oldPath)} -> ${sanitizeLogValue(newPath)}`);
+      } else {
+        chunk.path = oldPath;
       }
     } catch (e) {
-      console.warn('Chunk temp rename failed:', e);
+      console.warn('Chunk temp rename failed:', sanitizeLogValue(e?.message || e));
+      return res.status(400).json({ error: "Invalid chunk path" });
     }
 
     if (!chunkStorage.has(uploadId)) {
@@ -916,7 +935,8 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
 
     if (uploadData.canceled) {
       try {
-        fs.unlink(chunk.path, () => {});
+        const canceledPath = path.resolve(String(chunk.path || ""));
+        if (isPathInsideRoot(UPLOAD_DIR, canceledPath)) fs.rmSync(canceledPath, { force: true });
       } catch {}
       return res.status(410).json({ error: 'Upload canceled' });
     }
@@ -940,8 +960,13 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
       return res.status(500).json({ error: 'Write stream could not be created' });
     }
 
+    const safeChunkPath = path.resolve(String(chunk.path || ""));
+    if (!isPathInsideRoot(UPLOAD_DIR, safeChunkPath)) {
+      return res.status(400).json({ error: "Invalid chunk path" });
+    }
+
     await new Promise((resolve, reject) => {
-      const rs = fs.createReadStream(chunk.path);
+      const rs = fs.createReadStream(safeChunkPath);
 
       rs.on('error', (err) => {
         console.error('Chunk read error:', err);
@@ -956,12 +981,12 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
     });
 
     try {
-      fs.unlink(chunk.path, () => {});
+      fs.rmSync(safeChunkPath, { force: true });
     } catch (err) {
-      console.warn('Temporary chunk could not be deleted:', chunk.path, err);
+      console.warn('Temporary chunk could not be deleted:', sanitizeLogValue(chunk?.path), sanitizeLogValue(err?.message || err));
     }
 
-    uploadData.chunks[chunkIndexNum] = { size: chunk.size, path: chunk.path };
+    uploadData.chunks[chunkIndexNum] = { size: chunk.size, path: safeChunkPath };
     uploadData.completedChunks = (uploadData.completedChunks || 0) + 1;
 
     const completedChunks = uploadData.completedChunks;
@@ -970,7 +995,7 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
       uploadData.writeStream.end();
       if (purpose === 'probe') {
         uploadData.writeStream.on('finish', async () => {
-          console.log(`✅ All chunks merged (probe): ${uploadData.finalPath}`);
+          console.log(`✅ All chunks merged (probe): ${sanitizeLogValue(uploadData.finalPath)}`);
           await queueOwnershipFix(uploadData.finalPath);
           try {
             const probeData = await probeMediaFile(uploadData.finalPath);
@@ -999,7 +1024,7 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
       }
 
       uploadData.writeStream.on('finish', async () => {
-        console.log(`✅ All chunks merged: ${uploadData.finalPath}`);
+        console.log(`✅ All chunks merged: ${sanitizeLogValue(uploadData.finalPath)}`);
         await queueOwnershipFix(uploadData.finalPath);
       });
 
@@ -1020,8 +1045,8 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
     } catch (error) {
     console.error('Chunk upload error:', error);
 
-    const { uploadId } = req.body || {};
-    const uploadData = chunkStorage.get(uploadId);
+    const uploadId = normalizeUploadId(req.body?.uploadId);
+    const uploadData = uploadId ? chunkStorage.get(uploadId) : null;
 
     if (uploadData && uploadData.writeStream) {
       try {
@@ -1032,12 +1057,15 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
     }
 
     try {
-      if (chunk && chunk.path && fs.existsSync(chunk.path)) {
-        fs.unlinkSync(chunk.path);
-        console.log(`🧹 Deleted failed chunk file: ${chunk.path}`);
+      if (chunk?.path) {
+        const failedChunkPath = path.resolve(String(chunk.path));
+        if (isPathInsideRoot(UPLOAD_DIR, failedChunkPath)) {
+          fs.rmSync(failedChunkPath, { force: true });
+          console.log(`🧹 Removed failed chunk file if present: ${sanitizeLogValue(failedChunkPath)}`);
+        }
       }
     } catch (e) {
-      console.warn('Failed to delete failed chunk file:', chunk?.path, e);
+      console.warn('Failed to delete failed chunk file:', sanitizeLogValue(chunk?.path), sanitizeLogValue(e?.message || e));
     }
 
     return res.status(500).json({ error: error.message });
@@ -1047,7 +1075,7 @@ router.post('/api/upload/chunk', concurrencyLimit(4), upload.single('chunk'), as
 router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (req, res) => {
   try {
     const body = req.body || {};
-    console.log("📦 RAW req.body.youtubeConcurrency:", body.youtubeConcurrency, "typeof:", typeof body.youtubeConcurrency);
+    console.log("📦 RAW req.body.youtubeConcurrency:", sanitizeLogValue(body.youtubeConcurrency), "typeof:", typeof body.youtubeConcurrency);
     const metadata = {};
     const plTitleRaw = String(body.plTitle ?? body.playlistTitle ?? "").trim();
     const plTitle = plTitleRaw || null;
@@ -1068,20 +1096,30 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
         metadata.originalName = metadata.originalName || path.basename(candidate).replace(/^[^_]+_/, '');
       }
     } else if (req.file) {
-      inputPath = req.file.path;
-      queueOwnershipFix(req.file.path);
+      const candidate = path.resolve(String(req.file.path || ""));
+      if (!isPathInsideRoot(UPLOAD_DIR, candidate)) {
+        return sendError(res, "INVALID_UPLOAD_PATH", "Invalid uploaded file path", 400);
+      }
+      inputPath = candidate;
+      queueOwnershipFix(candidate);
     }
 
     if (!inputPath && localPath) {
     let relPath = String(localPath).trim();
     relPath = relPath.replace(/^[/\\]+/, "");
     const abs = path.resolve(LOCAL_INPUT_DIR, relPath);
-    if (!abs.startsWith(LOCAL_INPUT_DIR)) {
+    if (!isPathInsideRoot(LOCAL_INPUT_DIR, abs)) {
       return sendError(res, "INVALID_LOCAL_PATH", "Invalid localPath", 400);
     }
 
-    if (!fs.existsSync(abs)) {
+    let localStat;
+    try {
+      localStat = fs.statSync(abs);
+    } catch {
       return sendError(res, "LOCAL_FILE_NOT_FOUND", "Local file not found", 404);
+    }
+    if (!localStat.isFile()) {
+      return sendError(res, "INVALID_LOCAL_PATH", "localPath must reference a file", 400);
     }
     inputPath = abs;
     metadata.source = "local";
@@ -1183,7 +1221,7 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
       youtubeConcurrency
     );
 
-    console.log("🎛️ UI youtubeConcurrency:", youtubeConcurrency);
+    console.log("🎛️ UI youtubeConcurrency:", sanitizeLogValue(youtubeConcurrency));
     console.log("🎛️ Normalized concurrency:", youtubeConcurrencyNormalized);
 
     let selectedStreamsParsed = null;
@@ -1248,7 +1286,7 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
         try {
           return JSON.parse(raw);
         } catch {
-          console.warn("Failed to parse videoSettings JSON:", raw);
+          console.warn("Failed to parse videoSettings JSON:", sanitizeLogValue(raw));
           return null;
         }
       }
@@ -1427,12 +1465,12 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
 
       console.log("=== MEDIA DEBUG ===");
       console.log("platform:", isYouTubeSource ? "youtube" : "dailymotion");
-      console.log("URL:", normalized);
+      console.log("URL:", sanitizeLogValue(normalized));
       console.log("isPlaylist:", metadata.isPlaylist);
       console.log("isAutomix:", metadata.isAutomix);
       console.log("selectedIndices:", sel);
-      console.log("req.body.selectedIds:", req.body.selectedIds);
-      console.log("metadata.selectedIds (after merge):", metadata.selectedIds);
+      console.log("req.body.selectedIds:", sanitizeLogValue(JSON.stringify(req.body.selectedIds ?? null)));
+      console.log("metadata.selectedIds (after merge):", sanitizeLogValue(JSON.stringify(metadata.selectedIds ?? null)));
       console.log("================================");
 
       if (Array.isArray(frozenEntriesParsed) && frozenEntriesParsed.length > 0) {
@@ -1467,7 +1505,7 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
             metadata.selectedIds = automixData.ids;
             metadata.frozenEntries = automixData.entries;
             metadata.frozenTitle = automixData.title;
-            console.log("selectedIds fetched from API:", metadata.selectedIds);
+            console.log("selectedIds fetched from API:", sanitizeLogValue(JSON.stringify(metadata.selectedIds ?? null)));
           }
         } catch (error) {
           console.warn("Could not retrieve Automix IDs:", error.message);
@@ -1565,7 +1603,7 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (re
   }
 });
 
-router.get("/api/jobs", requireAuth, (req, res) => {
+router.get("/api/jobs", requireAuth, rateLimit(120, 60_000), (req, res) => {
   try {
     cleanupCompletedJobsWithoutOutputs();
 
@@ -1630,7 +1668,7 @@ router.get("/api/jobs", requireAuth, (req, res) => {
   }
 });
 
-router.get("/api/stream", requireAuth, (req, res) => {
+router.get("/api/stream", requireAuth, rateLimit(120, 60_000), (req, res) => {
   cleanupCompletedJobsWithoutOutputs();
 
   res.writeHead(200, {

@@ -4,11 +4,12 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { execFile } from "node:child_process";
+import { execFileSafe } from "./safeProcess.js";
+import { assertPathWithinAny } from "./security.js";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFileSafe);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isElectron = !!process.versions.electron;
@@ -164,20 +165,22 @@ function resolveWebCacheDir() {
     process.platform === "win32" && localAppData
       ? path.join(localAppData, "Gharmonize", "web-bin")
       : null,
-    homeDir ? path.join(homeDir, ".cache", "gharmonize", "web-bin") : null,
-    path.join(os.tmpdir(), "gharmonize-web-bin")
+    homeDir ? path.join(homeDir, ".cache", "gharmonize", "web-bin") : null
   ].filter(Boolean);
 
   for (const candidate of candidates) {
     try {
-      fs.mkdirSync(candidate, { recursive: true });
+      fs.mkdirSync(candidate, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(candidate, 0o700); } catch {}
       fs.accessSync(candidate, fs.constants.W_OK | fs.constants.X_OK);
       return candidate;
     } catch {
     }
   }
 
-  return path.join(os.tmpdir(), "gharmonize-web-bin");
+  const fallback = fs.mkdtempSync(path.join(os.tmpdir(), "gharmonize-web-bin-"));
+  try { fs.chmodSync(fallback, 0o700); } catch {}
+  return fallback;
 }
 
 const WEB_CACHE_DIR = resolveWebCacheDir();
@@ -189,20 +192,22 @@ function resolveBinaryRuntimeTmpDir() {
   const candidates = [
     configured ? path.resolve(configured) : null,
     WEB_RUNTIME_TMP_DIR,
-    path.join(process.cwd(), "temp", "binary-tmp"),
-    os.tmpdir()
+    path.join(process.cwd(), "temp", "binary-tmp")
   ].filter(Boolean);
 
   for (const candidate of candidates) {
     try {
-      fs.mkdirSync(candidate, { recursive: true });
+      fs.mkdirSync(candidate, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(candidate, 0o700); } catch {}
       fs.accessSync(candidate, fs.constants.W_OK | fs.constants.X_OK);
       return candidate;
     } catch {
     }
   }
 
-  return os.tmpdir();
+  const fallback = fs.mkdtempSync(path.join(os.tmpdir(), "gharmonize-bin-tmp-"));
+  try { fs.chmodSync(fallback, 0o700); } catch {}
+  return fallback;
 }
 
 export function getBinaryRuntimeEnv(extraEnv = {}) {
@@ -394,8 +399,9 @@ export function getDynamicBinaryMetadata(key = null) {
 
 // Persists json metadata file for web binary cache.
 async function writeJsonFile(filePath, value) {
-  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.promises.writeFile(filePath, JSON.stringify(value, null, 2), "utf8");
+  const target = assertPathWithinAny(filePath, [WEB_CACHE_DIR]);
+  await fs.promises.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  await fs.promises.writeFile(target, JSON.stringify(value, null, 2), { encoding: "utf8", mode: 0o600 });
 }
 
 // Creates fetch timeout wrapper for web binary cache.
@@ -1071,10 +1077,11 @@ async function copyExecutable(sourcePath, destPath) {
 
 // Writes executable text file into the web cache.
 async function writeExecutableFile(filePath, content) {
-  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.promises.writeFile(filePath, content, "utf8");
+  const target = assertPathWithinAny(filePath, [WEB_CACHE_DIR]);
+  await fs.promises.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  await fs.promises.writeFile(target, content, { encoding: "utf8", mode: 0o700 });
   if (process.platform !== "win32") {
-    await fs.promises.chmod(filePath, 0o755).catch(() => {});
+    await fs.promises.chmod(target, 0o700).catch(() => {});
   }
 }
 

@@ -313,7 +313,6 @@ function parseAppleAllMetaContents(html = "", attr = "property", key = "") {
 // Decodes HTML entities found in Apple Music page values for Apple mapping and metadata flow.
 function decodeHtmlEntities(value = "") {
   return String(value || "")
-    .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
@@ -324,7 +323,8 @@ function decodeHtmlEntities(value = "") {
     .replace(/&#(\d+);/g, (_, raw) => {
       const n = Number(raw);
       return Number.isFinite(n) ? String.fromCharCode(n) : _;
-    });
+    })
+    .replace(/&amp;/g, "&");
 }
 
 // Parses JSON-LD blocks embedded in Apple Music HTML for Apple mapping and metadata flow.
@@ -645,19 +645,48 @@ function normalizeAppleStorefront(value = "") {
 
 // Fetches and caches Apple Music page HTML for Apple mapping and metadata flow.
 async function fetchAppleMusicHtml(url = "") {
-  const target = String(url || "").trim();
-  if (!target) throw new Error("Apple Music URL is required");
+  const raw = String(url || "").trim();
+  if (!raw) throw new Error("Apple Music URL is required");
 
-  const cached = cacheGet(APPLE_PAGE_CACHE, target);
+  let target = new URL(raw);
+  const validateTarget = (candidate) => {
+    const host = candidate.hostname.toLowerCase();
+    if (
+      candidate.protocol !== "https:" ||
+      (host !== "music.apple.com" && host !== "embed.music.apple.com") ||
+      candidate.username ||
+      candidate.password
+    ) {
+      throw new Error("Unsafe Apple Music URL");
+    }
+  };
+  validateTarget(target);
+
+  const cacheKey = target.toString();
+  const cached = cacheGet(APPLE_PAGE_CACHE, cacheKey);
   if (cached !== undefined) return cached;
 
-  const res = await fetch(target, { headers: APPLE_WEB_HEADERS, redirect: "follow" });
+  let res = null;
+  for (let redirects = 0; redirects <= 3; redirects += 1) {
+    res = await fetch(target.toString(), {
+      headers: APPLE_WEB_HEADERS,
+      redirect: "manual"
+    });
+    if (![301, 302, 303, 307, 308].includes(res.status)) break;
+    const location = res.headers.get("location");
+    if (!location) throw new Error("Apple Music redirect missing location");
+    target = new URL(location, target);
+    validateTarget(target);
+  }
+  if (!res || [301, 302, 303, 307, 308].includes(res.status)) {
+    throw new Error("Apple Music redirect limit exceeded");
+  }
   if (!res.ok) {
     throw new Error(`Apple Music page fetch failed (${res.status})`);
   }
 
   const html = await res.text();
-  cacheSet(APPLE_PAGE_CACHE, target, html, APPLE_PAGE_CACHE_MAX);
+  cacheSet(APPLE_PAGE_CACHE, cacheKey, html, APPLE_PAGE_CACHE_MAX);
   return html;
 }
 

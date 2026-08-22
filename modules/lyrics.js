@@ -1,15 +1,16 @@
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawnSafe } from "./safeProcess.js";
 import { getCache, setCache } from "./cache.js";
 import { FFMPEG_BIN } from "./binaries.js";
 import { rewriteId3v11Tag } from "./id3.js";
+import { assertPathWithinAny, sanitizeLogValue } from "./security.js";
 
 const LYRICS_CACHE_TTL = 24 * 60 * 60 * 1000;
 
 // Handles emit log in core application logic.
 function emitLog(onLog, payload) {
-  if (payload?.fallback) console.log(payload.fallback);
+  if (payload?.fallback) console.log(sanitizeLogValue(payload.fallback));
   if (onLog) onLog(payload);
 }
 
@@ -190,7 +191,10 @@ export class LyricsFetcher {
         return null;
       }
 
-      const lrcPath = outputPath.replace(/\.[^/.]+$/, "") + ".lrc";
+      const baseDir = path.resolve(process.env.DATA_DIR || process.cwd());
+      const allowedRoots = [path.join(baseDir, "outputs"), path.join(baseDir, "temp"), path.join(baseDir, "uploads")];
+      const safeOutputPath = assertPathWithinAny(path.resolve(String(outputPath || "")), allowedRoots);
+      const lrcPath = assertPathWithinAny(safeOutputPath.replace(/\.[^/.]+$/, "") + ".lrc", allowedRoots);
       const savingLogMsg = {
         logKey: "log.lyrics.saving",
         logVars: { path: lrcPath },
@@ -306,7 +310,7 @@ async function embedLyricsInMedia(filePath, lyricsContent, options = {}) {
   try {
     await new Promise((resolve, reject) => {
       const stderrChunks = [];
-      const child = spawn(FFMPEG_BIN, args);
+      const child = spawnSafe(FFMPEG_BIN, args);
 
       child.stderr.on("data", (d) => {
         const line = String(d || "");
