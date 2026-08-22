@@ -56,6 +56,13 @@ export function assertTrustedExecutable(command) {
   return text;
 }
 
+// Treats a blank settings override as "use the managed/default executable"
+// while keeping process execution itself strict and non-empty.
+export function normalizeTrustedExecutableSetting(value) {
+  const text = String(value ?? "").trim();
+  return text ? assertTrustedExecutable(text) : "";
+}
+
 export function assertSafeProcessArgs(command, args = []) {
   if (!Array.isArray(args)) throw new Error("Process arguments must be an array");
   const executable = path.basename(String(command || "")).toLowerCase();

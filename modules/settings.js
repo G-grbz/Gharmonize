@@ -4,7 +4,7 @@ import path from 'path'
 import crypto from 'crypto'
 import { initializeDynamicBinaries } from './binaries.js'
 import { rateLimit } from './rateLimit.js'
-import { assertTrustedExecutable } from './safeProcess.js'
+import { normalizeTrustedExecutableSetting } from './safeProcess.js'
 import { getBinariesInfo, clearBinariesInfoCache } from './binariesInfo.js'
 import {
   decryptSecret,
@@ -24,6 +24,7 @@ const ENV_PATH =
 const SESSION_COOKIE = 'gharmonize_admin_session'
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
 const SENSITIVE_KEYS = new Set(['SPOTIFY_CLIENT_SECRET', 'HOMEPAGE_WIDGET_KEY'])
+const EXECUTABLE_SETTING_KEYS = new Set(['YTDLP_BIN', 'FFMPEG_BIN'])
 let sessionGeneration = 1
 const loginAttempts = new Map()
 
@@ -63,8 +64,18 @@ function applyAllowedEnvValue(key, value) {
     case 'YT_403_WORKAROUNDS': process.env.YT_403_WORKAROUNDS = value; return;
     case 'ENRICH_SPOTIFY_FOR_YT': process.env.ENRICH_SPOTIFY_FOR_YT = value; return;
     case 'MEDIA_COMMENT': process.env.MEDIA_COMMENT = value; return;
-    case 'YTDLP_BIN': process.env.YTDLP_BIN = assertTrustedExecutable(value); return;
-    case 'FFMPEG_BIN': process.env.FFMPEG_BIN = assertTrustedExecutable(value); return;
+    case 'YTDLP_BIN': {
+      const executable = normalizeTrustedExecutableSetting(normalized)
+      if (executable) process.env.YTDLP_BIN = executable
+      else delete process.env.YTDLP_BIN
+      return
+    }
+    case 'FFMPEG_BIN': {
+      const executable = normalizeTrustedExecutableSetting(normalized)
+      if (executable) process.env.FFMPEG_BIN = executable
+      else delete process.env.FFMPEG_BIN
+      return
+    }
     case 'GHARMONIZE_FFMPEG_CHANNEL': process.env.GHARMONIZE_FFMPEG_CHANNEL = value; return;
     case 'TRUST_PROXY': process.env.TRUST_PROXY = value; return;
     case 'TRUSTED_PROXY_CIDRS': process.env.TRUSTED_PROXY_CIDRS = value; return;
@@ -366,6 +377,20 @@ router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), 
     if (k === 'GHARMONIZE_FFMPEG_CHANNEL') { updates[k] = String(v || '').trim().toLowerCase() === 'master' ? 'master' : 'stable'; continue }
     if (k === 'TRUST_PROXY') { updates[k] = ['1','true','yes','on'].includes(String(v ?? '').trim().toLowerCase()) ? '1' : '0'; continue }
     if (typeof v !== 'undefined' && v !== null) updates[k] = String(v)
+  }
+  try {
+    for (const key of EXECUTABLE_SETTING_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(updates, key)) {
+        updates[key] = normalizeTrustedExecutableSetting(updates[key])
+      }
+    }
+  } catch (error) {
+    return res.status(400).json({
+      error: {
+        code: 'INVALID_EXECUTABLE_SETTING',
+        message: error?.message || 'Invalid executable setting'
+      }
+    })
   }
   writeEnv(updates)
   for (const [k, v] of Object.entries(updates)) applyAllowedEnvValue(k, v)

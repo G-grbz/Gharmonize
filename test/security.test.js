@@ -17,7 +17,11 @@ import {
   sanitizeLogValue,
   verifyPassword
 } from '../modules/security.js';
-import { assertSafeProcessArgs, assertTrustedExecutable } from '../modules/safeProcess.js';
+import {
+  assertSafeProcessArgs,
+  assertTrustedExecutable,
+  normalizeTrustedExecutableSetting
+} from '../modules/safeProcess.js';
 import { rateLimit } from '../modules/rateLimit.js';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gharmonize-security-'));
@@ -197,6 +201,13 @@ test('safe process layer rejects dangerous arguments and unknown executables', (
   assert.throws(() => assertSafeProcessArgs('ffmpeg', ['ok\n--evil']));
   assert.throws(() => assertTrustedExecutable('/tmp/not-gharmonize-tool'));
   assert.equal(assertTrustedExecutable('/usr/bin/ffmpeg'), '/usr/bin/ffmpeg');
+});
+
+test('blank executable settings select managed binaries without weakening process validation', () => {
+  assert.equal(normalizeTrustedExecutableSetting(''), '');
+  assert.equal(normalizeTrustedExecutableSetting('   '), '');
+  assert.equal(normalizeTrustedExecutableSetting(' /usr/bin/ffmpeg '), '/usr/bin/ffmpeg');
+  assert.throws(() => assertTrustedExecutable(''));
 });
 
 test('critical process sinks are routed through the safe process layer', () => {
