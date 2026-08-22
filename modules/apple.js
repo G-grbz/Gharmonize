@@ -660,16 +660,31 @@ async function fetchAppleMusicHtml(url = "") {
       throw new Error("Unsafe Apple Music URL");
     }
   };
+  const buildFetchUrl = (candidate) => {
+    validateTarget(candidate);
+    const origin = candidate.hostname.toLowerCase() === "embed.music.apple.com"
+      ? "https://embed.music.apple.com"
+      : "https://music.apple.com";
+    const pathname = candidate.pathname
+      .split("/")
+      .map((segment) => encodeURIComponent(decodeURIComponent(segment)))
+      .join("/");
+    const query = [...candidate.searchParams.entries()]
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join("&");
+    return `${origin}${pathname}${query ? `?${query}` : ""}`;
+  };
   validateTarget(target);
 
-  const cacheKey = target.toString();
+  const cacheKey = buildFetchUrl(target);
   const cached = cacheGet(APPLE_PAGE_CACHE, cacheKey);
   if (cached !== undefined) return cached;
 
   let res = null;
   for (let redirects = 0; redirects <= 3; redirects += 1) {
-    // Protocol, credentials, exact Apple host, and every redirect target are validated above.
-    res = await fetch(target.toString(), { // codeql[js/request-forgery]
+    // The request origin is selected from fixed Apple hosts; every untrusted
+    // path and query component is encoded before it reaches fetch.
+    res = await fetch(buildFetchUrl(target), {
       headers: APPLE_WEB_HEADERS,
       redirect: "manual"
     });

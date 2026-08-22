@@ -88,7 +88,7 @@ function directoryLabel(directoryPath) {
 }
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.get("/api/retag/directories", requireRetagAccess, rateLimit(60, 60_000), (req, res) => { // codeql[js/missing-rate-limiting]
+router.get("/api/retag/directories", requireRetagAccess, rateLimit(60, 60_000), (req, res) => {
   try {
     if (req.retagDesktopAccess) {
       return sendOk(res, { desktop: true, roots: [], current: null, entries: [] });
@@ -138,7 +138,7 @@ router.get("/api/retag/directories", requireRetagAccess, rateLimit(60, 60_000), 
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.post("/api/retag/jobs", requireRetagAccess, rateLimit(20, 60_000), (req, res) => { // codeql[js/missing-rate-limiting]
+router.post("/api/retag/jobs", requireRetagAccess, rateLimit(20, 60_000), (req, res) => {
   try {
     const directoryPath = resolveRequestedDirectory(req, req.body?.directoryPath);
     fs.accessSync(directoryPath, fs.constants.R_OK | fs.constants.W_OK);

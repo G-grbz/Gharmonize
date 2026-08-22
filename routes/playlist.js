@@ -109,7 +109,7 @@ router.get("/api/youtube/search", async (req, res) => {
     return sendOk(res, result);
   } catch (e) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    console.error("YouTube search error:", sanitizeLogValue(e?.message || e)); // codeql[js/log-injection]
+    console.error("YouTube search error:", sanitizeLogValue(e?.message || e));
     return sendError(res, "SEARCH_FAILED", e.message || "YouTube search failed", 500);
   }
 });
@@ -253,7 +253,7 @@ router.post("/api/playlist/preview", async (req, res) => {
       setCache(keyUrl, cached);
     } catch (e) {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      console.error("[AUTOMIX] extractAutomixAllFlat FAILED:", sanitizeLogValue(e?.message || e)); // codeql[js/log-injection]
+      console.error("[AUTOMIX] extractAutomixAllFlat FAILED:", sanitizeLogValue(e?.message || e));
 
       const meta = await getPlaylistMetaLite(keyUrl);
       const total = meta.count || 50;
@@ -330,7 +330,7 @@ router.post("/api/playlist/preview", async (req, res) => {
         });
       } catch (err) {
         // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-        console.error("[AUTOMIX] paged mode error:", sanitizeLogValue(err?.message || err)); // codeql[js/log-injection]
+        console.error("[AUTOMIX] paged mode error:", sanitizeLogValue(err?.message || err));
         return sendError(res, 'PREVIEW_FAILED', err.message || "Automix preview failed", 500);
       }
     }
@@ -401,7 +401,7 @@ router.post("/api/playlist/preview", async (req, res) => {
     sendOk(res, { playlist: { title: cached.title, count: cached.count, isAutomix: false }, page: p, pageSize: ps, items: slice });
   } catch (e) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-    console.error("Playlist preview error:", sanitizeLogValue(e?.message || e)); // codeql[js/log-injection]
+    console.error("Playlist preview error:", sanitizeLogValue(e?.message || e));
     return sendError(res, 'PREVIEW_FAILED', String(e.message || e), 500);
   }
 });

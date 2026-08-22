@@ -28,6 +28,14 @@ test("plain artist names are preserved", () => {
   assert.equal(normalizeYtMusicByline("AC/DC • Live"), "AC/DC • Live");
 });
 
+test("very long YouTube Music bylines are parsed without a backtracking expression", () => {
+  const padding = " ".repeat(100_000);
+  assert.equal(
+    normalizeYtMusicByline(`Video${padding}•${padding}Yiğit Mahzuni • 50 Mn görüntüleme • 3:05`),
+    "Yiğit Mahzuni"
+  );
+});
+
 test("frozen YouTube entries cannot carry display metadata into artist fields", () => {
   const entry = normalizeYtMusicAlbumEntry({
     title: "Kaybolurdun Gözlerimde",

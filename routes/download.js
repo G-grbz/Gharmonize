@@ -172,18 +172,18 @@ function handleDownload(req, res) {
     if (statErr) {
       if (statErr.code === "ENOENT" || statErr.code === "ENOTDIR") {
         // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-        console.warn("[download] Not found:", sanitizeLogValue(abs)); // codeql[js/log-injection]
+        console.warn("[download] Not found:", sanitizeLogValue(abs));
         return res.status(404).send("Not found");
       }
 
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      console.warn("[download] Stat failed:", sanitizeLogValue(abs), sanitizeLogValue(statErr?.message || statErr)); // codeql[js/log-injection]
+      console.warn("[download] Stat failed:", sanitizeLogValue(abs), sanitizeLogValue(statErr?.message || statErr));
       return res.status(500).send("Unable to read file");
     }
 
     if (!stat.isFile()) {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      console.warn("[download] Not a file:", sanitizeLogValue(abs)); // codeql[js/log-injection]
+      console.warn("[download] Not a file:", sanitizeLogValue(abs));
       return res.status(404).send("Not found");
     }
 
@@ -197,7 +197,7 @@ function handleDownload(req, res) {
 
     stream.once("error", (sendErr) => {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      console.warn("[download] Send failed:", sanitizeLogValue(abs), sanitizeLogValue(sendErr?.message || sendErr)); // codeql[js/log-injection]
+      console.warn("[download] Send failed:", sanitizeLogValue(abs), sanitizeLogValue(sendErr?.message || sendErr));
 
       if (!res.headersSent) {
         clearDownloadHeaders(res);
@@ -215,7 +215,7 @@ function handleDownload(req, res) {
 }
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => { // codeql[js/missing-rate-limiting]
+router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => {
   const isWindows = process.platform === "win32";
   const linuxPath = isWindows ? OUTPUTS_DISPLAY_DIR.replace(/\\/g, "/") : OUTPUTS_DISPLAY_DIR;
   const windowsPath = isWindows ? OUTPUTS_DISPLAY_DIR : OUTPUTS_DISPLAY_DIR.replace(/\//g, "\\");
@@ -229,7 +229,7 @@ router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => { // 
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.get("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => { // codeql[js/missing-rate-limiting]
+router.get("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => {
   const rawPath = req.query.path || req.query.url || "";
   const abs = resolveOutputPath(rawPath);
   const exists = !!(abs && fs.existsSync(abs));
@@ -237,7 +237,7 @@ router.get("/api/outputs/exists", rateLimit(120, 60_000), (req, res) => { // cod
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.post("/api/outputs/open", rateLimit(30, 60_000), async (req, res) => { // codeql[js/missing-rate-limiting]
+router.post("/api/outputs/open", rateLimit(30, 60_000), async (req, res) => {
   try {
     const openRoot = resolveOpenRootDir();
     const subdir = req.body?.subdir || req.body?.outputSubdir || "";
@@ -265,8 +265,8 @@ router.post("/api/outputs/open", rateLimit(30, 60_000), async (req, res) => { //
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.head("/download/*filePath", rateLimit(120, 60_000), handleDownload); // codeql[js/missing-rate-limiting]
+router.head("/download/*filePath", rateLimit(120, 60_000), handleDownload);
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.get("/download/*filePath", rateLimit(120, 60_000), handleDownload); // codeql[js/missing-rate-limiting]
+router.get("/download/*filePath", rateLimit(120, 60_000), handleDownload);
 
 export default router;

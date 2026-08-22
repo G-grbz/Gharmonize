@@ -316,8 +316,21 @@ async function resolveDeezerCanonicalUrl(url = "") {
       return raw;
     }
 
-    // Protocol, credentials, exact Deezer short-link host, and redirects are constrained above.
-    const res = await fetch(target.toString(), { // codeql[js/request-forgery]
+    const origin = host === "link.deezer.com"
+      ? "https://link.deezer.com"
+      : "https://deezer.page.link";
+    const pathname = target.pathname
+      .split("/")
+      .map((segment) => encodeURIComponent(decodeURIComponent(segment)))
+      .join("/");
+    const query = [...target.searchParams.entries()]
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join("&");
+    const safeTarget = `${origin}${pathname}${query ? `?${query}` : ""}`;
+
+    // The origin is selected from fixed Deezer hosts and every untrusted URL
+    // component is encoded before it reaches fetch.
+    const res = await fetch(safeTarget, {
       headers: DEEZER_WEB_HEADERS,
       redirect: "manual"
     });

@@ -1079,7 +1079,7 @@ async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = 
     // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
     const response = await fetch(`${YTM_ORIGIN}/youtubei/v1/search?prettyPrint=false`, {
       method: "POST",
-      headers, // codeql[js/file-access-to-http]
+      headers,
       signal: controller.signal,
       body: JSON.stringify(body)
     });
@@ -1664,7 +1664,7 @@ async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, t
       // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
       response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
         method: "POST",
-        headers, // codeql[js/file-access-to-http]
+        headers,
         signal: controller.signal,
         body: JSON.stringify({ context, ...payload })
       });
@@ -3460,7 +3460,7 @@ async function fetchYtmBootstrapConfig(cookieHeader, timeoutMs = 6000) {
   try {
     // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
     const response = await fetch(`${YTM_ORIGIN}/`, {
-      headers: { // codeql[js/file-access-to-http]
+      headers: {
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
         "Cookie": cookieHeader,
@@ -4112,7 +4112,7 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
       // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
       response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
         method: "POST",
-        headers, // codeql[js/file-access-to-http]
+        headers,
         signal: controller.signal,
         body: JSON.stringify({ context, ...payload })
       });

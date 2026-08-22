@@ -1,50 +1,22 @@
-const _rlStores = new Set()
-
-// Periodically remove expired IP entries from all limiter instances.
-const cleanupTimer = setInterval(() => {
-  const now = Date.now()
-  for (const store of _rlStores) {
-    for (const [key, entry] of store) {
-      if (now - entry.start >= entry.windowMs) store.delete(key)
-    }
-  }
-}, 5 * 60 * 1000)
-cleanupTimer.unref?.()
+import { ipKeyGenerator, rateLimit as createExpressRateLimit } from 'express-rate-limit'
 
 export function rateLimit(max, windowMs) {
   const limit = Math.max(1, Math.floor(Number(max) || 1))
   const window = Math.max(1, Math.floor(Number(windowMs) || 1))
-  const store = new Map()
-  _rlStores.add(store)
 
-  return (req, res, next) => {
-    const key = req.ip || req.socket?.remoteAddress || 'unknown'
-    const now = Date.now()
-    let entry = store.get(key)
-
-    if (!entry || now - entry.start >= window) {
-      entry = { count: 0, start: now, windowMs: window }
-    }
-
-    entry.count += 1
-    store.set(key, entry)
-
-    const resetSeconds = Math.max(1, Math.ceil((entry.start + window - now) / 1000))
-    res.setHeader?.('RateLimit-Limit', String(limit))
-    res.setHeader?.('RateLimit-Remaining', String(Math.max(0, limit - entry.count)))
-    res.setHeader?.('RateLimit-Reset', String(resetSeconds))
-
-    // Allow exactly `limit` requests. The next request is rejected.
-    if (entry.count > limit) {
-      res.setHeader?.('Retry-After', String(resetSeconds))
-      return res.status(429).json({
-        error: 'TOO_MANY_REQUESTS',
-        message: 'Rate limit exceeded'
-      })
-    }
-
-    next()
-  }
+  return createExpressRateLimit({
+    windowMs: window,
+    limit,
+    standardHeaders: 'draft-6',
+    legacyHeaders: false,
+    // Keep IPv6 clients grouped by subnet while retaining the previous fallback
+    // for non-Express test and integration callers.
+    keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown'),
+    handler: (_req, res) => res.status(429).json({
+      error: 'TOO_MANY_REQUESTS',
+      message: 'Rate limit exceeded'
+    })
+  })
 }
 
 export function concurrencyLimit(max) {

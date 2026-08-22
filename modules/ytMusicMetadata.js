@@ -34,19 +34,44 @@ function foldText(value = "") {
 const YTM_BYLINE_TYPE_RE = /^(?:song|songs|track|tracks|video|videos|album|albums|single|ep|playlist|playlists|artist|artists|podcast|episode|şarkı|şarkılar|sarki|sarkilar|parça|parca|albüm|albümler|albumler|çalma listesi|calma listesi|sanatçı|sanatci|bölüm|bolum)$/i;
 const YTM_BYLINE_DURATION_RE = /^\d{1,3}:\d{2}(?::\d{2})?$/;
 const YTM_BYLINE_YEAR_RE = /^(?:19|20)\d{2}$/;
-const YTM_BYLINE_STAT_WORDS = "views?|plays?|listeners?|subscribers?|songs?|tracks?|görüntüleme|goruntuleme|izlenme|dinlenme|dinlendi|kez\\s+dinlendi|abone|şarkı|şarkılar|sarki|sarkilar|parça|parca|içerik|icerik";
-const YTM_BYLINE_STAT_RE = new RegExp(
-  `^\\d[\\d.,\\s]*(?:k|m|b|mn|bin|milyon|milyar|million|billion)?\\s*(?:kez\\s+)?(?:${YTM_BYLINE_STAT_WORDS})\\b`,
-  "i"
-);
-const YTM_BYLINE_INLINE_STAT_RE = new RegExp(
-  `\\s+[-–—]\\s+\\d[\\d.,\\s]*(?:k|m|b|mn|bin|milyon|milyar|million|billion)?\\s*(?:kez\\s+)?(?:${YTM_BYLINE_STAT_WORDS})\\b.*$`,
-  "i"
-);
+const YTM_BYLINE_STAT_MAGNITUDES = new Set([
+  "k", "m", "b", "mn", "bin", "milyon", "milyar", "million", "billion"
+]);
+const YTM_BYLINE_STAT_WORDS = new Set([
+  "view", "views", "play", "plays", "listener", "listeners", "subscriber", "subscribers",
+  "song", "songs", "track", "tracks", "goruntuleme", "izlenme", "dinlenme", "dinlendi",
+  "abone", "sarki", "sarkilar", "parca", "icerik"
+]);
+
+function hasYtMusicStatSuffix(value = "") {
+  const tokens = foldText(value).split(" ").filter(Boolean);
+  if (!tokens.length || !/^\d+$/.test(tokens[0])) return false;
+
+  let index = 1;
+  while (index < tokens.length && /^\d+$/.test(tokens[index])) index += 1;
+  if (YTM_BYLINE_STAT_MAGNITUDES.has(tokens[index])) index += 1;
+  if (tokens[index] === "kez") index += 1;
+  return YTM_BYLINE_STAT_WORDS.has(tokens[index]);
+}
+
+function stripYtMusicInlineStat(value = "") {
+  for (const separator of [" - ", " – ", " — "]) {
+    let offset = 0;
+    while (offset < value.length) {
+      const index = value.indexOf(separator, offset);
+      if (index < 0) break;
+      if (hasYtMusicStatSuffix(value.slice(index + separator.length))) {
+        return cleanText(value.slice(0, index));
+      }
+      offset = index + separator.length;
+    }
+  }
+  return value;
+}
 
 function isYtMusicBylineStat(value = "") {
   const text = cleanText(value);
-  return !text || YTM_BYLINE_DURATION_RE.test(text) || YTM_BYLINE_YEAR_RE.test(text) || YTM_BYLINE_STAT_RE.test(text);
+  return !text || YTM_BYLINE_DURATION_RE.test(text) || YTM_BYLINE_YEAR_RE.test(text) || hasYtMusicStatSuffix(text);
 }
 
 // YouTube Music subtitles mix the content type, creator, counters and duration in one field.
@@ -55,7 +80,7 @@ export function normalizeYtMusicByline(value = "") {
   const text = cleanText(value);
   if (!text) return "";
 
-  const strippedInlineStats = cleanText(text.replace(YTM_BYLINE_INLINE_STAT_RE, ""));
+  const strippedInlineStats = stripYtMusicInlineStat(text);
   const parts = strippedInlineStats
     .split(/\s*[•·]\s*/)
     .map(cleanText)

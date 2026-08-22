@@ -166,10 +166,10 @@ test('filesystem boundary rejects traversal outside an allowed root', () => {
 });
 
 test('log sanitizer removes line breaks and control characters', () => {
-  assert.equal(sanitizeLogValue('safe\nFORGED\rline\u0000'), 'safe FORGED line?');
+  assert.equal(sanitizeLogValue('safe\nFORGED\rline\u0000'), 'safeFORGEDline?');
 });
 
-test('custom rate limiter allows the configured quota and rejects the next request', () => {
+test('rate limiter allows the configured quota and rejects the next request', async () => {
   const limiter = rateLimit(2, 60_000);
   const request = { ip: 'codeql-test-client' };
   const responses = Array.from({ length: 3 }, () => ({
@@ -182,9 +182,9 @@ test('custom rate limiter allows the configured quota and rejects the next reque
   }));
   let allowed = 0;
 
-  limiter(request, responses[0], () => { allowed += 1; });
-  limiter(request, responses[1], () => { allowed += 1; });
-  limiter(request, responses[2], () => { allowed += 1; });
+  await limiter(request, responses[0], () => { allowed += 1; });
+  await limiter(request, responses[1], () => { allowed += 1; });
+  await limiter(request, responses[2], () => { allowed += 1; });
 
   assert.equal(allowed, 2);
   assert.equal(responses[2].statusCode, 429);
@@ -218,9 +218,23 @@ test('provider fetches enforce fixed HTTPS origins and controlled redirects', ()
   assert.ok(spotify.includes('new URL("https://open.spotify.com/")'));
   assert.ok(spotify.includes('redirect: "error"'));
   assert.ok(apple.includes('host !== "music.apple.com" && host !== "embed.music.apple.com"'));
+  assert.ok(apple.includes('.map((segment) => encodeURIComponent(decodeURIComponent(segment)))'));
+  assert.equal(apple.includes('fetch(target.toString()'), false);
   assert.ok(apple.includes('redirect: "manual"'));
   assert.ok(deezer.includes('host !== "api.deezer.com"'));
+  assert.ok(deezer.includes('const safeTarget = `${origin}${pathname}${query ? `?${query}` : ""}`'));
+  assert.ok(deezer.includes('const res = await fetch(safeTarget, {'));
   assert.ok(deezer.includes('redirect: "manual"') || deezer.includes('redirect: "error"'));
+});
+
+test('rate limiting uses the CodeQL-modeled middleware implementation', () => {
+  const source = fs.readFileSync('modules/rateLimit.js', 'utf8');
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  assert.equal(typeof pkg.dependencies?.['express-rate-limit'], 'string');
+  assert.ok(source.includes("from 'express-rate-limit'"));
+  assert.ok(source.includes('return createExpressRateLimit({'));
+  assert.ok(source.includes("standardHeaders: 'draft-6'"));
+  assert.ok(source.includes('ipKeyGenerator('));
 });
 
 test('browser URL handling avoids substring-host checks and javascript hrefs', () => {
@@ -251,7 +265,7 @@ test('temporary state files use randomized exclusive creation', () => {
   assert.ok(binaries.includes('fs.mkdtempSync(path.join(os.tmpdir(), "gharmonize-web-bin-"))'));
 });
 
-test('CodeQL suppressions stay coupled to explicit security controls', () => {
+test('source tree does not hide findings with CodeQL suppression annotations', () => {
   const jsFiles = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -267,25 +281,11 @@ test('CodeQL suppressions stay coupled to explicit security controls', () => {
   }
 
   for (const file of jsFiles) {
-    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
-    for (let i = 0; i < lines.length; i += 1) {
-      if (!lines[i].includes('codeql[js/missing-rate-limiting]')) continue;
-      assert.ok(lines[i].includes('rateLimit('), `${file}:${i + 1} suppresses rate limiting without inline rateLimit middleware`);
-    }
-  }
-
-  for (const file of jsFiles) {
-    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
-    for (let i = 0; i < lines.length; i += 1) {
-      const markerAt = lines[i].indexOf('codeql[js/');
-      if (markerAt < 0) continue;
-      const executablePrefix = lines[i].slice(0, markerAt).replace(/\/\/\s*$/, '').trim();
-      assert.ok(executablePrefix, `${file}:${i + 1} has a detached CodeQL suppression`);
-    }
+    const text = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(text, /\b(?:codeql|lgtm)\s*\[[^\]]*\]/i, `${file} contains a source-level CodeQL suppression`);
   }
 
   const safeProcess = fs.readFileSync('modules/safeProcess.js', 'utf8');
-  assert.equal((safeProcess.match(/codeql\[js\/command-line-injection\]/g) || []).length, 3);
   assert.ok(safeProcess.includes('assertTrustedExecutable(command)'));
   assert.ok(safeProcess.includes('assertSafeProcessArgs(executable, args)'));
   assert.ok(safeProcess.includes('shell: false'));
@@ -303,7 +303,6 @@ test('YouTube Music cookie forwarding is domain-scoped and strips control charac
   assert.ok(text.includes('const domainMatches = host === domain || host.endsWith(`.${domain}`)'));
   assert.ok(text.includes('.replace(/\\r/g, "")'));
   assert.ok(text.includes('.replace(/\\n/g, "")'));
-  assert.ok(text.includes('codeql[js/file-access-to-http]'));
   assert.ok(text.includes('`${YTM_ORIGIN}/youtubei/v1/search?prettyPrint=false`'));
 });
 
@@ -313,4 +312,13 @@ test('media output and remote thumbnail writes remain confined and bounded', () 
   assert.ok(text.includes('path.relative(outputDir, candidate)'));
   assert.ok(text.includes('const maxCoverBytes = 25 * 1024 * 1024'));
   assert.ok(text.includes('if (buf.byteLength > maxCoverBytes) return null'));
+});
+
+test('probe cleanup and platform direct moves rebuild paths from safe basenames', () => {
+  const jobs = fs.readFileSync('routes/jobs.js', 'utf8');
+  const processor = fs.readFileSync('modules/processor.js', 'utf8');
+  assert.ok(jobs.includes('path.resolve(uploadRoot, path.basename(requested))'));
+  assert.ok(jobs.includes('path.dirname(requested) !== uploadRoot || requested !== abs'));
+  assert.ok(processor.includes('path.resolve(TEMP_DIR, path.basename(directMoveCandidate))'));
+  assert.ok(processor.includes('directMoveInputAbs === directMoveCandidate'));
 });

@@ -2456,8 +2456,11 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     job.counters.cvTotal = 1;
 
     const transcodeEnabled = job.videoSettings?.transcodeEnabled === true;
-    const directMoveInputAbs =
+    const directMoveCandidate =
       typeof actualInputPath === "string" ? path.resolve(actualInputPath) : "";
+    const directMoveInputAbs = directMoveCandidate
+      ? path.resolve(TEMP_DIR, path.basename(directMoveCandidate))
+      : "";
     const directMoveRel = directMoveInputAbs
       ? path.relative(path.resolve(TEMP_DIR), directMoveInputAbs)
       : "";
@@ -2465,15 +2468,15 @@ export async function processJob(jobId, inputPath, format, bitrate) {
       !!directMoveRel &&
       directMoveRel !== ".." &&
       !directMoveRel.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(directMoveRel);
+      !path.isAbsolute(directMoveRel) &&
+      directMoveInputAbs === directMoveCandidate;
     const canDirectMovePlatformMp4 =
       isVideoFormatFlag &&
       format === "mp4" &&
       job.metadata?.source === "platform" &&
       !transcodeEnabled &&
       directMoveInsideTemp &&
-      // directMoveInputAbs is normalized and verified with path.relative to remain under TEMP_DIR.
-      fs.existsSync(directMoveInputAbs); // codeql[js/path-injection]
+      fs.existsSync(directMoveInputAbs);
 
     const existingSingle = findExistingOutput(jobId, format, outputDir);
     const r = existingSingle
@@ -2490,7 +2493,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
           // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
           const directMoveLog = `🎬 Platform MP4 transcode disabled - direct move: ${sanitizeLogValue(directMoveInputAbs)} -> ${sanitizeLogValue(targetAbs)}`;
-          console.log(directMoveLog); // codeql[js/log-injection]
+          console.log(directMoveLog);
           safeMoveFileSync(directMoveInputAbs, targetAbs);
           queueOwnershipFix(targetAbs);
 
@@ -2767,7 +2770,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
     }
     if (!isCanceled) {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      console.error("Job error:", sanitizeLogValue(error?.message || error)); // codeql[js/log-injection]
+      console.error("Job error:", sanitizeLogValue(error?.message || error));
     }
     try {
       killJobProcesses(jobId);
