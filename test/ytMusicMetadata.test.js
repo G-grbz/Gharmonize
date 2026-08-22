@@ -34,6 +34,9 @@ test("very long YouTube Music bylines are parsed without a backtracking expressi
     normalizeYtMusicByline(`Video${padding}•${padding}Yiğit Mahzuni • 50 Mn görüntüleme • 3:05`),
     "Yiğit Mahzuni"
   );
+  const source = fs.readFileSync(new URL("../modules/ytMusicMetadata.js", import.meta.url), "utf8");
+  assert.equal(source.includes("split(/\\s*[•·]\\s*/"), false);
+  assert.ok(source.includes('value[index] !== "•" && value[index] !== "·"'));
 });
 
 test("frozen YouTube entries cannot carry display metadata into artist fields", () => {

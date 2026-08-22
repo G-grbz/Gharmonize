@@ -69,6 +69,20 @@ function stripYtMusicInlineStat(value = "") {
   return value;
 }
 
+function splitYtMusicBylineParts(value = "") {
+  const parts = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "•" && value[index] !== "·") continue;
+    const part = cleanText(value.slice(start, index));
+    if (part) parts.push(part);
+    start = index + 1;
+  }
+  const lastPart = cleanText(value.slice(start));
+  if (lastPart) parts.push(lastPart);
+  return parts;
+}
+
 function isYtMusicBylineStat(value = "") {
   const text = cleanText(value);
   return !text || YTM_BYLINE_DURATION_RE.test(text) || YTM_BYLINE_YEAR_RE.test(text) || hasYtMusicStatSuffix(text);
@@ -81,10 +95,7 @@ export function normalizeYtMusicByline(value = "") {
   if (!text) return "";
 
   const strippedInlineStats = stripYtMusicInlineStat(text);
-  const parts = strippedInlineStats
-    .split(/\s*[•·]\s*/)
-    .map(cleanText)
-    .filter(Boolean);
+  const parts = splitYtMusicBylineParts(strippedInlineStats);
   const hasTypePrefix = parts.length > 1 && YTM_BYLINE_TYPE_RE.test(parts[0]);
   const hasMetadataSuffix = parts.some((part, index) => index > 0 && isYtMusicBylineStat(part));
   const inlineStatsRemoved = strippedInlineStats !== text;
