@@ -17,7 +17,7 @@ import downloadRoute from './routes/download.js'
 import trackExtractorRoute from './routes/trackExtractor.js'
 import retagRoute from './routes/retag.js'
 import { sendError, sanitizeFilename } from './modules/utils.js'
-import { assertSafeRemoteUrl, createTrustedProxyPredicate } from './modules/security.js'
+import { assertSafeRemoteUrl, createTrustedProxyPredicate, decryptSecret } from './modules/security.js'
 import { rateLimit } from './modules/rateLimit.js'
 import discRouter from './routes/disc.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
@@ -53,6 +53,26 @@ if (userEnv && fs.existsSync(userEnv)) {
 
 if (desktopDataDir) {
   process.env.DATA_DIR = desktopDataDir
+}
+
+const encryptedEnvKeys = [
+  'SPOTIFY_CLIENT_SECRET',
+  'HOMEPAGE_WIDGET_KEY'
+]
+
+for (const key of encryptedEnvKeys) {
+  const value = String(process.env[key] || '').trim()
+
+  if (!value.startsWith('enc:v1:')) continue
+
+  try {
+    process.env[key] = decryptSecret(value, key)
+  } catch (error) {
+    console.error(
+      `[security] Could not decrypt ${key} after environment reload:`,
+      error?.message || error
+    )
+  }
 }
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd()
