@@ -26,9 +26,35 @@ export class SettingsManager {
         modal.id = 'settingsModal';
         modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:20;';
         modal.innerHTML = this.getModalHTML();
+        this.protectEnvironmentInputsFromAutofill(modal);
         document.body.appendChild(modal);
         if (window.i18n?.apply) window.i18n.apply(modal);
         this.modal = modal;
+    }
+
+    // Prevents browsers and common password managers from treating ENV settings
+    // as login/profile fields. Login and password-change inputs remain untouched.
+    protectEnvironmentInputsFromAutofill(root) {
+        const envInputs = root.querySelectorAll(
+            '#formView input[id^="f_"]:not([id^="f_ADMIN_"])'
+        );
+
+        envInputs.forEach((input, index) => {
+            input.setAttribute('name', `gharmonize_env_field_${index + 1}`);
+            input.setAttribute('autocomplete', input.type === 'password' ? 'new-password' : 'off');
+            input.setAttribute('autocapitalize', 'none');
+            input.setAttribute('spellcheck', 'false');
+            input.setAttribute('data-lpignore', 'true');
+            input.setAttribute('data-1p-ignore', 'true');
+            input.setAttribute('data-bwignore', 'true');
+            input.setAttribute('data-form-type', 'other');
+        });
+
+        root.querySelectorAll('#formView form:not(#changePasswordForm)').forEach((form) => {
+            form.setAttribute('autocomplete', 'off');
+            form.setAttribute('data-form-type', 'other');
+            form.setAttribute('data-lpignore', 'true');
+        });
     }
 
     // Returns modal html used for the browser UI layer.
@@ -330,13 +356,13 @@ export class SettingsManager {
                 <div class="form-group">
                     <label for="f_SPOTIFY_CLIENT_ID" class="settings-field-label">SPOTIFY_CLIENT_ID</label>
                     <div class="settings-field-hint muted" data-i18n="settings.spotifyClientId"></div>
-                    <input id="f_SPOTIFY_CLIENT_ID" type="text">
+                    <input id="f_SPOTIFY_CLIENT_ID" name="gharmonize_spotify_client_id" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore>
                 </div>
 
                 <div class="form-group">
                     <label for="f_SPOTIFY_CLIENT_SECRET" class="settings-field-label">SPOTIFY_CLIENT_SECRET</label>
                     <div class="settings-field-hint muted" data-i18n="settings.spotifyClientSecret"></div>
-                    <input id="f_SPOTIFY_CLIENT_SECRET" type="password" placeholder="••••••••" data-i18n-ph="ph.spotifyClientSecret" autocomplete="off">
+                    <input id="f_SPOTIFY_CLIENT_SECRET" name="gharmonize_spotify_client_secret" type="password" placeholder="••••••••" data-i18n-ph="ph.spotifyClientSecret" autocomplete="new-password" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore>
                 </div>
 
                 <div class="form-group">
@@ -480,7 +506,7 @@ export class SettingsManager {
                 <div class="form-group">
                 <label for="f_YTDLP_EXTRA" class="settings-field-label">YTDLP_EXTRA</label>
                 <div class="settings-field-hint muted" data-i18n="settings.ytdlpExtra"></div>
-                <input id="f_YTDLP_EXTRA" type="text" placeholder="Ek argümanlar, ör: --http-chunk-size 10M" data-i18n-ph="ph.ytdlpExtra">
+                <input id="f_YTDLP_EXTRA" name="gharmonize_ytdlp_extra" type="text" placeholder="Ek argümanlar, ör: --http-chunk-size 10M" data-i18n-ph="ph.ytdlpExtra" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore>
                 </div>
 
                 <div class="form-group">

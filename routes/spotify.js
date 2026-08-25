@@ -541,88 +541,56 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     const runMetaLimited = createLimiter(Math.max(1, Math.min(8, Math.floor(parallel * 2))));
     const mktResolved = resolveMarket(market);
 
-    (async () => {
-      try {
-        for (let i = 0; i < totalItems; i++) {
-          if (shouldCancel()) break;
-          const itemLite = sp.items[i];
-          const logicalIndex = i;
-          runMetaLimited(async () => {
-            if (shouldCancel()) return;
-            let rich = null;
-            try {
-              rich = await findMappedTrackMeta(itemLite, source, mktResolved);
-            } catch {}
+    const metadataPromises = sp.items.map((itemLite, logicalIndex) =>
+      runMetaLimited(async () => {
+        if (shouldCancel()) return null;
+        let rich = null;
+        try {
+          rich = await findMappedTrackMeta(itemLite, source, mktResolved);
+        } catch {}
 
-            const baseMeta = {
-              title: itemLite.title,
-              track: itemLite.title,
-              artist: itemLite.artist,
-              uploader: itemLite.artist,
-              album: itemLite.album || "",
-              album_artist: itemLite.album_artist || itemLite.artist,
-              track_number: itemLite.track_number ?? null,
-              disc_number: itemLite.disc_number ?? null,
-              track_total: itemLite.track_total ?? null,
-              disc_total: itemLite.disc_total ?? null,
-              isrc: itemLite.isrc || "",
-              release_year: itemLite.year || "",
-              release_date: itemLite.date || "",
-              webpage_url: itemLite.spUrl || itemLite.amUrl || itemLite.webpage_url || "",
-              genre: itemLite.genre || "",
-              label: itemLite.label || "",
-              publisher: itemLite.label || "",
-              copyright: itemLite.copyright || "",
-              coverUrl: itemLite.coverUrl || "",
-              duration_ms: itemLite.duration_ms ?? null
-            };
+        const baseMeta = {
+          title: itemLite.title,
+          track: itemLite.title,
+          artist: itemLite.artist,
+          uploader: itemLite.artist,
+          album: itemLite.album || "",
+          album_artist: itemLite.album_artist || itemLite.artist,
+          track_number: itemLite.track_number ?? null,
+          disc_number: itemLite.disc_number ?? null,
+          track_total: itemLite.track_total ?? null,
+          disc_total: itemLite.disc_total ?? null,
+          isrc: itemLite.isrc || "",
+          release_year: itemLite.year || "",
+          release_date: itemLite.date || "",
+          webpage_url: itemLite.spUrl || itemLite.amUrl || itemLite.webpage_url || "",
+          genre: itemLite.genre || "",
+          label: itemLite.label || "",
+          publisher: itemLite.label || "",
+          copyright: itemLite.copyright || "",
+          coverUrl: itemLite.coverUrl || "",
+          duration_ms: itemLite.duration_ms ?? null
+        };
 
-            let merged = { ...baseMeta };
-            for (const [k, v] of Object.entries(rich || {})) {
-              if (v == null) continue;
-              if (typeof v === "string" && !v.trim()) continue;
-              merged[k] = v;
-            }
-            merged = await enrichMetaWithApple(merged, {
-              fallbackArtist: itemLite.artist,
-              fallbackTitle: itemLite.title,
-              market: mktResolved
-            });
-
-            richMetaByIndex.set(logicalIndex, merged);
-
-            if (merged.coverUrl) coverUrlByIndex.set(logicalIndex, merged.coverUrl);
-
-            const abs = outputAbsByIndex.get(logicalIndex);
-            if (abs && fs.existsSync(abs)) {
-              const coverPath = await resolveCoverForRetag({
-                absOutputPath: abs,
-                preferUrl: coverUrlByIndex.get(logicalIndex) || null,
-                jobId,
-                logicalIndex
-              });
-              retagMediaFile(
-                abs,
-                format,
-               {
-                  ...merged,
-                  playlist_title: job.metadata.spotifyTitle,
-                  webpage_url:
-                    merged.webpage_url ||
-                    rich?.webpage_url ||
-                    itemLite.spUrl ||
-                    itemLite.amUrl ||
-                    itemLite.webpage_url ||
-                    ""
-                },
-                coverPath,
-                { jobId, tempDir: TEMP_DIR }
-              ).catch(() => {});
-            }
-          }).catch(()=>{});
+        let merged = { ...baseMeta };
+        for (const [k, v] of Object.entries(rich || {})) {
+          if (v == null) continue;
+          if (typeof v === "string" && !v.trim()) continue;
+          merged[k] = v;
         }
-      } catch {}
-    })();
+        try {
+          merged = await enrichMetaWithApple(merged, {
+            fallbackArtist: itemLite.artist,
+            fallbackTitle: itemLite.title,
+            market: mktResolved
+          });
+        } catch {}
+
+        richMetaByIndex.set(logicalIndex, merged);
+        if (merged.coverUrl) coverUrlByIndex.set(logicalIndex, merged.coverUrl);
+        return merged;
+      }).catch(() => null)
+    );
 
     // Converts downloaded item for Spotify mapping and metadata flow.
     const convertDownloadedItem = async (dlResult, idxZeroBased) => {
@@ -809,7 +777,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 
         try {
           const abs = outputAbsByIndex.get(logicalIndex);
-          const rich = richMetaByIndex.get(logicalIndex);
+          const rich = await metadataPromises[logicalIndex];
           if (abs && rich && fs.existsSync(abs)) {
             const coverPath = await resolveCoverForRetag({
               absOutputPath: abs,
@@ -817,13 +785,19 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
               jobId,
               logicalIndex
             });
-            retagMediaFile(
+            await retagMediaFile(
               abs,
               format,
               { ...rich, playlist_title: job.metadata.spotifyTitle },
               coverPath,
-              { jobId, tempDir: TEMP_DIR }
-            ).catch(()=>{});
+              {
+                jobId,
+                tempDir: TEMP_DIR,
+                onProcess: (child) => {
+                  try { registerJobProcess(jobId, child); } catch {}
+                }
+              }
+            );
           }
         } catch {}
 

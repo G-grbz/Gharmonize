@@ -76,6 +76,10 @@ test('unsafe yt-dlp execution flags are blocked', () => {
 test('normal yt-dlp tuning flags remain allowed', () => {
   assert.deepEqual(parseSafeYtDlpExtra('--force-ipv4 --socket-timeout 10'), ['--force-ipv4','--socket-timeout','10']);
 });
+test('positional text cannot leak into yt-dlp extra arguments as an input URL', () => {
+  assert.throws(() => parseSafeYtDlpExtra('admin'), /must start with an option/);
+  assert.throws(() => parseSafeYtDlpExtra('https:\/\/example.com\/video'), /must start with an option/);
+});
 test('Electron external URL policy blocks file/javascript schemes', () => {
   assert.equal(isSafeExternalUrl('https://github.com/G-grbz/Gharmonize'), true);
   assert.equal(isSafeExternalUrl('javascript:alert(1)'), false);
@@ -87,6 +91,20 @@ test('HTML contains no inline script or inline event handlers', () => {
     assert.equal(/<script(?![^>]*\bsrc=)[^>]*>/i.test(text), false, `${file} has inline script`);
     assert.equal(/\son(?:click|error|load)\s*=/i.test(text), false, `${file} has inline event handler`);
   }
+});
+test('settings protect every ENV input from browser autofill', () => {
+  const text = fs.readFileSync('public/ui/SettingsManager.js', 'utf8');
+  assert.ok(text.includes('this.protectEnvironmentInputsFromAutofill(modal)'));
+  assert.ok(text.includes('#formView input[id^="f_"]:not([id^="f_ADMIN_"])'));
+  for (const attribute of ['autocomplete', 'data-lpignore', 'data-1p-ignore', 'data-bwignore', 'data-form-type']) {
+    assert.ok(text.includes(`input.setAttribute('${attribute}'`), `${attribute} autofill protection is missing`);
+  }
+});
+test('Spotify retagging is awaited before job temp cleanup', () => {
+  const text = fs.readFileSync('routes/spotify.js', 'utf8');
+  assert.equal((text.match(/await retagMediaFile\(/g) || []).length, 1);
+  assert.equal(/retagMediaFile\([\s\S]{0,500}?\.catch\(/.test(text), false);
+  assert.ok(text.includes('const rich = await metadataPromises[logicalIndex]'));
 });
 test('default env ships without a known admin password', () => {
   const text = fs.readFileSync('.env.default','utf8');

@@ -299,6 +299,9 @@ const DANGEROUS_YTDLP_FLAGS = [
 export function parseSafeYtDlpExtra(raw) {
   const parts = String(raw || '').trim().split(/\s+/).filter(Boolean);
   if (process.env.GHARMONIZE_ALLOW_UNSAFE_YTDLP_ARGS === '1') return parts;
+  if (parts.length && !/^-{1,2}[A-Za-z0-9]/.test(parts[0])) {
+    throw new Error('yt-dlp extra arguments must start with an option (for example --force-ipv4)');
+  }
   for (const arg of parts) {
     if (DANGEROUS_YTDLP_FLAGS.some((re) => re.test(arg))) {
       throw new Error(`Unsafe yt-dlp option is blocked: ${arg}`);

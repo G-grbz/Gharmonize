@@ -11,6 +11,7 @@ import {
   deriveSessionSecret,
   encryptSecret,
   hashPassword,
+  parseSafeYtDlpExtra,
   parseCookieHeader,
   passwordPolicyError,
   verifyPassword
@@ -208,6 +209,18 @@ function migrateSecurityState() {
     }
   }
 
+  const ytdlpExtra = String(raw.get('YTDLP_EXTRA') || process.env.YTDLP_EXTRA || '').trim()
+  if (ytdlpExtra) {
+    try {
+      parseSafeYtDlpExtra(ytdlpExtra)
+    } catch (error) {
+      updates.YTDLP_EXTRA = ''
+      process.env.YTDLP_EXTRA = ''
+      changed = true
+      console.warn(`[yt-dlp] Cleared invalid YTDLP_EXTRA setting: ${error?.message || error}`)
+    }
+  }
+
   const plaintext = String(raw.get('ADMIN_PASSWORD') || process.env.ADMIN_PASSWORD || '').trim()
   let passwordHash = String(raw.get('ADMIN_PASSWORD_HASH') || process.env.ADMIN_PASSWORD_HASH || '').trim()
   if (!passwordHash && plaintext) {
@@ -384,10 +397,13 @@ router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), 
         updates[key] = normalizeTrustedExecutableSetting(updates[key])
       }
     }
+    if (Object.prototype.hasOwnProperty.call(updates, 'YTDLP_EXTRA')) {
+      parseSafeYtDlpExtra(updates.YTDLP_EXTRA)
+    }
   } catch (error) {
     return res.status(400).json({
       error: {
-        code: 'INVALID_EXECUTABLE_SETTING',
+        code: 'INVALID_ADVANCED_SETTING',
         message: error?.message || 'Invalid executable setting'
       }
     })

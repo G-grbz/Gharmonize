@@ -382,7 +382,9 @@ export async function mapMappedMusicWithCache(
     onLog = null,
     shouldCancel = null,
     forceRefresh = false,
-    refreshUnmatched = false,
+    // A missing match can be caused by a transient yt-dlp/network/configuration
+    // failure. Do not make that negative result permanent across later jobs.
+    refreshUnmatched = true,
     replaceManifest = true,
     indexOffset = 0
   } = {}

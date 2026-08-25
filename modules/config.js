@@ -16,6 +16,7 @@ const DEFAULT_AL     = (process.env.YT_ACCEPT_LANGUAGE || `${DEFAULT_LANG},en;q=
 const DEFAULT_UA =
   (process.env.YTDLP_UA || "").trim() ||
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
+let lastInvalidExtraArgs = null;
 
 export const FLAGS = {
   USE_MUSIC:             bool(process.env.YT_USE_MUSIC, false),
@@ -56,7 +57,18 @@ export function addGeoArgs(
 // Returns extra args used for core application logic.
 export function getExtraArgs() {
   const raw = process.env.YTDLP_ARGS_EXTRA || process.env.YTDLP_EXTRA;
-  return parseSafeYtDlpExtra(raw);
+  try {
+    const parsed = parseSafeYtDlpExtra(raw);
+    lastInvalidExtraArgs = null;
+    return parsed;
+  } catch (error) {
+    const invalidValue = String(raw || "").trim();
+    if (invalidValue && invalidValue !== lastInvalidExtraArgs) {
+      console.warn(`[yt-dlp] Ignoring invalid extra arguments: ${error?.message || error}`);
+      lastInvalidExtraArgs = invalidValue;
+    }
+    return [];
+  }
 }
 
 // Returns locale config used for core application logic.
