@@ -57,6 +57,7 @@ if (desktopDataDir) {
 
 const encryptedEnvKeys = [
   'SPOTIFY_CLIENT_SECRET',
+  'DEEZER_ARL',
   'HOMEPAGE_WIDGET_KEY'
 ]
 

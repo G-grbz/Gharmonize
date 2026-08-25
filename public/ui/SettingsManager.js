@@ -366,6 +366,12 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
+                    <label for="f_DEEZER_ARL" class="settings-field-label">DEEZER_ARL</label>
+                    <div class="settings-field-hint muted" data-i18n="settings.deezerArl"></div>
+                    <input id="f_DEEZER_ARL" type="password" placeholder="••••••••" data-i18n-ph="ph.deezerArl" autocomplete="new-password" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore data-bwignore="true">
+                </div>
+
+                <div class="form-group">
                     <label for="f_SPOTIFY_MARKET" class="settings-field-label">SPOTIFY_MARKET</label>
                     <div class="settings-field-hint muted" data-i18n="settings.spotifyMarket"></div>
                     <input id="f_SPOTIFY_MARKET" type="text" placeholder="TR, US, GB vb." data-i18n-ph="ph.spotifyMarket">
@@ -891,6 +897,7 @@ export class SettingsManager {
 
             document.getElementById('f_SPOTIFY_CLIENT_ID').value = s.SPOTIFY_CLIENT_ID || '';
             document.getElementById('f_SPOTIFY_CLIENT_SECRET').value = '';
+            document.getElementById('f_DEEZER_ARL').value = '';
             document.getElementById('f_SPOTIFY_DEBUG_MARKET').value = s.SPOTIFY_DEBUG_MARKET || '';
             document.getElementById('f_SPOTIFY_MARKET').value = s.SPOTIFY_MARKET || '';
             document.getElementById('f_SPOTIFY_FALLBACK_MARKETS').value = s.SPOTIFY_FALLBACK_MARKETS || '';
@@ -955,6 +962,7 @@ export class SettingsManager {
             settings: {
                 SPOTIFY_CLIENT_ID: document.getElementById('f_SPOTIFY_CLIENT_ID').value.trim(),
                 SPOTIFY_CLIENT_SECRET: document.getElementById('f_SPOTIFY_CLIENT_SECRET').value.trim(),
+                DEEZER_ARL: document.getElementById('f_DEEZER_ARL').value.trim(),
                 SPOTIFY_DEBUG_MARKET: document.getElementById('f_SPOTIFY_DEBUG_MARKET').value.trim(),
                 SPOTIFY_MARKET: document.getElementById('f_SPOTIFY_MARKET').value.trim(),
                 SPOTIFY_FALLBACK_MARKETS: document.getElementById('f_SPOTIFY_FALLBACK_MARKETS').value.trim(),

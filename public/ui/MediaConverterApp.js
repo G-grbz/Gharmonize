@@ -132,6 +132,15 @@ export class MediaConverterApp {
                 const parts = url.pathname.split('/').filter(Boolean);
                 const first = (parts[0] || '').toLowerCase();
                 const second = (parts[1] || '').toLowerCase();
+                const smartTracklistIndex = first === 'smarttracklist'
+                    ? 0
+                    : second === 'smarttracklist'
+                        ? 1
+                        : -1;
+                if (
+                    smartTracklistIndex >= 0 &&
+                    /^inspired-by-\d+$/i.test(parts[smartTracklistIndex + 1] || '')
+                ) return 'playlist';
                 const typeIndex = ['track', 'album', 'playlist', 'artist'].includes(first) ? 0
                     : ['track', 'album', 'playlist', 'artist'].includes(second) ? 1
                     : -1;

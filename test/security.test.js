@@ -11,6 +11,7 @@ import {
   ipInCidr,
   isPrivateIp,
   isSafeExternalUrl,
+  normalizeDeezerArl,
   parseSafeYtDlpExtra,
   passwordPolicyError,
   resolvePathInside,
@@ -79,6 +80,13 @@ test('normal yt-dlp tuning flags remain allowed', () => {
 test('positional text cannot leak into yt-dlp extra arguments as an input URL', () => {
   assert.throws(() => parseSafeYtDlpExtra('admin'), /must start with an option/);
   assert.throws(() => parseSafeYtDlpExtra('https:\/\/example.com\/video'), /must start with an option/);
+});
+test('Deezer ARL values are normalized before use as cookies', () => {
+  const valid = 'a'.repeat(192);
+  assert.equal(normalizeDeezerArl(`  ${valid}  `), valid);
+  assert.equal(normalizeDeezerArl(''), '');
+  assert.throws(() => normalizeDeezerArl('short'));
+  assert.throws(() => normalizeDeezerArl(`${'a'.repeat(64)}\r\nInjected: yes`));
 });
 test('Electron external URL policy blocks file/javascript schemes', () => {
   assert.equal(isSafeExternalUrl('https://github.com/G-grbz/Gharmonize'), true);
@@ -251,9 +259,23 @@ test('provider fetches enforce fixed HTTPS origins and controlled redirects', ()
   assert.equal(apple.includes('fetch(target.toString()'), false);
   assert.ok(apple.includes('redirect: "manual"'));
   assert.ok(deezer.includes('host !== "api.deezer.com"'));
+  assert.ok(deezer.includes('const DEEZER_WEB_GATEWAY = "https://www.deezer.com/ajax/gw-light.php"'));
+  assert.ok(deezer.includes('DEEZER_GATEWAY_METHODS.has(method)'));
   assert.ok(deezer.includes('const safeTarget = `${origin}${pathname}${query ? `?${query}` : ""}`'));
   assert.ok(deezer.includes('const res = await fetch(safeTarget, {'));
   assert.ok(deezer.includes('redirect: "manual"') || deezer.includes('redirect: "error"'));
+});
+
+test('Deezer ARL is treated as an encrypted masked environment secret', () => {
+  const app = fs.readFileSync('app.js', 'utf8');
+  const settings = fs.readFileSync('modules/settings.js', 'utf8');
+  const ui = fs.readFileSync('public/ui/SettingsManager.js', 'utf8');
+
+  assert.ok(app.includes("'DEEZER_ARL'"));
+  assert.ok(settings.includes("SENSITIVE_KEYS = new Set(['SPOTIFY_CLIENT_SECRET', 'DEEZER_ARL'"));
+  assert.ok(settings.includes("updates.DEEZER_ARL = normalizeDeezerArl(updates.DEEZER_ARL)"));
+  assert.ok(ui.includes('id="f_DEEZER_ARL" type="password"'));
+  assert.ok(ui.includes("document.getElementById('f_DEEZER_ARL').value = ''"));
 });
 
 test('rate limiting uses the CodeQL-modeled middleware implementation', () => {

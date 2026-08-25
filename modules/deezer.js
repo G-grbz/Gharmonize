@@ -1,6 +1,8 @@
 import fetch from "node-fetch";
+import { normalizeDeezerArl } from "./security.js";
 
 const DEEZER_API_BASE = "https://api.deezer.com";
+const DEEZER_WEB_GATEWAY = "https://www.deezer.com/ajax/gw-light.php";
 const DEEZER_WEB_HEADERS = Object.freeze({
   "user-agent":
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
@@ -25,7 +27,14 @@ const DEEZER_ARTIST_CACHE_MAX = 250;
 const DEEZER_ARTIST_TOP_BUNDLE_CACHE = new Map();
 const DEEZER_ARTIST_TOP_BUNDLE_CACHE_MAX = 200;
 const DEEZER_ALBUM_BUNDLE_CONCURRENCY = 4;
+const DEEZER_SMARTTRACKLIST_META_CONCURRENCY = 6;
 const DEEZER_RESOURCE_TYPES = Object.freeze(["track", "album", "playlist", "artist"]);
+const DEEZER_SMARTTRACKLIST_ID = /^inspired-by-\d+$/i;
+const DEEZER_GATEWAY_METHODS = new Set([
+  "deezer.getUserData",
+  "deezer.pageSmartTracklist",
+  "smartTracklist.getSongs"
+]);
 
 const LOCALE_CHAR_FOLD_MAP = Object.freeze({
   I: "i",
@@ -377,6 +386,144 @@ async function fetchDeezerJson(url = "") {
   }
 
   return data;
+}
+
+// Returns a stable error for personalized Deezer lists without exposing secrets.
+function deezerSmartTracklistError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+// Extracts cookie pairs set by Deezer without forwarding cookie attributes.
+function extractDeezerResponseCookies(headers) {
+  const values = headers?.raw?.()["set-cookie"] || [];
+  return values
+    .map((value) => String(value || "").split(";", 1)[0].trim())
+    .filter((value) => /^[A-Za-z0-9_!#$%&'*+.^`|~-]+=[^\r\n;]*$/.test(value));
+}
+
+// Combines the configured ARL and Deezer session cookies by cookie name.
+function buildDeezerCookieHeader(arl, responseCookies = []) {
+  const cookies = new Map();
+  const add = (pair) => {
+    const raw = String(pair || "").trim();
+    const separator = raw.indexOf("=");
+    if (separator <= 0) return;
+    const name = raw.slice(0, separator).trim();
+    const value = raw.slice(separator + 1).trim();
+    if (!/^[A-Za-z0-9_!#$%&'*+.^`|~-]+$/.test(name)) return;
+    if (/[\r\n;]/.test(value)) return;
+    cookies.set(name, value);
+  };
+
+  for (const pair of responseCookies) add(pair);
+  // The configured credential must win if Deezer also emits an arl cookie.
+  add(`arl=${arl}`);
+  return [...cookies.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+}
+
+// Reads Deezer's gateway error shape while keeping tokens and cookies out of logs.
+function getDeezerGatewayError(payload) {
+  const error = payload?.error;
+  if (!error) return "";
+  if (Array.isArray(error)) return error.length ? "Deezer web API returned an error" : "";
+  if (typeof error === "object") {
+    const keys = Object.keys(error);
+    return keys.length ? `Deezer web API error: ${keys.join(", ")}` : "";
+  }
+  return "Deezer web API returned an error";
+}
+
+// Calls a fixed allowlist of Deezer web gateway methods for personalized lists.
+async function fetchDeezerGateway(method, data = {}, { apiToken = "", cookie = "" } = {}) {
+  if (!DEEZER_GATEWAY_METHODS.has(method)) {
+    throw new Error("Unsupported Deezer web API method");
+  }
+
+  const target = new URL(DEEZER_WEB_GATEWAY);
+  target.searchParams.set("method", method);
+  target.searchParams.set("input", "3");
+  target.searchParams.set("api_version", "1.0");
+  target.searchParams.set("api_token", String(apiToken || ""));
+
+  const headers = {
+    ...DEEZER_WEB_HEADERS,
+    accept: "application/json",
+    "content-type": "application/json"
+  };
+  if (cookie) headers.cookie = cookie;
+
+  const res = await fetch(target.toString(), {
+    method: "POST",
+    headers,
+    body: JSON.stringify(data || {}),
+    redirect: "error"
+  });
+  if (!res.ok) {
+    throw new Error(`Deezer web API request failed (${res.status})`);
+  }
+
+  const payload = await res.json();
+  const gatewayError = getDeezerGatewayError(payload);
+  if (gatewayError) throw new Error(gatewayError);
+
+  return {
+    payload,
+    cookies: extractDeezerResponseCookies(res.headers)
+  };
+}
+
+// Opens an authenticated Deezer web session for personalized smart tracklists.
+async function createDeezerSmartTracklistSession() {
+  let arl = "";
+  try {
+    arl = normalizeDeezerArl(process.env.DEEZER_ARL);
+  } catch {
+    throw deezerSmartTracklistError(
+      "DEEZER_ARL_INVALID",
+      "DEEZER_ARL is invalid. Update it in Settings before using Deezer smart tracklists."
+    );
+  }
+  if (!arl) {
+    throw deezerSmartTracklistError(
+      "DEEZER_ARL_REQUIRED",
+      "Deezer inspired-by lists are personalized. Add DEEZER_ARL in Settings first."
+    );
+  }
+
+  const initialCookie = buildDeezerCookieHeader(arl);
+  const sessionResponse = await fetchDeezerGateway(
+    "deezer.getUserData",
+    {},
+    { cookie: initialCookie }
+  );
+  const session = sessionResponse?.payload?.results || {};
+  const userId = numberOrNull(session?.USER?.USER_ID);
+  const apiToken = String(session?.checkForm || "").trim();
+  if (!userId || userId <= 0 || !apiToken) {
+    throw deezerSmartTracklistError(
+      "DEEZER_ARL_INVALID",
+      "Deezer rejected DEEZER_ARL. Copy a current ARL cookie from a signed-in Deezer session."
+    );
+  }
+
+  return {
+    apiToken,
+    cookie: buildDeezerCookieHeader(arl, sessionResponse.cookies)
+  };
+}
+
+// Extracts track rows from both Deezer smart-tracklist gateway response shapes.
+function extractDeezerSmartTrackRows(payload) {
+  const results = payload?.results;
+  const candidates = [
+    results?.data,
+    results?.SONGS?.data,
+    results?.DATA?.SONGS?.data,
+    Array.isArray(results) ? results : null
+  ];
+  return candidates.find((rows) => Array.isArray(rows))?.filter(Boolean) || [];
 }
 
 // Loads paged Deezer tracklists fully for albums, playlists, and artists.
@@ -870,6 +1017,33 @@ export function parseDeezerUrl(url) {
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (!parts.length) return { type: "unknown", id: null, view: "" };
 
+    const smartTracklistIndex =
+      String(parts[0] || "").toLowerCase() === "smarttracklist"
+        ? 0
+        : String(parts[1] || "").toLowerCase() === "smarttracklist"
+          ? 1
+          : -1;
+    if (smartTracklistIndex >= 0) {
+      const locale = smartTracklistIndex === 1
+        ? String(parts[0] || "").toLowerCase()
+        : "";
+      const smartTracklistId = String(parts[smartTracklistIndex + 1] || "").toLowerCase();
+      const localeIsValid = !locale || /^[a-z]{2}(?:-[a-z]{2})?$/.test(locale);
+      if (
+        localeIsValid &&
+        parts.length === smartTracklistIndex + 2 &&
+        DEEZER_SMARTTRACKLIST_ID.test(smartTracklistId)
+      ) {
+        return {
+          type: "smarttracklist",
+          id: smartTracklistId,
+          view: "",
+          locale
+        };
+      }
+      return { type: "unknown", id: null, view: "" };
+    }
+
     let typeIndex = 0;
     const first = String(parts[0] || "").toLowerCase();
     const second = String(parts[1] || "").toLowerCase();
@@ -984,6 +1158,150 @@ export function deezerTrackToMeta(track, albumResult = null) {
     dzUrl: trackUrl,
     source_provider: "deezer",
     source_store: "deezer"
+  };
+}
+
+// Converts Deezer gateway song rows into the public-API-shaped metadata model.
+export function deezerGatewayTrackToMeta(track) {
+  const trackId = numberOrNull(track?.SNG_ID ?? track?.TRACK_ID ?? track?.id);
+  const title = String(track?.SNG_TITLE ?? track?.TITLE ?? track?.title ?? "").trim();
+  if (!trackId || trackId <= 0 || !title) return null;
+
+  const albumId = numberOrNull(track?.ALB_ID ?? track?.album?.id);
+  const artistId = numberOrNull(track?.ART_ID ?? track?.artist?.id);
+  const artistName = String(track?.ART_NAME ?? track?.artist?.name ?? "").trim();
+  const albumTitle = String(track?.ALB_TITLE ?? track?.album?.title ?? "").trim();
+  const pictureMd5 = String(
+    track?.ALB_PICTURE ??
+    track?.ALB_PICTURE_MD5 ??
+    track?.album?.md5_image ??
+    ""
+  ).trim();
+  const coverUrl = pictureMd5
+    ? `https://cdn-images.dzcdn.net/images/cover/${encodeURIComponent(pictureMd5)}/1000x1000-000000-80-0-0.jpg`
+    : "";
+
+  return deezerTrackToMeta({
+    id: Math.round(trackId),
+    title,
+    title_short: title,
+    link: buildDeezerPageUrl("track", trackId),
+    duration: numberOrNull(track?.DURATION ?? track?.duration),
+    isrc: String(track?.ISRC ?? track?.isrc ?? "").trim(),
+    release_date: String(
+      track?.PHYSICAL_RELEASE_DATE ??
+      track?.DIGITAL_RELEASE_DATE ??
+      track?.release_date ??
+      ""
+    ).trim(),
+    track_position: numberOrNull(track?.TRACK_NUMBER ?? track?.track_position),
+    disk_number: numberOrNull(track?.DISK_NUMBER ?? track?.disk_number),
+    explicit_lyrics:
+      track?.EXPLICIT_LYRICS === "1" ||
+      track?.EXPLICIT_LYRICS === true ||
+      track?.explicit_lyrics === true,
+    artist: {
+      id: artistId,
+      name: artistName,
+      link: buildDeezerPageUrl("artist", artistId)
+    },
+    album: {
+      id: albumId,
+      title: albumTitle,
+      link: buildDeezerPageUrl("album", albumId),
+      cover: coverUrl,
+      cover_big: coverUrl,
+      cover_xl: coverUrl,
+      md5_image: pictureMd5
+    }
+  });
+}
+
+// Hydrates personalized smart-tracklist rows through Deezer's public metadata API.
+async function hydrateDeezerSmartTrackRows(rows = []) {
+  const uniqueRows = [];
+  const seen = new Set();
+  for (const row of rows.slice(0, 500)) {
+    const id = numberOrNull(row?.SNG_ID ?? row?.TRACK_ID ?? row?.id);
+    if (!id || id <= 0 || seen.has(Math.round(id))) continue;
+    seen.add(Math.round(id));
+    uniqueRows.push(row);
+  }
+
+  const resolved = new Array(uniqueRows.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(DEEZER_SMARTTRACKLIST_META_CONCURRENCY, uniqueRows.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < uniqueRows.length) {
+        const index = nextIndex++;
+        const row = uniqueRows[index];
+        const id = numberOrNull(row?.SNG_ID ?? row?.TRACK_ID ?? row?.id);
+        let meta = null;
+        try {
+          meta = await findDeezerTrackMetaById(id);
+        } catch {}
+        resolved[index] = buildDeezerResolvedItem(
+          meta || deezerGatewayTrackToMeta(row)
+        );
+      }
+    })
+  );
+
+  return resolved.filter((item) => item?.title);
+}
+
+// Resolves a personalized Deezer smart-tracklist using its authenticated web session.
+async function resolveDeezerSmartTracklist(parsed) {
+  const session = await createDeezerSmartTracklistSession();
+  const lang = String(parsed?.locale || "en").split("-", 1)[0].toLowerCase();
+  const requestOptions = {
+    apiToken: session.apiToken,
+    cookie: session.cookie
+  };
+  const [pageResponse, songsResponse] = await Promise.all([
+    fetchDeezerGateway(
+      "deezer.pageSmartTracklist",
+      { smarttracklist_id: parsed.id, lang },
+      requestOptions
+    ),
+    fetchDeezerGateway(
+      "smartTracklist.getSongs",
+      { smartTracklist_id: parsed.id },
+      requestOptions
+    )
+  ]);
+
+  const songRows = extractDeezerSmartTrackRows(songsResponse.payload);
+  const pageRows = extractDeezerSmartTrackRows(pageResponse.payload);
+  const rows = songRows.length ? songRows : pageRows;
+  if (!rows.length) {
+    throw deezerSmartTracklistError(
+      "DEEZER_SMARTTRACKLIST_EMPTY",
+      "Deezer returned no tracks for this inspired-by list. It may be unavailable or expired."
+    );
+  }
+
+  const items = await hydrateDeezerSmartTrackRows(rows);
+  if (!items.length) {
+    throw deezerSmartTracklistError(
+      "DEEZER_SMARTTRACKLIST_METADATA_NOT_FOUND",
+      "Deezer smart-tracklist metadata could not be resolved."
+    );
+  }
+
+  const pageData = pageResponse?.payload?.results?.DATA || {};
+  const title = String(
+    pageData.AUTO_GENERATED_TITLE ||
+    pageData.TITLE ||
+    `Deezer ${parsed.id}`
+  ).trim();
+
+  return {
+    kind: "playlist",
+    provider: "deezer",
+    title,
+    items
   };
 }
 
@@ -1149,6 +1467,10 @@ export async function resolveDeezerUrlLite(url, _options = {}) {
   const parsed = parseDeezerUrl(canonicalUrl);
   if (!parsed?.id || parsed.type === "unknown") {
     throw new Error("Unsupported Deezer URL");
+  }
+
+  if (parsed.type === "smarttracklist") {
+    return resolveDeezerSmartTracklist(parsed);
   }
 
   if (parsed.type === "track") {

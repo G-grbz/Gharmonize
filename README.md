@@ -50,7 +50,7 @@ For Docker, NVIDIA/NVENC setups, and packaged AppImage/EXE builds, see:
 - **YouTube / YouTube Music** downloads for single items, playlists, and mixes
 - **YTLive** — a dedicated music-first UI for YouTube discovery, playback, and queueing
 - **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** download and conversion flows
-- **Spotify, Apple Music, and Deezer** mapping for track / playlist / album workflows
+- **Spotify, Apple Music, and Deezer** mapping for track / playlist / album workflows, including personalized Deezer `inspired-by-*` smart tracklists
 - **Phone ringtone output** for iPhone (`.m4r`) and Android (`.mp3`)
 - **Audio and video conversion** powered by FFmpeg, with FPS/A-V sync presets for AC3 / EAC3 / AAC
 - **GPU acceleration** for local transcoding — NVENC, VAAPI, Intel QSV

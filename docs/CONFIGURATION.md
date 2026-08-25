@@ -258,6 +258,27 @@ SPOTIFY_DEBUG_MARKET=1
 
 Spotify, Apple Music, and Deezer matching/download concurrency is controlled from the UI with the max concurrent downloads/conversions field.
 
+## Deezer personalized smart tracklists
+
+Gharmonize accepts Deezer `inspired-by-*` smart-tracklist URLs with or without a locale prefix, for example:
+
+```text
+https://www.deezer.com/smarttracklist/inspired-by-1
+https://www.deezer.com/tr/smarttracklist/inspired-by-2
+https://www.deezer.com/en/smarttracklist/inspired-by-3
+https://www.deezer.com/fr/smarttracklist/inspired-by-4
+```
+
+### `DEEZER_ARL`
+
+These lists are personalized, so Deezer returns their tracks only for a signed-in session. Copy the `arl` cookie value from a signed-in Deezer browser session into the **Spotify / Deezer** settings tab. Gharmonize validates it, stores it encrypted, masks it in the UI, and never includes it in exported job data or logs.
+
+```dotenv
+DEEZER_ARL=
+```
+
+> ❗ Treat `DEEZER_ARL` like a password. Do not commit or share it. If Deezer expires the session, replace it with a current cookie value.
+
 ### `PREFER_SPOTIFY_TAGS`
 When writing tags (ID3, etc.), prefer metadata coming from Spotify.
 

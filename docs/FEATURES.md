@@ -24,6 +24,7 @@ On current builds, runtime tools such as **ffmpeg**, **ffprobe**, **mkvmerge**, 
 ## Music Mapping and Collections
 
 * Spotify, Apple Music, and Deezer support **track / playlist / album** workflows
+* Deezer supports personalized, locale-prefixed or locale-free **`inspired-by-*` smart tracklists** through an encrypted `DEEZER_ARL` setting
 * Automatic mapping from supported music-service items to YouTube / YouTube Music sources
 * Optional preference for Spotify metadata during tagging (`PREFER_SPOTIFY_TAGS`, see [CONFIGURATION.md](CONFIGURATION.md))
 

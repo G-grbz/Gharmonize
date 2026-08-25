@@ -11,6 +11,7 @@ import {
   deriveSessionSecret,
   encryptSecret,
   hashPassword,
+  normalizeDeezerArl,
   parseSafeYtDlpExtra,
   parseCookieHeader,
   passwordPolicyError,
@@ -24,13 +25,13 @@ const ENV_PATH =
   || path.join(process.env.DATA_DIR || process.cwd(), '.env')
 const SESSION_COOKIE = 'gharmonize_admin_session'
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
-const SENSITIVE_KEYS = new Set(['SPOTIFY_CLIENT_SECRET', 'HOMEPAGE_WIDGET_KEY'])
+const SENSITIVE_KEYS = new Set(['SPOTIFY_CLIENT_SECRET', 'DEEZER_ARL', 'HOMEPAGE_WIDGET_KEY'])
 const EXECUTABLE_SETTING_KEYS = new Set(['YTDLP_BIN', 'FFMPEG_BIN'])
 let sessionGeneration = 1
 const loginAttempts = new Map()
 
 const ALLOWED_KEYS = [
-  'SPOTIFY_CLIENT_ID','SPOTIFY_CLIENT_SECRET','SPOTIFY_MARKET','SPOTIFY_FALLBACK_MARKETS',
+  'SPOTIFY_CLIENT_ID','SPOTIFY_CLIENT_SECRET','DEEZER_ARL','SPOTIFY_MARKET','SPOTIFY_FALLBACK_MARKETS',
   'YT_USE_MUSIC','PREFER_SPOTIFY_TAGS','TITLE_CLEAN_PIPE','YTDLP_UA','YTDLP_COOKIES',
   'YTDLP_COOKIES_FROM_BROWSER','YTDLP_EXTRA','YT_STRIP_COOKIES','YT_DEFAULT_REGION','YT_LANG',
   'YT_ACCEPT_LANGUAGE','YT_FORCE_IPV4','YT_403_WORKAROUNDS','ENRICH_SPOTIFY_FOR_YT','MEDIA_COMMENT',
@@ -48,6 +49,7 @@ function applyAllowedEnvValue(key, value) {
   switch (key) {
     case 'SPOTIFY_CLIENT_ID': process.env.SPOTIFY_CLIENT_ID = value; return;
     case 'SPOTIFY_CLIENT_SECRET': process.env.SPOTIFY_CLIENT_SECRET = value; return;
+    case 'DEEZER_ARL': process.env.DEEZER_ARL = value; return;
     case 'SPOTIFY_MARKET': process.env.SPOTIFY_MARKET = value; return;
     case 'SPOTIFY_FALLBACK_MARKETS': process.env.SPOTIFY_FALLBACK_MARKETS = value; return;
     case 'YT_USE_MUSIC': process.env.YT_USE_MUSIC = value; return;
@@ -399,6 +401,9 @@ router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), 
     }
     if (Object.prototype.hasOwnProperty.call(updates, 'YTDLP_EXTRA')) {
       parseSafeYtDlpExtra(updates.YTDLP_EXTRA)
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'DEEZER_ARL')) {
+      updates.DEEZER_ARL = normalizeDeezerArl(updates.DEEZER_ARL)
     }
   } catch (error) {
     return res.status(400).json({

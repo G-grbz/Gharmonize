@@ -310,6 +310,20 @@ export function parseSafeYtDlpExtra(raw) {
   return parts;
 }
 
+// Normalizes the Deezer ARL session cookie before it can reach an HTTP header.
+export function normalizeDeezerArl(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  if (
+    value.length < 32 ||
+    value.length > 512 ||
+    !/^[A-Za-z0-9_-]+$/.test(value)
+  ) {
+    throw new Error('DEEZER_ARL must be a valid Deezer session cookie value');
+  }
+  return value;
+}
+
 export function isSafeExternalUrl(raw) {
   try {
     const url = new URL(String(raw || ''));
