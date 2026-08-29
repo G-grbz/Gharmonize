@@ -232,10 +232,18 @@ function resolveManagedCacheBin(baseName) {
     meta && typeof meta === "object" && !Array.isArray(meta)
       ? meta[toolKey]
       : null;
+  const fixedManagedPath = path.join(WEB_CACHE_DIR, pickExeName(baseName));
+  const usesFixedWindowsMkvToolPath =
+    process.platform === "win32" &&
+    (baseName === "mkvmerge" || baseName === "mkvpropedit");
   const candidates = [
-    path.join(WEB_CACHE_DIR, pickExeName(baseName)),
-    metaEntry?.path ? path.resolve(String(metaEntry.path)) : null,
-    toolKey === "mkvpropedit" && meta?.mkvmerge?.helperPath
+    fixedManagedPath,
+    !usesFixedWindowsMkvToolPath && metaEntry?.path
+      ? path.resolve(String(metaEntry.path))
+      : null,
+    !usesFixedWindowsMkvToolPath &&
+    toolKey === "mkvpropedit" &&
+    meta?.mkvmerge?.helperPath
       ? path.resolve(String(meta.mkvmerge.helperPath))
       : null
   ].filter(Boolean);
@@ -1534,11 +1542,16 @@ async function ensureLatestMkvmerge(meta, options = {}) {
   const hasHelper = usesManagedLinuxWrapper
     ? !!current?.helperPath && fs.existsSync(current.helperPath)
     : (!current?.helperPath || fs.existsSync(current.helperPath));
+  const usesManagedWindowsPaths =
+    process.platform !== "win32" ||
+    (path.resolve(String(current?.path || "")) === path.resolve(path.join(WEB_CACHE_DIR, "mkvmerge.exe")) &&
+      path.resolve(String(current?.helperPath || "")) === path.resolve(path.join(WEB_CACHE_DIR, "mkvpropedit.exe")));
   if (
     !force &&
     current?.path &&
     hasBacking &&
     hasHelper &&
+    usesManagedWindowsPaths &&
     isExecutable(current.path) &&
     isFresh(current)
   ) {
@@ -1664,8 +1677,11 @@ async function ensureLatestMkvmerge(meta, options = {}) {
     const archivePath = path.join(WEB_CACHE_DIR, `mkvtoolnix-${safeVersion}.zip`);
     const tmpArchivePath = `${archivePath}.download`;
     const extractDir = path.join(WEB_CACHE_DIR, `mkvmerge-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    const finalPath = path.join(WEB_CACHE_DIR, `mkvmerge-${safeVersion}.exe`);
-    const helperPath = path.join(WEB_CACHE_DIR, `mkvpropedit-${safeVersion}.exe`);
+    // Keep executable paths independent from the remotely supplied release version.
+    // The version is still used for the download URL/archive metadata, but managed
+    // command paths are fixed names under Gharmonize's private binary cache.
+    const finalPath = path.join(WEB_CACHE_DIR, "mkvmerge.exe");
+    const helperPath = path.join(WEB_CACHE_DIR, "mkvpropedit.exe");
     const url = `https://mkvtoolnix.download/windows/releases/${version}/mkvtoolnix-${bitLabel}-${version}.zip`;
 
     if (isExecutable(finalPath) && isExecutable(helperPath)) {

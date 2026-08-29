@@ -179,7 +179,6 @@ test('Linux tray blocks the known-broken Electron 43 runtime', () => {
   assert.ok(Number.isInteger(lockedMajor));
   assert.equal(lockedMajor, declaredMajor);
   assert.notEqual(declaredMajor, 43);
-
   assert.ok(main.includes('function hasKnownBrokenLinuxTrayRuntime()'));
   assert.ok(main.includes("return major === 43;"));
   assert.ok(main.includes("[tray] unavailable; closing Gharmonize instead of leaving a hidden background process"));
@@ -187,6 +186,15 @@ test('Linux tray blocks the known-broken Electron 43 runtime', () => {
   assert.ok(dependabot.includes('versions: ["43.x"]'));
 });
 
+
+test('managed Windows MKVToolNix command paths do not depend on remote version text', () => {
+  const binaries = fs.readFileSync(path.join('modules', 'binaries.js'), 'utf8');
+
+  assert.ok(binaries.includes('path.join(WEB_CACHE_DIR, "mkvmerge.exe")'));
+  assert.ok(binaries.includes('path.join(WEB_CACHE_DIR, "mkvpropedit.exe")'));
+  assert.ok(!binaries.includes('`mkvmerge-${safeVersion}.exe`'));
+  assert.ok(!binaries.includes('`mkvpropedit-${safeVersion}.exe`'));
+});
 
 test('release workflow preserves Linux artifact name for publish collection', () => {
   const workflow = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
