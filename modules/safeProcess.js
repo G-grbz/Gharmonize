@@ -30,10 +30,29 @@ const YTDLP_DANGEROUS_FLAGS = [
   "--external-downloader-args",
   "--config-location",
   "--config-locations",
-  "--plugin-dirs",
-  "--cookies-from-browser",
-  "--ffmpeg-location"
+  "--plugin-dirs"
 ];
+
+const YTDLP_ALLOWED_COOKIE_BROWSERS = new Set([
+  "chrome",
+  "chromium",
+  "firefox",
+  "edge"
+]);
+
+function assertSafeYtDlpFfmpegLocation(value) {
+  const location = assertPlainProcessString(value, "yt-dlp ffmpeg location", 4096, { allowEmpty: false }).trim();
+  if (!path.isAbsolute(location) || location.endsWith(path.sep)) {
+    throw new Error(`Unsafe yt-dlp ffmpeg location is blocked: ${location}`);
+  }
+
+  const base = path.basename(location).toLowerCase();
+  if (base !== "ffmpeg" && base !== "ffmpeg.exe") {
+    throw new Error(`Unsafe yt-dlp ffmpeg location is blocked: ${location}`);
+  }
+
+  return location;
+}
 
 function assertPlainProcessString(value, label, maxLength, { allowEmpty = true } = {}) {
   const text = String(value ?? "");
@@ -132,8 +151,33 @@ export function assertSafeProcessArgs(command, args = []) {
   const safe = args.map((arg) => assertPlainProcessString(arg, "process argument", 64 * 1024));
 
   if (executable === "yt-dlp" || executable === "yt-dlp.exe") {
-    for (const arg of safe) {
+    for (let index = 0; index < safe.length; index += 1) {
+      const arg = safe[index];
       const lower = arg.toLowerCase();
+
+      if (lower === "--cookies-from-browser" || lower.startsWith("--cookies-from-browser=")) {
+        const browser = lower === "--cookies-from-browser"
+          ? String(safe[index + 1] || "").trim().toLowerCase()
+          : lower.slice("--cookies-from-browser=".length).trim();
+
+        if (!YTDLP_ALLOWED_COOKIE_BROWSERS.has(browser)) {
+          throw new Error(`Unsafe yt-dlp browser cookie source is blocked: ${browser || "<empty>"}`);
+        }
+
+        if (lower === "--cookies-from-browser") index += 1;
+        continue;
+      }
+
+      if (lower === "--ffmpeg-location" || lower.startsWith("--ffmpeg-location=")) {
+        const location = lower === "--ffmpeg-location"
+          ? String(safe[index + 1] || "").trim()
+          : arg.slice("--ffmpeg-location=".length).trim();
+
+        assertSafeYtDlpFfmpegLocation(location);
+        if (lower === "--ffmpeg-location") index += 1;
+        continue;
+      }
+
       if (YTDLP_DANGEROUS_FLAGS.some((flag) => lower === flag || lower.startsWith(`${flag}=`))) {
         if (process.env.GHARMONIZE_ALLOW_UNSAFE_YTDLP_ARGS !== "1") {
           throw new Error(`Unsafe yt-dlp option is blocked: ${arg}`);

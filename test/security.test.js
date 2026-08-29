@@ -240,6 +240,15 @@ test('rate limiter allows the configured quota and rejects the next request', as
 
 test('safe process layer rejects dangerous arguments and unknown executables', () => {
   assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--exec=touch /tmp/pwned']));
+  assert.doesNotThrow(() => assertSafeProcessArgs('yt-dlp', ['--cookies-from-browser', 'chrome']));
+  assert.doesNotThrow(() => assertSafeProcessArgs('yt-dlp', ['--cookies-from-browser=firefox']));
+  assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--cookies-from-browser', '/tmp/profile']));
+  assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--cookies-from-browser=chrome:../../profile']));
+  assert.doesNotThrow(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location', '/opt/gharmonize/ffmpeg']));
+  assert.doesNotThrow(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location=/opt/gharmonize/ffmpeg']));
+  assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location', 'ffmpeg']));
+  assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location', '/tmp/curl']));
+  assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location=/tmp/ffmpeg/']));
   assert.throws(() => assertSafeProcessArgs('ffmpeg', ['ok\n--evil']));
   assert.throws(() => assertTrustedExecutable('/tmp/not-gharmonize-tool'));
   assert.equal(assertTrustedExecutable('/usr/bin/ffmpeg'), '/usr/bin/ffmpeg');
