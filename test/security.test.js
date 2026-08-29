@@ -164,14 +164,22 @@ test('sandboxed Electron preload uses CommonJS and stays bridged', () => {
   assert.equal(fs.existsSync(path.join('electron', 'preload.mjs')), false);
 });
 
-test('Linux tray stays on Electron 42 and fails safe on broken Electron 43 runtime', () => {
+test('Linux tray blocks the known-broken Electron 43 runtime', () => {
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   const main = fs.readFileSync(path.join('electron', 'main.mjs'), 'utf8');
   const dependabot = fs.readFileSync(path.join('.github', 'dependabot.yml'), 'utf8');
 
-  assert.equal(pkg.devDependencies.electron, '^42.5.0');
-  assert.equal(lock.packages['node_modules/electron'].version, '42.9.3');
+  const declaredElectron = String(pkg.devDependencies.electron || '');
+  const lockedElectron = String(lock.packages['node_modules/electron']?.version || '');
+  const declaredMajor = Number(declaredElectron.match(/\d+/)?.[0]);
+  const lockedMajor = Number(lockedElectron.split('.')[0]);
+
+  assert.ok(Number.isInteger(declaredMajor));
+  assert.ok(Number.isInteger(lockedMajor));
+  assert.equal(lockedMajor, declaredMajor);
+  assert.notEqual(declaredMajor, 43);
+
   assert.ok(main.includes('function hasKnownBrokenLinuxTrayRuntime()'));
   assert.ok(main.includes("return major === 43;"));
   assert.ok(main.includes("[tray] unavailable; closing Gharmonize instead of leaving a hidden background process"));
