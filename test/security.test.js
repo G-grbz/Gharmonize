@@ -248,8 +248,22 @@ test('safe process layer rejects dangerous arguments and unknown executables', (
 test('blank executable settings select managed binaries without weakening process validation', () => {
   assert.equal(normalizeTrustedExecutableSetting(''), '');
   assert.equal(normalizeTrustedExecutableSetting('   '), '');
-  assert.equal(normalizeTrustedExecutableSetting(' /usr/bin/ffmpeg '), '/usr/bin/ffmpeg');
+  assert.equal(normalizeTrustedExecutableSetting(' /usr/bin/ffmpeg ', 'ffmpeg'), '/usr/bin/ffmpeg');
+  assert.throws(() => normalizeTrustedExecutableSetting('/tmp/yt-dlp', 'ffmpeg'));
   assert.throws(() => assertTrustedExecutable(''));
+});
+
+test('safe process dispatches only literal allowlisted executable tokens', () => {
+  const safeProcess = fs.readFileSync('modules/safeProcess.js', 'utf8');
+  const binaries = fs.readFileSync('modules/binaries.js', 'utf8');
+
+  assert.equal(/\bexecFile\(\s*(?:command|executable|token)\b/.test(safeProcess), false);
+  assert.equal(/\bspawn\(\s*(?:command|executable|token)\b/.test(safeProcess), false);
+  assert.ok(safeProcess.includes('case "ffmpeg": return execFile("ffmpeg"'));
+  assert.ok(safeProcess.includes('case "yt-dlp": return execFile("yt-dlp"'));
+  assert.equal(/yt-dlp-\$\{safeTag\}(?:\.exe)?`/.test(binaries), false);
+  assert.equal(/deno-\$\{safeTag\}(?:\.exe)?`/.test(binaries), false);
+  assert.ok(binaries.includes('fixedFfmpegPair("candidate")'));
 });
 
 test('critical process sinks are routed through the safe process layer', () => {
@@ -354,7 +368,7 @@ test('source tree does not hide findings with CodeQL suppression annotations', (
 
   const safeProcess = fs.readFileSync('modules/safeProcess.js', 'utf8');
   assert.ok(safeProcess.includes('assertTrustedExecutable(command)'));
-  assert.ok(safeProcess.includes('assertSafeProcessArgs(executable, args)'));
+  assert.ok(safeProcess.includes('assertSafeProcessArgs(token, args)'));
   assert.ok(safeProcess.includes('shell: false'));
 });
 
