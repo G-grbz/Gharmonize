@@ -83,6 +83,54 @@ export function assertSafeProcessArgs(command, args = []) {
   return safe;
 }
 
+
+function buildFixedToolExecOptions(resolvedCommand, expectedBase, options = {}) {
+  const trustedPath = assertTrustedExecutable(resolvedCommand || expectedBase);
+  const actualBase = path.basename(trustedPath).toLowerCase();
+  const requiredBase = String(expectedBase).toLowerCase();
+  if (actualBase !== requiredBase) {
+    throw new Error(`Unexpected executable name for ${requiredBase}: ${actualBase}`);
+  }
+
+  const supplied = options && typeof options === "object" ? options : {};
+  const env = {
+    ...process.env,
+    ...(supplied.env || {})
+  };
+
+  // When Gharmonize resolved an explicit managed/packaged/custom path, expose
+  // only its directory through PATH while keeping the actual child-process
+  // command name fixed. This prevents remote/configured path text from ever
+  // becoming the command argument passed to execFile().
+  const dir = path.dirname(trustedPath);
+  if (path.isAbsolute(trustedPath) || dir !== ".") {
+    const resolvedDir = path.resolve(dir);
+    env.PATH = [resolvedDir, env.PATH || ""].filter(Boolean).join(path.delimiter);
+  }
+
+  return {
+    ...supplied,
+    env,
+    shell: false
+  };
+}
+
+// Executes mkvpropedit using a fixed command token. The resolved path is used
+// only to select a trusted PATH directory; it never reaches execFile's command
+// argument, which keeps the process sink independent from remote release data.
+export function execMkvpropeditSafe(resolvedCommand, args = [], options = {}, callback) {
+  const command = process.platform === "win32" ? "mkvpropedit.exe" : "mkvpropedit";
+  const safeArgs = assertSafeProcessArgs(command, args);
+
+  if (typeof options === "function") {
+    const execOptions = buildFixedToolExecOptions(resolvedCommand, command, {});
+    return execFile(command, safeArgs, execOptions, options);
+  }
+
+  const execOptions = buildFixedToolExecOptions(resolvedCommand, command, options);
+  return execFile(command, safeArgs, execOptions, callback);
+}
+
 export function spawnSafe(command, args = [], options = {}) {
   const executable = assertTrustedExecutable(command);
   const safeArgs = assertSafeProcessArgs(executable, args);

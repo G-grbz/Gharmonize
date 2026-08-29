@@ -3,7 +3,7 @@ import path from "path";
 import { sanitizeFilename } from "./utils.js";
 import { MKVPROPEDIT_BIN } from "./binaries.js";
 import { assertPathWithinAny, sanitizeLogValue } from "./security.js";
-import { execFileSafe } from "./safeProcess.js";
+import { execMkvpropeditSafe } from "./safeProcess.js";
 
 
 function discOutputRoots() {
@@ -76,7 +76,7 @@ export async function writeMetadataToMKV(mkvPath, metadata) {
   try {
     const safeMkvPath = safeDiscOutputPath(mkvPath);
     await new Promise((resolve, reject) => {
-      execFileSafe(MKVPROPEDIT_BIN, [safeMkvPath, ...args], (error) => error ? reject(error) : resolve());
+      execMkvpropeditSafe(MKVPROPEDIT_BIN, [safeMkvPath, ...args], (error) => error ? reject(error) : resolve());
     });
     return { success: true };
   } catch (error) {
