@@ -205,9 +205,18 @@ function musicPlaylistFallback(source = "") {
 }
 
 // Resolves mapped music URLs with the lightweight Spotify or Apple Music resolver.
-async function resolveMappedMusicUrlLite(url, { market } = {}) {
+async function resolveMappedMusicUrlLite(
+  url,
+  { market, streamDeezerSearch = false, maxItems = 1000 } = {}
+) {
   if (isAppleMusicUrl(url)) return resolveAppleMusicUrlLite(url, { market });
-  if (isDeezerUrl(url)) return resolveDeezerUrlLite(url, { market });
+  if (isDeezerUrl(url)) {
+    return resolveDeezerUrlLite(url, {
+      market,
+      streamBatches: streamDeezerSearch,
+      maxItems
+    });
+  }
   return resolveSpotifyUrlLite(url, { market });
 }
 
@@ -394,7 +403,11 @@ router.post("/api/spotify/process/start", async (req, res) => {
         try {
           let sp;
           try {
-            sp = await resolveMappedMusicUrlLite(url, { market: resolveMarket(marketIn) });
+            sp = await resolveMappedMusicUrlLite(url, {
+              market: resolveMarket(marketIn),
+              streamDeezerSearch: source === "deezer",
+              maxItems: 1000
+            });
           } catch (e) {
             const msg = String(e?.message || "");
             if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
@@ -416,7 +429,10 @@ router.post("/api/spotify/process/start", async (req, res) => {
 	          j.metadata.spotifyTitle = sp.title;
 	          j.metadata.isPlaylist   = sp.kind === "playlist";
           j.metadata.isAlbum      = sp.kind === "album";
-          j.playlist.total = sp.items?.length || 0;
+          j.playlist.total = Math.max(
+            sp.items?.length || 0,
+            Number(sp.totalHint) || 0
+          );
           j.lastLogKey = "status.mappingStarted";
           j.lastLogVars = { title: sp.title, total: j.playlist.total };
           j.lastLog = `🔍 Mapping started: ${sp.title} (${j.playlist.total} track)`;
@@ -499,9 +515,13 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     const isVideoFormatFlag = isVideoFormat(format);
 
     let matchedCount = 0;
-    const totalItems = sp.items.length;
+    const initialItems = Array.isArray(sp?.items) ? sp.items : [];
+    let totalItems = Math.max(
+      initialItems.length,
+      Number(sp?.totalHint) || 0
+    );
 
-    if (totalItems <= 0) {
+    if (initialItems.length <= 0) {
       throw new Error(`${sourceLabel} playlist has no readable tracks`);
     }
 
@@ -511,6 +531,11 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     job.playlist.converted = 0;
     job.playlist.downloadTotal = 0;
     job.playlist.convertTotal = 0;
+    job.playlist.matched = 0;
+    job.playlist.mappingDone = 0;
+    job.playlist.mappingTotal = totalItems;
+    job.playlist.mappingProgress = 0;
+    job.playlist.mappingCompleted = false;
 
     // Determines whether cancel should run for Spotify mapping and metadata flow.
     const shouldCancel = () => {
@@ -538,59 +563,67 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     const outputAbsByIndex = new Map();
     const coverUrlByIndex = new Map();
     const matchedLogicalIndices = new Set();
+    const mappedLogicalIndices = new Set();
     const runMetaLimited = createLimiter(Math.max(1, Math.min(8, Math.floor(parallel * 2))));
     const mktResolved = resolveMarket(market);
 
-    const metadataPromises = sp.items.map((itemLite, logicalIndex) =>
-      runMetaLimited(async () => {
-        if (shouldCancel()) return null;
-        let rich = null;
-        try {
-          rich = await findMappedTrackMeta(itemLite, source, mktResolved);
-        } catch {}
+    const metadataPromises = [];
+    const queueMetadataForItems = (items, indexOffset = 0) => {
+      for (let localIndex = 0; localIndex < items.length; localIndex++) {
+        const itemLite = items[localIndex];
+        const logicalIndex = indexOffset + localIndex;
+        metadataPromises[logicalIndex] = runMetaLimited(async () => {
+          if (shouldCancel()) return null;
+          let rich = null;
+          try {
+            rich = await findMappedTrackMeta(itemLite, source, mktResolved);
+          } catch {}
 
-        const baseMeta = {
-          title: itemLite.title,
-          track: itemLite.title,
-          artist: itemLite.artist,
-          uploader: itemLite.artist,
-          album: itemLite.album || "",
-          album_artist: itemLite.album_artist || itemLite.artist,
-          track_number: itemLite.track_number ?? null,
-          disc_number: itemLite.disc_number ?? null,
-          track_total: itemLite.track_total ?? null,
-          disc_total: itemLite.disc_total ?? null,
-          isrc: itemLite.isrc || "",
-          release_year: itemLite.year || "",
-          release_date: itemLite.date || "",
-          webpage_url: itemLite.spUrl || itemLite.amUrl || itemLite.webpage_url || "",
-          genre: itemLite.genre || "",
-          label: itemLite.label || "",
-          publisher: itemLite.label || "",
-          copyright: itemLite.copyright || "",
-          coverUrl: itemLite.coverUrl || "",
-          duration_ms: itemLite.duration_ms ?? null
-        };
+          const baseMeta = {
+            title: itemLite.title,
+            track: itemLite.title,
+            artist: itemLite.artist,
+            uploader: itemLite.artist,
+            album: itemLite.album || "",
+            album_artist: itemLite.album_artist || itemLite.artist,
+            track_number: itemLite.track_number ?? null,
+            disc_number: itemLite.disc_number ?? null,
+            track_total: itemLite.track_total ?? null,
+            disc_total: itemLite.disc_total ?? null,
+            isrc: itemLite.isrc || "",
+            release_year: itemLite.year || "",
+            release_date: itemLite.date || "",
+            webpage_url: itemLite.spUrl || itemLite.amUrl || itemLite.webpage_url || "",
+            genre: itemLite.genre || "",
+            label: itemLite.label || "",
+            publisher: itemLite.label || "",
+            copyright: itemLite.copyright || "",
+            coverUrl: itemLite.coverUrl || "",
+            duration_ms: itemLite.duration_ms ?? null
+          };
 
-        let merged = { ...baseMeta };
-        for (const [k, v] of Object.entries(rich || {})) {
-          if (v == null) continue;
-          if (typeof v === "string" && !v.trim()) continue;
-          merged[k] = v;
-        }
-        try {
-          merged = await enrichMetaWithApple(merged, {
-            fallbackArtist: itemLite.artist,
-            fallbackTitle: itemLite.title,
-            market: mktResolved
-          });
-        } catch {}
+          let merged = { ...baseMeta };
+          for (const [k, v] of Object.entries(rich || {})) {
+            if (v == null) continue;
+            if (typeof v === "string" && !v.trim()) continue;
+            merged[k] = v;
+          }
+          try {
+            merged = await enrichMetaWithApple(merged, {
+              fallbackArtist: itemLite.artist,
+              fallbackTitle: itemLite.title,
+              market: mktResolved
+            });
+          } catch {}
 
-        richMetaByIndex.set(logicalIndex, merged);
-        if (merged.coverUrl) coverUrlByIndex.set(logicalIndex, merged.coverUrl);
-        return merged;
-      }).catch(() => null)
-    );
+          richMetaByIndex.set(logicalIndex, merged);
+          if (merged.coverUrl) coverUrlByIndex.set(logicalIndex, merged.coverUrl);
+          return merged;
+        }).catch(() => null);
+      }
+    };
+
+    queueMetadataForItems(initialItems, 0);
 
     // Converts downloaded item for Spotify mapping and metadata flow.
     const convertDownloadedItem = async (dlResult, idxZeroBased) => {
@@ -827,12 +860,13 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           concurrency: parallel,
           onProgress: (done, _queueTotal) => {
           job.playlist.downloaded = done;
-          job.downloadProgress = Math.floor((done / Math.max(1, totalItems)) * 100);
+          const totalForProgress = Math.max(1, Number(job.playlist.total) || totalItems || 1);
+          job.downloadProgress = Math.floor((done / totalForProgress) * 100);
           job.lastLogKey = 'log.downloading.progress';
-          job.lastLogVars = { done, total: totalItems };
-          job.lastLog = `📥 Downloading: ${done}/${totalItems}`;
+          job.lastLogVars = { done, total: totalForProgress };
+          job.lastLog = `📥 Downloading: ${done}/${totalForProgress}`;
 
-          const dlPct = totalItems > 0 ? (done / totalItems) : 0;
+          const dlPct = done / totalForProgress;
           if (job.phase === "downloading") {
             job.progress = Math.max(job.progress, Math.floor(30 + dlPct * 40));
           }
@@ -868,64 +902,137 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           }
         })
       : null;
-    await mapMappedMusicWithCache(
-      sp,
-      {
-        url: job.metadata?.spotifyUrl || "",
-        source,
-        concurrency: parallel,
-        shouldCancel,
-        onUpdate: (idx, item) => {
-        if (shouldCancel()) return;
+    const mapBatch = async (batchItems, indexOffset = 0, replaceManifest = true) => {
+      if (!Array.isArray(batchItems) || !batchItems.length) return;
 
-        job.progress = 5 + Math.floor(((idx + 1) / totalItems) * 25);
-        job.lastLogKey = 'log.searchingTrack';
-        job.lastLogVars = { artist: item.uploader, title: item.title };
-        job.lastLog = `🔍 Searching: ${item.uploader} - ${item.title}`;
+      await mapMappedMusicWithCache(
+        { ...sp, items: batchItems },
+        {
+          url: job.metadata?.spotifyUrl || "",
+          source,
+          concurrency: parallel,
+          shouldCancel,
+          replaceManifest,
+          indexOffset,
+          onUpdate: (localIdx, item) => {
+            if (shouldCancel()) return;
+            const idx = indexOffset + localIdx;
+            const totalForProgress = Math.max(1, Number(job.playlist.total) || totalItems || 1);
 
-        if (item.id) {
-          matchedCount++;
-          matchedLogicalIndices.add(idx);
-          job.metadata.selectedIds[idx] = item.id;
-          job.metadata.frozenEntries[idx] = {
-            index: item.index,
-            id: item.id,
-            title: item.title,
-            uploader: item.uploader,
-            webpage_url: item.webpage_url
-          };
+            // Mapping callbacks run concurrently and therefore arrive out of
+            // source order. Track completed logical indexes instead of using
+            // idx as progress; idx-based progress can jump backwards.
+            mappedLogicalIndices.add(idx);
+            job.playlist.mappingDone = mappedLogicalIndices.size;
+            job.playlist.mappingTotal = totalForProgress;
+            const mappingProgress = Math.max(
+              0,
+              Math.min(100, Math.floor((mappedLogicalIndices.size / totalForProgress) * 100))
+            );
+            job.playlist.mappingProgress = Math.max(
+              Number(job.playlist.mappingProgress) || 0,
+              mappingProgress
+            );
+            job.progress = Math.max(
+              Number(job.progress) || 0,
+              5 + Math.floor((job.playlist.mappingProgress / 100) * 25)
+            );
+            job.lastLogKey = 'log.searchingTrack';
+            job.lastLogVars = { artist: item.uploader, title: item.title };
+            job.lastLog = `🔍 Searching: ${item.uploader} - ${item.title}`;
 
-          if (dlQueue) {
-            dlQueue.enqueue(
-              {
+            if (item.id) {
+              const firstMatchForIndex = !matchedLogicalIndices.has(idx);
+              matchedLogicalIndices.add(idx);
+              matchedCount = matchedLogicalIndices.size;
+              job.playlist.matched = matchedCount;
+              job.metadata.selectedIds[idx] = item.id;
+              job.metadata.frozenEntries[idx] = {
                 index: item.index,
                 id: item.id,
                 title: item.title,
                 uploader: item.uploader,
                 webpage_url: item.webpage_url
-              },
-              idx
-            );
+              };
+
+              // A mapper callback may be retried/replayed for the same logical
+              // track. Count and enqueue each source position only once.
+              if (dlQueue && firstMatchForIndex) {
+                dlQueue.enqueue(
+                  {
+                    index: item.index,
+                    id: item.id,
+                    title: item.title,
+                    uploader: item.uploader,
+                    webpage_url: item.webpage_url
+                  },
+                  idx
+                );
+              }
+            }
+          },
+          onLog: (payload) => {
+            const { logKey, logVars, fallback } =
+              (typeof payload === 'string')
+                ? { logKey: null, logVars: null, fallback: payload }
+                : payload;
+            job.lastLogKey  = logKey || null;
+            job.lastLogVars = logVars || null;
+            job.lastLog     = fallback || '';
+            console.log(`[music-match ${jobId}] ${fallback || job.lastLogKey || ''}`);
           }
         }
-      },
-        onLog: (payload) => {
-          const { logKey, logVars, fallback } =
-            (typeof payload === 'string')
-              ? { logKey: null, logVars: null, fallback: payload }
-              : payload;
-          job.lastLogKey  = logKey || null;
-          job.lastLogVars = logVars || null;
-          job.lastLog     = fallback || '';
-          console.log(`[music-match ${jobId}] ${fallback || job.lastLogKey || ''}`);
-        }
-      }
-    );
+      );
+    };
+
+    const batchIterator = sp?.itemBatches?.[Symbol.asyncIterator]?.();
+    let prefetchedBatch = batchIterator ? batchIterator.next() : null;
+
+    await mapBatch(initialItems, 0, true);
+
+    while (prefetchedBatch) {
+      if (shouldCancel()) throw new Error("CANCELED");
+      const next = await prefetchedBatch;
+      if (next.done) break;
+
+      // Prefetch only one Deezer page ahead: bounded memory, no API burst.
+      prefetchedBatch = batchIterator.next();
+      const batchItems = Array.isArray(next.value?.items) ? next.value.items : [];
+      if (!batchItems.length) continue;
+
+      const indexOffset = sp.items.length;
+      sp.items.push(...batchItems);
+      totalItems = Math.max(
+        sp.items.length,
+        Number(next.value?.total) || 0
+      );
+      job.playlist.total = totalItems;
+      job.playlist.mappingTotal = totalItems;
+      if (results.length < totalItems) results.length = totalItems;
+      queueMetadataForItems(batchItems, indexOffset);
+
+      job.lastLogKey = null;
+      job.lastLogVars = null;
+      job.lastLog = `📚 Deezer results loaded: ${sp.items.length}/${totalItems}`;
+      await mapBatch(batchItems, indexOffset, false);
+    }
+
+    // Once discovery is finished, use the exact discovered count for final progress/ZIP stats.
+    totalItems = sp.items.length;
+    job.playlist.total = totalItems;
+    job.playlist.mappingTotal = totalItems;
+    job.playlist.mappingDone = totalItems;
+    job.playlist.mappingProgress = 100;
+    job.playlist.mappingCompleted = true;
+    job.progress = Math.max(Number(job.progress) || 0, 30);
+    results.length = Math.max(results.length, totalItems);
 
     if (shouldCancel()) { throw new Error("CANCELED"); }
 
     job.metadata.selectedIds = (job.metadata.selectedIds || []).filter(Boolean);
     job.metadata.frozenEntries = (job.metadata.frozenEntries || []).filter(Boolean);
+    matchedCount = job.metadata.frozenEntries.length;
+    job.playlist.matched = matchedCount;
 
     if (matchedCount === 0) {
       throw new Error("No matching tracks found");
@@ -1464,7 +1571,13 @@ router.post("/api/spotify/preview/start", async (req, res) => {
 
     let sp;
     try {
-      sp = await resolveMappedMusicUrl(url, { market: resolveMarket(marketIn) });
+      sp = source === "deezer"
+        ? await resolveMappedMusicUrlLite(url, {
+            market: resolveMarket(marketIn),
+            streamDeezerSearch: true,
+            maxItems: 1000
+          })
+        : await resolveMappedMusicUrl(url, { market: resolveMarket(marketIn) });
     } catch (e) {
       const msg = String(e?.message || "");
       if (msg.startsWith("SPOTIFY_MIX_UNSUPPORTED")) {
@@ -1484,40 +1597,93 @@ router.post("/api/spotify/preview/start", async (req, res) => {
       source,
       status: "running",
       title: sp.title || (sp.kind === "track" ? `${sourceLabel} Track` : `${sourceLabel} Playlist`),
-      total: (sp.items || []).length,
+      total: Math.max((sp.items || []).length, Number(sp.totalHint) || 0),
       done: 0,
       items: [],
       logs: [],
       createdAt: new Date(),
       validItems: [],
+      matchedIndexes: new Set(),
+      matchedCount: 0,
       jobId: null
     };
     spotifyMapTasks.set(id, task);
 
-    mapMappedMusicWithCache(sp, {
-      url,
-      source,
-      concurrency: effectiveMapConcurrency,
-      onUpdate: (idx, item) => {
-        task.items[idx] = item;
-        task.done++;
-        if (item?.id) task.validItems.push(item);
-      },
-      onLog: (log) => { task.logs.push({ time: new Date(), message: log }); console.log(`[music-match ${id}] ${log}`); }
-    }).then((result) => {
+    (async () => {
+      let cacheHits = 0;
+      let newlyMapped = 0;
+      let lastResult = null;
+
+      const mapPreviewBatch = async (batchItems, indexOffset = 0, replaceManifest = true) => {
+        if (!Array.isArray(batchItems) || !batchItems.length) return;
+        const result = await mapMappedMusicWithCache(
+          { ...sp, items: batchItems },
+          {
+            url,
+            source,
+            concurrency: effectiveMapConcurrency,
+            replaceManifest,
+            indexOffset,
+            onUpdate: (localIdx, item) => {
+              const idx = indexOffset + localIdx;
+              task.items[idx] = item;
+              task.done++;
+              if (item?.id) {
+                task.matchedIndexes.add(idx);
+                task.matchedCount = task.matchedIndexes.size;
+                task.validItems[idx] = item;
+              }
+            },
+            onLog: (log) => {
+              task.logs.push({ time: new Date(), message: log });
+              console.log(`[music-match ${id}] ${typeof log === "string" ? log : (log?.fallback || log?.logKey || "")}`);
+            }
+          }
+        );
+        cacheHits += Number(result?.cacheHits || 0);
+        newlyMapped += Number(result?.newlyMapped || 0);
+        lastResult = result;
+      };
+
+      const initialItems = Array.isArray(sp.items) ? sp.items : [];
+      const batchIterator = sp?.itemBatches?.[Symbol.asyncIterator]?.();
+      let prefetchedBatch = batchIterator ? batchIterator.next() : null;
+
+      await mapPreviewBatch(initialItems, 0, true);
+
+      while (prefetchedBatch) {
+        const next = await prefetchedBatch;
+        if (next.done) break;
+        prefetchedBatch = batchIterator.next();
+
+        const batchItems = Array.isArray(next.value?.items) ? next.value.items : [];
+        if (!batchItems.length) continue;
+        const indexOffset = sp.items.length;
+        sp.items.push(...batchItems);
+        task.total = Math.max(
+          sp.items.length,
+          Number(next.value?.total) || 0
+        );
+        await mapPreviewBatch(batchItems, indexOffset, false);
+      }
+
+      task.total = sp.items.length;
       task.status = "completed";
       task.validItems = (task.items || []).filter((item) => item?.id);
-      task.cache = {
-        sourceKey: result.sourceKey,
-        jsonFile: result.jsonFile,
-        urlListFile: result.urlListFile,
-        cacheHits: result.cacheHits,
-        newlyMapped: result.newlyMapped
-      };
-      task.urlListFile = result.urlListFile;
-      // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
-      console.log(`✅ ${sanitizeLogValue(sourceLabel)} URL list ready: ${sanitizeLogValue(result.urlListFile)}`);
-    }).catch((e) => { task.status = "error"; task.error = e.message; });
+      task.matchedCount = task.validItems.length;
+      if (lastResult) {
+        task.cache = {
+          sourceKey: lastResult.sourceKey,
+          jsonFile: lastResult.jsonFile,
+          urlListFile: lastResult.urlListFile,
+          cacheHits,
+          newlyMapped
+        };
+        task.urlListFile = lastResult.urlListFile;
+        // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
+        console.log(`✅ ${sanitizeLogValue(sourceLabel)} URL list ready: ${sanitizeLogValue(lastResult.urlListFile)}`);
+      }
+    })().catch((e) => { task.status = "error"; task.error = e.message; });
 
     return sendOk(res, { mapId: id, title: task.title, total: task.total, source, concurrency: effectiveMapConcurrency });
   } catch (e) {
@@ -1532,7 +1698,7 @@ router.get("/api/spotify/preview/stream/:id", (req, res) => {
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-  send({ type: "init", title: task.title, total: task.total, done: task.done, items: task.items || [] });
+  send({ type: "init", title: task.title, total: task.total, done: task.done, matched: task.matchedCount || 0, items: (task.items || []).filter(Boolean) });
   const sentItems = new Set();
   (task.items || []).forEach((item, index) => {
     if (item) sentItems.add(index);
@@ -1546,7 +1712,7 @@ router.get("/api/spotify/preview/stream/:id", (req, res) => {
   };
   const interval = setInterval(() => {
     sendPendingItems();
-    send({ type: "progress", done: task.done, total: task.total, status: task.status });
+    send({ type: "progress", done: task.done, total: task.total, matched: task.matchedCount || 0, status: task.status });
     if (task.status === "completed" || task.status === "error") { send({ type: "done", status: task.status, error: task.error || null }); clearInterval(interval); res.end(); }
   }, 800);
   req.on("close", () => clearInterval(interval));
@@ -1559,7 +1725,7 @@ router.get("/api/spotify/preview/stream-logs/:id", (req, res) => {
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-  send({ type: "init", title: task.title, total: task.total, done: task.done, items: task.items || [] });
+  send({ type: "init", title: task.title, total: task.total, done: task.done, matched: task.matchedCount || 0, items: (task.items || []).filter(Boolean) });
   const sentItems = new Set();
   (task.items || []).forEach((item, index) => {
     if (item) sentItems.add(index);
@@ -1579,7 +1745,7 @@ router.get("/api/spotify/preview/stream-logs/:id", (req, res) => {
   };
   const interval = setInterval(() => {
     sendPendingItems();
-    send({ type: "progress", done: task.done, total: task.total, status: task.status });
+    send({ type: "progress", done: task.done, total: task.total, matched: task.matchedCount || 0, status: task.status });
     if (task.status === "completed" || task.status === "error") {
       send({
         type: "done",

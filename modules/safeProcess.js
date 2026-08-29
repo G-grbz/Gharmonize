@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 
 const CONTROL_CHARS = /[\u0000\r\n\u2028\u2029]/;
 const DEFAULT_ALLOWED_EXECUTABLES = new Set([
@@ -102,3 +103,21 @@ export function execFileSafe(command, args = [], options = {}, callback) {
   // Trusted executable allowlist, argument validation, and shell:false are enforced above.
   return execFile(executable, safeArgs, { ...options, shell: false }, callback);
 }
+
+// Preserves Node execFile's native promisified { stdout, stderr } result shape.
+// Without this custom hook, promisify(execFileSafe) resolves only stdout because
+// execFileSafe is a wrapper, causing callers that destructure stdout/stderr to
+// see undefined values and report valid tool versions as "unknown".
+execFileSafe[promisify.custom] = function execFileSafeAsync(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    execFileSafe(command, args, options, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+};

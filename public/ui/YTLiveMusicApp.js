@@ -1,5 +1,32 @@
 import { settingsManager } from './SettingsManager.js';
 
+async function waitForRuntimeBinariesReady() {
+  const overlay = document.getElementById('binaryStartupOverlay');
+  if (!overlay) return;
+
+  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  while (true) {
+    try {
+      const response = await fetch('/api/binaries/status', { cache: 'no-store' });
+      if (response.ok) {
+        const status = await response.json();
+        if (!status?.active) return;
+      }
+    } catch (error) {
+      console.warn('Runtime binary readiness check failed:', error);
+    }
+    await sleep(500);
+  }
+}
+
+function hideRuntimeBinariesOverlay() {
+  const overlay = document.getElementById('binaryStartupOverlay');
+  if (!overlay) return;
+  overlay.classList.add('is-ready');
+  overlay.setAttribute('aria-busy', 'false');
+}
+
 function isHostOrSubdomain(host, domain) {
   const value = String(host || '').toLowerCase();
   const expected = String(domain || '').toLowerCase();
@@ -114,6 +141,8 @@ class YTLiveMusicApp {
       console.warn('i18n initialization failed:', error);
     }
 
+    await waitForRuntimeBinariesReady();
+
     window.app = {
       showNotification: (message, type = 'info') => this.notify(message, type),
       t: (key, vars) => this.t(key, vars),
@@ -134,6 +163,7 @@ class YTLiveMusicApp {
     this.scheduleQueuePoll();
     this.loadMusicHomeShelves();
     await this.search('', { preset: 'energizing' });
+    hideRuntimeBinariesOverlay();
   }
 
   bindEvents() {
@@ -2573,6 +2603,76 @@ class YTLiveMusicApp {
     if (host) host.hidden = false;
   }
 
+  createYouTubePlayerIframe({ videoId = '', playlistId = '', autoplay = true } = {}) {
+    const frame = document.querySelector('.player-frame');
+    if (!frame) return null;
+
+    const currentHost = document.getElementById('youtubePlayer');
+    const iframe = document.createElement('iframe');
+    iframe.id = 'youtubePlayer';
+    iframe.className = 'youtube-player';
+    iframe.title = 'YouTube video player';
+    iframe.frameBorder = '0';
+    iframe.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+
+    const embedTarget = playlistId
+      ? 'videoseries'
+      : encodeURIComponent(String(videoId || '').trim());
+    const url = new URL(`https://www.youtube.com/embed/${embedTarget}`);
+    url.searchParams.set('enablejsapi', '1');
+    url.searchParams.set('origin', window.location.origin);
+    url.searchParams.set('playsinline', '1');
+    url.searchParams.set('rel', '0');
+    url.searchParams.set('autoplay', autoplay ? '1' : '0');
+    if (playlistId) url.searchParams.set('list', playlistId);
+
+    if (currentHost) currentHost.replaceWith(iframe);
+    else {
+      const empty = document.getElementById('playerEmpty');
+      frame.insertBefore(iframe, empty || null);
+    }
+
+    iframe.src = url.toString();
+    return iframe;
+  }
+
+  waitForYouTubeIframeLoad(iframe, token, timeoutMs = 8000) {
+    return new Promise((resolve, reject) => {
+      if (!iframe) {
+        reject(new Error('YouTube player iframe could not be created'));
+        return;
+      }
+
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeoutId);
+        iframe.removeEventListener('load', onLoad);
+        iframe.removeEventListener('error', onError);
+        if (error) reject(error);
+        else resolve(iframe);
+      };
+      const onLoad = () => {
+        if (token !== this.youtubePlaybackToken) {
+          finish(new Error('YouTube playback superseded'));
+          return;
+        }
+        finish();
+      };
+      const onError = () => finish(new Error('YouTube player iframe could not be loaded'));
+      const timeoutId = window.setTimeout(
+        () => finish(new Error('YouTube player iframe timeout')),
+        timeoutMs
+      );
+
+      iframe.addEventListener('load', onLoad, { once: true });
+      iframe.addEventListener('error', onError, { once: true });
+    });
+  }
+
   showPlayerPlaceholder(title, text) {
     const empty = document.getElementById('playerEmpty');
     if (!empty) return;
@@ -2636,20 +2736,12 @@ class YTLiveMusicApp {
           try { this.youtubePlayer.destroy(); } catch {}
           this.youtubePlayer = null;
         }
-        const host = this.ensureYouTubePlayerHost();
-        if (!host) return;
-        host.hidden = false;
-
-        const playerVars = {
-          autoplay: autoplay ? 1 : 0,
-          playsinline: 1,
-          rel: 0,
-          origin: window.location.origin
-        };
-        if (isPlaylist) {
-          playerVars.listType = 'playlist';
-          playerVars.list = playlistId;
-        }
+        const iframe = this.createYouTubePlayerIframe({
+          videoId: isPlaylist ? '' : videoId,
+          playlistId: isPlaylist ? playlistId : '',
+          autoplay
+        });
+        if (!iframe) return;
 
         let revealed = false;
         let notifiedPlayable = false;
@@ -2669,34 +2761,35 @@ class YTLiveMusicApp {
           this.notify(this.tt('ytlive.playing', 'Playing.'), 'success');
         };
 
-        this.youtubePlayer = new YT.Player(host, {
-          videoId: isPlaylist ? undefined : videoId,
-          playerVars,
-          events: {
-            onReady: (event) => {
-              if (token !== this.youtubePlaybackToken) return;
-              if (autoplay) {
-                try { event.target.playVideo(); } catch {}
+        return this.waitForYouTubeIframeLoad(iframe, token).then(() => {
+          if (token !== this.youtubePlaybackToken) return;
+          this.youtubePlayer = new YT.Player(iframe, {
+            events: {
+              onReady: (event) => {
+                if (token !== this.youtubePlaybackToken) return;
+                if (autoplay) {
+                  try { event.target.playVideo(); } catch {}
+                }
+                reveal(silent ? 1800 : 900);
+              },
+              onStateChange: (event) => {
+                if (token !== this.youtubePlaybackToken) return;
+                const states = window.YT?.PlayerState || {};
+                if (event.data === states.ENDED || event.data === 0) {
+                  this.handleYouTubePlaybackEnded(item, token);
+                  return;
+                }
+                if ([states.PLAYING, states.BUFFERING, states.CUED].includes(event.data)) {
+                  notifyPlayable();
+                  reveal(120);
+                }
+              },
+              onError: () => {
+                if (this.handleYouTubePlaybackError(item, token, silent)) return;
+                this.showEmbedFallback(item, token, silent);
               }
-              reveal(silent ? 1800 : 900);
-            },
-            onStateChange: (event) => {
-              if (token !== this.youtubePlaybackToken) return;
-              const states = window.YT?.PlayerState || {};
-              if (event.data === states.ENDED || event.data === 0) {
-                this.handleYouTubePlaybackEnded(item, token);
-                return;
-              }
-              if ([states.PLAYING, states.BUFFERING, states.CUED].includes(event.data)) {
-                notifyPlayable();
-                reveal(120);
-              }
-            },
-            onError: () => {
-              if (this.handleYouTubePlaybackError(item, token, silent)) return;
-              this.showEmbedFallback(item, token, silent);
             }
-          }
+          });
         });
       })
       .catch(() => {

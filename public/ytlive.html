@@ -15,6 +15,13 @@
   <script src="/ui/ytlive-bootstrap.js"></script>
 </head>
 <body>
+  <div id="binaryStartupOverlay" class="binary-startup-overlay" role="status" aria-live="polite" aria-busy="true">
+    <div class="binary-startup-overlay__card">
+      <div class="binary-startup-overlay__spinner" aria-hidden="true"></div>
+      <div class="binary-startup-overlay__text" data-i18n="ui.binaryStartupPreparing">Please wait, tools are being prepared...</div>
+    </div>
+  </div>
+
   <div class="ytlive-shell">
     <aside class="sidebar" aria-label="Primary" data-i18n-aria="ytlive.nav.primary">
       <a class="brand" href="/" aria-label="Gharmonize">

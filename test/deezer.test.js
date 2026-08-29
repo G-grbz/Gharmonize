@@ -37,6 +37,41 @@ test('Deezer smart-tracklist parsing rejects malformed and unrelated paths', () 
   }
 });
 
+
+test('Deezer artist search URLs are parsed as artist collections', () => {
+  assert.deepEqual(
+    parseDeezerUrl('https://www.deezer.com/search/cem%20adrian/track'),
+    {
+      type: 'artist_search',
+      id: null,
+      query: 'cem adrian',
+      view: 'track',
+      locale: ''
+    }
+  );
+
+  assert.deepEqual(
+    parseDeezerUrl('https://www.deezer.com/tr/search/Cem%20Adrian/track'),
+    {
+      type: 'artist_search',
+      id: null,
+      query: 'Cem Adrian',
+      view: 'track',
+      locale: 'tr'
+    }
+  );
+});
+
+test('Deezer search URL parsing rejects unsupported search views', () => {
+  for (const url of [
+    'https://www.deezer.com/search/cem%20adrian',
+    'https://www.deezer.com/search/cem%20adrian/album',
+    'https://www.deezer.com/foo/search/cem%20adrian/track'
+  ]) {
+    assert.equal(parseDeezerUrl(url).type, 'unknown');
+  }
+});
+
 test('Deezer gateway rows retain useful metadata when public hydration fails', () => {
   const meta = deezerGatewayTrackToMeta({
     SNG_ID: '12345',
@@ -74,6 +109,11 @@ test('personalized Deezer lists explain that DEEZER_ARL is required', async () =
     if (typeof previous === 'undefined') delete process.env.DEEZER_ARL;
     else process.env.DEEZER_ARL = previous;
   }
+});
+
+test('classic UI treats Deezer artist search URLs as playlists', () => {
+  const source = fs.readFileSync('public/ui/MediaConverterApp.js', 'utf8');
+  assert.match(source, /searchIndex\s*>=\s*0[\s\S]{0,220}?===\s*'track'[\s\S]{0,80}?return 'playlist'/);
 });
 
 test('classic UI treats Deezer inspired-by URLs as playlists', () => {

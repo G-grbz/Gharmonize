@@ -396,7 +396,7 @@ export class JobManager {
             Number(job.playlist?.total || 0),
             Number(dlTotal || 0),
             Number(cvTotal || 0),
-            Array.isArray(job.metadata?.frozenEntries) ? job.metadata.frozenEntries.length : 0
+            Array.isArray(job.metadata?.frozenEntries) ? job.metadata.frozenEntries.filter(Boolean).length : 0
         );
 
         if (playlistTotal > 0) {
@@ -965,9 +965,12 @@ updateJobUI(job, batchId = null) {
 	            if (isMusicMatchJob) {
 	            const phaseNorm = this.normalizeStatus(job.currentPhase || job.phase);
 	            const parsed = this.parseXofY(job.lastLog) || null;
-	            const matchedCount = Array.isArray(job.metadata?.frozenEntries)
-	                ? job.metadata.frozenEntries.length
-	                : 0;
+	            const liveMatched = Number(job.playlist?.matched);
+	            const matchedCount = Number.isFinite(liveMatched)
+	                ? Math.max(0, Math.min(Number(job.playlist?.total) || liveMatched, liveMatched))
+	                : (Array.isArray(job.metadata?.frozenEntries)
+	                    ? job.metadata.frozenEntries.filter(Boolean).length
+	                    : 0);
 
 	            const { dlDone, cvDone, dlTotal, cvTotal } = this.getDlCvCounts(job, parsed);
 	            const total = this.safeNum(dlTotal || cvTotal || job.playlist?.total || parsed?.total || 0, 0);

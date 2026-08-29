@@ -9,7 +9,10 @@ export class SpotifyManager {
             source: 'spotify'
         };
         this.spotifyEventSource = null;
-        this.integratedRenderedCount = 0;
+        this.integratedEventSource = null;
+        this.integratedRenderedIndexes = new Set();
+        this.lastIntegratedMatched = 0;
+        this.lastIntegratedMappingProgress = 0;
         this.lastIntegratedLogSignature = '';
     }
 
@@ -56,6 +59,10 @@ export class SpotifyManager {
 
             document.getElementById('spotifyTitle').textContent = data.title || '-';
             document.getElementById('spotifyTotal').textContent = data.total || 0;
+            document.getElementById('spotifyMatched').textContent = '0';
+            document.getElementById('spotifyProgress').textContent = '0%';
+            const previewList = document.getElementById('spotifyPreviewList');
+            if (previewList) previewList.innerHTML = '';
             document.getElementById('spotifyStatus').style.display = 'block';
             document.getElementById('spotifyStatusText').textContent = this.app.t('status.mappingStarted');
 
@@ -106,7 +113,10 @@ export class SpotifyManager {
                     document.getElementById('spotifyTitle').textContent = data.title || '-';
                     document.getElementById('spotifyTotal').textContent = data.total || 0;
                     if (data.items && Array.isArray(data.items)) {
-                        data.items.forEach(item => this.addSpotifyItem(item));
+                        data.items.filter(Boolean).forEach(item => this.addSpotifyItem(item));
+                    }
+                    if (Number.isFinite(Number(data.matched))) {
+                        document.getElementById('spotifyMatched').textContent = String(Number(data.matched));
                     }
                     break;
 
@@ -120,6 +130,9 @@ export class SpotifyManager {
 
                 case 'progress':
                     this.updateSpotifyProgress(data.done, data.total);
+                    if (Number.isFinite(Number(data.matched))) {
+                        document.getElementById('spotifyMatched').textContent = String(Number(data.matched));
+                    }
                     break;
 
                 case 'log':
@@ -158,10 +171,14 @@ export class SpotifyManager {
 
     // Handles add Spotify metadata item in Spotify mapping and metadata flow.
     addSpotifyItem(item) {
+        if (!item) return;
         const listContainer = document.getElementById('spotifyPreviewList');
-        const matched = item.id !== null;
+        const matched = !!item.id;
+        const trackKey = String(item.index ?? '');
+        if (trackKey && listContainer.querySelector(`[data-track-index="${CSS.escape(trackKey)}"]`)) return;
 
         const itemElement = document.createElement('div');
+        if (trackKey) itemElement.dataset.trackIndex = trackKey;
         itemElement.className = `spotify-track-item ${matched ? 'matched' : 'unmatched'}`;
         if (matched) {
             itemElement.dataset.ytId = item.id;
@@ -177,8 +194,9 @@ export class SpotifyManager {
         `;
 
         listContainer.appendChild(itemElement);
-        const matchedCount = listContainer.querySelectorAll('.matched').length;
-        document.getElementById('spotifyMatched').textContent = matchedCount;
+        // The server is authoritative for the matched count. During async
+        // mapping the DOM can lag behind the backend, so counting rendered
+        // rows here can make the UI jump backwards (for example 200 -> 190).
     }
 
     // Handles add log entry in Spotify mapping and metadata flow.
@@ -257,7 +275,9 @@ export class SpotifyManager {
         document.getElementById('spotifyLogs').innerHTML = '';
         const listEl = document.getElementById('spotifyPreviewList');
         if (listEl) listEl.innerHTML = '';
-        this.integratedRenderedCount = 0;
+        this.integratedRenderedIndexes = new Set();
+        this.lastIntegratedMatched = 0;
+        this.lastIntegratedMappingProgress = 0;
         this.lastIntegratedLogSignature = '';
 
         const isVideoFormat = format === 'mp4' || format === 'mkv';
@@ -297,6 +317,8 @@ export class SpotifyManager {
         }
 
         const data = await response.json();
+        this.currentSpotifyTask.jobId = data.jobId;
+        this.currentSpotifyTask.completed = false;
         document.getElementById('spotifyTitle').textContent = data.title || '-';
         document.getElementById('spotifyTotal').textContent = data.total || '0';
 
@@ -317,16 +339,24 @@ export class SpotifyManager {
 
     // Streams integrated logs in Spotify mapping and metadata flow.
 	    streamIntegratedLogs(jobId) {
+            if (this.integratedEventSource) {
+                try { this.integratedEventSource.close(); } catch (_) {}
+            }
+
 	        const eventSource = new EventSource(`/api/stream/${jobId}`);
+            this.integratedEventSource = eventSource;
 	        const logsContainer = document.getElementById('spotifyLogs');
 	        let finished = false;
 
         eventSource.onmessage = (event) => {
+            // Ignore stale events from an older integrated job.
+            if (this.currentSpotifyTask.jobId && this.currentSpotifyTask.jobId !== jobId) return;
             const job = JSON.parse(event.data);
 
             if (job?.phase === 'completed' || job?.phase === 'error' || job?.phase === 'canceled') {
                 finished = true;
                 try { eventSource.close(); } catch (_) {}
+                if (this.integratedEventSource === eventSource) this.integratedEventSource = null;
             }
 
 	            try {
@@ -337,9 +367,12 @@ export class SpotifyManager {
 	                const spTitle = job?.metadata?.frozenTitle || job?.metadata?.spotifyTitle;
 	                const spTotalRaw = job?.playlist?.total;
 	                const spTotal = Number(spTotalRaw);
-	                const matchedCount = Array.isArray(job?.metadata?.frozenEntries)
-	                    ? job.metadata.frozenEntries.length
-	                    : 0;
+	                const liveMatched = Number(job?.playlist?.matched);
+	                const matchedCount = Number.isFinite(liveMatched)
+	                    ? Math.max(0, Math.min(Number.isFinite(spTotal) ? spTotal : liveMatched, liveMatched))
+	                    : (Array.isArray(job?.metadata?.frozenEntries)
+	                        ? job.metadata.frozenEntries.filter(Boolean).length
+	                        : 0);
 
 	                if (spTitle && titleEl && (titleEl.textContent === '-' || titleEl.textContent === this.app.t('status.starting') || !titleEl.textContent)) {
 	                    titleEl.textContent = spTitle;
@@ -350,14 +383,22 @@ export class SpotifyManager {
 	                }
 
 	                if (matchedEl) {
-	                    matchedEl.textContent = String(matchedCount);
+                    // Matching is monotonic for a job. Never let a stale snapshot
+                    // or a lagging rendered list reduce the visible count.
+                    this.lastIntegratedMatched = Math.max(this.lastIntegratedMatched, matchedCount);
+	                    matchedEl.textContent = String(this.lastIntegratedMatched);
 	                }
 	            } catch (_) {}
 
-	            const progressValue = Number(job?.progress);
-	            if (Number.isFinite(progressValue) && progressValue >= 0) {
-	                document.getElementById('spotifyProgress').textContent = `${Math.floor(progressValue)}%`;
-	            }
+            // This card is the matching card, so show mapping progress rather
+            // than the mixed download/convert job progress. Download and convert
+            // start early and can otherwise make this value jump 85% -> 17%.
+            const mappingProgressRaw = Number(job?.playlist?.mappingProgress);
+            if (Number.isFinite(mappingProgressRaw) && mappingProgressRaw >= 0) {
+                const mappingProgress = Math.max(0, Math.min(100, Math.floor(mappingProgressRaw)));
+                this.lastIntegratedMappingProgress = Math.max(this.lastIntegratedMappingProgress, mappingProgress);
+                document.getElementById('spotifyProgress').textContent = `${this.lastIntegratedMappingProgress}%`;
+            }
 
             (() => {
                 try {
@@ -422,10 +463,14 @@ export class SpotifyManager {
 
 	            if (job?.metadata?.frozenEntries && Array.isArray(job.metadata.frozenEntries)) {
 	                const arr = job.metadata.frozenEntries;
-	                for (let i = this.integratedRenderedCount; i < arr.length; i++) {
-	                    this.addSpotifyItem(arr[i]);
-	                }
-	                this.integratedRenderedCount = arr.length;
+                // frozenEntries is intentionally sparse while parallel matching
+                // is in flight. A high index may arrive before a low index, so
+                // never use array.length as a rendered cursor.
+                arr.forEach((item, index) => {
+                    if (!item || this.integratedRenderedIndexes.has(index)) return;
+                    this.addSpotifyItem(item);
+                    this.integratedRenderedIndexes.add(index);
+                });
 	            }
 	        };
 
@@ -451,7 +496,7 @@ export class SpotifyManager {
         listContainer.innerHTML = '';
 
         entries.forEach((item, index) => {
-            const matched = item.id !== null;
+            const matched = !!item.id;
 
             const itemElement = document.createElement('div');
             itemElement.className = `spotify-track-item ${matched ? 'matched' : 'unmatched'}`;
@@ -471,8 +516,9 @@ export class SpotifyManager {
             listContainer.appendChild(itemElement);
         });
 
-        const matchedCount = listContainer.querySelectorAll('.matched').length;
-        document.getElementById('spotifyMatched').textContent = matchedCount;
+        // The server is authoritative for the matched count. During async
+        // mapping the DOM can lag behind the backend, so counting rendered
+        // rows here can make the UI jump backwards (for example 200 -> 190).
     }
 
     // Converts matched Spotify metadata for Spotify mapping and metadata flow.

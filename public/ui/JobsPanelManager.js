@@ -470,7 +470,7 @@ export class JobsPanelManager {
                 Number(j.playlist?.total || 0),
                 Number(counters.dlTotal || 0),
                 Number(counters.cvTotal || 0),
-                Array.isArray(j.metadata?.frozenEntries) ? j.metadata.frozenEntries.length : 0
+                Array.isArray(j.metadata?.frozenEntries) ? j.metadata.frozenEntries.filter(Boolean).length : 0
             );
 
             if (playlistTotal > 0) {

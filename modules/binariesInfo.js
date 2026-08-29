@@ -73,7 +73,7 @@ function isLikelyVersionForTool(toolName, version) {
     return /^\d+\.\d+(?:\.\d+)?$/.test(value);
   }
   if (tool === 'yt-dlp' || tool === 'ytdlp') {
-    return /^\d{4}\.\d{2}\.\d{2}$/.test(value);
+    return /^\d{4}\.\d{2}\.\d{2}(?:[.+_-][0-9A-Za-z.-]+)?$/.test(value);
   }
   if (tool === 'deno') {
     return /^\d+\.\d+(?:\.\d+)?$/.test(value);
@@ -113,7 +113,7 @@ function parseVersionFromOutput(output, toolName = '') {
 
   if (tool === 'yt-dlp' || tool === 'ytdlp') {
     for (const line of lines) {
-      const match = line.match(/\b(\d{4}\.\d{2}\.\d{2})\b/);
+      const match = line.match(/\b(\d{4}\.\d{2}\.\d{2}(?:[.+_-][0-9A-Za-z.-]+)?)\b/);
       if (match?.[1]) return match[1];
     }
   }

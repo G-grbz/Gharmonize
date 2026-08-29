@@ -132,6 +132,17 @@ export class MediaConverterApp {
                 const parts = url.pathname.split('/').filter(Boolean);
                 const first = (parts[0] || '').toLowerCase();
                 const second = (parts[1] || '').toLowerCase();
+                const searchIndex = first === 'search'
+                    ? 0
+                    : second === 'search'
+                        ? 1
+                        : -1;
+                if (
+                    searchIndex >= 0 &&
+                    (parts[searchIndex + 1] || '') &&
+                    (parts[searchIndex + 2] || '').toLowerCase() === 'track'
+                ) return 'playlist';
+
                 const smartTracklistIndex = first === 'smarttracklist'
                     ? 0
                     : second === 'smarttracklist'

@@ -28,6 +28,8 @@ const DEEZER_ARTIST_TOP_BUNDLE_CACHE = new Map();
 const DEEZER_ARTIST_TOP_BUNDLE_CACHE_MAX = 200;
 const DEEZER_ALBUM_BUNDLE_CONCURRENCY = 4;
 const DEEZER_SMARTTRACKLIST_META_CONCURRENCY = 6;
+const DEEZER_ARTIST_SEARCH_MAX_TRACKS = 1000;
+const DEEZER_ARTIST_SEARCH_PAGE_SIZE = 100;
 const DEEZER_RESOURCE_TYPES = Object.freeze(["track", "album", "playlist", "artist"]);
 const DEEZER_SMARTTRACKLIST_ID = /^inspired-by-\d+$/i;
 const DEEZER_GATEWAY_METHODS = new Set([
@@ -732,6 +734,178 @@ async function searchDeezerTracks(query, { limit = 8 } = {}) {
   return Array.isArray(data?.data) ? data.data : [];
 }
 
+// Searches Deezer artists so /search/<artist>/track URLs can reuse artist resolution.
+async function searchDeezerArtists(query, { limit = 10 } = {}) {
+  const parsed = new URL(`${DEEZER_API_BASE}/search/artist`);
+  parsed.searchParams.set(
+    "limit",
+    String(Math.max(1, Math.min(25, Number(limit) || 10)))
+  );
+  parsed.searchParams.set("q", String(query || "").trim());
+  const data = await fetchDeezerJson(parsed.toString());
+  return Array.isArray(data?.data) ? data.data.filter(Boolean) : [];
+}
+
+// Picks the closest Deezer artist result for a search-page URL.
+function pickDeezerArtistSearchResult(query, artists = []) {
+  const queryNorm = norm(query);
+  if (!queryNorm || !Array.isArray(artists) || !artists.length) return null;
+
+  let best = null;
+  let bestScore = -1;
+  for (const artist of artists) {
+    const name = String(artist?.name || "").trim();
+    const nameNorm = norm(name);
+    if (!nameNorm) continue;
+
+    let score = 0;
+    if (nameNorm === queryNorm) score = 100;
+    else if (nameNorm.includes(queryNorm) || queryNorm.includes(nameNorm)) score = 70;
+    else {
+      const match = buildArtistMatchInfo(queryNorm, nameNorm);
+      if (match.acceptable) score = 40 + Math.min(20, match.overlap * 5);
+    }
+
+    // Deezer search order remains the tie-breaker.
+    if (score > bestScore) {
+      bestScore = score;
+      best = artist;
+    }
+  }
+
+  return bestScore >= 40 ? best : null;
+}
+
+// Resolves the canonical artist behind Deezer /search/<artist>/track URLs.
+async function resolveDeezerArtistSearchTarget(query) {
+  const artists = await searchDeezerArtists(query, { limit: 10 });
+  const artist = pickDeezerArtistSearchResult(query, artists);
+  const artistId = numberOrNull(artist?.id);
+  if (!artistId || artistId <= 0) {
+    throw new Error("Deezer artist could not be resolved from search URL");
+  }
+  return {
+    id: Math.round(artistId),
+    name: String(artist?.name || query || "").trim(),
+    artist
+  };
+}
+
+// Builds Deezer's advanced track-search expression for one exact artist.
+function buildDeezerArtistTrackSearchQuery(artistName = "") {
+  const safe = String(artistName || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .trim();
+  return safe ? `artist:"${safe}"` : "";
+}
+
+// Streams Deezer artist-search results in bounded pages so mapping can start immediately.
+async function* streamDeezerArtistSearchBatches(
+  parsed,
+  { maxItems = DEEZER_ARTIST_SEARCH_MAX_TRACKS, pageSize = DEEZER_ARTIST_SEARCH_PAGE_SIZE } = {}
+) {
+  const target = await resolveDeezerArtistSearchTarget(parsed?.query);
+  const max = Math.max(1, Math.min(DEEZER_ARTIST_SEARCH_MAX_TRACKS, Number(maxItems) || DEEZER_ARTIST_SEARCH_MAX_TRACKS));
+  const pageLimit = Math.max(1, Math.min(DEEZER_ARTIST_SEARCH_PAGE_SIZE, Number(pageSize) || DEEZER_ARTIST_SEARCH_PAGE_SIZE));
+  const searchQuery = buildDeezerArtistTrackSearchQuery(target.name || parsed?.query);
+  const seenTrackIds = new Set();
+
+  let apiIndex = 0;
+  let emitted = 0;
+  let totalHint = null;
+
+  while (emitted < max) {
+    const requested = Math.min(pageLimit, max - emitted);
+    const url = new URL(`${DEEZER_API_BASE}/search/track`);
+    url.searchParams.set("q", searchQuery);
+    url.searchParams.set("limit", String(requested));
+    url.searchParams.set("index", String(apiIndex));
+
+    const page = await fetchDeezerJson(url.toString());
+    const rows = Array.isArray(page?.data) ? page.data.filter(Boolean) : [];
+    const apiTotal = numberOrNull(page?.total);
+    if (totalHint == null && apiTotal != null && apiTotal >= 0) {
+      totalHint = Math.min(max, Math.max(0, Math.round(apiTotal)));
+    }
+    if (!rows.length) break;
+
+    const items = [];
+    for (const track of rows) {
+      const trackId = numberOrNull(track?.id);
+      const dedupeKey = trackId && trackId > 0
+        ? `id:${Math.round(trackId)}`
+        : `fallback:${norm(track?.artist?.name)}|${norm(track?.title || track?.title_short)}|${numberOrNull(track?.duration) || ""}`;
+      if (seenTrackIds.has(dedupeKey)) continue;
+      seenTrackIds.add(dedupeKey);
+
+      const item = buildDeezerResolvedItem(deezerTrackToMeta(track, null));
+      if (!item?.title) continue;
+      items.push(item);
+      emitted += 1;
+      if (emitted >= max) break;
+    }
+
+    apiIndex += rows.length;
+    const cappedTotal = totalHint ?? Math.min(max, emitted + (rows.length === requested ? requested : 0));
+    if (items.length) {
+      yield {
+        items,
+        offset: emitted - items.length,
+        total: Math.max(emitted, cappedTotal),
+        artist: target.artist,
+        artistId: target.id,
+        artistName: target.name
+      };
+    }
+
+    if (emitted >= max) break;
+    if (apiTotal != null && apiIndex >= apiTotal) break;
+    if (rows.length < requested) break;
+  }
+}
+
+// Resolves a Deezer artist-search URL either fully or as a first-page + async batch stream.
+async function resolveDeezerArtistSearch(parsed, options = {}) {
+  const iterator = streamDeezerArtistSearchBatches(parsed, {
+    maxItems: options?.maxItems,
+    pageSize: options?.pageSize
+  });
+  const first = await iterator.next();
+  if (first.done || !first.value?.items?.length) {
+    throw new Error("Deezer artist tracks not found");
+  }
+
+  const firstBatch = first.value;
+  const titleBase = String(firstBatch.artistName || parsed?.query || "").trim();
+  const collection = {
+    kind: "playlist",
+    provider: "deezer",
+    title: titleBase ? `${titleBase} - Tracks` : "Deezer Artist - Tracks",
+    items: firstBatch.items,
+    totalHint: Math.max(firstBatch.items.length, Number(firstBatch.total) || 0),
+    deezerArtistId: firstBatch.artistId || null,
+    streamed: options?.streamBatches === true
+  };
+
+  if (options?.streamBatches === true) {
+    collection.itemBatches = iterator;
+    return collection;
+  }
+
+  for await (const batch of iterator) {
+    if (Array.isArray(batch?.items) && batch.items.length) {
+      collection.items.push(...batch.items);
+      collection.totalHint = Math.max(
+        collection.items.length,
+        Number(batch.total) || 0
+      );
+    }
+  }
+  collection.totalHint = collection.items.length;
+  return collection;
+}
+
 // Loads a Deezer track entity by id for metadata flow.
 async function lookupDeezerTrack(trackId) {
   const id = numberOrNull(trackId);
@@ -1017,6 +1191,44 @@ export function parseDeezerUrl(url) {
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (!parts.length) return { type: "unknown", id: null, view: "" };
 
+    const first = String(parts[0] || "").toLowerCase();
+    const second = String(parts[1] || "").toLowerCase();
+    const searchIndex = first === "search"
+      ? 0
+      : second === "search"
+        ? 1
+        : -1;
+    if (searchIndex >= 0) {
+      const locale = searchIndex === 1 ? first : "";
+      const localeIsValid = !locale || /^[a-z]{2}(?:-[a-z]{2})?$/.test(locale);
+      const rawQuery = String(parts[searchIndex + 1] || "").trim();
+      const view = String(parts[searchIndex + 2] || "").toLowerCase();
+      let query = "";
+      try {
+        query = decodeURIComponent(rawQuery.replace(/\+/g, "%20")).trim();
+      } catch {
+        query = rawQuery.trim();
+      }
+
+      // Deezer uses /search/<artist>/track when opening an artist track search.
+      if (
+        localeIsValid &&
+        query &&
+        view === "track" &&
+        parts.length === searchIndex + 3
+      ) {
+        return {
+          type: "artist_search",
+          id: null,
+          query,
+          view,
+          locale
+        };
+      }
+
+      return { type: "unknown", id: null, view: "" };
+    }
+
     const smartTracklistIndex =
       String(parts[0] || "").toLowerCase() === "smarttracklist"
         ? 0
@@ -1045,8 +1257,6 @@ export function parseDeezerUrl(url) {
     }
 
     let typeIndex = 0;
-    const first = String(parts[0] || "").toLowerCase();
-    const second = String(parts[1] || "").toLowerCase();
 
     if (!DEEZER_RESOURCE_TYPES.includes(first) && DEEZER_RESOURCE_TYPES.includes(second)) {
       typeIndex = 1;
@@ -1465,6 +1675,15 @@ export async function findDeezerTrackMetaByQuery(
 export async function resolveDeezerUrlLite(url, _options = {}) {
   const canonicalUrl = await resolveDeezerCanonicalUrl(url);
   const parsed = parseDeezerUrl(canonicalUrl);
+
+  if (parsed.type === "artist_search") {
+    return resolveDeezerArtistSearch(parsed, {
+      maxItems: _options?.maxItems ?? DEEZER_ARTIST_SEARCH_MAX_TRACKS,
+      pageSize: _options?.pageSize ?? DEEZER_ARTIST_SEARCH_PAGE_SIZE,
+      streamBatches: _options?.streamBatches === true
+    });
+  }
+
   if (!parsed?.id || parsed.type === "unknown") {
     throw new Error("Unsupported Deezer URL");
   }

@@ -12,6 +12,12 @@
   <link rel="shortcut icon" type="image/x-icon" href="/src/favicon.ico">
 </head>
 <body>
+  <div id="binaryStartupOverlay" class="binary-startup-overlay" role="status" aria-live="polite" aria-busy="true">
+    <div class="binary-startup-overlay__card">
+      <div class="binary-startup-overlay__spinner" aria-hidden="true"></div>
+      <div class="binary-startup-overlay__text" data-i18n="ui.binaryStartupPreparing">Please wait, tools are being prepared...</div>
+    </div>
+  </div>
 <div id="loading-screen">
     <div class="loading-spinner"></div>
     <div class="loading-text" data-i18n="loading">Loading...</div>

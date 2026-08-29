@@ -6,6 +6,33 @@ import { modalManager } from './ModalManager.js';
 import { versionManager } from './VersionManager.js';
 import { TrackExtractorManager } from './TrackExtractorManager.js';
 
+async function waitForRuntimeBinariesReady() {
+    const overlay = document.getElementById('binaryStartupOverlay');
+    if (!overlay) return;
+
+    const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+    while (true) {
+        try {
+            const response = await fetch('/api/binaries/status', { cache: 'no-store' });
+            if (response.ok) {
+                const status = await response.json();
+                if (!status?.active) return;
+            }
+        } catch (error) {
+            console.warn('Runtime binary readiness check failed:', error);
+        }
+        await sleep(500);
+    }
+}
+
+function hideRuntimeBinariesOverlay() {
+    const overlay = document.getElementById('binaryStartupOverlay');
+    if (!overlay) return;
+    overlay.classList.add('is-ready');
+    overlay.setAttribute('aria-busy', 'false');
+}
+
 
 if (typeof window !== 'undefined' && window.electronAPI?.updateLanguage) {
   document.addEventListener('i18n:applied', (event) => {
@@ -55,6 +82,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const mainContent = document.querySelector('.main-content');
     if (loadingScreen) loadingScreen.style.display = 'none';
     if (mainContent) mainContent.style.display = 'block';
+
+    await waitForRuntimeBinariesReady();
 
     document.getElementById('jobsEmptyUrlAction')?.addEventListener('click', () => window.focusUrlInput());
     document.getElementById('jobsEmptyFileAction')?.addEventListener('click', () => window.focusFileInput());
@@ -113,6 +142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupCollapsibleSections();
     setupTitlePositioning();
     initDiscRipperPanel();
+    hideRuntimeBinariesOverlay();
     });
 
 window.versionManager = versionManager;

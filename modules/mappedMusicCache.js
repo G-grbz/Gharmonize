@@ -109,6 +109,9 @@ export function getMappedMusicSourceKey(rawUrl = "", sourceHint = "") {
 
   if (source === "deezer") {
     const parsed = parseDeezerUrl(url);
+    if (parsed?.type === "artist_search" && parsed?.query) {
+      return `deezer:artist_search:${sha1(String(parsed.query).trim().toLowerCase()).slice(0, 20)}`;
+    }
     if (parsed?.type && parsed?.id && parsed.type !== "unknown") {
       return `deezer:${parsed.type}:${parsed.id}`;
     }
