@@ -6,6 +6,7 @@ import { initializeDynamicBinaries } from './binaries.js'
 import { rateLimit } from './rateLimit.js'
 import { normalizeTrustedExecutableSetting } from './safeProcess.js'
 import { getBinariesInfo, clearBinariesInfoCache } from './binariesInfo.js'
+import { writeEnvFileSync } from './envFile.js'
 import {
   decryptSecret,
   deriveSessionSecret,
@@ -176,16 +177,8 @@ function writeEnv(updates, extraAllowed = []) {
     }
   }
   const clean = out.filter((line, idx, arr) => idx === 0 || line.trim() !== '' || arr[idx - 1].trim() !== '')
-  const envDir = path.dirname(ENV_PATH)
-  fs.mkdirSync(envDir, { recursive: true, mode: 0o700 })
-  const tmpPath = path.join(envDir, `.gharmonize-env.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`)
-  try {
-    fs.writeFileSync(tmpPath, clean.join('\n').trim() + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' })
-    fs.renameSync(tmpPath, ENV_PATH)
-    try { fs.chmodSync(ENV_PATH, 0o600) } catch {}
-  } finally {
-    try { fs.rmSync(tmpPath, { force: true }) } catch {}
-  }
+  const contents = clean.join('\n').trim() + '\n'
+  writeEnvFileSync(ENV_PATH, contents)
 }
 
 function getEnv(key) {

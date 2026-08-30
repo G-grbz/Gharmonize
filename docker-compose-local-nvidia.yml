@@ -16,6 +16,7 @@ services:
     user: "0:0"
     privileged: true
     runtime: nvidia
+    gpus: all
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,video,utility

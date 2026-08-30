@@ -8,6 +8,12 @@ import { execFileSafe } from "./safeProcess.js";
 import { assertPathWithinAny } from "./security.js";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  isSameYtDlpRelease,
+  normalizeYtDlpVersion,
+  isSameDenoRelease,
+  normalizeDenoVersion
+} from "./toolVersion.js";
 
 const execFileAsync = promisify(execFileSafe);
 const __filename = fileURLToPath(import.meta.url);
@@ -1187,6 +1193,16 @@ async function writeMkvToolNixLinuxWrapper(wrapperPath, appImagePath, binaryName
   await writeExecutableFile(wrapperPath, `${content}\n`);
 }
 
+// Reads the installed yt-dlp stable version from its version command.
+async function readYtDlpVersion(binaryPath) {
+  const { stdout, stderr } = await execFileAsync(binaryPath, ["--version"], {
+    timeout: 8000,
+    windowsHide: true,
+    env: getBinaryRuntimeEnv()
+  });
+  return normalizeYtDlpVersion(`${stdout || ""}\n${stderr || ""}`);
+}
+
 // Ensures latest yt-dlp binary from web cache.
 async function ensureLatestYtDlp(meta, options = {}) {
   const force = !!options.force;
@@ -1200,9 +1216,20 @@ async function ensureLatestYtDlp(meta, options = {}) {
     setMetaEntry(meta, "ytdlp", { ...current, path: fixedYtDlpPath });
     current = meta.ytdlp;
   }
+
   if (!force && current?.path && isExecutable(current.path) && isFresh(current)) {
-    await pruneVersionedFiles("yt-dlp-", []);
-    return current.path;
+    try {
+      const installedVersion = await readYtDlpVersion(current.path);
+      if (isSameYtDlpRelease(installedVersion, current.tag)) {
+        await pruneVersionedFiles("yt-dlp-", []);
+        return current.path;
+      }
+      console.warn(
+        `[binaries] yt-dlp cache metadata mismatch: installed=${installedVersion || "unknown"} metadata=${current.tag || "unknown"}; refreshing`
+      );
+    } catch {
+      // Continue to the release check when the cached binary cannot be verified.
+    }
   }
 
   const release = await fetchLatestRelease("yt-dlp/yt-dlp");
@@ -1214,36 +1241,65 @@ async function ensureLatestYtDlp(meta, options = {}) {
 
   if (isExecutable(finalPath)) {
     try {
-      await verifyBinary(finalPath, ["--version"]);
-      setMetaEntry(meta, "ytdlp", { tag, path: finalPath });
-      await pruneVersionedFiles("yt-dlp-", []);
-      return finalPath;
+      const installedVersion = await readYtDlpVersion(finalPath);
+      if (isSameYtDlpRelease(installedVersion, tag)) {
+        setMetaEntry(meta, "ytdlp", { tag, path: finalPath });
+        await pruneVersionedFiles("yt-dlp-", []);
+        return finalPath;
+      }
+      console.log(
+        `[binaries] yt-dlp update available: ${installedVersion || "unknown"} -> ${normalizeYtDlpVersion(tag) || tag}`
+      );
     } catch {
-      await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+      // A broken cached binary is replaced only after the new download verifies.
     }
   }
 
-  const tmpPath = `${finalPath}.download`;
+  // Verify downloaded executables under their real allowlisted basename. The
+  // safe process layer intentionally dispatches only fixed executable tokens,
+  // so names such as "yt-dlp.download" must never be executed directly.
+  const verifyDir = path.join(
+    WEB_CACHE_DIR,
+    `yt-dlp-verify-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`
+  );
+  const tmpPath = path.join(verifyDir, pickExeName("yt-dlp"));
   const url = releaseAsset.browser_download_url;
 
-  await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+  await fs.promises.rm(verifyDir, { recursive: true, force: true }).catch(() => {});
+  await fs.promises.mkdir(verifyDir, { recursive: true, mode: 0o700 });
   try {
     startDynamicBinaryTask("ytdlp", "downloading", "Downloading yt-dlp");
     await downloadToFile(url, tmpPath, HTTP_HEADERS, releaseAsset.digest);
-    await fs.promises.rename(tmpPath, finalPath);
     if (process.platform !== "win32") {
-      await fs.promises.chmod(finalPath, 0o755).catch(() => {});
+      await fs.promises.chmod(tmpPath, 0o755).catch(() => {});
     }
-    await verifyBinary(finalPath, ["--version"]);
+    const downloadedVersion = await readYtDlpVersion(tmpPath);
+    if (!isSameYtDlpRelease(downloadedVersion, tag)) {
+      throw new Error(
+        `Downloaded yt-dlp version mismatch: expected ${normalizeYtDlpVersion(tag) || tag}, got ${downloadedVersion || "unknown"}`
+      );
+    }
+
+    if (process.platform === "win32") {
+      await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+    }
+    await fs.promises.rename(tmpPath, finalPath);
     setMetaEntry(meta, "ytdlp", { tag, path: finalPath });
     await pruneVersionedFiles("yt-dlp-", []);
     return finalPath;
-  } catch (err) {
-    await fs.promises.rm(finalPath, { force: true }).catch(() => {});
-    throw err;
   } finally {
-    await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+    await fs.promises.rm(verifyDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+// Reads the installed Deno stable version from its version command.
+async function readDenoVersion(binaryPath) {
+  const { stdout, stderr } = await execFileAsync(binaryPath, ["--version"], {
+    timeout: 8000,
+    windowsHide: true,
+    env: getBinaryRuntimeEnv()
+  });
+  return normalizeDenoVersion(`${stdout || ""}\n${stderr || ""}`);
 }
 
 // Ensures latest deno binary from web cache.
@@ -1259,9 +1315,20 @@ async function ensureLatestDeno(meta, options = {}) {
     setMetaEntry(meta, "deno", { ...current, path: fixedDenoPath });
     current = meta.deno;
   }
+
   if (!force && current?.path && isExecutable(current.path) && isFresh(current)) {
-    await pruneVersionedFiles("deno-", []);
-    return current.path;
+    try {
+      const installedVersion = await readDenoVersion(current.path);
+      if (isSameDenoRelease(installedVersion, current.tag)) {
+        await pruneVersionedFiles("deno-", []);
+        return current.path;
+      }
+      console.warn(
+        `[binaries] deno cache metadata mismatch: installed=${installedVersion || "unknown"} metadata=${current.tag || "unknown"}; refreshing`
+      );
+    } catch {
+      // Continue to the release check when the cached binary cannot be verified.
+    }
   }
 
   const release = await fetchLatestRelease("denoland/deno");
@@ -1274,44 +1341,66 @@ async function ensureLatestDeno(meta, options = {}) {
 
   if (isExecutable(finalPath)) {
     try {
-      await verifyBinary(finalPath, ["--version"]);
-      setMetaEntry(meta, "deno", { tag, path: finalPath });
-      await pruneVersionedFiles("deno-", []);
-      return finalPath;
+      const installedVersion = await readDenoVersion(finalPath);
+      if (isSameDenoRelease(installedVersion, tag)) {
+        setMetaEntry(meta, "deno", { tag, path: finalPath });
+        await pruneVersionedFiles("deno-", []);
+        return finalPath;
+      }
+      console.log(
+        `[binaries] deno update available: ${installedVersion || "unknown"} -> ${normalizeDenoVersion(tag) || tag}`
+      );
     } catch {
-      await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+      // A broken cached binary is replaced only after the new download verifies.
     }
   }
 
   const zipPath = path.join(WEB_CACHE_DIR, `deno-${safeTag}.zip`);
   const tmpZipPath = `${zipPath}.download`;
   const extractDir = path.join(WEB_CACHE_DIR, `deno-extract-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  // As with yt-dlp, Deno is verified using its real allowlisted basename in a
+  // private staging directory instead of trying to execute "deno.download".
+  const verifyDir = path.join(
+    WEB_CACHE_DIR,
+    `deno-verify-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`
+  );
+  const tmpExecutablePath = path.join(verifyDir, pickExeName("deno"));
   const url = releaseAsset.browser_download_url;
 
   await fs.promises.rm(tmpZipPath, { force: true }).catch(() => {});
   await fs.promises.rm(extractDir, { recursive: true, force: true }).catch(() => {});
+  await fs.promises.rm(verifyDir, { recursive: true, force: true }).catch(() => {});
 
   try {
     startDynamicBinaryTask("deno", "downloading", "Downloading deno");
     await downloadToFile(url, tmpZipPath, HTTP_HEADERS, releaseAsset.digest);
     await fs.promises.rename(tmpZipPath, zipPath);
     await fs.promises.mkdir(extractDir, { recursive: true });
+    await fs.promises.mkdir(verifyDir, { recursive: true, mode: 0o700 });
     await extractZip(zipPath, extractDir);
 
     const exeName = pickExeName("deno");
     const extractedPath = await findFileRecursive(extractDir, exeName);
-    await copyExecutable(extractedPath, finalPath);
-    await verifyBinary(finalPath, ["--version"]);
+    await copyExecutable(extractedPath, tmpExecutablePath);
+    const downloadedVersion = await readDenoVersion(tmpExecutablePath);
+    if (!isSameDenoRelease(downloadedVersion, tag)) {
+      throw new Error(
+        `Downloaded Deno version mismatch: expected ${normalizeDenoVersion(tag) || tag}, got ${downloadedVersion || "unknown"}`
+      );
+    }
+
+    if (process.platform === "win32") {
+      await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+    }
+    await fs.promises.rename(tmpExecutablePath, finalPath);
     setMetaEntry(meta, "deno", { tag, path: finalPath });
     await pruneVersionedFiles("deno-", []);
     return finalPath;
-  } catch (err) {
-    await fs.promises.rm(finalPath, { force: true }).catch(() => {});
-    throw err;
   } finally {
     await fs.promises.rm(tmpZipPath, { force: true }).catch(() => {});
     await fs.promises.rm(zipPath, { force: true }).catch(() => {});
     await fs.promises.rm(extractDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(verifyDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

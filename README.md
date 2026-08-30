@@ -40,10 +40,39 @@ Then open **http://localhost:5174**
 
 Gharmonize checks runtime binaries (ffmpeg, ffprobe, mkvmerge, yt-dlp, deno) at startup and downloads or refreshes them automatically when needed.
 
-For Docker, NVIDIA/NVENC setups, and packaged AppImage/EXE builds, see:
+For packaged AppImage/EXE builds and full installation details, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
-- 📦 [docs/INSTALLATION.md](docs/INSTALLATION.md) — local/desktop setup & build commands
-- 🐳 [docs/DOCKER.md](docs/DOCKER.md) — Docker Compose, Docker run, NVIDIA/NVENC
+### Docker
+
+Gharmonize can run from the published Docker image or be built locally from source. The default/local Compose configuration does **not** request the NVIDIA runtime.
+
+**Published image**
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+**Local source build**
+
+```bash
+docker compose -f docker-compose.local.yml up -d --build
+```
+
+**Local source build with NVIDIA / NVENC**
+
+```bash
+docker compose \
+  -f docker-compose.local.yml \
+  -f docker-compose-local-nvidia.yml \
+  up -d --build
+```
+
+> **Important:** `docker-compose-local-nvidia.yml` is an **override**, not a standalone Compose stack. Always load it **after** `docker-compose.local.yml`. It adds the NVIDIA-specific settings (`gpus: all`, NVIDIA runtime/environment, root user, and privileged mode) to the base `web` service. Do **not** run the NVIDIA override by itself. Without the override, the local Compose stack does not request NVIDIA devices or the NVIDIA container runtime.
+
+Docker runtime binaries (FFmpeg, FFprobe, MKVToolNix, yt-dlp, and Deno) are checked at startup and cached under `/opt/gharmonize/cache`; missing or outdated managed binaries can be refreshed automatically. On a new Docker installation, the generated initial admin password is stored at `/opt/gharmonize/cache/INITIAL_ADMIN_PASSWORD.txt`.
+
+Full Docker setup, bind mounts, permissions, `MUSIC_DIR`, NVIDIA Container Toolkit requirements, and `docker run` examples are documented in [docs/DOCKER.md](docs/DOCKER.md).
 
 ---
 

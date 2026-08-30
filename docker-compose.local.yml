@@ -10,10 +10,7 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     group_add:
       - "${RUN_MEDIA_GID:-65534}"
-    gpus: all
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
       - NODE_ENV=production
       - PORT=${PORT:-5174}
       - GHARMONIZE_HOST=0.0.0.0
@@ -22,6 +19,10 @@ services:
       - YT_FORCE_IPV4=1
       - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
       - GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries
+      - GHARMONIZE_BINARY_TMP_DIR=/usr/src/app/temp/binary-tmp
+      - TMPDIR=/usr/src/app/temp/binary-tmp
+      - TMP=/usr/src/app/temp/binary-tmp
+      - TEMP=/usr/src/app/temp/binary-tmp
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - DATA_DIR=/usr/src/app

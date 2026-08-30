@@ -28,6 +28,8 @@ sudo chmod 700 /opt/gharmonize
 
 Gharmonize creates a random initial admin credential on first start. The supplied Compose files keep the application root filesystem read-only and place both the master key and one-time credential in the writable cache volume. Read `/opt/gharmonize/cache/INITIAL_ADMIN_PASSWORD.txt` once, change the password from Settings, and then remove that file.
 
+The supplied Compose files also keep `/tmp` mounted with `noexec`. Managed yt-dlp uses `/usr/src/app/temp/binary-tmp` as its executable runtime extraction directory, so the `/tmp` hardening can remain enabled without breaking the standalone yt-dlp binary.
+
 
 ### 4. Docker image
 
@@ -71,51 +73,22 @@ If a refresh fails, Gharmonize keeps the currently resolved binaries as a fallba
 
 ## Optional: NVIDIA / NVENC in Docker
 
-If you want NVENC inside Docker, install the NVIDIA driver and the NVIDIA Container Toolkit on the host first.
+The standard Compose files do **not** request an NVIDIA runtime or GPU. This keeps the default Docker deployment portable on hosts without NVIDIA hardware or the NVIDIA Container Toolkit.
 
-Then update `docker-compose.yml`:
-
-* Comment out or remove `user: "${PUID:-1000}:${PGID:-1000}"`
-* Enable `user: "0:0"`
-* Enable `privileged: true`
-* Enable `runtime: nvidia`
-* Enable `NVIDIA_VISIBLE_DEVICES=all`
-* Enable `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`
-
-Relevant compose section:
-
-```yaml
-services:
-  web:
-    image: ggrbz/gharmonize:latest
-    container_name: Gharmonize
-    user: "0:0"
-    privileged: true
-    runtime: nvidia
-    group_add:
-      - "${RUN_MEDIA_GID:-65534}"
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-      - NODE_ENV=production
-      - PORT=${PORT:-5174}
-      - YTDLP_EXTRA=--force-ipv4
-      - GHARMONIZE_WEB_BINARIES_IN_DOCKER=1
-      - GHARMONIZE_WEB_CACHE_DIR=/usr/src/app/cache/binaries
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DATA_DIR=/usr/src/app
-      - OUTPUTS_DISPLAY_DIR=/opt/gharmonize/outputs
-      - RETAG_ROOTS=/music
-```
-
-After the edit:
+For NVIDIA/NVENC, install and configure the **NVIDIA Container Toolkit** on the Docker host first. For a local source build, load the normal local Compose file and then layer the supplied NVIDIA override on top of it:
 
 ```bash
-docker compose up -d
+docker compose \
+  -f docker-compose.local.yml \
+  -f docker-compose-local-nvidia.yml \
+  up -d --build
 ```
 
-> On some hosts, NVENC inside Docker only works reliably when the container runs with the root user plus the `privileged` and `runtime: nvidia` settings above.
+`docker-compose-local-nvidia.yml` is an **override file**, not a standalone Compose stack. It only augments the `web` service defined by `docker-compose.local.yml`, so do **not** run it by itself and keep it **after** the base file in the command.
+
+The override contains all NVIDIA-specific settings (`gpus: all`, `runtime: nvidia`, the NVIDIA environment variables, root user, and privileged mode). Do not add those settings to `docker-compose.local.yml`; without the override, the local Compose stack does not request NVIDIA devices or the NVIDIA container runtime.
+
+> On some hosts, NVENC inside Docker only works reliably when the container runs with the root user plus the `privileged` and NVIDIA runtime settings provided by the override. Files created on host bind mounts may therefore be owned by root.
 
 ---
 
@@ -173,6 +146,7 @@ docker run -d \
   --user 0:0 \
   --privileged \
   --runtime=nvidia \
+  --gpus all \
   -p 5174:5174 \
   -e NVIDIA_VISIBLE_DEVICES=all \
   -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility \
