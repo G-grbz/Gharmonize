@@ -24,7 +24,9 @@ Seamlessly download content from YouTube, YouTube Music, and major platforms lik
 
 ## Quick Start
 
-**Local / Desktop (recommended)**
+> **Prebuilt desktop builds:** Official Gharmonize **Windows EXE** and **Linux AppImage** releases already include the Node.js runtime required by the application through Electron. You **do not need to install Node.js separately** to use these packaged builds. Some third-party download sites may incorrectly list Node.js as an additional prerequisite; that notice can be ignored for official prebuilt Gharmonize binaries. Node.js is only required when running or building Gharmonize from source.
+
+**Local / Desktop (from source)**
 
 ```bash
 git clone https://github.com/G-grbz/Gharmonize
