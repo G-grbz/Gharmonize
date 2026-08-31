@@ -88,6 +88,20 @@ test('music URL queue processes list URLs strictly one at a time', async () => {
   ]);
 });
 
+
+test('music URL queue provider detection parses hostnames instead of trusting URL substrings', () => {
+  const { manager } = createHarness();
+
+  assert.equal(manager.getProvider('https://open.spotify.com/album/123ABC'), 'Spotify');
+  assert.equal(manager.getProvider('https://music.apple.com/tr/album/example/123456789'), 'Apple Music');
+  assert.equal(manager.getProvider('https://www.deezer.com/tr/album/123456'), 'Deezer');
+
+  assert.equal(manager.getProvider('https://evil.example/?next=https://music.apple.com/tr/album/1'), 'musicQueue.unknownProvider');
+  assert.equal(manager.getProvider('https://music.apple.com.evil.example/album/1'), 'musicQueue.unknownProvider');
+  assert.equal(manager.getProvider('https://evil-spotify.example/path/open.spotify.com/track/1'), 'musicQueue.unknownProvider');
+  assert.equal(manager.getProvider('https://deezer.com.evil.example/album/1'), 'musicQueue.unknownProvider');
+});
+
 test('music URL queue support indicator mirrors supported mapped-music URL shapes', () => {
   const { manager } = createHarness();
 

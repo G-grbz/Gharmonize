@@ -329,10 +329,35 @@ export class MusicUrlQueueManager {
     }
 
     getProvider(url) {
-        const value = String(url || '').toLowerCase();
-        if (value.startsWith('spotify:') || value.includes('spotify.')) return 'Spotify';
-        if (value.startsWith('deezer:') || value.includes('deezer.')) return 'Deezer';
-        if (value.includes('music.apple.com')) return 'Apple Music';
+        const raw = String(url || '').trim();
+        const value = raw.toLowerCase();
+
+        if (value.startsWith('spotify:')) return 'Spotify';
+        if (value.startsWith('deezer:')) return 'Deezer';
+
+        let parsed;
+        try {
+            parsed = new URL(raw);
+        } catch {
+            return this.app.t('musicQueue.unknownProvider');
+        }
+
+        if (!/^https?:$/i.test(parsed.protocol)) {
+            return this.app.t('musicQueue.unknownProvider');
+        }
+
+        const host = parsed.hostname.toLowerCase();
+        if (host === 'open.spotify.com') return 'Spotify';
+        if (host === 'music.apple.com' || host === 'embed.music.apple.com') return 'Apple Music';
+        if (
+            host === 'deezer.com'
+            || host.endsWith('.deezer.com')
+            || host === 'deezer.page.link'
+            || host.endsWith('.deezer.page.link')
+        ) {
+            return 'Deezer';
+        }
+
         return this.app.t('musicQueue.unknownProvider');
     }
 
