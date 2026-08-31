@@ -1671,6 +1671,65 @@ export async function findDeezerTrackMetaByQuery(
   return meta;
 }
 
+// Resolves only the display title for a supported Deezer URL without enumerating full albums/playlists/artists.
+export async function resolveDeezerUrlTitle(url) {
+  const canonicalUrl = await resolveDeezerCanonicalUrl(url);
+  const parsed = parseDeezerUrl(canonicalUrl);
+
+  if (parsed.type === "artist_search") {
+    const query = String(parsed.query || "").trim();
+    if (!query) throw new Error("Deezer search title could not be resolved");
+    return `${query} - Tracks`;
+  }
+
+  if (parsed.type === "smarttracklist") {
+    const resolved = await resolveDeezerSmartTracklist(parsed);
+    const title = String(resolved?.title || "").trim();
+    if (!title) throw new Error("Deezer smart-tracklist title could not be resolved");
+    return title;
+  }
+
+  if (!parsed?.id || parsed.type === "unknown") {
+    throw new Error("Unsupported Deezer URL");
+  }
+
+  if (parsed.type === "track") {
+    const track = await lookupDeezerTrack(parsed.id);
+    const title = [track?.artist?.name, track?.title]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" - ");
+    if (!title) throw new Error("Deezer track title could not be resolved");
+    return title;
+  }
+
+  if (parsed.type === "album") {
+    const album = await lookupDeezerAlbum(parsed.id);
+    const title = [album?.artist?.name, album?.title]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" - ");
+    if (!title) throw new Error("Deezer album title could not be resolved");
+    return title;
+  }
+
+  if (parsed.type === "playlist") {
+    const playlist = await lookupDeezerPlaylist(parsed.id);
+    const title = String(playlist?.title || "").trim();
+    if (!title) throw new Error("Deezer playlist title could not be resolved");
+    return title;
+  }
+
+  if (parsed.type === "artist") {
+    const artist = await lookupDeezerArtist(parsed.id);
+    const name = String(artist?.name || "").trim();
+    if (!name) throw new Error("Deezer artist title could not be resolved");
+    return `${name} - Top Tracks`;
+  }
+
+  throw new Error("Unsupported Deezer URL");
+}
+
 // Resolves Deezer URLs into preview-ready track collections for mapping flow.
 export async function resolveDeezerUrlLite(url, _options = {}) {
   const canonicalUrl = await resolveDeezerCanonicalUrl(url);

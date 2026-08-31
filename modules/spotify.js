@@ -1326,6 +1326,32 @@ export async function resolveSpotifyUrlLite(url, { market } = {}) {
   }
 }
 
+// Resolves only the display title for a supported Spotify URL without enumerating the full collection.
+export async function resolveSpotifyUrlTitle(url) {
+  const { type, id } = parseSpotifyUrl(url);
+  if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
+
+  const entity = await _fetchSpotifyEmbedEntity(type, id);
+  const name = String(entity?.title || entity?.name || "").trim();
+  if (!name) throw new Error("Spotify title could not be resolved");
+
+  if (type === "track") {
+    const artist = _normalizeArtistList(
+      Array.isArray(entity?.artists)
+        ? entity.artists.map((entry) => entry?.name).filter(Boolean).join(", ")
+        : entity?.subtitle || ""
+    );
+    return artist ? `${artist} - ${name}` : name;
+  }
+
+  if (type === "album") {
+    const artist = _normalizeArtistList(entity?.subtitle || "");
+    return artist ? `${artist} - ${name}` : name;
+  }
+
+  return name;
+}
+
 // Resolves Spotify metadata URL for Spotify mapping and metadata flow.
 export async function resolveSpotifyUrl(url, { market } = {}) {
   return resolveSpotifyUrlLite(url, { market });

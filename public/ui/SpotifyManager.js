@@ -231,164 +231,206 @@ export class SpotifyManager {
     }
 
     // Handles start integrated Spotify metadata process in Spotify mapping and metadata flow.
-    async startIntegratedSpotifyProcess() {
-    const url = document.getElementById('urlInput').value.trim();
-    const outputSettings = this.app.resolveCurrentOutputSettings();
-    const format = outputSettings.format;
-    const bitrate = outputSettings.bitrate;
-    const sampleRate = outputSettings.sampleRate;
-    const includeLyrics = document.getElementById('lyricsCheckbox').checked;
-    const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
-    const videoSettings = this.app.videoManager?.getSettings() || {};
-    const audioProcessing = this.app.getCurrentAudioProcessingSettings();
-    const bitDepthSelect = document.getElementById('bitDepthSelect');
+    async startIntegratedSpotifyProcess(options = {}) {
+        // Direct calls always process only the URL explicitly supplied (or #urlInput).
+        // The saved URL queue is intentionally started only from its own modal action.
+        const url = String(options.url ?? document.getElementById('urlInput')?.value ?? '').trim();
+        const outputSettings = this.app.resolveCurrentOutputSettings();
+        const format = outputSettings.format;
+        const bitrate = outputSettings.bitrate;
+        const sampleRate = outputSettings.sampleRate;
+        const includeLyrics = document.getElementById('lyricsCheckbox').checked;
+        const embedLyrics = !!document.getElementById('embedLyricsCheckbox')?.checked;
+        const videoSettings = this.app.videoManager?.getSettings() || {};
+        const audioProcessing = this.app.getCurrentAudioProcessingSettings();
+        const bitDepthSelect = document.getElementById('bitDepthSelect');
+        const manageButton = !options.queueManaged;
 
-    let bitDepth = null;
-    if (bitDepthSelect && (format === 'flac' || format === 'wav')) {
-        bitDepth = bitDepthSelect.value || null;
-    }
-
-    let compressionLevel;
-    const compEl = document.getElementById('compressionLevelRange');
-    if (format === 'flac' && compEl) {
-        const v = parseInt(compEl.value, 10);
-        if (Number.isFinite(v)) {
-            compressionLevel = v;
-        }
-    }
-
-    if (!url) {
-        this.app.showNotification(this.app.t('notif.needUrl'), 'error', 'error');
-        return;
-    }
-
-    try {
-        const btn = document.getElementById('startIntegratedBtn');
-        btn.classList.add('btn-loading');
-        btn.disabled = true;
-
-        document.getElementById('spotifyPreviewCard').style.display = 'block';
-        document.getElementById('spotifyTitle').textContent = this.app.t('status.starting');
-        document.getElementById('spotifyTotal').textContent = '0';
-        document.getElementById('spotifyMatched').textContent = '0';
-        document.getElementById('spotifyProgress').textContent = '0%';
-        document.getElementById('spotifyLogs').innerHTML = '';
-        const listEl = document.getElementById('spotifyPreviewList');
-        if (listEl) listEl.innerHTML = '';
-        this.integratedRenderedIndexes = new Set();
-        this.lastIntegratedMatched = 0;
-        this.lastIntegratedMappingProgress = 0;
-        this.lastIntegratedLogSignature = '';
-
-        const isVideoFormat = format === 'mp4' || format === 'mkv';
-        const spotifyConcurrency = this.getSpotifyConcurrency();
-
-        const autoCreateZip = !isVideoFormat && this.app.autoCreateZip;
-
-        const body = {
-            url,
-            format,
-            bitrate,
-            sampleRate,
-            includeLyrics,
-            embedLyrics,
-            ...audioProcessing,
-            autoCreateZip,
-            ringtone: outputSettings.ringtone,
-            ...(compressionLevel != null ? { compressionLevel } : {}),
-            ...(bitDepth != null ? { bitDepth } : {}),
-            ...(isVideoFormat ? { videoSettings } : {}),
-            spotifyConcurrency
-        };
-
-        const response = await fetch('/api/spotify/process/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            const code = error?.error?.code;
-            const msg = code
-                ? this.app.t(`errors.${code}`)
-                : (error?.error?.message || this.app.t('errors.startFailed'));
-            throw new Error(msg);
+        let bitDepth = null;
+        if (bitDepthSelect && (format === 'flac' || format === 'wav')) {
+            bitDepth = bitDepthSelect.value || null;
         }
 
-        const data = await response.json();
-        this.currentSpotifyTask.jobId = data.jobId;
-        this.currentSpotifyTask.completed = false;
-        document.getElementById('spotifyTitle').textContent = data.title || '-';
-        document.getElementById('spotifyTotal').textContent = data.total || '0';
+        let compressionLevel;
+        const compEl = document.getElementById('compressionLevelRange');
+        if (format === 'flac' && compEl) {
+            const v = parseInt(compEl.value, 10);
+            if (Number.isFinite(v)) {
+                compressionLevel = v;
+            }
+        }
 
-        this.app.jobManager.trackJob(data.jobId);
-        this.app.showNotification(this.app.t('notif.queue'), 'success', 'queue');
-        this.streamIntegratedLogs(data.jobId);
+        if (!url) {
+            this.app.showNotification(this.app.t('notif.needUrl'), 'error', 'error');
+            return { status: 'error', error: this.app.t('notif.needUrl') };
+        }
 
-    } catch (error) {
-        this.app.showNotification(`${this.app.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
-        document.getElementById('spotifyLogs').innerHTML +=
-            `<div class="log-entry error">[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('notif.errorPrefix')}: ${this.app.escapeHtml(error.message)}</div>`;
-    } finally {
-        const btn = document.getElementById('startIntegratedBtn');
-        btn.classList.remove('btn-loading');
-        btn.disabled = false;
-    }
-}
-
-    // Streams integrated logs in Spotify mapping and metadata flow.
-	    streamIntegratedLogs(jobId) {
-            if (this.integratedEventSource) {
-                try { this.integratedEventSource.close(); } catch (_) {}
+        try {
+            const btn = document.getElementById('startIntegratedBtn');
+            if (manageButton && btn) {
+                btn.classList.add('btn-loading');
+                btn.disabled = true;
             }
 
-	        const eventSource = new EventSource(`/api/stream/${jobId}`);
-            this.integratedEventSource = eventSource;
-	        const logsContainer = document.getElementById('spotifyLogs');
-	        let finished = false;
+            document.getElementById('spotifyPreviewCard').style.display = 'block';
+            document.getElementById('spotifyTitle').textContent = this.app.t('status.starting');
+            document.getElementById('spotifyTotal').textContent = '0';
+            document.getElementById('spotifyMatched').textContent = '0';
+            document.getElementById('spotifyProgress').textContent = '0%';
+            document.getElementById('spotifyLogs').innerHTML = '';
+            const listEl = document.getElementById('spotifyPreviewList');
+            if (listEl) listEl.innerHTML = '';
+            this.integratedRenderedIndexes = new Set();
+            this.lastIntegratedMatched = 0;
+            this.lastIntegratedMappingProgress = 0;
+            this.lastIntegratedLogSignature = '';
+
+            const isVideoFormat = format === 'mp4' || format === 'mkv';
+            const spotifyConcurrency = this.getSpotifyConcurrency();
+            const autoCreateZip = !isVideoFormat && this.app.autoCreateZip;
+
+            const body = {
+                url,
+                format,
+                bitrate,
+                sampleRate,
+                includeLyrics,
+                embedLyrics,
+                ...audioProcessing,
+                autoCreateZip,
+                ringtone: outputSettings.ringtone,
+                ...(compressionLevel != null ? { compressionLevel } : {}),
+                ...(bitDepth != null ? { bitDepth } : {}),
+                ...(isVideoFormat ? { videoSettings } : {}),
+                spotifyConcurrency
+            };
+
+            const response = await fetch('/api/spotify/process/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                const code = error?.error?.code;
+                const msg = code
+                    ? this.app.t(`errors.${code}`)
+                    : (error?.error?.message || this.app.t('errors.startFailed'));
+                throw new Error(msg);
+            }
+
+            const data = await response.json();
+            this.currentSpotifyTask.jobId = data.jobId;
+            this.currentSpotifyTask.completed = false;
+            document.getElementById('spotifyTitle').textContent = data.title || '-';
+            document.getElementById('spotifyTotal').textContent = data.total || '0';
+
+            this.app.jobManager.trackJob(data.jobId);
+            this.app.showNotification(this.app.t('notif.queue'), 'success', 'queue');
+
+            const terminalPromise = this.streamIntegratedLogs(data.jobId, {
+                waitForTerminal: !!options.awaitCompletion
+            });
+
+            if (options.awaitCompletion) {
+                const job = await terminalPromise;
+                const terminalStatus = String(job?.phase || job?.status || '').toLowerCase();
+                return {
+                    status: terminalStatus === 'completed'
+                        ? 'completed'
+                        : terminalStatus === 'canceled'
+                            ? 'canceled'
+                            : 'error',
+                    error: job?.error || null,
+                    jobId: data.jobId,
+                    job
+                };
+            }
+
+            return { status: 'started', jobId: data.jobId };
+        } catch (error) {
+            this.app.showNotification(`${this.app.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
+            const logs = document.getElementById('spotifyLogs');
+            if (logs) {
+                logs.innerHTML += `<div class="log-entry error">[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('notif.errorPrefix')}: ${this.app.escapeHtml(error.message)}</div>`;
+            }
+            return { status: 'error', error: error.message };
+        } finally {
+            if (manageButton) {
+                const btn = document.getElementById('startIntegratedBtn');
+                btn?.classList.remove('btn-loading');
+                if (btn) btn.disabled = false;
+            }
+        }
+    }
+
+    // Streams integrated logs in Spotify mapping and metadata flow.
+    streamIntegratedLogs(jobId, { waitForTerminal = false } = {}) {
+        if (this.integratedEventSource) {
+            try { this.integratedEventSource.close(); } catch (_) {}
+        }
+
+        const eventSource = new EventSource(`/api/stream/${jobId}`);
+        this.integratedEventSource = eventSource;
+        const logsContainer = document.getElementById('spotifyLogs');
+        let finished = false;
+        let resolved = false;
+        let resolveTerminal;
+        const terminalPromise = new Promise((resolve) => {
+            resolveTerminal = resolve;
+        });
+
+        const isTerminal = (job) => {
+            const phase = String(job?.phase || job?.status || '').toLowerCase();
+            return phase === 'completed' || phase === 'error' || phase === 'canceled';
+        };
+
+        const finish = (job) => {
+            if (resolved) return;
+            resolved = true;
+            finished = true;
+            this.currentSpotifyTask.completed = String(job?.phase || job?.status || '').toLowerCase() === 'completed';
+            try { eventSource.close(); } catch (_) {}
+            if (this.integratedEventSource === eventSource) this.integratedEventSource = null;
+            resolveTerminal(job || { phase: 'error', error: this.app.t('musicQueue.unknownError') });
+        };
 
         eventSource.onmessage = (event) => {
             // Ignore stale events from an older integrated job.
             if (this.currentSpotifyTask.jobId && this.currentSpotifyTask.jobId !== jobId) return;
             const job = JSON.parse(event.data);
 
-            if (job?.phase === 'completed' || job?.phase === 'error' || job?.phase === 'canceled') {
-                finished = true;
-                try { eventSource.close(); } catch (_) {}
-                if (this.integratedEventSource === eventSource) this.integratedEventSource = null;
-            }
+            try {
+                const titleEl = document.getElementById('spotifyTitle');
+                const totalEl = document.getElementById('spotifyTotal');
+                const matchedEl = document.getElementById('spotifyMatched');
 
-	            try {
-	                const titleEl = document.getElementById('spotifyTitle');
-	                const totalEl = document.getElementById('spotifyTotal');
-	                const matchedEl = document.getElementById('spotifyMatched');
+                const spTitle = job?.metadata?.frozenTitle || job?.metadata?.spotifyTitle;
+                const spTotalRaw = job?.playlist?.total;
+                const spTotal = Number(spTotalRaw);
+                const liveMatched = Number(job?.playlist?.matched);
+                const matchedCount = Number.isFinite(liveMatched)
+                    ? Math.max(0, Math.min(Number.isFinite(spTotal) ? spTotal : liveMatched, liveMatched))
+                    : (Array.isArray(job?.metadata?.frozenEntries)
+                        ? job.metadata.frozenEntries.filter(Boolean).length
+                        : 0);
 
-	                const spTitle = job?.metadata?.frozenTitle || job?.metadata?.spotifyTitle;
-	                const spTotalRaw = job?.playlist?.total;
-	                const spTotal = Number(spTotalRaw);
-	                const liveMatched = Number(job?.playlist?.matched);
-	                const matchedCount = Number.isFinite(liveMatched)
-	                    ? Math.max(0, Math.min(Number.isFinite(spTotal) ? spTotal : liveMatched, liveMatched))
-	                    : (Array.isArray(job?.metadata?.frozenEntries)
-	                        ? job.metadata.frozenEntries.filter(Boolean).length
-	                        : 0);
+                if (spTitle && titleEl && (titleEl.textContent === '-' || titleEl.textContent === this.app.t('status.starting') || !titleEl.textContent)) {
+                    titleEl.textContent = spTitle;
+                }
 
-	                if (spTitle && titleEl && (titleEl.textContent === '-' || titleEl.textContent === this.app.t('status.starting') || !titleEl.textContent)) {
-	                    titleEl.textContent = spTitle;
-	                }
+                if (Number.isFinite(spTotal) && spTotal >= 0 && totalEl) {
+                    totalEl.textContent = String(spTotal);
+                }
 
-	                if (Number.isFinite(spTotal) && spTotal >= 0 && totalEl) {
-	                    totalEl.textContent = String(spTotal);
-	                }
-
-	                if (matchedEl) {
+                if (matchedEl) {
                     // Matching is monotonic for a job. Never let a stale snapshot
                     // or a lagging rendered list reduce the visible count.
                     this.lastIntegratedMatched = Math.max(this.lastIntegratedMatched, matchedCount);
-	                    matchedEl.textContent = String(this.lastIntegratedMatched);
-	                }
-	            } catch (_) {}
+                    matchedEl.textContent = String(this.lastIntegratedMatched);
+                }
+            } catch (_) {}
 
             // This card is the matching card, so show mapping progress rather
             // than the mixed download/convert job progress. Download and convert
@@ -413,19 +455,19 @@ export class SpotifyManager {
                     if (line) {
                         this.addLogEntry(line, 'warning');
                     }
-                } catch (_) { }
+                } catch (_) {}
             })();
 
-	            if (job.phase || job.lastLog || job.lastLogKey) {
-	                const phaseText = {
-	                    preparing: this.app.t('phase.preparing'),
-	                    mapping: this.app.t('phase.mapping'),
-	                    downloading: this.app.t('phase.downloading'),
-	                    converting: this.app.t('phase.converting'),
-	                    completed: this.app.t('phase.completed'),
-	                    canceled: this.app.t('status.canceled'),
-	                    error: this.app.t('phase.error')
-	                };
+            if (job.phase || job.lastLog || job.lastLogKey) {
+                const phaseText = {
+                    preparing: this.app.t('phase.preparing'),
+                    mapping: this.app.t('phase.mapping'),
+                    downloading: this.app.t('phase.downloading'),
+                    converting: this.app.t('phase.converting'),
+                    completed: this.app.t('phase.completed'),
+                    canceled: this.app.t('status.canceled'),
+                    error: this.app.t('phase.error')
+                };
 
                 if (typeof job.lastLog === 'string') {
                     job.lastLog = this.app.normalizeBackendLog(job.lastLog);
@@ -451,7 +493,7 @@ export class SpotifyManager {
                     text
                 });
 
-                if (text && signature !== this.lastIntegratedLogSignature) {
+                if (text && signature !== this.lastIntegratedLogSignature && logsContainer) {
                     this.lastIntegratedLogSignature = signature;
                     const logEntry = document.createElement('div');
                     logEntry.className = `log-entry ${job.phase === 'error' ? 'error' : 'info'}`;
@@ -461,8 +503,8 @@ export class SpotifyManager {
                 }
             }
 
-	            if (job?.metadata?.frozenEntries && Array.isArray(job.metadata.frozenEntries)) {
-	                const arr = job.metadata.frozenEntries;
+            if (job?.metadata?.frozenEntries && Array.isArray(job.metadata.frozenEntries)) {
+                const arr = job.metadata.frozenEntries;
                 // frozenEntries is intentionally sparse while parallel matching
                 // is in flight. A high index may arrive before a low index, so
                 // never use array.length as a rendered cursor.
@@ -471,23 +513,50 @@ export class SpotifyManager {
                     this.addSpotifyItem(item);
                     this.integratedRenderedIndexes.add(index);
                 });
-	            }
-	        };
+            }
 
-        eventSource.onerror = (error) => {
-            if (finished) {
-            try { eventSource.close(); } catch (_) {}
-            return;
-        }
-
-        console.error('Integrated log SSE error:', error);
-        const logEntry = document.createElement('div');
-        logEntry.className = 'log-entry error';
-        logEntry.textContent = `[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('errors.streamDisconnected')}`;
-        logsContainer.appendChild(logEntry);
-        logsContainer.scrollTop = logsContainer.scrollHeight;
-        try { eventSource.close(); } catch (_) {}
+            if (isTerminal(job)) finish(job);
         };
+
+        eventSource.onerror = async (error) => {
+            if (finished) {
+                try { eventSource.close(); } catch (_) {}
+                return;
+            }
+
+            console.error('Integrated log SSE error:', error);
+            if (logsContainer) {
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry error';
+                logEntry.textContent = `[${new Date().toLocaleTimeString()}] ❌ ${this.app.t('errors.streamDisconnected')}`;
+                logsContainer.appendChild(logEntry);
+                logsContainer.scrollTop = logsContainer.scrollHeight;
+            }
+            try { eventSource.close(); } catch (_) {}
+
+            if (!waitForTerminal) return;
+            const terminalJob = await this.pollIntegratedJobUntilTerminal(jobId);
+            finish(terminalJob);
+        };
+
+        return terminalPromise;
+    }
+
+    // Falls back to the job endpoint if the SSE connection drops while a queued list is running.
+    async pollIntegratedJobUntilTerminal(jobId) {
+        for (;;) {
+            try {
+                const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+                if (response.ok) {
+                    const job = await response.json();
+                    const terminal = String(job?.phase || job?.status || '').toLowerCase();
+                    if (terminal === 'completed' || terminal === 'error' || terminal === 'canceled') {
+                        return job;
+                    }
+                }
+            } catch (_) {}
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
     }
 
     // Updates Spotify metadata preview list for Spotify mapping and metadata flow.

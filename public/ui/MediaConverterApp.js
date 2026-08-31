@@ -8,6 +8,7 @@ import { notificationManager } from './NotificationManager.js';
 import { modalManager } from './ModalManager.js';
 import { settingsManager } from './SettingsManager.js';
 import { RetagManager } from './RetagManager.js';
+import { MusicUrlQueueManager } from './MusicUrlQueueManager.js';
 
 export class MediaConverterApp {
     // Initializes class state and defaults for the browser UI layer.
@@ -31,6 +32,7 @@ export class MediaConverterApp {
         this.autoCreateZip = true;
         this.formatManager = new FormatManager(this);
         this.retagManager = new RetagManager(this);
+        this.musicUrlQueueManager = new MusicUrlQueueManager(this);
         this.notificationManager = notificationManager;
         this.modalManager = modalManager;
         this.lastPreviewedPlaylistUrl = null;
@@ -59,6 +61,7 @@ export class MediaConverterApp {
         this.loadFfmpegCaps();
         this.loadOutputLocations();
         this.retagManager.initialize();
+        this.musicUrlQueueManager.initialize();
         this.initializeEventListeners();
         this.jobManager.restoreSessionState();
 
@@ -756,6 +759,7 @@ export class MediaConverterApp {
 
         document.getElementById('urlInput').addEventListener('input', (e) => {
             this.onUrlInputChange(e.target.value);
+            this.musicUrlQueueManager?.updateButton();
         });
 
         const langSelect = document.getElementById('langSelect');
@@ -1172,8 +1176,9 @@ export class MediaConverterApp {
     // Handles on URL input change in the browser UI layer.
     onUrlInputChange(url) {
         this.applyUrlDrivenDefaultFormat(url);
-        const isSpotify = this.isSpotifyUrl(url);
-        const isYoutubePl = !isSpotify && this.isYoutubePlaylistUrl(url);
+        const trimmed = (url || '').trim();
+        const isSpotify = this.isSpotifyUrl(trimmed);
+        const isYoutubePl = !isSpotify && this.isYoutubePlaylistUrl(trimmed);
         const spotifyConcContainer = document.getElementById('spotifyConcurrencyContainer');
         const youtubeConcContainer = document.getElementById('youtubeConcurrencyContainer');
         const playlistCheckboxEl = document.getElementById('playlistCheckbox');
@@ -1186,7 +1191,7 @@ export class MediaConverterApp {
             if (spotifyConcContainer) spotifyConcContainer.style.display = 'flex';
             if (youtubeConcContainer) youtubeConcContainer.style.display = 'none';
 
-            this.setAutoZipVisibility(this.shouldShowAutoZipForCurrentUI({ url }));
+            this.setAutoZipVisibility(this.shouldShowAutoZipForCurrentUI({ url: trimmed }));
             this.lastPreviewedPlaylistUrl = null;
             return;
         }
@@ -1197,8 +1202,6 @@ export class MediaConverterApp {
         document.getElementById('spotifyPreviewCard').style.display = 'none';
         if (spotifyConcContainer) spotifyConcContainer.style.display = 'none';
         if (youtubeConcContainer) youtubeConcContainer.style.display = 'flex';
-
-        const trimmed = (url || '').trim();
 
         if (!isYoutubePl || !trimmed) {
             this.lastPreviewedPlaylistUrl = null;

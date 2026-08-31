@@ -10,6 +10,7 @@ import {
   isSpotifyUrl,
   resolveSpotifyUrl,
   resolveSpotifyUrlLite,
+  resolveSpotifyUrlTitle,
   findSpotifyMetaById,
   findSpotifyMetaByQuery
 } from "../modules/spotify.js";
@@ -23,14 +24,16 @@ import {
   findAppleTrackMetaByQuery,
   isAppleMusicUrl,
   resolveAppleMusicUrl,
-  resolveAppleMusicUrlLite
+  resolveAppleMusicUrlLite,
+  resolveAppleMusicUrlTitle
 } from "../modules/apple.js";
 import {
   findDeezerTrackMetaById,
   findDeezerTrackMetaByQuery,
   isDeezerUrl,
   resolveDeezerUrl,
-  resolveDeezerUrlLite
+  resolveDeezerUrlLite,
+  resolveDeezerUrlTitle
 } from "../modules/deezer.js";
 import {
   resolveJobOutputDir,
@@ -256,6 +259,42 @@ async function findMappedTrackMeta(itemLite, source, market) {
 
   return findSpotifyMetaByQuery(itemLite?.artist, itemLite?.title, market);
 }
+
+router.post("/api/spotify/url-title", async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    const market = resolveMarket(req.body?.market);
+    if (!url || !isMappedMusicUrl(url)) {
+      return sendError(res, "UNSUPPORTED_MUSIC_URL", "Unsupported mapped music URL", 400);
+    }
+
+    let title = "";
+    if (isAppleMusicUrl(url)) {
+      title = await resolveAppleMusicUrlTitle(url, { market });
+    } else if (isDeezerUrl(url)) {
+      title = await resolveDeezerUrlTitle(url);
+    } else {
+      title = await resolveSpotifyUrlTitle(url);
+    }
+
+    title = String(title || "").trim();
+    if (!title) {
+      return sendError(res, "MUSIC_URL_TITLE_NOT_FOUND", "Music URL title could not be resolved", 404);
+    }
+
+    return sendOk(res, {
+      title,
+      provider: musicSourceFromUrl(url)
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      "MUSIC_URL_TITLE_FAILED",
+      sanitizeLogValue(error?.message || "Music URL title could not be resolved"),
+      502
+    );
+  }
+});
 
 router.post("/api/spotify/process/start", async (req, res) => {
   try {

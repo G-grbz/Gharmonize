@@ -158,7 +158,13 @@
         <small id="urlSectionComment" class="comment" data-i18n="ph.urlcomment"></small>
         <form id="urlForm">
           <div class="form-group" id="urlInputGroup">
-            <input type="url" id="urlInput" data-i18n-ph="ph.url" placeholder="YouTube URL or direct media link" required />
+            <div class="music-url-input-row">
+              <input type="url" id="urlInput" data-i18n-ph="ph.url" placeholder="YouTube URL or direct media link" required />
+              <button type="button" id="musicUrlQueueAddBtn" class="music-url-queue-add" style="display:none;" aria-label="Add to URL list" title="Add to URL list">
+                <span class="music-url-queue-plus">+</span>
+                <span id="musicUrlQueueCount" class="music-url-queue-count" style="display:none;">0</span>
+              </button>
+            </div>
           </div>
 
           <div class="checkbox-group" id="playlistCheckboxContainer">
@@ -217,7 +223,7 @@
           </div>
 
           <div class="spotify-actions" id="urlSpotifyActions" style="display: none;">
-            <button id="startIntegratedBtn" class="btn-primary" data-i18n="btn.spotifyIntegrated">Match & Download</button>
+            <button type="button" id="startIntegratedBtn" class="btn-primary" data-i18n="btn.spotifyIntegrated">Match & Download</button>
           </div>
 
           <div class="btn-row" id="normalUrlActions">

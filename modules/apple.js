@@ -1264,6 +1264,53 @@ export async function findAppleTrackMetaById(trackId, { market = "" } = {}) {
   return appleTrackToMeta(track, collectionResult);
 }
 
+// Resolves only the display title for a supported Apple Music URL.
+export async function resolveAppleMusicUrlTitle(url, { market } = {}) {
+  const parsed = parseAppleMusicUrl(url);
+  if (!parsed?.id || parsed.type === "unknown") {
+    throw new Error("Unsupported Apple Music URL");
+  }
+
+  const effectiveMarket = resolveMarket(market || parsed.storefront || "");
+
+  if (parsed.type === "track") {
+    const meta = await findAppleTrackMetaById(parsed.id, { market: effectiveMarket });
+    if (!meta) throw new Error("Apple Music track title could not be resolved");
+    const title = [meta.artist, meta.track || meta.title]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" - ");
+    if (!title) throw new Error("Apple Music track title could not be resolved");
+    return title;
+  }
+
+  if (parsed.type === "album") {
+    const collection = await lookupAppleCollection(parsed.id, { market: effectiveMarket });
+    if (!collection) throw new Error("Apple Music album title could not be resolved");
+    const title = [collection.artistName, collection.collectionName]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" - ");
+    if (!title) throw new Error("Apple Music album title could not be resolved");
+    return title;
+  }
+
+  if (parsed.type === "playlist") {
+    const html = await fetchAppleMusicHtml(url);
+    const jsonLdBlocks = extractJsonLdBlocks(html);
+    const playlistLd =
+      jsonLdBlocks.find((block) => String(block?.["@type"] || "").toLowerCase() === "musicplaylist") ||
+      null;
+    const title =
+      decodeHtmlEntities(parseAppleMetaContent(html, "name", "apple:title")) ||
+      String(playlistLd?.name || "").trim();
+    if (!title) throw new Error("Apple Music playlist title could not be resolved");
+    return title;
+  }
+
+  throw new Error("Unsupported Apple Music URL");
+}
+
 // Resolves Apple Music track, album, or playlist URLs into mapped items for Apple mapping and metadata flow.
 export async function resolveAppleMusicUrlLite(url, { market } = {}) {
   const parsed = parseAppleMusicUrl(url);

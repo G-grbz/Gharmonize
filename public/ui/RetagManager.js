@@ -62,6 +62,7 @@ export class RetagManager {
     }
     this.syncDirectoryLabel();
     this.app.setAutoZipVisibility(active ? false : this.app.shouldShowAutoZipForCurrentUI());
+    this.app.musicUrlQueueManager?.updateButton?.();
   }
 
   syncDirectoryLabel() {
