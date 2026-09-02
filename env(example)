@@ -31,6 +31,8 @@ YTDLP_COOKIES=
 YTDLP_COOKIES_FROM_BROWSER=
 YT_UI_FORCE_COOKIES=0
 YT_LANG=en-US
+# YouTube Music account index for browser-cookie auth (0, 1, 2...). Leave blank for default account.
+YTM_AUTH_USER=
 YT_FORCE_IPV4=1
 YT_ACCEPT_LANGUAGE=en;q=0.8
 YT_DEFAULT_REGION=US

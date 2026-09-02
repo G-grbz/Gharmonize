@@ -59,6 +59,7 @@ const DM_IMPERSONATION_HINT =
   "Dailymotion requires yt-dlp impersonation dependencies (curl_cffi). Rebuild/install yt-dlp with curl-cffi support.";
 
 const YTM_ORIGIN = "https://music.youtube.com";
+const YTM_DEFAULT_API_KEY = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30";
 const YTM_HOME_BROWSE_ID = "FEmusic_home";
 const YTM_HOME_BROWSE_URL = `${YTM_ORIGIN}/browse/${YTM_HOME_BROWSE_ID}`;
 const YTM_COOKIE_EXPORT_DIR = path.resolve(
@@ -1015,14 +1016,16 @@ function extractYtmSearchItemsFromTree(data, { targetType = "", limit = 30 } = {
   return uniqueMusicHomeItems(out, limit);
 }
 
-async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = "", region = "" } = {}) {
+async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = "", region = "", timeoutMs: timeoutOverride = null } = {}) {
   const q = String(query || "").trim();
   if (!q) return [];
 
   const searchType = normalizeSearchType(type);
   const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
   const safeRegion = normalizeDiscoverRegion(region || getInnertubeRegion(), safeLang);
-  const timeoutMs = Number(process.env.YTM_SEARCH_TIMEOUT_MS || 12000);
+  const timeoutMs = Number.isFinite(Number(timeoutOverride)) && Number(timeoutOverride) > 0
+    ? Number(timeoutOverride)
+    : Number(process.env.YTM_SEARCH_TIMEOUT_MS || 12000);
 
   let cookies = [];
   try {
@@ -1584,10 +1587,10 @@ function extractYtmDiscoverItemsFromTree(data, { targetType = "track", limit = 6
   return uniqueDiscoverItems(out, limit);
 }
 
-async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, targetType, preset = "", lang, region, timeoutMs, useCookies = true, returnShelves = false, maxShelves = 6 }) {
+async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, targetType, preset = "", lang, region, timeoutMs, useCookies = true, returnShelves = false, maxShelves = 6, continuationPages = null }) {
   const safeLang = normalizeDiscoverLang(lang);
   const safeRegion = normalizeDiscoverRegion(region, safeLang);
-  const shelfLimit = normalizeMusicHomeNumber(maxShelves, 6, 1, 12);
+  const shelfLimit = normalizeMusicHomeNumber(maxShelves, 6, 1, 50);
   const cacheKey = JSON.stringify({
     browseId,
     params,
@@ -1737,7 +1740,9 @@ async function fetchYouTubeMusicBrowseDiscover({ browseId, params = "", limit, t
     const seenTokens = new Set();
     const tokenQueue = Array.from(collectYtmContinuationTokens(firstPage));
     let continuationPages = 0;
-    const maxContinuationPages = getDiscoverNumber(process.env.YOUTUBE_DISCOVER_CONTINUATION_PAGES ?? 2, 2, 0, 6);
+    const maxContinuationPages = continuationPages == null
+      ? getDiscoverNumber(process.env.YOUTUBE_DISCOVER_CONTINUATION_PAGES ?? 2, 2, 0, 6)
+      : getDiscoverNumber(continuationPages, 0, 0, 6);
 
     while ((returnShelves ? filteredShelves.length < shelfLimit : items.length < limit) && tokenQueue.length && continuationPages < maxContinuationPages) {
       const token = tokenQueue.shift();
@@ -3238,6 +3243,26 @@ let ytmExportedCookieCache = {
   expiresAt: 0
 };
 
+let ytmBootstrapCache = {
+  cookieKey: "",
+  config: {},
+  expiresAt: 0
+};
+
+function invalidateYtmSessionCaches({ removeExport = false } = {}) {
+  const cachedPath = ytmExportedCookieCache.path;
+  ytmExportedCookieCache = { path: "", expiresAt: 0 };
+  ytmBootstrapCache = { cookieKey: "", config: {}, expiresAt: 0 };
+
+  if (removeExport && cachedPath) {
+    try {
+      const safeRoot = path.resolve(YTM_COOKIE_EXPORT_DIR);
+      const safePath = path.resolve(cachedPath);
+      if (safePath.startsWith(`${safeRoot}${path.sep}`)) fs.unlinkSync(safePath);
+    } catch {}
+  }
+}
+
 function pruneMusicHomeCookieExports() {
   try {
     const entries = fs
@@ -3259,7 +3284,7 @@ function pruneMusicHomeCookieExports() {
   } catch {}
 }
 
-function exportBrowserCookiesForMusicHome(timeoutMs = 12000) {
+function exportBrowserCookiesForMusicHome(timeoutMs = 5000) {
   const cookieBrowser = String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
   if (!cookieBrowser) return Promise.resolve("");
 
@@ -3315,18 +3340,18 @@ function exportBrowserCookiesForMusicHome(timeoutMs = 12000) {
   });
 }
 
-async function resolveMusicHomeCookieFile() {
+async function resolveMusicHomeCookieFile({ forceRefresh = false } = {}) {
   const cookieFile = String(process.env.YTDLP_COOKIES || "").trim();
   if (hasCookieFile(cookieFile)) return cookieFile;
   if (String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim()) {
-    if (ytmExportedCookieCache.expiresAt > Date.now() && hasCookieFile(ytmExportedCookieCache.path)) {
+    if (!forceRefresh && ytmExportedCookieCache.expiresAt > Date.now() && hasCookieFile(ytmExportedCookieCache.path)) {
       return ytmExportedCookieCache.path;
     }
 
     const exported = await exportBrowserCookiesForMusicHome();
     ytmExportedCookieCache = {
       path: exported,
-      expiresAt: Date.now() + getDiscoverNumber(process.env.YTM_COOKIE_EXPORT_CACHE_TTL_MS || 300000, 300000, 0, 3600000)
+      expiresAt: Date.now() + getDiscoverNumber(process.env.YTM_COOKIE_EXPORT_CACHE_TTL_MS || 1800000, 1800000, 0, 3600000)
     };
     return exported;
   }
@@ -3393,15 +3418,34 @@ function getCookieValue(cookies = [], names = []) {
   return found?.value || "";
 }
 
-function buildSapisidAuthHeader(cookies = []) {
-  const sapisid = getCookieValue(cookies, ["SAPISID", "__Secure-3PAPISID", "APISID"]);
-  if (!sapisid) return "";
+function hasYtmBrowserAuthCookie(cookies = []) {
+  const hasSid = !!getCookieValue(cookies, ["SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"]);
+  const hasLoginInfo = !!getCookieValue(cookies, ["LOGIN_INFO"]);
+  return hasSid && hasLoginInfo;
+}
 
+function buildSidAuthorizationPart(scheme, sid, origin = YTM_ORIGIN) {
+  if (!sid) return "";
   const timestamp = Math.floor(Date.now() / 1000);
   const hash = createHash("sha1")
-    .update(`${timestamp} ${sapisid} ${YTM_ORIGIN}`)
+    .update(`${timestamp} ${sid} ${origin}`)
     .digest("hex");
-  return `SAPISIDHASH ${timestamp}_${hash}`;
+  return `${scheme} ${timestamp}_${hash}`;
+}
+
+function buildSapisidAuthHeader(cookies = []) {
+  // Match yt-dlp's current YouTube SID auth behavior. SAPISID falls back to
+  // __Secure-3PAPISID, and modern browser sessions can also provide 1P/3P hashes.
+  const sapisid = getCookieValue(cookies, ["SAPISID"]) ||
+    getCookieValue(cookies, ["__Secure-3PAPISID"]);
+  const onePartySapisid = getCookieValue(cookies, ["__Secure-1PAPISID"]);
+  const threePartySapisid = getCookieValue(cookies, ["__Secure-3PAPISID"]);
+
+  return [
+    buildSidAuthorizationPart("SAPISIDHASH", sapisid),
+    buildSidAuthorizationPart("SAPISID1PHASH", onePartySapisid),
+    buildSidAuthorizationPart("SAPISID3PHASH", threePartySapisid)
+  ].filter(Boolean).join(" ");
 }
 
 function getInnertubeLang() {
@@ -3448,12 +3492,37 @@ function extractYtmBootstrapConfig(html = "") {
     visitorData: pick([
       /"VISITOR_DATA"\s*:\s*"([^"]+)"/,
       /"visitorData"\s*:\s*"([^"]+)"/
-    ])
+    ]),
+    apiKey: pick([
+      /"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"/,
+      /"innertubeApiKey"\s*:\s*"([^"]+)"/
+    ]),
+    authUser: pick([
+      /"SESSION_INDEX"\s*:\s*"?(\d+)"?/,
+      /"sessionIndex"\s*:\s*"?(\d+)"?/
+    ]),
+    delegatedSessionId: pick([
+      /"DELEGATED_SESSION_ID"\s*:\s*"([^"]+)"/,
+      /"delegatedSessionId"\s*:\s*"([^"]+)"/
+    ]),
+    loggedIn: /"LOGGED_IN"\s*:\s*true/i.test(source)
+      ? true
+      : (/"LOGGED_IN"\s*:\s*false/i.test(source) ? false : null)
   };
 }
 
 async function fetchYtmBootstrapConfig(cookieHeader, timeoutMs = 6000) {
   if (!cookieHeader) return {};
+
+  const cookieKey = createHash("sha1").update(cookieHeader).digest("hex");
+  if (
+    ytmBootstrapCache.cookieKey === cookieKey &&
+    ytmBootstrapCache.expiresAt > Date.now() &&
+    ytmBootstrapCache.config &&
+    typeof ytmBootstrapCache.config === "object"
+  ) {
+    return ytmBootstrapCache.config;
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -3469,7 +3538,20 @@ async function fetchYtmBootstrapConfig(cookieHeader, timeoutMs = 6000) {
       signal: controller.signal
     });
     const html = await response.text();
-    return response.ok ? extractYtmBootstrapConfig(html) : {};
+    const config = response.ok ? extractYtmBootstrapConfig(html) : {};
+    if (response.ok) {
+      ytmBootstrapCache = {
+        cookieKey,
+        config,
+        expiresAt: Date.now() + getDiscoverNumber(
+          process.env.YTM_BOOTSTRAP_CACHE_TTL_MS || 600000,
+          600000,
+          0,
+          3600000
+        )
+      };
+    }
+    return config;
   } catch {
     return {};
   } finally {
@@ -3991,14 +4073,21 @@ function buildMusicHomeShelvesFromInnertube(data, { maxShelves = 6, limitPerShel
     }
   };
 
-  walk(data);
+  const homeSections = getYtmHomeSectionItems(data);
+  if (homeSections.length) {
+    for (const section of homeSections) {
+      walk(section);
+      if (shelves.length >= maxShelves) break;
+    }
+  } else {
+    walk(data);
+  }
   return shelves.slice(0, maxShelves);
 }
 
 function mergeMusicHomeShelves(shelfGroups = [], { maxShelves = 6, limitPerShelf = 12 } = {}) {
   const shelves = [];
   const seenShelves = new Set();
-  const seenTitles = new Set();
 
   for (const group of shelfGroups) {
     for (const shelf of Array.isArray(group) ? group : []) {
@@ -4007,10 +4096,12 @@ function mergeMusicHomeShelves(shelfGroups = [], { maxShelves = 6, limitPerShelf
 
       const title = normalizeMusicHomeTitle(shelf?.title) || "YouTube Music";
       const titleKey = normalizeMusicHomeTitleKey(title) || title.toLowerCase();
-      const key = `${titleKey}:${getMusicHomeItemKey(items[0])}`;
-      if (seenTitles.has(titleKey) || seenShelves.has(key)) continue;
+      const browseKey = [shelf?.browseId, shelf?.params].filter(Boolean).join(":");
+      const key = browseKey
+        ? `browse:${browseKey}`
+        : `${titleKey}:${getMusicHomeItemKey(items[0])}`;
+      if (seenShelves.has(key)) continue;
 
-      seenTitles.add(titleKey);
       seenShelves.add(key);
       shelves.push({ ...shelf, title, items });
       if (shelves.length >= maxShelves) return shelves;
@@ -4021,14 +4112,111 @@ function mergeMusicHomeShelves(shelfGroups = [], { maxShelves = 6, limitPerShelf
 }
 
 function selectMusicHomeShelves(shelves = [], { maxShelves = 6, limitPerShelf = 12 } = {}) {
-  const shelfLimit = normalizeMusicHomeNumber(maxShelves, 6, 1, 12);
-  const candidateLimit = Math.max(shelfLimit, Math.min(40, shelfLimit * 3));
-  const candidates = mergeMusicHomeShelves([shelves], {
-    maxShelves: candidateLimit,
+  const shelfLimit = normalizeMusicHomeNumber(maxShelves, 6, 1, 50);
+  return mergeMusicHomeShelves([shelves], {
+    maxShelves: shelfLimit,
     limitPerShelf
-  });
-  return orderMusicHomeShelvesForDisplay(candidates, shelfLimit)
-    .map((shelf) => ({ ...shelf, pinned: false }));
+  }).map((shelf) => ({ ...shelf, pinned: false }));
+}
+
+function getYtmHomeSectionListRenderer(data = {}) {
+  const tabs = data?.contents?.singleColumnBrowseResultsRenderer?.tabs;
+  if (!Array.isArray(tabs)) return null;
+
+  for (const tab of tabs) {
+    const sectionList = tab?.tabRenderer?.content?.sectionListRenderer;
+    if (sectionList && typeof sectionList === "object") return sectionList;
+  }
+  return null;
+}
+
+function getYtmHomeSectionItems(data = {}) {
+  const initial = getYtmHomeSectionListRenderer(data)?.contents;
+  if (Array.isArray(initial)) return initial;
+
+  const continuation = data?.continuationContents?.sectionListContinuation?.contents;
+  if (Array.isArray(continuation)) return continuation;
+
+  const actions = Array.isArray(data?.onResponseReceivedActions)
+    ? data.onResponseReceivedActions
+    : [];
+  for (const action of actions) {
+    const items = action?.appendContinuationItemsAction?.continuationItems;
+    if (Array.isArray(items)) return items;
+  }
+  return [];
+}
+
+function getYtmLegacyHomeContinuationToken(data = {}) {
+  const continuationSets = [
+    getYtmHomeSectionListRenderer(data)?.continuations,
+    data?.continuationContents?.sectionListContinuation?.continuations
+  ];
+
+  for (const continuations of continuationSets) {
+    if (!Array.isArray(continuations)) continue;
+    for (const continuation of continuations) {
+      const token =
+        continuation?.nextContinuationData?.continuation ||
+        continuation?.reloadContinuationData?.continuation ||
+        continuation?.timedContinuationData?.continuation ||
+        "";
+      if (token) return String(token);
+    }
+  }
+  return "";
+}
+
+function getYtmInlineHomeContinuationToken(data = {}) {
+  const items = getYtmHomeSectionItems(data);
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const renderer = items[index]?.continuationItemRenderer;
+    const token =
+      renderer?.continuationEndpoint?.continuationCommand?.token ||
+      renderer?.continuationEndpoint?.nextContinuationData?.continuation ||
+      "";
+    if (token) return String(token);
+  }
+  return "";
+}
+
+function getYtmLoggedInState(data = {}) {
+  const services = data?.responseContext?.serviceTrackingParams;
+  if (!Array.isArray(services)) return null;
+
+  for (const service of services) {
+    const params = Array.isArray(service?.params) ? service.params : [];
+    const loggedIn = params.find((item) => String(item?.key || "").toLowerCase() === "logged_in");
+    if (!loggedIn) continue;
+    const value = String(loggedIn.value ?? "").trim().toLowerCase();
+    if (["1", "true"].includes(value)) return true;
+    if (["0", "false"].includes(value)) return false;
+  }
+  return null;
+}
+
+function resolveYtmAuthUserCandidates(bootstrap = {}) {
+  const candidates = [];
+  const add = (value) => {
+    const safe = String(value ?? "").trim();
+    const parsed = Number(safe);
+    if (
+      /^\d+$/.test(safe) &&
+      Number.isInteger(parsed) &&
+      parsed >= 0 &&
+      parsed <= 20 &&
+      !candidates.includes(safe)
+    ) {
+      candidates.push(safe);
+    }
+  };
+
+  // A configured account remains the first choice, but don't get stuck on it:
+  // browser account slots can change after a profile/account is removed.
+  add(process.env.YTM_AUTH_USER);
+  add(bootstrap?.authUser);
+  for (let index = 0; index <= 5; index += 1) add(index);
+  return candidates.length ? candidates : ["0"];
 }
 
 function collectYtmContinuationTokens(value, tokens = new Set(), depth = 0) {
@@ -4063,33 +4251,48 @@ function collectYtmContinuationTokens(value, tokens = new Set(), depth = 0) {
   return tokens;
 }
 
-async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeoutMs = 15000, lang = "", region = "" }) {
-  const cookieFile = await resolveMusicHomeCookieFile();
+async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeoutMs = 15000, lang = "", region = "", forceFreshCookies = false, onProgress = null }) {
+  const cookieFile = await resolveMusicHomeCookieFile({ forceRefresh: forceFreshCookies });
   const cookies = parseNetscapeCookieFile(cookieFile, "music.youtube.com");
   const cookieHeader = buildCookieHeader(cookies);
   if (!cookieHeader) {
     return { personalized: false, cookieAvailable: false, shelves: [] };
   }
+  if (!hasYtmBrowserAuthCookie(cookies)) {
+    const hasLoginInfo = !!getCookieValue(cookies, ["LOGIN_INFO"]);
+    const hasSid = !!getCookieValue(cookies, ["SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"]);
+    const missing = [
+      hasLoginInfo ? "" : "LOGIN_INFO",
+      hasSid ? "" : "SAPISID/__Secure-*PAPISID"
+    ].filter(Boolean).join(" + ");
+    const error = new Error(`YouTube Music browser cookies are not a complete signed-in session${missing ? ` (missing ${missing})` : ""}.`);
+    error.code = "YTM_AUTH_COOKIE_MISSING";
+    throw error;
+  }
 
   const locale = getInnertubeLocale(lang, region);
-  const bootstrap = await fetchYtmBootstrapConfig(cookieHeader, Math.min(timeoutMs, 6000));
+  const bootstrap = await fetchYtmBootstrapConfig(cookieHeader, Math.min(timeoutMs, 2500));
   const clientVersion = String(process.env.YTM_CLIENT_VERSION || bootstrap.clientVersion || getDefaultYtmClientVersion()).trim();
+  const authUserCandidates = resolveYtmAuthUserCandidates(bootstrap);
   const headers = {
     "Accept": "application/json",
     "Accept-Language": locale.acceptLanguage,
+    "Cache-Control": "no-cache",
     "Content-Type": "application/json",
     "Origin": YTM_ORIGIN,
+    "Pragma": "no-cache",
     "Referer": `${YTM_ORIGIN}/`,
     "User-Agent": DEFAULT_USER_AGENT,
-    "X-Goog-AuthUser": "0",
     "X-Goog-Visitor-Id": bootstrap.visitorData || "",
     "X-Origin": YTM_ORIGIN,
+    "X-Youtube-Bootstrap-Logged-In": "true",
     "X-Youtube-Client-Name": "67",
     "X-Youtube-Client-Version": clientVersion,
     "Cookie": cookieHeader
   };
   const auth = buildSapisidAuthHeader(cookies);
   if (auth) headers.Authorization = auth;
+  if (bootstrap.delegatedSessionId) headers["X-Goog-PageId"] = bootstrap.delegatedSessionId;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -4099,20 +4302,35 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
       clientName: "WEB_REMIX",
       clientVersion,
       visitorData: bootstrap.visitorData || undefined,
-      hl: locale.hl,
+      hl: locale.lang,
       gl: locale.region
     },
-    user: { lockedSafetyMode: false },
+    user: {
+      lockedSafetyMode: false,
+      ...(bootstrap.delegatedSessionId ? { onBehalfOfUser: bootstrap.delegatedSessionId } : {})
+    },
     request: { useSsl: true }
   };
 
-  const postBrowse = async (payload) => {
+  const postBrowse = async (payload, { legacyContinuation = "", authUser = "0" } = {}) => {
+    const endpoint = new URL(`${YTM_ORIGIN}/youtubei/v1/browse`);
+    endpoint.searchParams.set("alt", "json");
+    endpoint.searchParams.set("prettyPrint", "false");
+    endpoint.searchParams.set("key", bootstrap.apiKey || YTM_DEFAULT_API_KEY);
+    if (legacyContinuation) {
+      endpoint.searchParams.set("ctoken", legacyContinuation);
+      endpoint.searchParams.set("continuation", legacyContinuation);
+    }
+
     let response;
     try {
       // Parsed cookie-file values are domain-scoped, sanitized, and sent only to the fixed YTM_ORIGIN.
-      response = await fetch(`${YTM_ORIGIN}/youtubei/v1/browse?prettyPrint=false`, {
+      response = await fetch(endpoint, {
         method: "POST",
-        headers,
+        headers: {
+          ...headers,
+          "X-Goog-AuthUser": authUser
+        },
         signal: controller.signal,
         body: JSON.stringify({ context, ...payload })
       });
@@ -4143,36 +4361,107 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
   };
 
   try {
-    const firstPage = await postBrowse({ browseId: YTM_HOME_BROWSE_ID });
+    let firstPage = null;
+    let loggedIn = null;
+    let authUser = authUserCandidates[0] || "0";
+    const authAttempts = [];
+
+    for (const candidate of authUserCandidates) {
+      const candidatePage = await postBrowse(
+        { browseId: YTM_HOME_BROWSE_ID },
+        { authUser: candidate }
+      );
+      const candidateLoggedIn = getYtmLoggedInState(candidatePage);
+      authAttempts.push(candidate);
+
+      if (candidateLoggedIn === true || (candidateLoggedIn == null && bootstrap.loggedIn === true)) {
+        firstPage = candidatePage;
+        loggedIn = candidateLoggedIn;
+        authUser = candidate;
+        break;
+      }
+
+      if (!firstPage) {
+        firstPage = candidatePage;
+        loggedIn = candidateLoggedIn;
+        authUser = candidate;
+      }
+    }
+
+    if (loggedIn === false || (loggedIn == null && bootstrap.loggedIn === false)) {
+      const error = new Error(
+        `YouTube Music browser session is not authenticated for account index ${authAttempts.join(", ")}`
+      );
+      error.code = "YTM_AUTH_REJECTED";
+      error.authAttempts = authAttempts;
+      throw error;
+    }
+
     let parsedShelves = buildMusicHomeShelvesFromInnertube(firstPage, { maxShelves, limitPerShelf });
     const seenTokens = new Set();
-    const tokenQueue = Array.from(collectYtmContinuationTokens(firstPage));
+    let currentPage = firstPage;
     let continuationPages = 0;
+    const emitProgress = (phase) => {
+      if (typeof onProgress !== "function" || !parsedShelves.length) return;
+      try {
+        onProgress({
+          personalized: loggedIn !== false,
+          cookieAvailable: true,
+          source: "innertube",
+          authUser,
+          authAttempts,
+          loggedIn,
+          continuationPages,
+          fetchedShelves: parsedShelves.length,
+          title: "YouTube Music",
+          shelves: parsedShelves,
+          phase
+        });
+      } catch {}
+    };
+    emitProgress("first-page");
+    const maxContinuationPages = normalizeMusicHomeNumber(
+      process.env.YTM_HOME_CONTINUATION_PAGES || 8,
+      8,
+      0,
+      40
+    );
 
-    while (parsedShelves.length < maxShelves && tokenQueue.length && continuationPages < 8) {
-      const token = tokenQueue.shift();
-      if (!token || seenTokens.has(token)) continue;
+    while (parsedShelves.length < maxShelves && continuationPages < maxContinuationPages) {
+      const legacyToken = getYtmLegacyHomeContinuationToken(currentPage);
+      const inlineToken = legacyToken ? "" : getYtmInlineHomeContinuationToken(currentPage);
+      const token = legacyToken || inlineToken;
+      if (!token || seenTokens.has(token)) break;
 
       seenTokens.add(token);
       continuationPages += 1;
 
-      const nextPage = await postBrowse({ continuation: token });
+      // Home uses sectionListContinuation pagination. Newer response shapes can instead expose
+      // a continuationItemRenderer; support both without crawling unrelated shelf/menu tokens.
+      const nextPage = legacyToken
+        ? await postBrowse(
+            { browseId: YTM_HOME_BROWSE_ID },
+            { legacyContinuation: legacyToken, authUser }
+          )
+        : await postBrowse({ continuation: inlineToken }, { authUser });
+      const nextShelves = buildMusicHomeShelvesFromInnertube(nextPage, { maxShelves, limitPerShelf });
       parsedShelves = mergeMusicHomeShelves(
-        [
-          parsedShelves,
-          buildMusicHomeShelvesFromInnertube(nextPage, { maxShelves, limitPerShelf })
-        ],
+        [parsedShelves, nextShelves],
         { maxShelves, limitPerShelf }
       );
-
-      for (const nextToken of collectYtmContinuationTokens(nextPage)) {
-        if (!seenTokens.has(nextToken)) tokenQueue.push(nextToken);
-      }
+      currentPage = nextPage;
+      emitProgress("continuation");
     }
 
     return {
-      personalized: parsedShelves.length > 0,
+      personalized: loggedIn !== false && parsedShelves.length > 0,
       cookieAvailable: true,
+      source: "innertube",
+      authUser,
+      authAttempts,
+      loggedIn,
+      continuationPages,
+      fetchedShelves: parsedShelves.length,
       title: "YouTube Music",
       shelves: parsedShelves
     };
@@ -4182,13 +4471,13 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
 }
 
 async function getFallbackYouTubeMusicHomeShelves({ maxShelves, fetchShelves, limitPerShelf, timeoutMs, lang = "", region = "", cookieAvailable = false } = {}) {
-  const targetShelves = normalizeMusicHomeNumber(maxShelves, 6, 1, 12);
-  const browseShelves = normalizeMusicHomeNumber(fetchShelves || targetShelves, targetShelves, targetShelves, 40);
+  const targetShelves = normalizeMusicHomeNumber(maxShelves, 6, 1, 50);
+  const browseShelves = normalizeMusicHomeNumber(fetchShelves || targetShelves, targetShelves, targetShelves, 100);
   const perShelf = normalizeMusicHomeNumber(limitPerShelf, 12, 4, 24);
   const safeLang = normalizeDiscoverLang(lang);
   const safeRegion = normalizeDiscoverRegion(region, safeLang);
   const shelfGroups = [];
-  const browseTimeout = Math.min(timeoutMs || 12000, 12000);
+  const browseTimeout = Math.min(timeoutMs || 4000, 4000);
 
   try {
     const publicShelves = await fetchPublicYouTubeMusicBrowseShelves({
@@ -4199,7 +4488,8 @@ async function getFallbackYouTubeMusicHomeShelves({ maxShelves, fetchShelves, li
       lang: safeLang,
       region: safeRegion,
       timeoutMs: browseTimeout,
-      maxShelves: browseShelves
+      maxShelves: browseShelves,
+      continuationPages: 0
     });
     if (publicShelves.length) shelfGroups.push(publicShelves);
   } catch (error) {
@@ -4213,52 +4503,60 @@ async function getFallbackYouTubeMusicHomeShelves({ maxShelves, fetchShelves, li
     limitPerShelf: perShelf
   });
 
-  const presetOrder = [
-    "energizing",
-    "workout",
-    "feel-good",
-    "relax",
-    "party",
-    "focus",
-    "sleep",
-    "romance",
-    "sad",
-    "commute"
-  ];
+  // If anonymous Home is sparse, fill it with a small set of independent,
+  // concurrent YT Music searches. This restores useful fallback shelves without
+  // the previous long sequential mood crawl.
+  if (mergedShelves.length < Math.min(targetShelves, 8)) {
+    const presetOrder = [
+      "energizing",
+      "workout",
+      "feel-good",
+      "relax",
+      "party",
+      "focus",
+      "romance",
+      "commute",
+      "sad",
+      "sleep"
+    ];
+    const needed = Math.max(0, Math.min(10, targetShelves - mergedShelves.length));
+    const searchTimeout = Math.min(Math.max(1500, browseTimeout), 3500);
+    const presetResults = await Promise.allSettled(
+      presetOrder.slice(0, needed).map(async (preset) => {
+        const query = getDiscoverMoodFallbackQuery(preset, safeLang);
+        const items = await searchYouTubeMusicContent(query, {
+          limit: perShelf,
+          type: "track",
+          lang: safeLang,
+          region: safeRegion,
+          timeoutMs: searchTimeout
+        });
+        return {
+          preset,
+          items: uniqueMusicHomeItems(items, perShelf)
+        };
+      })
+    );
 
-  for (const preset of presetOrder) {
-    if (mergedShelves.length >= targetShelves) break;
-    try {
-      const items = await getDiscoverItemsForPreset({
-        preset,
-        limit: perShelf,
-        lang: safeLang,
-        region: safeRegion,
-        timeoutMs: Math.min(timeoutMs || 12000, 10000)
-      });
-      const shelfItems = uniqueMusicHomeItems(items, perShelf);
-      if (!shelfItems.length) continue;
-
+    for (const result of presetResults) {
+      if (result.status !== "fulfilled" || !result.value.items.length) continue;
       shelfGroups.push([{
-        title: getDiscoverMoodDisplayTitle(preset, safeLang),
+        title: getDiscoverMoodDisplayTitle(result.value.preset, safeLang),
         source: "youtube_music_home_fallback",
-        items: shelfItems
+        items: result.value.items
       }]);
-      mergedShelves = mergeMusicHomeShelves(shelfGroups, {
-        maxShelves: browseShelves,
-        limitPerShelf: perShelf
-      });
-    } catch (error) {
-      discoverDebug("home-fallback:preset-error", {
-        preset,
-        error: error?.message || String(error)
-      });
     }
+
+    mergedShelves = mergeMusicHomeShelves(shelfGroups, {
+      maxShelves: browseShelves,
+      limitPerShelf: perShelf
+    });
   }
 
   return {
     personalized: false,
     fallback: true,
+    source: "fallback",
     cookieAvailable,
     title: "YouTube Music",
     shelves: selectMusicHomeShelves(mergedShelves, {
@@ -4269,20 +4567,25 @@ async function getFallbackYouTubeMusicHomeShelves({ maxShelves, fetchShelves, li
 }
 
 // Reads the signed-in YouTube Music home feed for the ytlive UI.
-export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang = "", region = "" } = {}) {
+export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang = "", region = "", onProgress = null } = {}) {
+  const startedAt = Date.now();
+  const withTiming = (result = {}) => ({
+    ...result,
+    elapsedMs: Math.max(0, Date.now() - startedAt)
+  });
   const cookieAvailable = hasUsableCookieSource();
-  const maxShelves = normalizeMusicHomeNumber(shelves, 6, 1, 12);
-  const defaultFetchShelves = Math.min(40, Math.max(maxShelves * 3, maxShelves + 6));
+  const maxShelves = normalizeMusicHomeNumber(shelves, 6, 1, 50);
+  const defaultFetchShelves = maxShelves;
   const fetchShelves = normalizeMusicHomeNumber(
     process.env.YTM_HOME_FETCH_SHELVES || defaultFetchShelves,
     defaultFetchShelves,
     maxShelves,
-    40
+    100
   );
   const limitPerShelf = normalizeMusicHomeNumber(limit, 12, 4, 24);
 
   if (!cookieAvailable) {
-    return getFallbackYouTubeMusicHomeShelves({
+    const fallback = await getFallbackYouTubeMusicHomeShelves({
       maxShelves,
       fetchShelves,
       limitPerShelf,
@@ -4291,51 +4594,105 @@ export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang
       region,
       cookieAvailable: false
     });
+    return withTiming(fallback);
   }
 
-  const timeout = Number(process.env.YTM_HOME_TIMEOUT_MS || 45000);
-  try {
+  const timeout = Number(process.env.YTM_HOME_TIMEOUT_MS || 10000);
+  const innertubeTimeout = Math.min(timeout, Number(process.env.YTM_HOME_INNERTUBE_TIMEOUT_MS || 7000));
+  let innertubeWarning = "";
+  let innertubeErrorCode = "";
+
+  const streamProgress = typeof onProgress === "function"
+    ? (progress = {}) => {
+        const selectedShelves = selectMusicHomeShelves(progress.shelves, { maxShelves, limitPerShelf });
+        if (!selectedShelves.length) return;
+        onProgress({
+          ...progress,
+          shelves: selectedShelves,
+          fetchedShelves: selectedShelves.length,
+          elapsedMs: Math.max(0, Date.now() - startedAt)
+        });
+      }
+    : null;
+
+  const tryInnertube = async ({ forceFreshCookies = false } = {}) => {
     const result = await fetchYouTubeMusicHomeInnertube({
       maxShelves: fetchShelves,
       limitPerShelf,
-      timeoutMs: Math.min(timeout, 15000),
+      timeoutMs: innertubeTimeout,
       lang,
-      region
+      region,
+      forceFreshCookies,
+      onProgress: streamProgress
     });
     const selectedShelves = selectMusicHomeShelves(result.shelves, { maxShelves, limitPerShelf });
-    if (selectedShelves.length) {
-      return {
-        ...result,
-        shelves: selectedShelves
-      };
-    }
-    console.warn("YouTube Music home API returned no shelves, using fallback shelves.");
-  } catch (error) {
-    console.warn("YouTube Music home API failed, falling back to yt-dlp:", error?.message || error);
-  }
+    return {
+      ...result,
+      shelves: selectedShelves
+    };
+  };
 
   try {
-    const data = await runYtJson(
-      ["--flat-playlist", YTM_HOME_BROWSE_URL],
-      "youtube-music-home",
-      timeout
-    );
-    const parsedShelves = buildMusicHomeShelves(data, { maxShelves: fetchShelves, limitPerShelf });
-    const selectedShelves = selectMusicHomeShelves(parsedShelves, { maxShelves, limitPerShelf });
-    if (selectedShelves.length) {
-      return {
-        personalized: parsedShelves.length > 0,
-        cookieAvailable,
-        title: normalizeMusicHomeTitle(data?.title || "YouTube Music"),
-        shelves: selectedShelves
-      };
-    }
-    console.warn("YouTube Music home yt-dlp returned no shelves, using fallback shelves.");
+    const result = await tryInnertube();
+    if (result.shelves.length) return withTiming(result);
+
+    innertubeWarning = "YouTube Music Innertube home returned no playable shelves.";
+    console.warn("YouTube Music home API returned no shelves, using fallback shelves.");
   } catch (error) {
-    console.warn("YouTube Music home yt-dlp failed, using fallback shelves:", error?.message || error);
+    innertubeWarning = error?.message || String(error);
+    innertubeErrorCode = String(error?.code || "");
+
+    const canRefreshBrowserCookies =
+      ["YTM_AUTH_COOKIE_MISSING", "YTM_AUTH_REJECTED"].includes(innertubeErrorCode) &&
+      !!String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim() &&
+      !String(process.env.YTDLP_COOKIES || "").trim();
+
+    if (canRefreshBrowserCookies) {
+      try {
+        invalidateYtmSessionCaches({ removeExport: true });
+        const retryResult = await tryInnertube({ forceFreshCookies: true });
+        if (retryResult.shelves.length) return withTiming(retryResult);
+        innertubeWarning = "YouTube Music refreshed browser session returned no playable shelves.";
+        innertubeErrorCode = "";
+      } catch (retryError) {
+        innertubeWarning = retryError?.message || String(retryError);
+        innertubeErrorCode = String(retryError?.code || innertubeErrorCode);
+      }
+    }
+
+    console.warn("YouTube Music home API failed, using fallback shelves:", innertubeWarning);
   }
 
-  return getFallbackYouTubeMusicHomeShelves({
+  const authFailure = ["YTM_AUTH_COOKIE_MISSING", "YTM_AUTH_REJECTED"].includes(innertubeErrorCode);
+  if (!authFailure && String(process.env.YTM_HOME_YTDLP_FALLBACK || "0").trim() === "1") {
+    try {
+      const data = await runYtJson(
+        ["--flat-playlist", YTM_HOME_BROWSE_URL],
+        "youtube-music-home",
+        Math.min(timeout, Number(process.env.YTM_HOME_YTDLP_TIMEOUT_MS || 8000))
+      );
+      const parsedShelves = buildMusicHomeShelves(data, { maxShelves: fetchShelves, limitPerShelf });
+      const selectedShelves = selectMusicHomeShelves(parsedShelves, { maxShelves, limitPerShelf });
+      if (selectedShelves.length) {
+        return withTiming({
+          personalized: cookieAvailable && parsedShelves.length > 0,
+          cookieAvailable,
+          source: "yt-dlp",
+          authUser: String(process.env.YTM_AUTH_USER || "").trim() || null,
+          warning: innertubeWarning
+            ? `YouTube Music Innertube home unavailable: ${innertubeWarning}`
+            : "YouTube Music Innertube home was unavailable; using yt-dlp home output.",
+          title: normalizeMusicHomeTitle(data?.title || "YouTube Music"),
+          shelves: selectedShelves
+        });
+      }
+      console.warn("YouTube Music home yt-dlp returned no shelves, using fallback shelves.");
+    } catch (error) {
+      console.warn("YouTube Music home yt-dlp failed, using fallback shelves:", error?.message || error);
+    }
+  }
+
+  const fallback = await getFallbackYouTubeMusicHomeShelves({
     maxShelves,
     fetchShelves,
     limitPerShelf,
@@ -4343,6 +4700,11 @@ export async function getYouTubeMusicHomeShelves({ shelves = 6, limit = 12, lang
     lang,
     region,
     cookieAvailable,
+  });
+  return withTiming({
+    ...fallback,
+    authUser: String(process.env.YTM_AUTH_USER || "").trim() || null,
+    warning: innertubeWarning || fallback.warning || "YouTube Music personalized home was unavailable."
   });
 }
 

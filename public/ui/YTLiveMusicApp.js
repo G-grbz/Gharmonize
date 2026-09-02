@@ -63,6 +63,8 @@ class YTLiveMusicApp {
     this.jobs = new Map();
     this.jobStreams = new Map();
     this.queuePollTimer = null;
+    this.queueHoverOpenDelay = 350;
+    this.queueHoverTimer = null;
     this.searchController = null;
     this.searchSerial = 0;
     this.activePreset = null;
@@ -116,6 +118,7 @@ class YTLiveMusicApp {
     this.collapsibleState = this.loadCollapsibleState();
     this.collapsiblePanels = ['downloadListsPanel', 'playlistTracksPanel', 'musicHomeSection', 'discover'];
     this.downloadLists = [];
+    this.expandedDownloadListIds = new Set();
     this.activeDownloadListMenu = null;
     this.presetCounters = new Map();
     this.escapeMap = {
@@ -227,6 +230,7 @@ class YTLiveMusicApp {
     });
 
     this.setupCollapsiblePanels();
+    this.setupQueueHoverIntent();
 
     document.addEventListener('i18n:applied', () => {
       this.applyLocalizedUi();
@@ -251,6 +255,40 @@ class YTLiveMusicApp {
     this.setupInfiniteScroll();
     this.updatePlayerNavigationControls();
     document.addEventListener('error', (event) => this.handleThumbnailError(event), true);
+  }
+
+  setupQueueHoverIntent() {
+    const queuePanel = document.getElementById('queuePanel');
+    if (!queuePanel) return;
+
+    const hoverMedia = window.matchMedia('(min-width: 1181px) and (hover: hover) and (pointer: fine)');
+
+    const clearOpenTimer = () => {
+      if (this.queueHoverTimer === null) return;
+      window.clearTimeout(this.queueHoverTimer);
+      this.queueHoverTimer = null;
+    };
+
+    const closeQueue = () => {
+      clearOpenTimer();
+      queuePanel.classList.remove('is-hover-open');
+    };
+
+    queuePanel.addEventListener('pointerenter', () => {
+      if (!hoverMedia.matches || queuePanel.classList.contains('is-hover-open')) return;
+      clearOpenTimer();
+      this.queueHoverTimer = window.setTimeout(() => {
+        this.queueHoverTimer = null;
+        if (hoverMedia.matches && queuePanel.matches(':hover')) {
+          queuePanel.classList.add('is-hover-open');
+        }
+      }, this.queueHoverOpenDelay);
+    });
+
+    queuePanel.addEventListener('pointerleave', closeQueue);
+    hoverMedia.addEventListener?.('change', (event) => {
+      if (!event.matches) closeQueue();
+    });
   }
 
   async loadUiConfig() {
@@ -292,13 +330,13 @@ class YTLiveMusicApp {
   loadMusicHomeShelfCount() {
     try {
       const saved = Number(localStorage.getItem(this.musicHomeShelfCountKey));
-      if (Number.isFinite(saved)) return Math.max(1, Math.min(12, Math.round(saved)));
+      if (Number.isFinite(saved)) return Math.max(1, Math.min(50, Math.round(saved)));
     } catch {}
     return 6;
   }
 
   saveMusicHomeShelfCount(value) {
-    this.musicHomeShelfCount = Math.max(1, Math.min(12, Math.round(Number(value) || 6)));
+    this.musicHomeShelfCount = Math.max(1, Math.min(50, Math.round(Number(value) || 6)));
     try {
       localStorage.setItem(this.musicHomeShelfCountKey, String(this.musicHomeShelfCount));
     } catch {}
@@ -760,6 +798,77 @@ class YTLiveMusicApp {
     };
   }
 
+  async readMusicHomeShelfStream(params, { signal = null, onProgress = null } = {}) {
+    const response = await fetch(`/api/youtube/music-home-stream?${params}`, {
+      signal,
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      throw new Error(this.tt('ytlive.musicHome.failed', 'YouTube Music ana sayfası okunamadı.'));
+    }
+
+    if (!response.body?.getReader) {
+      const fallbackResponse = await fetch(`/api/youtube/music-home?${params}`, {
+        signal,
+        cache: 'no-store'
+      });
+      const fallbackData = await fallbackResponse.json().catch(() => ({}));
+      if (!fallbackResponse.ok || fallbackData.ok === false) {
+        throw new Error(fallbackData?.error?.message || this.tt('ytlive.musicHome.failed', 'YouTube Music ana sayfası okunamadı.'));
+      }
+      return fallbackData;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalData = null;
+
+    const processLine = (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const frame = JSON.parse(trimmed);
+      if (frame.type === 'progress') {
+        onProgress?.(frame);
+        return;
+      }
+      if (frame.type === 'done') {
+        finalData = frame;
+        return;
+      }
+      if (frame.type === 'error') {
+        throw new Error(frame?.error?.message || this.tt('ytlive.musicHome.failed', 'YouTube Music ana sayfası okunamadı.'));
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      let newlineIndex = buffer.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        processLine(line);
+        newlineIndex = buffer.indexOf('\n');
+      }
+      if (done) break;
+    }
+    if (buffer.trim()) processLine(buffer);
+    return finalData || {};
+  }
+
+  normalizeMusicHomeShelfPayload(data = {}) {
+    return (Array.isArray(data.shelves) ? data.shelves : [])
+      .map((shelf) => ({
+        title: shelf?.title || this.tt('ytlive.musicHome.shelfFallback', 'YouTube Music'),
+        pinned: false,
+        items: (Array.isArray(shelf?.items) ? shelf.items : [])
+          .map((item) => this.normalizeItem(item))
+          .filter((item) => item.webpage_url)
+      }))
+      .filter((shelf) => shelf.items.length);
+  }
+
   async loadMusicHomeShelves({ showToast = false } = {}) {
     const section = document.getElementById('musicHomeSection');
     const status = document.getElementById('musicHomeStatus');
@@ -781,37 +890,86 @@ class YTLiveMusicApp {
         lang: this.getCurrentLang(),
         region: this.getCurrentRegion()
       });
-      const response = await fetch(`/api/youtube/music-home?${params}`, {
+      let lastProgressShelfCount = 0;
+      const data = await this.readMusicHomeShelfStream(params, {
         signal: this.musicHomeController.signal,
-        cache: 'no-store'
+        onProgress: (progress) => {
+          const progressiveShelves = this.normalizeMusicHomeShelfPayload(progress);
+          if (!progressiveShelves.length || progressiveShelves.length < lastProgressShelfCount) return;
+          lastProgressShelfCount = progressiveShelves.length;
+          this.musicHomeShelves = progressiveShelves;
+          this.renderMusicHomeShelves({ preserveScroll: true });
+
+          if (status) {
+            const authUser = progress.authUser == null || progress.authUser === '' ? '' : String(progress.authUser);
+            const continuationPages = Number(progress.continuationPages || 0);
+            const elapsedMs = Number(progress.elapsedMs || 0);
+            const elapsedLabel = elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(elapsedMs >= 10000 ? 0 : 1)} sn` : '';
+            const diagnostics = [
+              authUser ? `YT hesap ${authUser}` : '',
+              continuationPages > 0 ? `${continuationPages} devam sayfası` : '',
+              elapsedLabel
+            ].filter(Boolean);
+            status.textContent = `${progressiveShelves.length} kişisel raf hazır · devamı yükleniyor${diagnostics.length ? ` · ${diagnostics.join(' · ')}` : ''}`;
+          }
+        }
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.ok === false) {
-        throw new Error(data?.error?.message || this.tt('ytlive.musicHome.failed', 'YouTube Music ana sayfası okunamadı.'));
+      if (data?.error?.message) {
+        throw new Error(data.error.message);
       }
 
-      const shelves = Array.isArray(data.shelves) ? data.shelves : [];
-      this.musicHomeShelves = shelves
-        .map((shelf) => ({
-          title: shelf?.title || this.tt('ytlive.musicHome.shelfFallback', 'YouTube Music'),
-          pinned: false,
-          items: (Array.isArray(shelf?.items) ? shelf.items : [])
-            .map((item) => this.normalizeItem(item))
-            .filter((item) => item.webpage_url)
-        }))
-        .filter((shelf) => shelf.items.length);
-
-      this.renderMusicHomeShelves();
+      const finalShelves = this.normalizeMusicHomeShelfPayload(data);
+      if (finalShelves.length) {
+        this.musicHomeShelves = finalShelves;
+        this.renderMusicHomeShelves({ preserveScroll: true });
+      }
 
       if (this.musicHomeShelves.length) {
+        const source = String(data.source || '').toLowerCase();
+        const isDirectPersonalHome = source === 'innertube' && data.personalized !== false;
+        const authUser = data.authUser == null || data.authUser === '' ? '' : String(data.authUser);
+        const continuationPages = Number(data.continuationPages || 0);
+        const elapsedMs = Number(data.elapsedMs || 0);
+        const elapsedLabel = elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(elapsedMs >= 10000 ? 0 : 1)} sn` : '';
+
         if (status) {
-          status.textContent = this.tt('ytlive.musicHome.loaded', '{count} kişisel raf yüklendi.', {
-            count: this.musicHomeShelves.length
+          if (isDirectPersonalHome) {
+            const base = this.tt('ytlive.musicHome.loaded', '{count} kişisel raf yüklendi.', {
+              count: this.musicHomeShelves.length
+            });
+            const diagnostics = [
+              authUser ? `YT hesap ${authUser}` : '',
+              continuationPages > 0 ? `${continuationPages} devam sayfası` : '',
+              elapsedLabel
+            ].filter(Boolean);
+            status.textContent = diagnostics.length ? `${base} · ${diagnostics.join(' · ')}` : base;
+          } else if (source === 'yt-dlp') {
+            status.textContent = `${this.musicHomeShelves.length} raf yüklendi · yt-dlp fallback${elapsedLabel ? ` · ${elapsedLabel}` : ''} (Innertube kişisel Home kullanılamadı)`;
+          } else {
+            status.textContent = `${this.musicHomeShelves.length} genel raf yüklendi${elapsedLabel ? ` · ${elapsedLabel}` : ''} · kişisel YouTube Music oturumu kullanılamadı`;
+          }
+          if (data.warning) status.title = String(data.warning);
+        }
+
+        if (!isDirectPersonalHome) {
+          console.warn('YouTube Music personal home fallback is active:', {
+            source: data.source || 'unknown',
+            personalized: data.personalized,
+            authUser: data.authUser,
+            warning: data.warning || ''
           });
         }
+
         this.playRandomPlayerContent({ source: 'musicHome' });
         if (showToast) {
-          this.notify(this.tt('ytlive.musicHome.updated', 'YouTube Music rafları yenilendi.'), 'success');
+          if (isDirectPersonalHome) {
+            this.notify(this.tt('ytlive.musicHome.updated', 'YouTube Music rafları yenilendi.'), 'success');
+          } else {
+            this.notify(
+              String(data.warning || 'YouTube Music kişisel Home kullanılamadı; fallback rafları gösteriliyor.'),
+              'warning'
+            );
+          }
         }
         return;
       }
@@ -836,7 +994,7 @@ class YTLiveMusicApp {
     }
   }
 
-  renderMusicHomeShelves() {
+  renderMusicHomeShelves({ preserveScroll = false } = {}) {
     const section = document.getElementById('musicHomeSection');
     const host = document.getElementById('musicHomeShelves');
     if (!section || !host) return;
@@ -847,10 +1005,16 @@ class YTLiveMusicApp {
       return;
     }
 
+    const previousScroll = preserveScroll
+      ? Array.from(host.querySelectorAll('.music-shelf__rail')).map((rail) => rail.scrollLeft)
+      : [];
+
     section.hidden = false;
     const downloadTitle = this.escapeHtml(this.tt('ytlive.download.now', 'İndir'));
     const listTitle = this.escapeHtml(this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle'));
     const playTitle = this.escapeHtml(this.tt('ytlive.play', 'Oynat'));
+    const scrollLeftTitle = this.escapeHtml(this.tt('ytlive.musicHome.scrollLeft', 'Sola kaydır'));
+    const scrollRightTitle = this.escapeHtml(this.tt('ytlive.musicHome.scrollRight', 'Sağa kaydır'));
 
     host.innerHTML = this.musicHomeShelves.map((shelf, shelfIndex) => {
       const title = this.escapeHtml(shelf.title || this.tt('ytlive.musicHome.shelfFallback', 'YouTube Music'));
@@ -898,10 +1062,75 @@ class YTLiveMusicApp {
             <h3>${title}</h3>
             <span>${count}</span>
           </div>
-          <div class="music-shelf__rail">${items}</div>
+          <div class="music-shelf__rail-shell">
+            <button class="music-shelf__arrow music-shelf__arrow--prev" type="button" data-shelf-scroll="-1" aria-label="${scrollLeftTitle}">‹</button>
+            <div class="music-shelf__rail" data-shelf-rail="${shelfIndex}">${items}</div>
+            <button class="music-shelf__arrow music-shelf__arrow--next" type="button" data-shelf-scroll="1" aria-label="${scrollRightTitle}">›</button>
+          </div>
         </section>
       `;
     }).join('');
+
+    host.querySelectorAll('.music-shelf__rail').forEach((rail, index) => {
+      if (preserveScroll && Number.isFinite(previousScroll[index])) {
+        rail.scrollLeft = previousScroll[index];
+      }
+      rail.addEventListener('scroll', () => this.syncMusicShelfArrows(rail), { passive: true });
+      this.syncMusicShelfArrows(rail);
+    });
+  }
+
+  syncMusicShelfArrows(rail) {
+    if (!rail) return;
+    const shell = rail.closest('.music-shelf__rail-shell');
+    if (!shell) return;
+    const prev = shell.querySelector('[data-shelf-scroll="-1"]');
+    const next = shell.querySelector('[data-shelf-scroll="1"]');
+    const maxScroll = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    const atStart = rail.scrollLeft <= 2;
+    const atEnd = rail.scrollLeft >= maxScroll - 2;
+    shell.classList.toggle('has-overflow', maxScroll > 4);
+    if (prev) {
+      prev.removeAttribute('aria-disabled');
+      prev.dataset.atEdge = atStart ? 'true' : 'false';
+    }
+    if (next) {
+      next.removeAttribute('aria-disabled');
+      next.dataset.atEdge = atEnd ? 'true' : 'false';
+    }
+  }
+
+  bumpMusicShelfEdge(rail, direction) {
+    if (!rail) return;
+    const className = direction < 0 ? 'is-edge-bump-start' : 'is-edge-bump-end';
+    rail.classList.remove('is-edge-bump-start', 'is-edge-bump-end');
+    void rail.offsetWidth;
+    rail.classList.add(className);
+    rail.addEventListener('animationend', () => {
+      rail.classList.remove(className);
+    }, { once: true });
+  }
+
+  scrollMusicShelf(button) {
+    const shell = button?.closest?.('.music-shelf__rail-shell');
+    const rail = shell?.querySelector?.('.music-shelf__rail');
+    if (!rail) return;
+    const direction = Number(button.dataset.shelfScroll || 0) < 0 ? -1 : 1;
+    const maxScroll = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    const atStart = rail.scrollLeft <= 2;
+    const atEnd = rail.scrollLeft >= maxScroll - 2;
+
+    if (direction < 0 && atStart) {
+      this.bumpMusicShelfEdge(rail, direction);
+      return;
+    }
+    if (direction > 0 && atEnd) {
+      this.bumpMusicShelfEdge(rail, direction);
+      return;
+    }
+
+    const distance = Math.max(280, Math.round(rail.clientWidth * 0.82));
+    rail.scrollBy({ left: direction * distance, behavior: 'smooth' });
   }
 
   renderSkeletonResults() {
@@ -1156,9 +1385,19 @@ class YTLiveMusicApp {
   }
 
   handleMusicHomeInteraction(event) {
-    const actionButton = event.target.closest('[data-music-action]');
     const section = document.getElementById('musicHomeSection');
-    if (!actionButton || !section?.contains(actionButton)) return;
+    if (!section) return;
+
+    const scrollButton = event.target.closest('[data-shelf-scroll]');
+    if (scrollButton && section.contains(scrollButton)) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.scrollMusicShelf(scrollButton);
+      return;
+    }
+
+    const actionButton = event.target.closest('[data-music-action]');
+    if (!actionButton || !section.contains(actionButton)) return;
 
     const shelfIndex = Number(actionButton.dataset.shelf);
     const index = Number(actionButton.dataset.index);
@@ -3008,7 +3247,10 @@ class YTLiveMusicApp {
     grid.innerHTML = lists.map((list) => {
       const items = Array.isArray(list.items) ? list.items : [];
       const canSync = !!this.getMappedListSourceUrl(items);
-      const previewItems = items.slice(0, 8).map((item) => {
+      const listId = String(list.id || '');
+      const isExpanded = this.expandedDownloadListIds.has(listId);
+      const visibleItems = isExpanded ? items : items.slice(0, 8);
+      const previewItems = visibleItems.map((item) => {
         const title = this.escapeHtml(item.title || this.tt('ytlive.youtubeContent', 'YouTube içeriği'));
         const uploader = this.escapeHtml(item.uploader || 'YouTube');
         const key = this.escapeHtml(item.key || '');
@@ -3023,7 +3265,13 @@ class YTLiveMusicApp {
         `;
       }).join('');
       const more = items.length > 8
-        ? `<li class="download-list-item download-list-item--more">${this.escapeHtml(this.tt('ytlive.lists.moreItems', '+{count} içerik daha', { count: items.length - 8 }))}</li>`
+        ? `<li class="download-list-item download-list-item--more">
+            <button class="download-list-more-button" type="button" data-list-action="toggle-items" data-list-id="${this.escapeHtml(list.id)}" aria-expanded="${isExpanded ? 'true' : 'false'}">
+              ${this.escapeHtml(isExpanded
+                ? this.tt('ytlive.lists.showLess', 'Daha az göster')
+                : this.tt('ytlive.lists.moreItems', '+{count} içerik daha', { count: items.length - 8 }))}
+            </button>
+          </li>`
         : '';
 
       return `
@@ -3040,7 +3288,7 @@ class YTLiveMusicApp {
               <button class="ghost-button compact-action" type="button" data-list-action="delete" data-list-id="${this.escapeHtml(list.id)}">${deleteLabel}</button>
             </div>
           </div>
-          <ul class="download-list-card__items">
+          <ul class="download-list-card__items${isExpanded ? ' is-expanded' : ''}">
             ${previewItems || `<li class="download-list-item download-list-item--more">${this.escapeHtml(this.tt('ytlive.lists.emptyList', 'Bu liste boş.'))}</li>`}
             ${more}
           </ul>
@@ -3057,6 +3305,13 @@ class YTLiveMusicApp {
 
     const listId = button.dataset.listId || '';
     const action = button.dataset.listAction || '';
+    if (action === 'toggle-items') {
+      const key = String(listId);
+      if (this.expandedDownloadListIds.has(key)) this.expandedDownloadListIds.delete(key);
+      else this.expandedDownloadListIds.add(key);
+      this.renderDownloadLists();
+      return;
+    }
     if (action === 'play') {
       this.playSavedList(listId);
       return;
@@ -3101,11 +3356,15 @@ class YTLiveMusicApp {
     title.textContent = this.tt('ytlive.lists.addMenu', 'İndirme listesine ekle');
     menu.appendChild(title);
 
+    const scrollBody = document.createElement('div');
+    scrollBody.className = 'download-list-menu__scroll';
+    menu.appendChild(scrollBody);
+
     if (!this.downloadLists.length) {
       const empty = document.createElement('div');
       empty.className = 'download-list-menu__empty';
       empty.textContent = this.tt('ytlive.lists.empty', 'Henüz indirme listesi yok.');
-      menu.appendChild(empty);
+      scrollBody.appendChild(empty);
     } else {
       this.downloadLists.forEach((list) => {
         const button = document.createElement('button');
@@ -3116,7 +3375,7 @@ class YTLiveMusicApp {
           this.closeDownloadListMenu();
           this.addItemToDownloadList(item, list.id);
         });
-        menu.appendChild(button);
+        scrollBody.appendChild(button);
       });
     }
 
@@ -3170,7 +3429,7 @@ class YTLiveMusicApp {
     const rect = anchor?.getBoundingClientRect?.() || fallbackRect;
 
     menu.style.maxWidth = `${availableWidth}px`;
-    menu.style.maxHeight = `${availableHeight}px`;
+    menu.style.maxHeight = `${Math.min(availableHeight, Math.max(240, viewportHeight * 0.9))}px`;
 
     const menuRect = menu.getBoundingClientRect();
     const menuWidth = Math.min(menuRect.width || availableWidth, availableWidth);

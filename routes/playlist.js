@@ -133,6 +133,44 @@ router.get("/api/youtube/music-home", async (req, res) => {
   }
 });
 
+router.get("/api/youtube/music-home-stream", async (req, res) => {
+  const limit = Number(req.query.limit || 12);
+  const shelves = Number(req.query.shelves || 6);
+  const lang = String(req.query.lang || "").trim().toLowerCase();
+  const region = String(req.query.region || "").trim().toUpperCase();
+
+  res.status(200);
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const writeFrame = (payload) => {
+    if (res.writableEnded || res.destroyed) return;
+    res.write(`${JSON.stringify(payload)}\n`);
+    res.flush?.();
+  };
+
+  try {
+    const result = await getYouTubeMusicHomeShelves({
+      limit,
+      shelves,
+      lang,
+      region,
+      onProgress: (progress) => writeFrame({ type: "progress", ...progress })
+    });
+    writeFrame({ type: "done", ...result });
+  } catch (e) {
+    console.warn("YouTube Music home stream unavailable:", e?.message || e);
+    writeFrame({
+      type: "error",
+      error: { message: e?.message || "YouTube Music home failed" }
+    });
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
+});
+
 router.post("/api/playlist/preview", async (req, res) => {
   try {
     const { url, page = 1, pageSize = 25 } = req.body || {};

@@ -462,6 +462,12 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
+                <label for="f_YTM_AUTH_USER" class="settings-field-label">YTM_AUTH_USER</label>
+                <div class="settings-field-hint muted" data-i18n="settings.ytmAuthUser"></div>
+                <input id="f_YTM_AUTH_USER" type="number" min="0" step="1" placeholder="0" data-i18n-ph="ph.ytmAuthUser">
+                </div>
+
+                <div class="form-group">
                 <label for="f_YT_ACCEPT_LANGUAGE" class="settings-field-label">YT_ACCEPT_LANGUAGE</label>
                 <div class="settings-field-hint muted" data-i18n="settings.ytAcceptLang"></div>
                 <input id="f_YT_ACCEPT_LANGUAGE" type="text" placeholder="en-US,en;q=0.8 (opsiyonel)" data-i18n-ph="ph.ytAcceptLang">
@@ -916,6 +922,7 @@ export class SettingsManager {
                 : '0';
             document.getElementById('f_YT_DEFAULT_REGION').value = s.YT_DEFAULT_REGION || '';
             document.getElementById('f_YT_LANG').value = s.YT_LANG || 'en-US';
+            document.getElementById('f_YTM_AUTH_USER').value = s.YTM_AUTH_USER || '';
             document.getElementById('f_YT_ACCEPT_LANGUAGE').value = s.YT_ACCEPT_LANGUAGE || '';
             document.getElementById('f_YT_FORCE_IPV4').value = (typeof s.YT_FORCE_IPV4 !== 'undefined' && s.YT_FORCE_IPV4 !== null) ? String(s.YT_FORCE_IPV4) : '1';
             document.getElementById('f_YT_403_WORKAROUNDS').value = (typeof s.YT_403_WORKAROUNDS !== 'undefined' && s.YT_403_WORKAROUNDS !== null) ? String(s.YT_403_WORKAROUNDS) : '1';
@@ -979,6 +986,7 @@ export class SettingsManager {
                 YT_STRIP_COOKIES: document.getElementById('f_YT_STRIP_COOKIES').value,
                 YT_DEFAULT_REGION: document.getElementById('f_YT_DEFAULT_REGION').value.trim(),
                 YT_LANG: document.getElementById('f_YT_LANG').value.trim(),
+                YTM_AUTH_USER: document.getElementById('f_YTM_AUTH_USER').value.trim(),
                 YT_ACCEPT_LANGUAGE: document.getElementById('f_YT_ACCEPT_LANGUAGE').value.trim(),
                 YT_FORCE_IPV4: document.getElementById('f_YT_FORCE_IPV4').value,
                 YT_403_WORKAROUNDS: document.getElementById('f_YT_403_WORKAROUNDS').value,
