@@ -308,7 +308,11 @@
         </div>
         <div class="collapsible-body" data-collapsible-body>
           <div id="downloadListsStatus" class="status-line"></div>
-          <div id="downloadListsGrid" class="download-lists-grid"></div>
+          <div class="music-shelf__rail-shell download-lists-grid-shell">
+            <button class="music-shelf__arrow music-shelf__arrow--prev" type="button" data-download-lists-scroll="-1" aria-label="Sola kaydır" data-i18n-aria="ytlive.musicHome.scrollLeft">‹</button>
+            <div id="downloadListsGrid" class="download-lists-grid"></div>
+            <button class="music-shelf__arrow music-shelf__arrow--next" type="button" data-download-lists-scroll="1" aria-label="Sağa kaydır" data-i18n-aria="ytlive.musicHome.scrollRight">›</button>
+          </div>
         </div>
       </section>
 

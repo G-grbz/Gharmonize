@@ -252,6 +252,7 @@ class YTLiveMusicApp {
     document.getElementById('playlistTracksPanel')?.addEventListener('click', (event) => this.handlePlaylistTrackInteraction(event));
     document.getElementById('playlistTracksPanel')?.addEventListener('keydown', (event) => this.handlePlaylistTrackKeyInteraction(event));
     document.getElementById('downloadListsPanel')?.addEventListener('click', (event) => this.handleDownloadListPanelInteraction(event));
+    document.getElementById('downloadListsGrid')?.addEventListener('scroll', (event) => this.syncDownloadListArrows(event.currentTarget), { passive: true });
     this.setupInfiniteScroll();
     this.updatePlayerNavigationControls();
     document.addEventListener('error', (event) => this.handleThumbnailError(event), true);
@@ -3224,6 +3225,7 @@ class YTLiveMusicApp {
     if (error) {
       status.textContent = error;
       grid.innerHTML = `<div class="empty-state">${this.escapeHtml(error)}</div>`;
+      requestAnimationFrame(() => this.syncDownloadListArrows(grid));
       return;
     }
 
@@ -3235,6 +3237,7 @@ class YTLiveMusicApp {
 
     if (!lists.length) {
       grid.innerHTML = `<div class="empty-state">${this.escapeHtml(this.tt('ytlive.lists.emptyHint', 'Yeni + butonundan liste oluşturabilirsin.'))}</div>`;
+      requestAnimationFrame(() => this.syncDownloadListArrows(grid));
       return;
     }
 
@@ -3295,9 +3298,60 @@ class YTLiveMusicApp {
         </article>
       `;
     }).join('');
+    requestAnimationFrame(() => this.syncDownloadListArrows(grid));
+  }
+
+  syncDownloadListArrows(grid) {
+    if (!grid) return;
+    const shell = grid.closest('.download-lists-grid-shell');
+    if (!shell) return;
+    const prev = shell.querySelector('[data-download-lists-scroll="-1"]');
+    const next = shell.querySelector('[data-download-lists-scroll="1"]');
+    const maxScroll = Math.max(0, grid.scrollWidth - grid.clientWidth);
+    const atStart = grid.scrollLeft <= 2;
+    const atEnd = grid.scrollLeft >= maxScroll - 2;
+    shell.classList.toggle('has-overflow', maxScroll > 4);
+    if (prev) {
+      prev.removeAttribute('aria-disabled');
+      prev.dataset.atEdge = atStart ? 'true' : 'false';
+    }
+    if (next) {
+      next.removeAttribute('aria-disabled');
+      next.dataset.atEdge = atEnd ? 'true' : 'false';
+    }
+  }
+
+  scrollDownloadLists(button) {
+    const shell = button?.closest?.('.download-lists-grid-shell');
+    const grid = shell?.querySelector?.('.download-lists-grid');
+    if (!grid) return;
+    const direction = Number(button.dataset.downloadListsScroll || 0) < 0 ? -1 : 1;
+    const maxScroll = Math.max(0, grid.scrollWidth - grid.clientWidth);
+    const atStart = grid.scrollLeft <= 2;
+    const atEnd = grid.scrollLeft >= maxScroll - 2;
+
+    if (direction < 0 && atStart) {
+      this.bumpMusicShelfEdge(grid, direction);
+      return;
+    }
+    if (direction > 0 && atEnd) {
+      this.bumpMusicShelfEdge(grid, direction);
+      return;
+    }
+
+    const distance = Math.max(320, Math.round(grid.clientWidth * 0.82));
+    grid.scrollBy({ left: direction * distance, behavior: 'smooth' });
   }
 
   handleDownloadListPanelInteraction(event) {
+    const scrollButton = event.target.closest('[data-download-lists-scroll]');
+    if (scrollButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.scrollDownloadLists(scrollButton);
+      return;
+    }
+
     const button = event.target.closest('[data-list-action]');
     if (!button) return;
     event.preventDefault();
@@ -3411,7 +3465,9 @@ class YTLiveMusicApp {
       document.addEventListener('mousedown', outsideHandler);
       document.addEventListener('keydown', keyHandler);
       window.addEventListener('resize', repositionHandler, { passive: true });
+      window.addEventListener('scroll', repositionHandler, { passive: true });
       window.visualViewport?.addEventListener('resize', repositionHandler, { passive: true });
+      window.visualViewport?.addEventListener('scroll', repositionHandler, { passive: true });
     }, 0);
     this.activeDownloadListMenu = { menu, outsideHandler, keyHandler, repositionHandler };
   }
@@ -3421,34 +3477,65 @@ class YTLiveMusicApp {
 
     const margin = 12;
     const gap = 8;
-    const viewportWidth = Math.max(document.documentElement?.clientWidth || 0, window.innerWidth || 0);
-    const viewportHeight = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
+    const visualViewport = window.visualViewport;
+    const viewportLeft = Number.isFinite(visualViewport?.offsetLeft) ? visualViewport.offsetLeft : 0;
+    const viewportTop = Number.isFinite(visualViewport?.offsetTop) ? visualViewport.offsetTop : 0;
+    const viewportWidth = Math.max(0, visualViewport?.width || window.innerWidth || document.documentElement?.clientWidth || 0);
+    const viewportHeight = Math.max(0, visualViewport?.height || window.innerHeight || document.documentElement?.clientHeight || 0);
+    const viewportRight = viewportLeft + viewportWidth;
+    const viewportBottom = viewportTop + viewportHeight;
     const availableWidth = Math.max(0, viewportWidth - (margin * 2));
     const availableHeight = Math.max(0, viewportHeight - (margin * 2));
-    const fallbackRect = { left: margin, right: margin, top: margin, bottom: margin };
+    const fallbackRect = {
+      left: viewportLeft + margin,
+      right: viewportLeft + margin,
+      top: viewportTop + margin,
+      bottom: viewportTop + margin,
+    };
     const rect = anchor?.getBoundingClientRect?.() || fallbackRect;
 
     menu.style.maxWidth = `${availableWidth}px`;
-    menu.style.maxHeight = `${Math.min(availableHeight, Math.max(240, viewportHeight * 0.9))}px`;
+    menu.style.maxHeight = `${availableHeight}px`;
+
+    // The list itself is the only scrollable region. Reserve guaranteed room
+    // for the title and the always-visible "create list" footer.
+    const scrollBody = menu.querySelector('.download-list-menu__scroll');
+    const title = menu.querySelector('.download-list-menu__title');
+    const createButton = menu.querySelector('.download-list-menu__create');
+    if (scrollBody) {
+      const menuStyle = window.getComputedStyle(menu);
+      const paddingTop = Number.parseFloat(menuStyle.paddingTop) || 0;
+      const paddingBottom = Number.parseFloat(menuStyle.paddingBottom) || 0;
+      const rowGap = Number.parseFloat(menuStyle.rowGap || menuStyle.gap) || 0;
+      const titleHeight = title?.getBoundingClientRect?.().height || 0;
+      const createHeight = createButton?.getBoundingClientRect?.().height || 0;
+      const fixedHeight = paddingTop + paddingBottom + titleHeight + createHeight + (rowGap * 2);
+      scrollBody.style.maxHeight = `${Math.max(0, availableHeight - fixedHeight)}px`;
+      scrollBody.style.flex = '1 1 auto';
+      scrollBody.style.minHeight = '0';
+    }
 
     const menuRect = menu.getBoundingClientRect();
     const menuWidth = Math.min(menuRect.width || availableWidth, availableWidth);
     const menuHeight = Math.min(menuRect.height || availableHeight, availableHeight);
-    const maxLeft = Math.max(margin, viewportWidth - menuWidth - margin);
-    const maxTop = Math.max(margin, viewportHeight - menuHeight - margin);
+    const minLeft = viewportLeft + margin;
+    const minTop = viewportTop + margin;
+    const maxLeft = Math.max(minLeft, viewportRight - menuWidth - margin);
+    const maxTop = Math.max(minTop, viewportBottom - menuHeight - margin);
 
     let left = rect.left;
-    if (left + menuWidth + margin > viewportWidth) {
+    if (left + menuWidth + margin > viewportRight) {
       left = rect.right - menuWidth;
     }
-    left = Math.min(Math.max(margin, left), maxLeft);
+    left = Math.min(Math.max(minLeft, left), maxLeft);
 
     const belowTop = rect.bottom + gap;
     const aboveTop = rect.top - menuHeight - gap;
-    const opensAbove = belowTop + menuHeight + margin > viewportHeight && aboveTop >= margin;
-    const top = opensAbove
-      ? aboveTop
-      : Math.min(Math.max(margin, belowTop), maxTop);
+    const spaceBelow = viewportBottom - margin - rect.bottom;
+    const spaceAbove = rect.top - (viewportTop + margin);
+    const opensAbove = spaceBelow < menuHeight + gap && spaceAbove > spaceBelow;
+    const preferredTop = opensAbove ? aboveTop : belowTop;
+    const top = Math.min(Math.max(minTop, preferredTop), maxTop);
     const originX = left < rect.left ? 'right' : 'left';
     const originY = opensAbove ? 'bottom' : 'top';
 
@@ -3463,7 +3550,9 @@ class YTLiveMusicApp {
     try { document.removeEventListener('mousedown', active.outsideHandler); } catch {}
     try { document.removeEventListener('keydown', active.keyHandler); } catch {}
     try { window.removeEventListener('resize', active.repositionHandler); } catch {}
+    try { window.removeEventListener('scroll', active.repositionHandler); } catch {}
     try { window.visualViewport?.removeEventListener('resize', active.repositionHandler); } catch {}
+    try { window.visualViewport?.removeEventListener('scroll', active.repositionHandler); } catch {}
     active.menu?.remove?.();
     this.activeDownloadListMenu = null;
   }
