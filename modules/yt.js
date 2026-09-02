@@ -59,7 +59,6 @@ const DM_IMPERSONATION_HINT =
   "Dailymotion requires yt-dlp impersonation dependencies (curl_cffi). Rebuild/install yt-dlp with curl-cffi support.";
 
 const YTM_ORIGIN = "https://music.youtube.com";
-const YTM_DEFAULT_API_KEY = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30";
 const YTM_HOME_BROWSE_ID = "FEmusic_home";
 const YTM_HOME_BROWSE_URL = `${YTM_ORIGIN}/browse/${YTM_HOME_BROWSE_ID}`;
 const YTM_COOKIE_EXPORT_DIR = path.resolve(
@@ -4316,7 +4315,10 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
     const endpoint = new URL(`${YTM_ORIGIN}/youtubei/v1/browse`);
     endpoint.searchParams.set("alt", "json");
     endpoint.searchParams.set("prettyPrint", "false");
-    endpoint.searchParams.set("key", bootstrap.apiKey || YTM_DEFAULT_API_KEY);
+    if (!bootstrap.apiKey) {
+      throw new Error("YouTube Music bootstrap did not expose an Innertube API key");
+    }
+    endpoint.searchParams.set("key", bootstrap.apiKey);
     if (legacyContinuation) {
       endpoint.searchParams.set("ctoken", legacyContinuation);
       endpoint.searchParams.set("continuation", legacyContinuation);
