@@ -1,4 +1,5 @@
 version: 2
+# Auto-merge policy is enforced by .github/workflows/dependabot-policy.yml.
 updates:
   - package-ecosystem: npm
     directory: /

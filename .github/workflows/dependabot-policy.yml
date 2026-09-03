@@ -1,0 +1,170 @@
+name: Dependabot Policy
+
+# Gharmonize policy:
+# - Auto-merge npm indirect patch/minor updates after CI + CodeQL pass.
+# - Auto-merge patch/minor updates for cross-env, nodemon, and wait-on.
+# - Keep direct production dependencies, Electron/electron-builder, GitHub Actions,
+#   and every major update for manual review.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  policy:
+    name: Classify and merge safe updates
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'G-grbz/Gharmonize'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply Gharmonize dependency policy
+        id: policy
+        shell: bash
+        env:
+          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          DEPENDENCY_TYPE: ${{ steps.metadata.outputs.dependency-type }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          PACKAGE_ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+        run: |
+          set -euo pipefail
+
+          echo "Dependencies: $DEPENDENCY_NAMES"
+          echo "Dependency type: $DEPENDENCY_TYPE"
+          echo "Update type: $UPDATE_TYPE"
+          echo "Package ecosystem: $PACKAGE_ECOSYSTEM"
+
+          safe=false
+          reason="manual review required"
+
+          is_patch_or_minor=false
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor)
+              is_patch_or_minor=true
+              ;;
+          esac
+
+          if [[ "$PACKAGE_ECOSYSTEM" == "npm" && "$is_patch_or_minor" == "true" ]]; then
+            if [[ "$DEPENDENCY_TYPE" == "indirect" ]]; then
+              safe=true
+              reason="indirect npm patch/minor update"
+            elif [[ "$DEPENDENCY_TYPE" == "direct:development" ]]; then
+              # Only these low-risk direct dev tools may auto-merge.
+              safe=true
+              IFS=',' read -ra deps <<< "$DEPENDENCY_NAMES"
+              for raw_dep in "${deps[@]}"; do
+                dep="$(echo "$raw_dep" | xargs)"
+                case "$dep" in
+                  cross-env|nodemon|wait-on)
+                    ;;
+                  *)
+                    safe=false
+                    reason="direct development dependency is not on the auto-merge allowlist"
+                    break
+                    ;;
+                esac
+              done
+
+              if [[ "$safe" == "true" ]]; then
+                reason="allowlisted direct dev dependency patch/minor update"
+              fi
+            fi
+          fi
+
+          # Hard vetoes. These always require manual review/build testing.
+          if [[ ",$DEPENDENCY_NAMES," == *",electron,"* || ",$DEPENDENCY_NAMES," == *",electron-builder,"* ]]; then
+            safe=false
+            reason="Electron packaging/runtime dependency requires manual build testing"
+          fi
+
+          if [[ "$UPDATE_TYPE" == "version-update:semver-major" ]]; then
+            safe=false
+            reason="major update requires manual review"
+          fi
+
+          if [[ "$PACKAGE_ECOSYSTEM" == "github-actions" ]]; then
+            safe=false
+            reason="GitHub Actions updates require manual review"
+          fi
+
+          echo "safe=$safe" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Dependabot policy"
+            echo
+            echo "- Dependencies: \`$DEPENDENCY_NAMES\`"
+            echo "- Type: \`$DEPENDENCY_TYPE\`"
+            echo "- Update: \`$UPDATE_TYPE\`"
+            echo "- Ecosystem: \`$PACKAGE_ECOSYSTEM\`"
+            echo "- Auto-merge eligible: **$safe**"
+            echo "- Decision: $reason"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for CI and CodeQL
+        if: steps.policy.outputs.safe == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+
+          # pull_request_target has write permission, but it never checks out or
+          # executes code from the Dependabot branch. We only observe the normal
+          # pull_request checks produced by CI and CodeQL.
+          for attempt in $(seq 1 40); do
+            checks="$(gh pr checks "$PR_URL" --json name,workflow,bucket 2>/dev/null || true)"
+            if [[ -z "$checks" ]]; then
+              checks='[]'
+            fi
+
+            relevant="$(jq '[.[] | select(.workflow == "CI" or .workflow == "CodeQL")]' <<< "$checks")"
+            ci_count="$(jq '[.[] | select(.workflow == "CI")] | length' <<< "$relevant")"
+            codeql_count="$(jq '[.[] | select(.workflow == "CodeQL")] | length' <<< "$relevant")"
+
+            if [[ "$ci_count" -ge 3 && "$codeql_count" -ge 1 ]]; then
+              failed="$(jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "skipping")] | length' <<< "$relevant")"
+              pending="$(jq '[.[] | select(.bucket == "pending")] | length' <<< "$relevant")"
+              passed="$(jq '[.[] | select(.bucket == "pass")] | length' <<< "$relevant")"
+              total="$(jq 'length' <<< "$relevant")"
+
+              echo "CI/CodeQL checks: $passed passed, $pending pending, $failed failed/skipped, $total total"
+
+              if [[ "$failed" -gt 0 ]]; then
+                echo "A required CI or CodeQL check failed, was cancelled, or was skipped. Refusing auto-merge."
+                exit 1
+              fi
+
+              if [[ "$pending" -eq 0 && "$passed" -eq "$total" ]]; then
+                echo "CI and CodeQL are green."
+                exit 0
+              fi
+            else
+              echo "Waiting for CI/CodeQL checks to appear (CI jobs: $ci_count, CodeQL jobs: $codeql_count)..."
+            fi
+
+            sleep 15
+          done
+
+          echo "Timed out waiting for CI and CodeQL. Refusing auto-merge."
+          exit 1
+
+      - name: Merge safe Dependabot update
+        if: steps.policy.outputs.safe == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_URL" --merge --delete-branch
