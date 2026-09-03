@@ -250,6 +250,14 @@ test('safe process layer rejects dangerous arguments and unknown executables', (
   assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location', '/tmp/curl']));
   assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location=/tmp/ffmpeg/']));
   assert.throws(() => assertSafeProcessArgs('ffmpeg', ['ok\n--evil']));
+  assert.doesNotThrow(() => assertSafeProcessArgs('ffmpeg', [
+    '-metadata',
+    'lyrics=First line\nSecond line',
+    '-metadata:s:a:0',
+    'lyrics=First line\r\nSecond line',
+  ]));
+  assert.throws(() => assertSafeProcessArgs('ffmpeg', ['-i', 'track.mp3\n--evil']));
+  assert.throws(() => assertSafeProcessArgs('ffmpeg', ['-metadata', 'lyrics=ok\u2028--evil']));
   assert.throws(() => assertTrustedExecutable('/tmp/not-gharmonize-tool'));
   assert.equal(assertTrustedExecutable('/usr/bin/ffmpeg'), '/usr/bin/ffmpeg');
 });

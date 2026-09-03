@@ -3,6 +3,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const CONTROL_CHARS = /[\u0000\r\n\u2028\u2029]/;
+const CONTROL_CHARS_WITH_MULTILINE = /[\u0000\u2028\u2029]/;
 const DEFAULT_ALLOWED_EXECUTABLES = new Set([
   "yt-dlp", "yt-dlp.exe",
   "ffmpeg", "ffmpeg.exe",
@@ -54,9 +55,10 @@ function assertSafeYtDlpFfmpegLocation(value) {
   return location;
 }
 
-function assertPlainProcessString(value, label, maxLength, { allowEmpty = true } = {}) {
+function assertPlainProcessString(value, label, maxLength, { allowEmpty = true, allowLineBreaks = false } = {}) {
   const text = String(value ?? "");
-  if ((!allowEmpty && !text) || text.length > maxLength || CONTROL_CHARS.test(text)) {
+  const unsafeChars = allowLineBreaks ? CONTROL_CHARS_WITH_MULTILINE : CONTROL_CHARS;
+  if ((!allowEmpty && !text) || text.length > maxLength || unsafeChars.test(text)) {
     throw new Error(`Unsafe ${label}`);
   }
   return text;
@@ -148,7 +150,16 @@ export function normalizeTrustedExecutableSetting(value, expectedBase = "") {
 export function assertSafeProcessArgs(command, args = []) {
   if (!Array.isArray(args)) throw new Error("Process arguments must be an array");
   const executable = canonicalExecutableToken(command).toLowerCase();
-  const safe = args.map((arg) => assertPlainProcessString(arg, "process argument", 64 * 1024));
+  const isFfmpeg = executable === "ffmpeg" || executable === "ffmpeg.exe"
+    || executable === "ffmpeg-candidate" || executable === "ffmpeg-candidate.exe"
+    || executable === "ffmpeg-lkg" || executable === "ffmpeg-lkg.exe";
+  const safe = args.map((arg, index) => {
+    const previous = String(args[index - 1] ?? "").toLowerCase();
+    const isFfmpegMetadataValue = isFfmpeg && /^-metadata(?::[^=\s]+)*$/.test(previous);
+    return assertPlainProcessString(arg, "process argument", 64 * 1024, {
+      allowLineBreaks: isFfmpegMetadataValue,
+    });
+  });
 
   if (executable === "yt-dlp" || executable === "yt-dlp.exe") {
     for (let index = 0; index < safe.length; index += 1) {
