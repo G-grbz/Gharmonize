@@ -1,7 +1,7 @@
 {
   "name": "Gharmonize",
   "desktopName": "gharmonize.desktop",
-  "version": "1.3.7",
+  "version": "1.3.8",
   "description": "Gharmonize is a desktop application that brings together third-party tools from various platforms to help you build and manage your local music library.",
   "author": "G-grbz <gkhn.gurbuz@hotmail.com>",
   "license": "GPL-3.0-only",
