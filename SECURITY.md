@@ -33,3 +33,18 @@ Official tagged releases publish `SHA256SUMS`, a CycloneDX SBOM, and GitHub arti
 gh attestation verify <artifact> --repo G-grbz/Gharmonize
 sha256sum -c SHA256SUMS
 ```
+
+## Official downloads, impersonation, and suspicious distributions
+
+The official Gharmonize project is hosted at:
+
+- Repository: https://github.com/G-grbz/Gharmonize
+- Releases: https://github.com/G-grbz/Gharmonize/releases
+
+A third-party repository or website using the Gharmonize name is not automatically an official distribution. In particular, treat a download as suspicious if it asks you to disable antivirus protection, add security exclusions, run an unrelated installer as Administrator, or obtain Gharmonize from an unrelated external domain.
+
+Do not rely on a third-party project's source-code claim as proof that a separately hosted binary is safe. Verify official tagged artifacts with the published `SHA256SUMS` and GitHub artifact attestations described above.
+
+If you find a repository, website, package, or executable that uses the Gharmonize name or project screenshots in a way that could be mistaken for an official release, please report it to the hosting provider and notify the maintainer through the contact information on the official GitHub profile. Include the URL and screenshots when possible.
+
+[Softpedia](https://www.softpedia.com/get/Multimedia/Audio/Other-AUDIO-Tools/Gharmonize.shtml) currently maintains an independent third-party listing and review for Gharmonize. The listing was created independently and was not requested, operated, or managed by this project. The authoritative source for official releases remains the GitHub repository above.

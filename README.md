@@ -22,6 +22,19 @@ Seamlessly download content from YouTube, YouTube Music, and major platforms lik
 
 ---
 
+## Official distribution and downloads
+
+> [!IMPORTANT]
+> The **only official Gharmonize source repository and release channel** is [`G-grbz/Gharmonize`](https://github.com/G-grbz/Gharmonize). Official desktop binaries are published through [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases).
+>
+> Repositories, websites, archives, or executables using the **Gharmonize** name outside these channels are **not official unless this repository explicitly says otherwise**. Never disable Windows Defender or another security product, add antivirus exclusions, or run an unrelated executable as Administrator just because a third-party page claims it is required for Gharmonize.
+
+**Independent third-party listing:** [Softpedia – Gharmonize](https://www.softpedia.com/get/Multimedia/Audio/Other-AUDIO-Tools/Gharmonize.shtml) independently lists and reviews Gharmonize. This listing was created independently; it was **not requested, operated, or managed by the Gharmonize project**. Use the official GitHub release page, `SHA256SUMS`, and GitHub artifact attestations when you need to verify a release.
+
+For guidance on unofficial downloads, impersonation, and reporting suspicious distributions, see [SECURITY.md](SECURITY.md). For use of the Gharmonize name and logo, see [TRADEMARK.md](TRADEMARK.md).
+
+---
+
 ## Quick Start
 
 > **Prebuilt desktop builds:** Official Gharmonize **Windows EXE** and **Linux AppImage** releases already include the Node.js runtime required by the application through Electron. You **do not need to install Node.js separately** to use these packaged builds. Some third-party download sites may incorrectly list Node.js as an additional prerequisite; that notice can be ignored for official prebuilt Gharmonize binaries. Node.js is only required when running or building Gharmonize from source.
@@ -106,7 +119,8 @@ Full details in [docs/FEATURES.md](docs/FEATURES.md).
 | [docs/COOKIES.md](docs/COOKIES.md) | Cookies, age-restricted content, environment comparison |
 | [docs/HOMEPAGE_WIDGET.md](docs/HOMEPAGE_WIDGET.md) | Homepage dashboard widget setup |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues & fixes |
-| [LICENSE](LICENSE) | License & redistribution rules |
+| [LICENSE.md](LICENSE.md) | GPL-3.0 license & redistribution rules |
+| [TRADEMARK.md](TRADEMARK.md) | Gharmonize name, logo, and branding policy |
 | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) | Bundled third-party tool licenses |
 
 ---
