@@ -202,10 +202,18 @@ class YTLiveMusicApp {
     this.syncMusicHomeShelfCountInput();
     document.getElementById('musicHomeShelfCountInput')?.addEventListener('change', () => this.handleMusicHomeShelfCountChange());
     document.getElementById('formatSelect')?.addEventListener('change', () => this.handleFormatChange());
-    ['bitrateSelect', 'sampleRateSelect', 'includeLyrics', 'embedLyrics', 'autoZip'].forEach((id) => {
+    ['bitrateSelect', 'sampleRateSelect', 'includeLyrics', 'embedLyrics', 'autoZip', 'loudnormModeSelect'].forEach((id) => {
       document.getElementById(id)?.addEventListener('change', () => this.handleOutputSettingChange());
     });
     document.getElementById('youtubeConcurrencyInput')?.addEventListener('input', () => this.handleOutputSettingChange());
+
+    const volumeGainRange = document.getElementById('volumeGainRange');
+    volumeGainRange?.addEventListener('input', () => this.syncAudioOutputControls());
+    volumeGainRange?.addEventListener('change', () => this.handleOutputSettingChange());
+    document.getElementById('loudnormCheckbox')?.addEventListener('change', () => {
+      this.syncAudioOutputControls();
+      this.handleOutputSettingChange();
+    });
 
     document.querySelectorAll('[data-scroll]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -577,6 +585,30 @@ class YTLiveMusicApp {
     if (autoZip) autoZip.disabled = isVideo;
   }
 
+  normalizeLoudnormMode(value) {
+    const mode = String(value || 'ebu_r128').trim().toLowerCase();
+    return ['ebu_r128', 'two_pass', 'dynamic'].includes(mode) ? mode : 'ebu_r128';
+  }
+
+  syncAudioOutputControls() {
+    const volumeGainRange = document.getElementById('volumeGainRange');
+    const volumeGainValue = document.getElementById('volumeGainValue');
+    const loudnormCheckbox = document.getElementById('loudnormCheckbox');
+    const loudnormModeGroup = document.getElementById('loudnormModeGroup');
+    const loudnormModeSelect = document.getElementById('loudnormModeSelect');
+
+    if (volumeGainRange && volumeGainValue) {
+      const raw = Number(volumeGainRange.value);
+      const gain = Number.isFinite(raw) ? Math.max(1, Math.min(5, raw)) : 1;
+      volumeGainValue.textContent = `${gain.toFixed(1)}x`;
+      volumeGainRange.setAttribute('aria-valuetext', `${gain.toFixed(1)}x`);
+    }
+
+    const loudnormEnabled = !!loudnormCheckbox?.checked;
+    if (loudnormModeGroup) loudnormModeGroup.hidden = !loudnormEnabled;
+    if (loudnormModeSelect) loudnormModeSelect.disabled = !loudnormEnabled;
+  }
+
   syncLyricsControls() {
     this.syncOutputAvailability();
     this.saveOutputSettings();
@@ -615,7 +647,8 @@ class YTLiveMusicApp {
     [
       ['includeLyrics', 'includeLyrics'],
       ['embedLyrics', 'embedLyrics'],
-      ['autoZip', 'autoCreateZip']
+      ['autoZip', 'autoCreateZip'],
+      ['loudnormCheckbox', 'loudnorm']
     ].forEach(([id, key]) => {
       const checkbox = document.getElementById(id);
       if (checkbox && typeof settings[key] === 'boolean') {
@@ -623,7 +656,20 @@ class YTLiveMusicApp {
       }
     });
 
+    const volumeGainRange = document.getElementById('volumeGainRange');
+    if (volumeGainRange) {
+      const rawGain = Number(settings.volumeGain ?? 1);
+      const gain = Number.isFinite(rawGain) ? Math.max(1, Math.min(5, rawGain)) : 1;
+      volumeGainRange.value = gain.toFixed(1);
+    }
+
+    const loudnormModeSelect = document.getElementById('loudnormModeSelect');
+    if (loudnormModeSelect) {
+      loudnormModeSelect.value = this.normalizeLoudnormMode(settings.loudnormMode);
+    }
+
     this.syncOutputAvailability();
+    this.syncAudioOutputControls();
   }
 
   loadOutputSettings() {
@@ -645,7 +691,10 @@ class YTLiveMusicApp {
       spotifyConcurrency: concurrency,
       includeLyrics: !!document.getElementById('includeLyrics')?.checked,
       embedLyrics: !!document.getElementById('embedLyrics')?.checked,
-      autoCreateZip: !!document.getElementById('autoZip')?.checked
+      autoCreateZip: !!document.getElementById('autoZip')?.checked,
+      volumeGain: Math.max(1, Math.min(5, Number(document.getElementById('volumeGainRange')?.value || 1))),
+      loudnorm: !!document.getElementById('loudnormCheckbox')?.checked,
+      loudnormMode: this.normalizeLoudnormMode(document.getElementById('loudnormModeSelect')?.value)
     };
     this.outputSettings = settings;
     try {
@@ -3161,7 +3210,10 @@ class YTLiveMusicApp {
         isPlaylist: item.type !== 'track',
         includeLyrics: !!payload.includeLyrics,
         embedLyrics: !!payload.embedLyrics,
-        autoCreateZip: !!payload.autoCreateZip
+        autoCreateZip: !!payload.autoCreateZip,
+        volumeGain: payload.volumeGain ?? 1,
+        loudnorm: !!payload.loudnorm,
+        loudnormMode: payload.loudnorm ? this.normalizeLoudnormMode(payload.loudnormMode) : null
       }
     };
 
@@ -4223,6 +4275,9 @@ class YTLiveMusicApp {
       includeLyrics: !isVideo && !!document.getElementById('includeLyrics')?.checked,
       embedLyrics: !isVideo && !!document.getElementById('embedLyrics')?.checked,
       autoCreateZip: !isVideo && !!document.getElementById('autoZip')?.checked,
+      volumeGain: Math.max(1, Math.min(5, Number(document.getElementById('volumeGainRange')?.value || 1))),
+      loudnorm: !!document.getElementById('loudnormCheckbox')?.checked,
+      loudnormMode: this.normalizeLoudnormMode(document.getElementById('loudnormModeSelect')?.value),
       youtubeConcurrency: spotifyConcurrency,
       spotifyConcurrency
     };
@@ -4551,7 +4606,10 @@ class YTLiveMusicApp {
       frozenEntries: Array.isArray(frozenEntries) ? frozenEntries : null,
       includeLyrics: Boolean(payload.includeLyrics ?? serverMeta.includeLyrics ?? previous.includeLyrics),
       embedLyrics: Boolean(payload.embedLyrics ?? serverMeta.embedLyrics ?? previous.embedLyrics),
-      autoCreateZip: Boolean(payload.autoCreateZip ?? serverMeta.autoCreateZip ?? previous.autoCreateZip)
+      autoCreateZip: Boolean(payload.autoCreateZip ?? serverMeta.autoCreateZip ?? previous.autoCreateZip),
+      volumeGain: Number(payload.volumeGain ?? serverMeta.volumeGain ?? previous.volumeGain ?? 1),
+      loudnorm: Boolean(payload.loudnorm ?? serverMeta.loudnorm ?? previous.loudnorm),
+      loudnormMode: this.normalizeLoudnormMode(payload.loudnormMode ?? serverMeta.loudnormMode ?? previous.loudnormMode)
     };
   }
 

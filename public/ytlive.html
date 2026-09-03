@@ -237,10 +237,65 @@
           <div class="eyebrow" id="nowType">YouTube</div>
           <h1 id="nowTitle">Gharmonize Music</h1>
           <p id="nowSubtitle" data-i18n="ytlive.now.subtitle">Search YouTube content, play it, and add it to the conversion queue.</p>
-          <div class="now-actions">
-            <button id="addCurrentBtn" class="primary-button" type="button" disabled data-i18n="ytlive.download.now">Download</button>
-            <button id="addCurrentToListBtn" class="secondary-button icon-button" type="button" disabled data-i18n-title="ytlive.lists.addMenu" aria-label="Add to download list">+</button>
-            <a id="openCurrentLink" class="secondary-button is-disabled" href="#" target="_blank" rel="noopener" data-i18n="ytlive.openYoutube">Open on YouTube</a>
+          <div class="now-actions" role="toolbar" aria-label="Now playing actions">
+            <button id="addCurrentBtn" class="now-action-button now-action-button--primary" type="button" disabled data-i18n-title="ytlive.download.now" data-i18n-aria="ytlive.download.now" aria-label="Download" title="Download">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3v11" />
+                <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+                <path d="M5 20h14" />
+              </svg>
+            </button>
+            <button id="addCurrentToListBtn" class="now-action-button" type="button" disabled data-i18n-title="ytlive.lists.addMenu" data-i18n-aria="ytlive.lists.addMenu" aria-label="Add to download list" title="Add to download list">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 6h10M4 12h8M4 18h7" />
+                <path d="M18 13v7M14.5 16.5h7" />
+              </svg>
+            </button>
+            <a id="openCurrentLink" class="now-action-button is-disabled" href="#" target="_blank" rel="noopener" data-i18n-title="ytlive.openYoutube" data-i18n-aria="ytlive.openYoutube" aria-label="Open on YouTube" title="Open on YouTube">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-brand-youtube" aria-hidden="true" focusable="false">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M2 8a4 4 0 0 1 4 -4h12a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-12a4 4 0 0 1 -4 -4v-8" />
+                <path d="M10 9l5 3l-5 3l0 -6" />
+              </svg>
+            </a>
+            <span class="now-actions__divider" aria-hidden="true"></span>
+            <label class="now-setting-button" data-i18n-title="ytlive.output.includeLyrics" title="Download lyrics">
+              <input id="includeLyrics" type="checkbox" />
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-subtitles-arrow-right" aria-hidden="true" focusable="false">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M11.5 19h-5.5a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v3" />
+                <path d="M7 15h5" />
+                <path d="M17 12h-3" />
+                <path d="M11 12h-1" />
+                <path d="M16 18h6" />
+                <path d="M19 15l3 3l-3 3" />
+              </svg>
+              <span class="sr-only" data-i18n="ytlive.output.includeLyrics">Download lyrics</span>
+            </label>
+            <label class="now-setting-button" data-i18n-title="ytlive.output.embedLyrics" title="Embed lyrics into file">
+              <input id="embedLyrics" type="checkbox" />
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-subtitles-ai" aria-hidden="true" focusable="false">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M11.5 19h-5.5a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v4" />
+                <path d="M7 15h5" />
+                <path d="M17 12h-3" />
+                <path d="M11 12h-1" />
+                <path d="M19 15l1 2.5l2.5 1l-2.5 1l-1 2.5l-1 -2.5l-2.5 -1l2.5 -1z" />
+              </svg>
+              <span class="sr-only" data-i18n="ytlive.output.embedLyrics">Embed lyrics into file</span>
+            </label>
+            <label class="now-setting-button" data-i18n-title="ytlive.output.autoZip" title="Create ZIP when playlist finishes">
+              <input id="autoZip" type="checkbox" checked />
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-file-type-zip" aria-hidden="true" focusable="false">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+                <path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4" />
+                <path d="M16 18h1.5a1.5 1.5 0 0 0 0 -3h-1.5v6" />
+                <path d="M12 15v6" />
+                <path d="M5 15h3l-3 6h3" />
+              </svg>
+              <span class="sr-only" data-i18n="ytlive.output.autoZip">Create ZIP when playlist finishes</span>
+            </label>
           </div>
 
           <div class="output-panel">
@@ -266,18 +321,35 @@
               <span data-i18n="ytlive.output.concurrency">Playlist parallel downloads</span>
               <input id="youtubeConcurrencyInput" type="number" min="1" max="16" step="1" value="4" />
             </label>
-            <label class="check-row">
-              <input id="includeLyrics" type="checkbox" />
-              <span data-i18n="ytlive.output.includeLyrics">Download lyrics</span>
-            </label>
-            <label class="check-row">
-              <input id="embedLyrics" type="checkbox" />
-              <span data-i18n="ytlive.output.embedLyrics">Embed lyrics into file</span>
-            </label>
-            <label class="check-row">
-              <input id="autoZip" type="checkbox" checked />
-              <span data-i18n="ytlive.output.autoZip">Create ZIP when playlist finishes</span>
-            </label>
+
+            <div class="audio-output-controls">
+              <div class="audio-gain-row">
+                <div class="audio-setting-label">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 10v4h4l5 4V6L9 10z" />
+                    <path d="M17 9.5a4 4 0 0 1 0 5M19.5 7a7 7 0 0 1 0 10" />
+                  </svg>
+                  <span data-i18n="ui.volumeGainLabel">Volume Gain</span>
+                </div>
+                <output id="volumeGainValue" for="volumeGainRange">1.0x</output>
+              </div>
+              <input type="range" id="volumeGainRange" min="1.0" max="5" step="0.1" value="1.0" data-i18n-aria="ui.volumeGainLabel" aria-label="Volume Gain" />
+
+              <div class="loudnorm-row">
+                <label class="loudnorm-check" for="loudnormCheckbox">
+                  <input type="checkbox" id="loudnormCheckbox" />
+                  <span data-i18n="ui.loudnormLabel">Loudness Normalize (loudnorm)</span>
+                </label>
+                <label class="loudnorm-mode-control" id="loudnormModeGroup" for="loudnormModeSelect" hidden>
+                  <span class="sr-only" data-i18n="label.loudnormMode">Loudnorm Mode</span>
+                  <select id="loudnormModeSelect" data-i18n-aria="label.loudnormMode" aria-label="Loudnorm Mode">
+                    <option value="ebu_r128" data-i18n="option.loudnormMode.ebuR128">EBU R128 Standard</option>
+                    <option value="two_pass" data-i18n="option.loudnormMode.twoPass">Two-Pass Processing</option>
+                    <option value="dynamic" data-i18n="option.loudnormMode.dynamic">Dynamic Range Control</option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
         </aside>
       </section>
