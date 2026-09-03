@@ -147,6 +147,30 @@ export function normalizeTrustedExecutableSetting(value, expectedBase = "") {
   return trusted;
 }
 
+function isFfmpegMetadataOption(value) {
+  const option = String(value ?? "").toLowerCase();
+  if (option === "-metadata") return true;
+
+  const prefix = "-metadata:";
+  if (!option.startsWith(prefix)) return false;
+
+  const specifier = option.slice(prefix.length);
+  if (!specifier) return false;
+
+  // FFmpeg metadata specifiers used by Gharmonize are simple stream selectors
+  // such as s:v, s:a:0 and s:s:1. Parse them in linear time instead of
+  // relying on a backtracking regular expression.
+  for (let index = 0; index < specifier.length; index += 1) {
+    const code = specifier.charCodeAt(index);
+    const isLowerAlpha = code >= 97 && code <= 122;
+    const isDigit = code >= 48 && code <= 57;
+    const isSafePunctuation = code === 45 || code === 46 || code === 58 || code === 95;
+    if (!isLowerAlpha && !isDigit && !isSafePunctuation) return false;
+  }
+
+  return true;
+}
+
 export function assertSafeProcessArgs(command, args = []) {
   if (!Array.isArray(args)) throw new Error("Process arguments must be an array");
   const executable = canonicalExecutableToken(command).toLowerCase();
@@ -154,8 +178,8 @@ export function assertSafeProcessArgs(command, args = []) {
     || executable === "ffmpeg-candidate" || executable === "ffmpeg-candidate.exe"
     || executable === "ffmpeg-lkg" || executable === "ffmpeg-lkg.exe";
   const safe = args.map((arg, index) => {
-    const previous = String(args[index - 1] ?? "").toLowerCase();
-    const isFfmpegMetadataValue = isFfmpeg && /^-metadata(?::[^=\s]+)*$/.test(previous);
+    const previous = args[index - 1];
+    const isFfmpegMetadataValue = isFfmpeg && isFfmpegMetadataOption(previous);
     return assertPlainProcessString(arg, "process argument", 64 * 1024, {
       allowLineBreaks: isFfmpegMetadataValue,
     });
