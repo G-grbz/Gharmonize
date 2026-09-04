@@ -2,11 +2,22 @@
 
 [![CI](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml) [![CodeQL](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml)
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/adf9d2f8-a99b-43c8-9c37-d4a47f5b1e3f" alt="logo" width="200" style="background: transparent; display: inline-block;" />
-</p>
+<img width="2172" height="724"
+     alt="Gharmonize & YTLive"
+     src="https://github.com/user-attachments/assets/844d6376-80ba-4c28-a5a0-6553d0b140e7" />
+
+---
+
+<details>
+<summary><b>🎬 Watch Gharmonize Demo</b></summary>
+
+<br>
 
 https://github.com/user-attachments/assets/4083729e-3db9-4936-ac01-28c0f318aebe
+
+</details>
+
+---
 
 ### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/EXE)
 
@@ -16,7 +27,6 @@ Seamlessly download content from YouTube, YouTube Music, and major platforms lik
 
 > **Spotify note:** Spotify is used for **metadata + matching** (track/playlist/album info). Gharmonize does **not** claim DRM bypass.
 
-<img width="1666" height="899" alt="Gharmonize Screenshot" src="https://github.com/user-attachments/assets/449c5f67-4240-4ca0-8da4-b2ca97a3b5bb" />
 
 </div>
 
