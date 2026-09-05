@@ -1,6 +1,13 @@
 # syntax=docker/dockerfile:1
 FROM node:22-bookworm AS base
 
+LABEL org.opencontainers.image.title="Gharmonize" \
+      org.opencontainers.image.description="Media download, conversion, ripping, tagging, and music automation toolkit" \
+      org.opencontainers.image.source="https://github.com/G-grbz/Gharmonize" \
+      org.opencontainers.image.url="https://github.com/G-grbz/Gharmonize" \
+      org.opencontainers.image.documentation="https://github.com/G-grbz/Gharmonize/blob/main/docs/DOCKER.md" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
+
 WORKDIR /usr/src/app
 
 ARG DEBIAN_FRONTEND=noninteractive

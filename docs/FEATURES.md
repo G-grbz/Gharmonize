@@ -69,7 +69,7 @@ Full guide: [YTLIVE.md](YTLIVE.md)
 ## Deployment and Runtime
 
 * Local Node.js and Electron desktop workflows are the primary, full-featured usage path
-* Docker image deployment with the published `latest` tag as an alternative setup (see [DOCKER.md](DOCKER.md))
+* Docker image deployment through the official GHCR package (`ghcr.io/g-grbz/gharmonize`) with `latest` and versioned release tags as an alternative setup (see [DOCKER.md](DOCKER.md))
 * Runtime settings panel and `.env` configuration (see [CONFIGURATION.md](CONFIGURATION.md))
 * Automatic runtime binary download / refresh with fallback to existing binaries (see [BINARY_MANAGEMENT.md](BINARY_MANAGEMENT.md))
 

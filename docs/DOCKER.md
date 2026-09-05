@@ -33,11 +33,25 @@ The supplied Compose files also keep `/tmp` mounted with `noexec`. Managed yt-dl
 
 ### 4. Docker image
 
-The default compose file uses the published Gharmonize image:
+The official Gharmonize container image is published through **GitHub Container Registry (GHCR)**:
+
+```text
+ghcr.io/g-grbz/gharmonize
+```
+
+The default Compose file tracks the current release through the `latest` tag:
 
 ```yaml
-image: ggrbz/gharmonize:latest
+image: ghcr.io/g-grbz/gharmonize:latest
 ```
+
+You can also pull the image directly:
+
+```bash
+docker pull ghcr.io/g-grbz/gharmonize:latest
+```
+
+Release builds are also published with their version number (for example `ghcr.io/g-grbz/gharmonize:1.3.8`) so deployments can pin a specific release instead of following `latest`. Public GHCR images can be pulled without a GitHub login.
 
 ### 5. Start the stack
 
@@ -132,7 +146,7 @@ docker run -d \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   -v /home:/home:ro \
   -v /run/media:/run/media:ro \
-  ggrbz/gharmonize:latest
+  ghcr.io/g-grbz/gharmonize:latest
 ```
 
 ### 3. NVIDIA / NVENC Variant
@@ -170,7 +184,7 @@ docker run -d \
   -v /opt/gharmonize/.env:/usr/src/app/.env \
   -v /home:/home:ro \
   -v /run/media:/run/media:ro \
-  ggrbz/gharmonize:latest
+  ghcr.io/g-grbz/gharmonize:latest
 ```
 
 > Do not publish `.env`, `.gharmonize-key`, cookie files, or `INITIAL_ADMIN_PASSWORD.txt`. For remote access, terminate HTTPS at a trusted reverse proxy and configure `TRUSTED_PROXY_CIDRS`.

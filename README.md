@@ -35,7 +35,7 @@ Seamlessly download content from YouTube, YouTube Music, and major platforms lik
 ## Official distribution and downloads
 
 > [!IMPORTANT]
-> The **only official Gharmonize source repository and release channel** is [`G-grbz/Gharmonize`](https://github.com/G-grbz/Gharmonize). Official desktop binaries are published through [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases).
+> The **only official Gharmonize source repository and release channel** is [`G-grbz/Gharmonize`](https://github.com/G-grbz/Gharmonize). Official desktop binaries are published through [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases), and the official container image is published through [GitHub Container Registry](https://github.com/G-grbz/Gharmonize/pkgs/container/gharmonize).
 >
 > Repositories, websites, archives, or executables using the **Gharmonize** name outside these channels are **not official unless this repository explicitly says otherwise**. Never disable Windows Defender or another security product, add antivirus exclusions, or run an unrelated executable as Administrator just because a third-party page claims it is required for Gharmonize.
 
@@ -67,14 +67,17 @@ For packaged AppImage/EXE builds and full installation details, see [docs/INSTAL
 
 ### Docker
 
-Gharmonize can run from the published Docker image or be built locally from source. The default/local Compose configuration does **not** request the NVIDIA runtime.
+Gharmonize can run from the official **GitHub Container Registry (GHCR)** image or be built locally from source. The default/local Compose configuration does **not** request the NVIDIA runtime.
 
-**Published image**
+**Official image:** [`ghcr.io/g-grbz/gharmonize`](https://github.com/G-grbz/Gharmonize/pkgs/container/gharmonize)
 
 ```bash
+docker pull ghcr.io/g-grbz/gharmonize:latest
 docker compose pull
 docker compose up -d
 ```
+
+Release versions are also published with versioned tags such as `ghcr.io/g-grbz/gharmonize:1.3.8`, allowing deployments to pin a specific Gharmonize release instead of tracking `latest`.
 
 **Local source build**
 

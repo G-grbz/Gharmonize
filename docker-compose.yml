@@ -1,6 +1,6 @@
 services:
   web:
-    image: ggrbz/gharmonize:latest
+    image: ghcr.io/g-grbz/gharmonize:latest
     container_name: Gharmonize
     read_only: true
     tmpfs:
