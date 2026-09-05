@@ -353,6 +353,31 @@ On first start, Gharmonize generates a strong random admin password, stores only
 
 `ADMIN_PASSWORD` is accepted only as a legacy migration input. Do not add a plaintext admin password to new deployments. `APP_SECRET` is no longer used for session signing.
 
+### Application access modes
+
+Gharmonize can keep the original behavior or require authentication before the application can be used:
+
+```dotenv
+GHARMONIZE_ACCESS_MODE=none
+```
+
+- `none` — the application opens normally. Existing administrator-only actions (Settings, protected local-file/disc operations, and similar routes) still require the admin session exactly as before.
+- `admin` — the browser must establish an administrator session or an approved temporary-access session before dynamic Gharmonize routes are available. The check is enforced server-side as well as by the full-screen login gate.
+
+When `admin` mode is selected, temporary use can be enabled:
+
+```dotenv
+GHARMONIZE_TEMP_ACCESS_ENABLED=1
+GHARMONIZE_TEMP_ACCESS_HOURS=1
+GHARMONIZE_TEMP_ACCESS_DAYS=0
+GHARMONIZE_TEMP_ACCESS_MONTHS=0
+GHARMONIZE_TEMP_ACCESS_YEARS=0
+```
+
+The duration fields are combined. Months are treated as 30 days and years as 365 days; the configured temporary session is capped at five years. At least one hour must be configured when temporary access is enabled.
+
+A visitor can then choose **Request access** on the login screen. Gharmonize records the server-observed client IP (`req.ip`). Reverse proxies connected through loopback are trusted automatically; additional proxy networks are trusted only when `TRUST_PROXY` is enabled and their peers match `TRUSTED_PROXY_CIDRS`. Signed-in administrators see pending requests in the Classic **Access requests** jobs-bell tab and in the YTLive access bell. Requests remain pending until explicitly approved or rejected (a server restart or access-policy change clears the in-memory pending queue). Only one pending request or active temporary grant is allowed per observed IP. Rejected IPs are subject to a server-enforced 15-minute retry cooldown. Approval creates a persisted grant plus an HttpOnly, SameSite cookie bound to that grant, the client IP, expiration time, and the persistent access-policy revision. Active grants remain visible to administrators and can be revoked individually; revocation is enforced server-side immediately even if the client still holds an unexpired cookie. Temporary access permits normal application use but does **not** become an administrator session, so administrator-only routes remain protected. Active grants survive a normal server restart, while changing the access policy or admin password revokes them.
+
 ### Encryption master key
 Sensitive settings are encrypted at rest with AES-256-GCM. By default Gharmonize creates `.gharmonize-key` under `DATA_DIR` with mode `0600`. For production, keep the key separate from the database/configuration using either:
 
@@ -536,4 +561,4 @@ GHARMONIZE_ALLOW_PRIVATE_URLS=0
 GHARMONIZE_ALLOW_UNSAFE_YTDLP_ARGS=0
 ```
 
-`GHARMONIZE_HOST` defaults to loopback. Docker explicitly sets `0.0.0.0`. Enable `TRUST_PROXY` only when the direct reverse proxy is listed in `TRUSTED_PROXY_CIDRS`. Sensitive Settings values are encrypted at rest with AES-256-GCM using the Gharmonize master key. Keep the key separate from broadly accessible backups.
+`GHARMONIZE_HOST` defaults to loopback. Docker explicitly sets `0.0.0.0`. A reverse proxy whose direct connection reaches Gharmonize from loopback (`127.0.0.0/8` or `::1`) is trusted automatically so the real client address can be derived safely from forwarded headers. Enable `TRUST_PROXY` only for additional proxy networks, and list those direct proxy peers in `TRUSTED_PROXY_CIDRS`. Direct LAN/WAN clients are never allowed to make their own forwarded headers trusted merely by setting them. Sensitive Settings values are encrypted at rest with AES-256-GCM using the Gharmonize master key. Keep the key separate from broadly accessible backups.

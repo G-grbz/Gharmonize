@@ -34,3 +34,6 @@ build/bin/*
 Thumbs.db
 .vscode/
 .idea/
+
+# Runtime temporary access grant state
+temporary-access-grants.json

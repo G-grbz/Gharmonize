@@ -8,6 +8,7 @@
 
   <title>🎵 Gharmonize</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/access.css" />
   <link rel="icon" type="image/x-icon" href="/src/favicon.ico">
   <link rel="shortcut icon" type="image/x-icon" href="/src/favicon.ico">
 </head>
@@ -468,6 +469,10 @@
       <div class="controls">
         <button id="jobsFilterActive" class="chip chip--active" data-filter="active" data-i18n="jobsPanel.filterActive">Active</button>
         <button id="jobsFilterAll" class="chip" data-filter="all" data-i18n="jobsPanel.filterAll">All</button>
+        <button id="jobsFilterAccess" class="chip jobs-access-tab" data-filter="access">
+          <span data-i18n="access.requestsTab">Access requests</span>
+          <span id="accessRequestsTabBadge" class="jobs-access-tab__badge" hidden>0</span>
+        </button>
         <button id="jobsClose" class="icon-btn" aria-label="Close" data-i18n="btn.close">✕</button>
       </div>
     </header>

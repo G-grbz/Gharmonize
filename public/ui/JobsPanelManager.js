@@ -18,6 +18,11 @@ export class JobsPanelManager {
         this.isStarted = false;
         this.pollingInterval = null;
         this.tokenCheckInterval = null;
+        this.accessRequestsInterval = null;
+        this.accessRequestsInFlight = false;
+        this.accessRequests = [];
+        this.activeAccessGrants = [];
+        this.temporaryAccessDuration = {};
         this.progressCache = new Map();
         this.completedAtCache = new Map();
         this.storageKey = 'gharmonize_jobs_panel_state';
@@ -131,6 +136,7 @@ export class JobsPanelManager {
         document.getElementById('jobsClose')?.addEventListener('click', () => this.close());
         document.getElementById('jobsFilterActive')?.addEventListener('click', () => this.setFilter('active'));
         document.getElementById('jobsFilterAll')?.addEventListener('click', () => this.setFilter('all'));
+        document.getElementById('jobsFilterAccess')?.addEventListener('click', () => this.setFilter('access'));
 
         window.addEventListener('gharmonize:auth', (ev) => {
             if (ev?.detail?.loggedIn) this.goOnline();
@@ -177,6 +183,7 @@ export class JobsPanelManager {
         this.filter = newFilter;
         document.getElementById('jobsFilterActive')?.classList.toggle('chip--active', newFilter === 'active');
         document.getElementById('jobsFilterAll')?.classList.toggle('chip--active', newFilter === 'all');
+        document.getElementById('jobsFilterAccess')?.classList.toggle('chip--active', newFilter === 'access');
         this.render();
     }
 
@@ -184,6 +191,7 @@ export class JobsPanelManager {
     goOnline() {
         document.getElementById('jobsBell').hidden = false;
         this.startSSE();
+        this.startAccessRequestsPolling();
     }
 
     // Handles go offline in the browser UI layer.
@@ -201,6 +209,13 @@ export class JobsPanelManager {
         clearInterval(this.pollingInterval);
         this.pollingInterval = null;
         }
+    if (this.accessRequestsInterval) {
+        clearInterval(this.accessRequestsInterval);
+        this.accessRequestsInterval = null;
+    }
+    this.accessRequests = [];
+    this.activeAccessGrants = [];
+    this.temporaryAccessDuration = {};
     }
 
     // Handles destroy in the browser UI layer.
@@ -213,8 +228,234 @@ export class JobsPanelManager {
             clearInterval(this.pollingInterval);
             this.pollingInterval = null;
         }
+        if (this.accessRequestsInterval) {
+            clearInterval(this.accessRequestsInterval);
+            this.accessRequestsInterval = null;
+        }
         this.eventSource?.close();
         this.isStarted = false;
+    }
+
+    startAccessRequestsPolling() {
+        if (this.accessRequestsInterval) return;
+        this.refreshAccessRequests().catch(() => {});
+        this.accessRequestsInterval = setInterval(() => {
+            this.refreshAccessRequests().catch(() => {});
+        }, 2500);
+    }
+
+    async refreshAccessRequests() {
+        if (this.accessRequestsInFlight || !localStorage.getItem(this.tokenKey)) return;
+        this.accessRequestsInFlight = true;
+        try {
+            const response = await fetch('/api/access/requests', { cache: 'no-store' });
+            if (response.status === 401) {
+                this.handleTokenExpired();
+                return;
+            }
+            if (!response.ok) throw new Error(`Access requests HTTP ${response.status}`);
+            const body = await response.json();
+            this.accessRequests = Array.isArray(body?.requests) ? body.requests : [];
+            this.activeAccessGrants = Array.isArray(body?.active) ? body.active : [];
+            this.temporaryAccessDuration = body?.temporaryDuration || {};
+            this.updateJobsBell();
+            if (this.filter === 'access') this.render();
+        } finally {
+            this.accessRequestsInFlight = false;
+        }
+    }
+
+    escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    formatAccessDuration(duration = {}) {
+        const parts = [];
+        const values = [
+            [duration.years, this.t('access.unitYear')],
+            [duration.months, this.t('access.unitMonth')],
+            [duration.days, this.t('access.unitDay')],
+            [duration.hours, this.t('access.unitHour')]
+        ];
+        for (const [value, label] of values) {
+            if (Number(value) > 0) parts.push(`${Number(value)} ${label}`);
+        }
+        return parts.join(' ') || `1 ${this.t('access.unitHour')}`;
+    }
+
+    async decideAccessRequest(id, decision, buttons = []) {
+        buttons.forEach((button) => { button.disabled = true; });
+        try {
+            const response = await fetch(`/api/access/requests/${encodeURIComponent(id)}/decision`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ decision })
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body?.error?.message || `HTTP ${response.status}`);
+            window.app?.showNotification?.(
+                decision === 'approve'
+                    ? this.t('access.approvedToast')
+                    : this.t('access.rejectedToast'),
+                decision === 'approve' ? 'success' : 'info'
+            );
+            await this.refreshAccessRequests();
+        } catch (error) {
+            console.warn('[JobsPanel] access decision failed:', error);
+            window.app?.showNotification?.(
+                error?.message || this.t('access.requestFailed'),
+                'error'
+            );
+            buttons.forEach((button) => { button.disabled = false; });
+        }
+    }
+
+    async revokeAccessGrant(id, buttons = []) {
+        buttons.forEach((button) => { button.disabled = true; });
+        try {
+            const response = await fetch(`/api/access/grants/${encodeURIComponent(id)}/revoke`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body?.error?.message || `HTTP ${response.status}`);
+            window.app?.showNotification?.(this.t('access.revokedToast'), 'info');
+            await this.refreshAccessRequests();
+        } catch (error) {
+            console.warn('[JobsPanel] access revoke failed:', error);
+            window.app?.showNotification?.(error?.message || this.t('access.revokeFailed'), 'error');
+            buttons.forEach((button) => { button.disabled = false; });
+        }
+    }
+
+    renderAccessRequests(prevScrollTop = 0) {
+        if (!this.list) return;
+        const requests = Array.isArray(this.accessRequests) ? this.accessRequests : [];
+        const active = Array.isArray(this.activeAccessGrants) ? this.activeAccessGrants : [];
+        const duration = this.escapeHtml(this.formatAccessDuration(this.temporaryAccessDuration));
+
+        if (!requests.length && !active.length) {
+            this.list.innerHTML = `
+                <div class="jobs-panel__empty jobs-access-empty">
+                    <div class="jobs-panel__empty-icon">🔐</div>
+                    <div class="jobs-panel__empty-title">${this.escapeHtml(this.t('access.requestsEmpty'))}</div>
+                    <div class="jobs-panel__empty-subtitle">${this.escapeHtml(this.t('access.requestsEmptyHint'))}</div>
+                </div>
+            `;
+            this.list.scrollTop = prevScrollTop;
+            return;
+        }
+
+        const pendingHtml = requests.length ? `
+            <section class="jobs-access-section">
+                <div class="jobs-access-section__title">
+                    <span>${this.escapeHtml(this.t('access.pendingRequestsTitle'))}</span>
+                    <span class="jobs-access-section__count">${requests.length}</span>
+                </div>
+                <div class="jobs-access-list">
+                    ${requests.map((request) => {
+                        const requestedAt = new Date(Number(request.createdAt || 0)).toLocaleString();
+                        const ip = this.escapeHtml(request.ip || '-');
+                        const ua = this.escapeHtml(request.userAgent || '-');
+                        const id = this.escapeHtml(request.id || '');
+                        return `
+                            <article class="jobs-access-card" data-access-request-id="${id}">
+                                <div class="jobs-access-card__header">
+                                    <div>
+                                        <div class="jobs-access-card__title">🔐 ${this.escapeHtml(this.t('access.adminRequestTitle'))}</div>
+                                        <div class="jobs-access-card__time">${this.escapeHtml(requestedAt)}</div>
+                                    </div>
+                                    <span class="chip chip--active">${this.escapeHtml(this.t('access.pending'))}</span>
+                                </div>
+                                <dl class="jobs-access-card__details">
+                                    <div><dt>${this.escapeHtml(this.t('access.ipLabel'))}</dt><dd>${ip}</dd></div>
+                                    <div><dt>${this.escapeHtml(this.t('access.durationLabel'))}</dt><dd>${duration}</dd></div>
+                                    <div class="jobs-access-card__client"><dt>${this.escapeHtml(this.t('access.browserLabel'))}</dt><dd>${ua}</dd></div>
+                                </dl>
+                                <div class="jobs-access-card__actions">
+                                    <button class="btn-secondary jobs-access-reject" type="button" data-access-decision="reject" data-access-id="${id}">
+                                        ${this.escapeHtml(this.t('access.reject'))}
+                                    </button>
+                                    <button class="btn-primary jobs-access-approve" type="button" data-access-decision="approve" data-access-id="${id}">
+                                        ${this.escapeHtml(this.t('access.approve'))}
+                                    </button>
+                                </div>
+                            </article>
+                        `;
+                    }).join('')}
+                </div>
+            </section>
+        ` : '';
+
+        const activeHtml = active.length ? `
+            <section class="jobs-access-section">
+                <div class="jobs-access-section__title">
+                    <span>${this.escapeHtml(this.t('access.activeGrantsTitle'))}</span>
+                    <span class="jobs-access-section__count">${active.length}</span>
+                </div>
+                <div class="jobs-access-list">
+                    ${active.map((grant) => {
+                        const approvedAt = new Date(Number(grant.approvedAt || grant.createdAt || 0)).toLocaleString();
+                        const expiresAt = new Date(Number(grant.expiresAt || 0)).toLocaleString();
+                        const ip = this.escapeHtml(grant.ip || '-');
+                        const ua = this.escapeHtml(grant.userAgent || '-');
+                        const id = this.escapeHtml(grant.id || '');
+                        return `
+                            <article class="jobs-access-card jobs-access-card--approved" data-access-grant-id="${id}">
+                                <div class="jobs-access-card__header">
+                                    <div>
+                                        <div class="jobs-access-card__title">✅ ${this.escapeHtml(this.t('access.activeGrantTitle'))}</div>
+                                        <div class="jobs-access-card__time">${this.escapeHtml(approvedAt)}</div>
+                                    </div>
+                                    <span class="chip chip--active">${this.escapeHtml(this.t('access.active'))}</span>
+                                </div>
+                                <dl class="jobs-access-card__details">
+                                    <div><dt>${this.escapeHtml(this.t('access.ipLabel'))}</dt><dd>${ip}</dd></div>
+                                    <div><dt>${this.escapeHtml(this.t('access.expiresLabel'))}</dt><dd>${this.escapeHtml(expiresAt)}</dd></div>
+                                    <div class="jobs-access-card__client"><dt>${this.escapeHtml(this.t('access.browserLabel'))}</dt><dd>${ua}</dd></div>
+                                </dl>
+                                <div class="jobs-access-card__actions">
+                                    <button class="btn-secondary jobs-access-revoke" type="button" data-access-revoke-id="${id}">
+                                        ${this.escapeHtml(this.t('access.revoke'))}
+                                    </button>
+                                </div>
+                            </article>
+                        `;
+                    }).join('')}
+                </div>
+            </section>
+        ` : '';
+
+        this.list.innerHTML = pendingHtml + activeHtml;
+
+        this.list.querySelectorAll('[data-access-decision]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const id = button.getAttribute('data-access-id') || '';
+                const decision = button.getAttribute('data-access-decision') || '';
+                if (!id || !['approve', 'reject'].includes(decision)) return;
+                const card = button.closest('[data-access-request-id]');
+                const buttons = [...(card?.querySelectorAll('[data-access-decision]') || [])];
+                this.decideAccessRequest(id, decision, buttons).catch(() => {});
+            });
+        });
+
+        this.list.querySelectorAll('[data-access-revoke-id]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const id = button.getAttribute('data-access-revoke-id') || '';
+                if (!id) return;
+                const card = button.closest('[data-access-grant-id]');
+                const buttons = [...(card?.querySelectorAll('[data-access-revoke-id]') || [])];
+                this.revokeAccessGrant(id, buttons).catch(() => {});
+            });
+        });
+
+        this.list.scrollTop = prevScrollTop;
     }
 
     // Handles start sse in the browser UI layer.
@@ -916,7 +1157,14 @@ export class JobsPanelManager {
         const bell  = document.getElementById('jobsBell');
         if (!badge || !bell) return;
 
-        const baseCount = activeCount;
+        const accessCount = Array.isArray(this.accessRequests) ? this.accessRequests.length : 0;
+        const accessTabBadge = document.getElementById('accessRequestsTabBadge');
+        if (accessTabBadge) {
+            accessTabBadge.textContent = accessCount > 99 ? '99+' : String(accessCount);
+            accessTabBadge.hidden = accessCount === 0;
+        }
+
+        const baseCount = activeCount + accessCount;
         const displayCount = this.state.hasUpdate
             ? baseCount + 1
             : baseCount;
@@ -983,6 +1231,11 @@ export class JobsPanelManager {
         });
 
       this.updateJobsBell();
+
+    if (this.filter === 'access') {
+        this.renderAccessRequests(prevScrollTop);
+        return;
+    }
 
     let updateNotification = '';
     if (this.state.hasUpdate) {

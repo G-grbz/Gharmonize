@@ -5,6 +5,7 @@ import { initDiscRipperPanel } from './discRipperPanel.js';
 import { modalManager } from './ModalManager.js';
 import { versionManager } from './VersionManager.js';
 import { TrackExtractorManager } from './TrackExtractorManager.js';
+import { accessManager } from './AccessManager.js';
 
 async function waitForRuntimeBinariesReady() {
     const overlay = document.getElementById('binaryStartupOverlay');
@@ -77,6 +78,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.i18n?.apply) {
         window.i18n.apply(document.body);
     }
+
+    await accessManager.ensureAccess();
 
     const loadingScreen = document.getElementById('loading-screen');
     const mainContent = document.querySelector('.main-content');

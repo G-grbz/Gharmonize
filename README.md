@@ -166,7 +166,7 @@ Gharmonize is licensed under the **GPL-3.0 license**.
 
 ## Security and release verification
 
-Gharmonize uses scrypt admin password hashing, AES-256-GCM encryption for supported sensitive settings, loopback-by-default native serving, trusted-proxy CIDR validation, SSRF/path hardening, Electron sandbox/IPC restrictions, and runtime-binary origin/digest checks. See [SECURITY.md](SECURITY.md) for the reporting policy and deployment notes.
+Gharmonize uses scrypt admin password hashing, AES-256-GCM encryption for supported sensitive settings, configurable server-side application access gating with optional administrator-approved temporary sessions, loopback-by-default native serving, trusted-proxy CIDR validation, SSRF/path hardening, Electron sandbox/IPC restrictions, and runtime-binary origin/digest checks. See [SECURITY.md](SECURITY.md) for the reporting policy and deployment notes.
 
 Official tagged releases are built by GitHub Actions for Windows and Linux and publish Windows NSIS/portable artifacts, a Linux AppImage, a source archive, CycloneDX SBOM, `SHA256SUMS`, and GitHub artifact attestations.
 

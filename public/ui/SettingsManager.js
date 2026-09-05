@@ -194,6 +194,44 @@ export class SettingsManager {
                 </select>
                 </div>
 
+                <h4 class="settings-section-title" data-i18n="settings.access.title">Erişim ve Giriş</h4>
+
+                <div class="form-group">
+                    <label for="f_GHARMONIZE_ACCESS_MODE" class="settings-field-label" data-i18n="settings.access.modeLabel">Giriş seçeneği</label>
+                    <div class="settings-field-hint muted" data-i18n="settings.access.modeHint">Giriş yok mevcut davranışı korur. Yönetici girişi seçildiğinde uygulama açılmadan önce yönetici şifresi istenir.</div>
+                    <select id="f_GHARMONIZE_ACCESS_MODE">
+                        <option value="none" data-i18n="settings.access.modeNone">Giriş yok</option>
+                        <option value="admin" data-i18n="settings.access.modeAdmin">Yönetici girişi</option>
+                    </select>
+                </div>
+
+                <div id="temporaryAccessSettings" class="form-group" hidden>
+                    <label class="settings-field-label settings-checkbox-row" for="f_GHARMONIZE_TEMP_ACCESS_ENABLED">
+                        <input id="f_GHARMONIZE_TEMP_ACCESS_ENABLED" type="checkbox" value="1" />
+                        <span data-i18n="settings.access.tempEnabled">Geçici yetkilendirmeye izin ver</span>
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.access.tempHint">Giriş ekranındaki “Kullanım izni iste” düğmesi istemcinin IP adresini yöneticiye gönderir. Yönetici isteği onaylayabilir veya reddedebilir.</div>
+
+                    <div id="temporaryAccessDuration" class="access-settings-duration" hidden>
+                        <label>
+                            <span data-i18n="settings.access.hours">Saat</span>
+                            <input id="f_GHARMONIZE_TEMP_ACCESS_HOURS" type="number" min="0" max="23" step="1" value="1" />
+                        </label>
+                        <label>
+                            <span data-i18n="settings.access.days">Gün</span>
+                            <input id="f_GHARMONIZE_TEMP_ACCESS_DAYS" type="number" min="0" max="365" step="1" value="0" />
+                        </label>
+                        <label>
+                            <span data-i18n="settings.access.months">Ay</span>
+                            <input id="f_GHARMONIZE_TEMP_ACCESS_MONTHS" type="number" min="0" max="11" step="1" value="0" />
+                        </label>
+                        <label>
+                            <span data-i18n="settings.access.years">Yıl</span>
+                            <input id="f_GHARMONIZE_TEMP_ACCESS_YEARS" type="number" min="0" max="5" step="1" value="0" />
+                        </label>
+                    </div>
+                </div>
+
                 <div class="form-group">
                 <label for="f_YOUTUBE_QUICK_ADD_LIMIT" class="settings-field-label">YOUTUBE_QUICK_ADD_LIMIT</label>
                 <div class="settings-field-hint muted" data-i18n="settings.youtubeQuickAddLimit">YTLive'da YouTube playlist + butonu ile eklenecek ilk parça sayısı.</div>
@@ -666,6 +704,8 @@ export class SettingsManager {
     document.getElementById('reloadBtn').onclick = () => this.loadSettings();
     document.getElementById('saveBtn').onclick = () => this.saveSettings();
     document.getElementById('changePassBtn').onclick = () => this.changePassword();
+    document.getElementById('f_GHARMONIZE_ACCESS_MODE')?.addEventListener('change', () => this.syncAccessControls());
+    document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED')?.addEventListener('change', () => this.syncAccessControls());
     document.getElementById('genWidgetKeyBtn').onclick = () => this.generateHomepageWidgetKey();
     document.getElementById('toggleWidgetKeyBtn').onclick = () => this.toggleHomepageWidgetKeyVisibility();
     document.getElementById('copyWidgetKeyBtn').onclick = () => this.copyHomepageWidgetKey();
@@ -738,6 +778,16 @@ export class SettingsManager {
             btn?.classList.remove('btn-loading');
             if (btn) btn.disabled = false;
         }
+    }
+
+    // Keeps temporary-authorization controls aligned with the selected access mode.
+    syncAccessControls() {
+        const mode = document.getElementById('f_GHARMONIZE_ACCESS_MODE')?.value || 'none';
+        const enabled = !!document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED')?.checked;
+        const wrapper = document.getElementById('temporaryAccessSettings');
+        const duration = document.getElementById('temporaryAccessDuration');
+        if (wrapper) wrapper.hidden = mode !== 'admin';
+        if (duration) duration.hidden = mode !== 'admin' || !enabled;
     }
 
     // Opens login only in the browser UI layer.
@@ -934,6 +984,13 @@ export class SettingsManager {
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
             document.getElementById('f_FRONTEND_UI').value = s.FRONTEND_UI === 'ytlive' ? 'ytlive' : 'classic';
+            document.getElementById('f_GHARMONIZE_ACCESS_MODE').value = s.GHARMONIZE_ACCESS_MODE === 'admin' ? 'admin' : 'none';
+            document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED').checked = String(s.GHARMONIZE_TEMP_ACCESS_ENABLED || '0') === '1';
+            document.getElementById('f_GHARMONIZE_TEMP_ACCESS_HOURS').value = s.GHARMONIZE_TEMP_ACCESS_HOURS || '1';
+            document.getElementById('f_GHARMONIZE_TEMP_ACCESS_DAYS').value = s.GHARMONIZE_TEMP_ACCESS_DAYS || '0';
+            document.getElementById('f_GHARMONIZE_TEMP_ACCESS_MONTHS').value = s.GHARMONIZE_TEMP_ACCESS_MONTHS || '0';
+            document.getElementById('f_GHARMONIZE_TEMP_ACCESS_YEARS').value = s.GHARMONIZE_TEMP_ACCESS_YEARS || '0';
+            this.syncAccessControls();
             document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value = s.YOUTUBE_QUICK_ADD_LIMIT || '25';
             document.getElementById('f_YTLIVE_MUSIC_TITLE').value = s.YTLIVE_MUSIC_TITLE || '';
             document.getElementById('f_YTLIVE_MUSIC_SUBTITLE').value = s.YTLIVE_MUSIC_SUBTITLE || '';
@@ -998,6 +1055,12 @@ export class SettingsManager {
                 TRUST_PROXY: document.getElementById('f_TRUST_PROXY').value,
                 UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
                 FRONTEND_UI: document.getElementById('f_FRONTEND_UI').value,
+                GHARMONIZE_ACCESS_MODE: document.getElementById('f_GHARMONIZE_ACCESS_MODE').value,
+                GHARMONIZE_TEMP_ACCESS_ENABLED: document.getElementById('f_GHARMONIZE_ACCESS_MODE').value === 'admin' && document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED').checked ? '1' : '0',
+                GHARMONIZE_TEMP_ACCESS_HOURS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_HOURS').value.trim() || '0',
+                GHARMONIZE_TEMP_ACCESS_DAYS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_DAYS').value.trim() || '0',
+                GHARMONIZE_TEMP_ACCESS_MONTHS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_MONTHS').value.trim() || '0',
+                GHARMONIZE_TEMP_ACCESS_YEARS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_YEARS').value.trim() || '0',
                 YOUTUBE_QUICK_ADD_LIMIT: document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value.trim(),
                 YTLIVE_MUSIC_TITLE: document.getElementById('f_YTLIVE_MUSIC_TITLE').value.trim(),
                 YTLIVE_MUSIC_SUBTITLE: document.getElementById('f_YTLIVE_MUSIC_SUBTITLE').value.trim(),
@@ -1038,6 +1101,7 @@ export class SettingsManager {
             }
 
             await window.app?.reloadUiConfig?.();
+            window.dispatchEvent(new CustomEvent('gharmonize:access-config-changed'));
 
             modalManager.showAlert({
                 title: this.t('settings.title') || 'Ayarlar',

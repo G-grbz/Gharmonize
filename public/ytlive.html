@@ -11,6 +11,7 @@
     }
   </style>
   <link rel="stylesheet" href="/ytlive.css" />
+  <link rel="stylesheet" href="/access.css" />
   <link rel="icon" type="image/x-icon" href="/src/favicon.ico">
   <script src="/ui/ytlive-bootstrap.js"></script>
 </head>
@@ -169,7 +170,13 @@
           <input id="searchInput" type="search" placeholder="Search YouTube for songs, artists, albums, or playlists" data-i18n-ph="ytlive.search.placeholder" />
           <button class="primary-button" type="submit" data-i18n="ytlive.search.button">Search</button>
         </form>
-        <div class="queue-chip" id="queueChip" data-i18n="ytlive.queue.empty">Queue empty</div>
+        <div class="topbar-actions">
+          <button id="ytliveAccessBell" class="ytlive-access-bell" type="button" hidden aria-label="Access requests" title="Access requests">
+            <span class="ytlive-access-bell__icon" aria-hidden="true">🔔</span>
+            <span id="ytliveAccessBadge" class="ytlive-access-badge" hidden>0</span>
+          </button>
+          <div class="queue-chip" id="queueChip" data-i18n="ytlive.queue.empty">Queue empty</div>
+        </div>
       </header>
 
       <section class="quick-url-panel" aria-label="Play or add by URL" data-i18n-aria="ytlive.quickUrl.aria">
@@ -451,6 +458,18 @@
       </div>
     </aside>
   </div>
+
+  <div id="ytliveAccessOverlay" class="ytlive-access-overlay" hidden></div>
+  <aside id="ytliveAccessPanel" class="ytlive-access-panel" aria-hidden="true" inert>
+    <header class="ytlive-access-panel__header">
+      <div>
+        <div class="eyebrow">Gharmonize</div>
+        <h2 id="ytliveAccessTitle">Access requests</h2>
+      </div>
+      <button id="ytliveAccessClose" class="ghost-button ytlive-access-close" type="button" aria-label="Close">✕</button>
+    </header>
+    <div id="ytliveAccessList" class="ytlive-access-list"></div>
+  </aside>
 
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 

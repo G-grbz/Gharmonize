@@ -1,4 +1,6 @@
 import { settingsManager } from './SettingsManager.js';
+import { accessManager } from './AccessManager.js';
+import { accessInboxManager } from './AccessInboxManager.js';
 
 async function waitForRuntimeBinariesReady() {
   const overlay = document.getElementById('binaryStartupOverlay');
@@ -144,6 +146,7 @@ class YTLiveMusicApp {
       console.warn('i18n initialization failed:', error);
     }
 
+    await accessManager.ensureAccess();
     await waitForRuntimeBinariesReady();
 
     window.app = {
@@ -156,6 +159,7 @@ class YTLiveMusicApp {
     };
 
     await settingsManager.initialize();
+    accessInboxManager.initialize();
     this.bindEvents();
     this.applyLocalizedUi();
     await this.refreshDownloadLists();

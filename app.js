@@ -97,7 +97,9 @@ const dynamicBinariesInitPromise = initializeDynamicBinaries()
     return null
   })
 
-const { default: settingsRoute } = await import('./modules/settings.js')
+const settingsModule = await import('./modules/settings.js')
+const settingsRoute = settingsModule.default
+const { appAccessMiddleware } = settingsModule
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const PUBLIC_DIR = path.join(__dirname, 'public')
@@ -111,9 +113,16 @@ function isTrustProxyEnabled(value = process.env.TRUST_PROXY) {
 
 function applyTrustProxySetting() {
   const enabled = isTrustProxyEnabled()
-  const predicate = createTrustedProxyPredicate(process.env.TRUSTED_PROXY_CIDRS)
-  app.set('trust proxy', enabled ? predicate : false)
-  console.log(`🔐 Trust proxy: ${enabled ? 'enabled for configured trusted peers' : 'disabled'}`)
+  const configuredPredicate = createTrustedProxyPredicate(process.env.TRUSTED_PROXY_CIDRS)
+  const loopbackPredicate = createTrustedProxyPredicate('127.0.0.0/8,::1/128')
+
+  // Always trust a reverse proxy connected through this host's loopback interface.
+  // A client connecting directly over LAN/WAN cannot spoof X-Forwarded-For because
+  // its immediate socket peer is not loopback. TRUST_PROXY extends this trust to
+  // explicitly configured proxy CIDRs (for example a Docker bridge proxy).
+  const predicate = (ip) => loopbackPredicate(ip) || (enabled && configuredPredicate(ip))
+  app.set('trust proxy', predicate)
+  console.log(`🔐 Trust proxy: loopback enabled${enabled ? ' + configured trusted peers' : ''}`)
 }
 
 applyTrustProxySetting()
@@ -442,8 +451,12 @@ app.get('/', rateLimit(120, 60_000), (_req, res, next) => {
 
 app.use(express.static(PUBLIC_DIR))
 
+// Enforce the configured application access policy on every dynamic route.
+// Static assets remain reachable so the browser can render the login/approval gate.
+app.use(appAccessMiddleware)
+
 app.use('/api', async (req, res, next) => {
-  if (req.path === '/binaries/status') {
+  if (req.path === '/binaries/status' || req.path.startsWith('/access/') || req.path === '/auth/login' || req.path === '/auth/logout') {
     return next()
   }
 

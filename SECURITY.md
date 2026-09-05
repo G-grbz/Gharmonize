@@ -14,7 +14,7 @@ Include the affected version, deployment mode (desktop, native web, or Docker), 
 
 - The native web server binds to `127.0.0.1` by default. Docker explicitly opts into `0.0.0.0`.
 - Remote deployments should be placed behind HTTPS and a trusted reverse proxy/firewall.
-- `TRUST_PROXY` should only be enabled together with explicit `TRUSTED_PROXY_CIDRS`.
+- Loopback reverse proxies are trusted automatically. `TRUST_PROXY` should only be enabled for additional proxy networks together with explicit `TRUSTED_PROXY_CIDRS`.
 - Admin passwords are stored as scrypt hashes. Sensitive settings supported by the settings UI are encrypted at rest with AES-256-GCM.
 - Keep `.gharmonize-key`, `.env`, cookie files, media inputs, and output directories out of source control and backups with overly broad access.
 - Runtime binary downloads are restricted to trusted HTTPS origins; GitHub release asset SHA-256 digests are verified when supplied by GitHub.
@@ -24,6 +24,10 @@ Include the affected version, deployment mode (desktop, native web, or Docker), 
 ## Code scanning triage
 
 Gharmonize keeps CodeQL security queries enabled. Project-local controls such as the custom rate limiter, log sanitizer, process allowlist, and path-boundary helpers may not always be modeled by CodeQL. A source-level `codeql[...]` suppression is used only for a reviewed sink where the corresponding security control is immediately present and covered by regression tests. Query-wide exclusions are not used for these cases, so newly introduced unprotected code remains visible to CodeQL.
+
+### Application access boundary
+
+When administrator-gated application access is enabled, Gharmonize enforces the gate on the server before dynamic API/download routes; the browser overlay is not the security boundary. Temporary authorization uses a signed HttpOnly/SameSite cookie bound to a persisted grant, the server-observed client IP, configured expiry, and a persistent access-policy revision, and never grants administrator privileges. Administrators can revoke one active grant without rotating every other session; the next server-side authorization check rejects that cookie, and temporary clients also refresh gate state frequently so an idle UI relocks quickly. Access-policy or admin-password changes revoke all temporary grants. Approval requests use cryptographically random identifiers, a signed HttpOnly per-browser requester identity, bounded request metadata, rate limits, explicit administrator approval, one-pending-or-active-grant-per-IP enforcement, and a 15-minute server-side rejection cooldown. Pending and active grants are available from the Classic jobs-bell access inbox and the YTLive access bell instead of interrupting either UI. Loopback reverse proxies are trusted automatically; non-loopback reverse-proxy deployments must configure `TRUST_PROXY` and `TRUSTED_PROXY_CIDRS` correctly so the IP used for approval and session binding is trustworthy.
 
 ## Release verification
 
@@ -40,6 +44,7 @@ The official Gharmonize project is hosted at:
 
 - Repository: https://github.com/G-grbz/Gharmonize
 - Releases: https://github.com/G-grbz/Gharmonize/releases
+- Container: https://github.com/G-grbz/Gharmonize/pkgs/container/gharmonize
 
 A third-party repository or website using the Gharmonize name is not automatically an official distribution. In particular, treat a download as suspicious if it asks you to disable antivirus protection, add security exclusions, run an unrelated installer as Administrator, or obtain Gharmonize from an unrelated external domain.
 
