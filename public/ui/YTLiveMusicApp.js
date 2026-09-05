@@ -945,12 +945,16 @@ class YTLiveMusicApp {
         region: this.getCurrentRegion()
       });
       let lastProgressShelfCount = 0;
+      let receivedPersonalProgress = false;
       const data = await this.readMusicHomeShelfStream(params, {
         signal: this.musicHomeController.signal,
         onProgress: (progress) => {
           const progressiveShelves = this.normalizeMusicHomeShelfPayload(progress);
           if (!progressiveShelves.length || progressiveShelves.length < lastProgressShelfCount) return;
           lastProgressShelfCount = progressiveShelves.length;
+          receivedPersonalProgress =
+            receivedPersonalProgress ||
+            (String(progress.source || '').toLowerCase() === 'innertube' && progress.personalized !== false);
           this.musicHomeShelves = progressiveShelves;
           this.renderMusicHomeShelves({ preserveScroll: true });
 
@@ -973,28 +977,35 @@ class YTLiveMusicApp {
       }
 
       const finalShelves = this.normalizeMusicHomeShelfPayload(data);
-      if (finalShelves.length) {
+      const finalSource = String(data.source || '').toLowerCase();
+      const isDirectPersonalHome = finalSource === 'innertube' && data.personalized !== false;
+      // A stream may already have delivered authenticated shelves before a
+      // continuation fails. Never replace that real personal Home with a later
+      // anonymous fallback response.
+      const preservingPersonalProgress = receivedPersonalProgress && !isDirectPersonalHome;
+      if (finalShelves.length && !preservingPersonalProgress) {
         this.musicHomeShelves = finalShelves;
         this.renderMusicHomeShelves({ preserveScroll: true });
       }
 
       if (this.musicHomeShelves.length) {
-        const source = String(data.source || '').toLowerCase();
-        const isDirectPersonalHome = source === 'innertube' && data.personalized !== false;
+        const source = finalSource;
+        const usingPersonalShelves = isDirectPersonalHome || preservingPersonalProgress;
         const authUser = data.authUser == null || data.authUser === '' ? '' : String(data.authUser);
         const continuationPages = Number(data.continuationPages || 0);
         const elapsedMs = Number(data.elapsedMs || 0);
         const elapsedLabel = elapsedMs > 0 ? `${(elapsedMs / 1000).toFixed(elapsedMs >= 10000 ? 0 : 1)} sn` : '';
 
         if (status) {
-          if (isDirectPersonalHome) {
+          if (usingPersonalShelves) {
             const base = this.tt('ytlive.musicHome.loaded', '{count} kişisel raf yüklendi.', {
               count: this.musicHomeShelves.length
             });
             const diagnostics = [
               authUser ? `YT hesap ${authUser}` : '',
               continuationPages > 0 ? `${continuationPages} devam sayfası` : '',
-              elapsedLabel
+              elapsedLabel,
+              (data.partial || preservingPersonalProgress) ? 'devamı tamamlanamadı' : ''
             ].filter(Boolean);
             status.textContent = diagnostics.length ? `${base} · ${diagnostics.join(' · ')}` : base;
           } else if (source === 'yt-dlp') {
@@ -1005,7 +1016,7 @@ class YTLiveMusicApp {
           if (data.warning) status.title = String(data.warning);
         }
 
-        if (!isDirectPersonalHome) {
+        if (!usingPersonalShelves) {
           console.warn('YouTube Music personal home fallback is active:', {
             source: data.source || 'unknown',
             personalized: data.personalized,
@@ -1016,8 +1027,13 @@ class YTLiveMusicApp {
 
         this.playRandomPlayerContent({ source: 'musicHome' });
         if (showToast) {
-          if (isDirectPersonalHome) {
+          if (usingPersonalShelves && !data.partial && !preservingPersonalProgress) {
             this.notify(this.tt('ytlive.musicHome.updated', 'YouTube Music rafları yenilendi.'), 'success');
+          } else if (usingPersonalShelves) {
+            this.notify(
+              String(data.warning || 'Kişisel raflar yüklendi; devam sayfalarının tamamı alınamadı.'),
+              'warning'
+            );
           } else {
             this.notify(
               String(data.warning || 'YouTube Music kişisel Home kullanılamadı; fallback rafları gösteriliyor.'),

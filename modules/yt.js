@@ -4403,6 +4403,7 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
     const seenTokens = new Set();
     let currentPage = firstPage;
     let continuationPages = 0;
+    let continuationWarning = "";
     const emitProgress = (phase) => {
       if (typeof onProgress !== "function" || !parsedShelves.length) return;
       try {
@@ -4440,12 +4441,22 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
 
       // Home uses sectionListContinuation pagination. Newer response shapes can instead expose
       // a continuationItemRenderer; support both without crawling unrelated shelf/menu tokens.
-      const nextPage = legacyToken
-        ? await postBrowse(
-            { browseId: YTM_HOME_BROWSE_ID },
-            { legacyContinuation: legacyToken, authUser }
-          )
-        : await postBrowse({ continuation: inlineToken }, { authUser });
+      let nextPage;
+      try {
+        nextPage = legacyToken
+          ? await postBrowse(
+              { browseId: YTM_HOME_BROWSE_ID },
+              { legacyContinuation: legacyToken, authUser }
+            )
+          : await postBrowse({ continuation: inlineToken }, { authUser });
+      } catch (error) {
+        // The first page has already proved that this browser session is signed in.
+        // Do not discard those personal shelves because a later pagination request
+        // times out or is rejected; return the usable partial Home instead.
+        continuationWarning = error?.message || "YouTube Music home continuation could not be loaded.";
+        console.warn("YouTube Music home continuation failed; keeping loaded personal shelves:", continuationWarning);
+        break;
+      }
       const nextShelves = buildMusicHomeShelvesFromInnertube(nextPage, { maxShelves, limitPerShelf });
       parsedShelves = mergeMusicHomeShelves(
         [parsedShelves, nextShelves],
@@ -4464,6 +4475,8 @@ async function fetchYouTubeMusicHomeInnertube({ maxShelves, limitPerShelf, timeo
       loggedIn,
       continuationPages,
       fetchedShelves: parsedShelves.length,
+      partial: !!continuationWarning,
+      warning: continuationWarning,
       title: "YouTube Music",
       shelves: parsedShelves
     };
