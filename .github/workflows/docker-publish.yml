@@ -24,9 +24,11 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: g-grbz/gharmonize
+
     steps:
       - name: Resolve release ref
         id: release_ref
@@ -37,6 +39,7 @@ jobs:
           MANUAL_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
+
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             REF="$MANUAL_REF"
           else
@@ -60,6 +63,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [[ -f .dockerigrone && ! -f .dockerignore ]]; then
             mv .dockerigrone .dockerignore
           fi
@@ -71,6 +75,7 @@ jobs:
           RELEASE_REF: ${{ steps.release_ref.outputs.ref }}
         run: |
           set -euo pipefail
+
           VERSION="$(node -p "require('./package.json').version")"
           TAG_VERSION="${RELEASE_REF#v}"
 
@@ -99,9 +104,16 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+
+          # Keep GHCR package versions clean.
+          # GitHub attestation is generated separately below.
+          provenance: false
+          sbom: false
+
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
           labels: |
             org.opencontainers.image.title=Gharmonize
             org.opencontainers.image.description=Media download, conversion, ripping, tagging, and music automation toolkit
@@ -111,10 +123,11 @@ jobs:
             org.opencontainers.image.licenses=GPL-3.0-only
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ steps.version.outputs.revision }}
+
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Attest GHCR image
+      - name: Create GitHub attestation
         uses: actions/attest@v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
