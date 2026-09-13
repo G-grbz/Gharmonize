@@ -6,7 +6,7 @@ import vm from 'node:vm';
 // Run the actual UI methods with a small DOM/timer fixture, without initializing
 // playback, authentication or the page's DOMContentLoaded callback.
 const source = fs.readFileSync(new URL('../public/ui/YTLiveMusicApp.js', import.meta.url), 'utf8')
-  .replace(/^import .*;\r?\n/gm, '');
+  .replace(/^import\s[\s\S]*?;\r?\n/gm, '');
 
 function fixture(fetchImpl = () => { throw new Error('Unexpected fetch'); }) {
   const timers = new Map();
@@ -22,6 +22,7 @@ function fixture(fetchImpl = () => { throw new Error('Unexpected fetch'); }) {
     fetch: fetchImpl,
     console: { warn() {} },
     window: {
+      addEventListener() {},
       setTimeout: (callback, delayMs) => { timers.set(++timerId, callback); timerDelays.set(timerId, delayMs); return timerId; },
       clearTimeout: (id) => { timers.delete(id); timerDelays.delete(id); }
     },
@@ -73,6 +74,7 @@ test('recommendations start without waiting for download-list and queue initiali
   const started = [];
   Object.assign(app, {
     bindEvents() {}, applyLocalizedUi() {}, renderFormatOptions() {}, scheduleQueuePoll() {},
+    resumeMusicTextMatchOperation: () => new Promise(() => {}),
     loadMusicHomeShelves() { started.push('home'); },
     async search() { started.push('discover'); },
     refreshDownloadLists: () => lists.promise,
