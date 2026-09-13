@@ -97,6 +97,7 @@ export class JobManager {
         this.updateJobUI(job, batchId);
 
         if (isTerminal) {
+            document.dispatchEvent(new CustomEvent('job:terminal', { detail: { jobId, status: job.status, job } }));
             eventSource.close();
             this.currentJobs.delete(jobId);
         }
@@ -1823,6 +1824,7 @@ updateJobUI(job, batchId = null) {
             js.currentPhase = 'canceled';
             this.jobStates.set(job.id, js);
             this.updateJobUI(js, this.jobToBatch.get(job.id) || null);
+            document.dispatchEvent(new CustomEvent('job:terminal', { detail: { jobId: job.id, status: 'canceled', job: js } }));
 
             this.app.showNotification(this.app.t('notif.canceledByUser'), 'success', 'action');
             this.saveSessionState();
@@ -2035,6 +2037,7 @@ updateJobUI(job, batchId = null) {
                     js.currentPhase = 'canceled';
                     this.jobStates.set(id, js);
                     this.updateJobUI(js, batchId);
+                    document.dispatchEvent(new CustomEvent('job:terminal', { detail: { jobId: id, status: 'canceled', job: js } }));
                 }
             } catch (_) { }
         });
@@ -2373,9 +2376,11 @@ updateJobUI(job, batchId = null) {
 
             this.app.showNotification(this.app.t('notif.queue'), 'success', 'queue');
             this.saveSessionState();
+            return result;
         } catch (error) {
             console.error("Job submission error:", error);
             this.app.showNotification(`${this.app.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
+            return null;
         }
     }
 }

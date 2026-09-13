@@ -12,6 +12,7 @@ import { getBinariesInfo, clearBinariesInfoCache } from './modules/binariesInfo.
 import spotifyRoute from './routes/spotify.js'
 import playlistRoute from './routes/playlist.js'
 import ytliveDownloadListsRoute from './routes/ytliveDownloadLists.js'
+import musicTextRoute from './routes/musicText.js'
 import jobsRoute from './routes/jobs.js'
 import downloadRoute from './routes/download.js'
 import trackExtractorRoute from './routes/trackExtractor.js'
@@ -483,6 +484,7 @@ app.use(formatsRoute)
 app.use(spotifyRoute)
 app.use(playlistRoute)
 app.use(ytliveDownloadListsRoute)
+app.use(musicTextRoute)
 app.use(jobsRoute)
 app.use(trackExtractorRoute)
 app.use(retagRoute)

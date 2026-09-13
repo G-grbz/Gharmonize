@@ -3,7 +3,8 @@ const CATALOG_MUSIC_PROVIDERS = new Set([
   'apple',
   'apple_music',
   'deezer',
-  'tidal'
+  'tidal',
+  'text'
 ]);
 
 export const MAPPED_MUSIC_YT_SEARCH_RESULTS = Math.max(
@@ -64,11 +65,31 @@ function norm(value = '') {
     .toLocaleLowerCase('tr-TR')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
+    // YouTube metadata is frequently ASCII-normalized even when the source
+    // title uses Turkish dotless-i. Treat those spellings as equivalent for
+    // identity matching, not as a reason to reject an otherwise exact track.
+    .replace(/ı/g, 'i')
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    // Common Turkish catalogue spelling variant. This remains deliberately
+    // narrow: we only canonicalize a known orthographic alias instead of
+    // relaxing the matcher enough to accept a different song.
+    .replace(/\bcafe\b/g, 'kafe')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+
+
+function searchQueryNorm(value = '') {
+  return String(value || '')
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function compactNorm(value = '') {
   return norm(value).replace(/\s+/g, '');
@@ -148,7 +169,7 @@ function uniqueQueries(values = []) {
   const seen = new Set();
   for (const value of values) {
     const query = String(value || '').replace(/\s+/g, ' ').trim();
-    const key = norm(query);
+    const key = searchQueryNorm(query);
     if (!query || !key || seen.has(key)) continue;
     seen.add(key);
     out.push(query);
@@ -161,9 +182,16 @@ export function isCatalogMusicProvider(provider = '') {
 }
 
 export function buildCatalogMusicSearchQueries(artist = '', title = '') {
+  const rawTitle = String(title || '').trim();
+  const kafeTitle = rawTitle.replace(/\bcafe\b/gi, 'kafe');
+  const cafeTitle = rawTitle.replace(/\bkafe\b/gi, 'cafe');
   return uniqueQueries([
-    `${artist || ''} ${title || ''}`,
-    title
+    `${artist || ''} ${rawTitle}`,
+    rawTitle,
+    `${artist || ''} ${kafeTitle}`,
+    kafeTitle,
+    `${artist || ''} ${cafeTitle}`,
+    cafeTitle
   ]);
 }
 

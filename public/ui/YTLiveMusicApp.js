@@ -1,6 +1,21 @@
 import { settingsManager } from './SettingsManager.js';
 import { accessManager } from './AccessManager.js';
 import { accessInboxManager } from './AccessInboxManager.js';
+import {
+  MUSIC_TEXT_QUEUE_STORAGE_KEY,
+  parseMusicTextList,
+  matchMusicTextItems,
+  buildMusicTextJobPayload,
+  loadMusicTextQueue,
+  loadMusicTextQueueState,
+  saveMusicTextQueueState,
+  applyMusicTextMatchProgress,
+  reconcileMusicTextQueuedItems,
+  resetMusicTextJob,
+  pruneMusicTextTerminalItems,
+  MUSIC_TEXT_DONE_PROGRESS_TTL_MS,
+  shouldShowMusicTextOperationProgress
+} from './MusicTextImport.js';
 
 async function waitForRuntimeBinariesReady() {
   const overlay = document.getElementById('binaryStartupOverlay');
@@ -123,6 +138,16 @@ class YTLiveMusicApp {
     this.collapsiblePanels = ['downloadListsPanel', 'playlistTracksPanel', 'musicHomeSection', 'discover'];
     this.downloadLists = [];
     this.expandedDownloadListIds = new Set();
+    this.musicTextStorageKey = MUSIC_TEXT_QUEUE_STORAGE_KEY;
+    this.musicTextRunning = false;
+    this.musicTextProgress = null;
+    this.musicTextOperation = null;
+    this.musicTextAutoRemoveTerminal = false;
+    this.musicTextResumePromise = null;
+    this.musicTextItems = this.loadMusicTextItems();
+    this.musicTextNextId = Math.max(1, ...this.musicTextItems.map((item) => Number(item.id) + 1 || 1));
+    this.musicTextReconcileInFlight = false;
+    this.musicTextProgressHideTimer = null;
     this.activeDownloadListMenu = null;
     this.presetCounters = new Map();
     this.escapeMap = {
@@ -167,8 +192,13 @@ class YTLiveMusicApp {
 
     await settingsManager.initialize();
     accessInboxManager.initialize();
+    window.addEventListener('storage', (event) => {
+      if (event.key !== MUSIC_TEXT_QUEUE_STORAGE_KEY || this.musicTextRunning) return;
+      this.syncMusicTextItemsFromShared();
+    });
     this.bindEvents();
     this.applyLocalizedUi();
+    void this.resumeMusicTextMatchOperation();
     // Recommendations do not depend on download lists, output formats or the
     // queue snapshot. Start them as soon as access and runtime tools are ready.
     this.loadMusicHomeShelves();
@@ -203,6 +233,7 @@ class YTLiveMusicApp {
     document.getElementById('autoPlayModeBtn')?.addEventListener('click', () => this.toggleAutoPlayMode());
     document.getElementById('addUrlBtn')?.addEventListener('click', () => this.addUrlInput());
     document.getElementById('addUrlToListBtn')?.addEventListener('click', (event) => this.addUrlInputToList(event));
+    document.getElementById('bulkMusicTextBtn')?.addEventListener('click', () => this.openMusicTextImportModal());
     document.getElementById('addCurrentBtn')?.addEventListener('click', () => {
       if (this.currentItem) this.addItem(this.currentItem);
     });
@@ -276,6 +307,621 @@ class YTLiveMusicApp {
     this.setupInfiniteScroll();
     this.updatePlayerNavigationControls();
     document.addEventListener('error', (event) => this.handleThumbnailError(event), true);
+  }
+
+  progressFromMusicTextOperation(operation = null) {
+    if (!operation || !shouldShowMusicTextOperationProgress(operation)) return null;
+    return {
+      phase: operation.phase || 'matching',
+      total: Number(operation.total || 0),
+      completed: Number(operation.completed || 0),
+      matched: Number(operation.matched || 0),
+      failed: Number(operation.failed || 0),
+      message: operation.message || null,
+      updatedAt: Number(operation.updatedAt || Date.now())
+    };
+  }
+
+  clearMusicTextProgressHideTimer() {
+    if (this.musicTextProgressHideTimer === null) return;
+    clearTimeout(this.musicTextProgressHideTimer);
+    this.musicTextProgressHideTimer = null;
+  }
+
+  scheduleMusicTextProgressHide(state) {
+    this.clearMusicTextProgressHideTimer();
+    if (!state || state.phase !== 'done') return;
+    const elapsed = Math.max(0, Date.now() - Number(state.updatedAt || Date.now()));
+    const remaining = MUSIC_TEXT_DONE_PROGRESS_TTL_MS - elapsed;
+    if (remaining <= 0) {
+      this.musicTextProgress = null;
+      return;
+    }
+    this.musicTextProgressHideTimer = setTimeout(() => {
+      this.musicTextProgressHideTimer = null;
+      if (this.musicTextProgress?.phase !== 'done') return;
+      this.musicTextProgress = null;
+      this.renderMusicTextProgress();
+    }, remaining + 20);
+  }
+
+  loadMusicTextItems() {
+    const state = loadMusicTextQueueState();
+    this.musicTextOperation = state.operation;
+    this.musicTextAutoRemoveTerminal = state.preferences?.autoRemoveTerminal === true;
+    this.musicTextProgress = this.progressFromMusicTextOperation(state.operation);
+    return this.musicTextAutoRemoveTerminal && !['matching', 'queueing'].includes(state.operation?.phase)
+      ? pruneMusicTextTerminalItems(state.items, { autoRemoveTerminal: true })
+      : state.items;
+  }
+
+  saveMusicTextItems() {
+    try {
+      saveMusicTextQueueState({
+        items: this.musicTextItems,
+        operation: this.musicTextOperation,
+        preferences: { autoRemoveTerminal: this.musicTextAutoRemoveTerminal }
+      });
+    } catch {}
+  }
+
+  syncMusicTextItemsFromShared() {
+    if (this.musicTextRunning) return;
+    const state = loadMusicTextQueueState();
+    this.musicTextItems = state.items;
+    this.musicTextOperation = state.operation;
+    this.musicTextAutoRemoveTerminal = state.preferences?.autoRemoveTerminal === true;
+    if (this.musicTextAutoRemoveTerminal && !['matching', 'queueing'].includes(state.operation?.phase)) {
+      const before = this.musicTextItems.length;
+      this.musicTextItems = pruneMusicTextTerminalItems(this.musicTextItems, { autoRemoveTerminal: true });
+      if (this.musicTextItems.length !== before) this.saveMusicTextItems();
+    }
+    this.musicTextProgress = this.progressFromMusicTextOperation(state.operation);
+    this.musicTextNextId = Math.max(1, ...this.musicTextItems.map((item) => Number(item.id) + 1 || 1));
+    this.renderMusicTextImportModal();
+    if (this.musicTextOperation?.phase === 'matching') void this.resumeMusicTextMatchOperation();
+  }
+
+  async reconcileMusicTextQueuedJobs() {
+    if (this.musicTextReconcileInFlight) return;
+    if (!this.musicTextItems.some((item) => item.status === 'queued' && item.jobId)) return;
+    this.musicTextReconcileInFlight = true;
+    try {
+      const result = await reconcileMusicTextQueuedItems(this.musicTextItems);
+      if (!result.changed) return;
+      this.musicTextItems = pruneMusicTextTerminalItems(result.items, { autoRemoveTerminal: this.musicTextAutoRemoveTerminal });
+      this.musicTextNextId = Math.max(1, ...this.musicTextItems.map((item) => Number(item.id) + 1 || 1));
+      this.musicTextProgress = null;
+      this.saveMusicTextItems();
+      this.renderMusicTextImportModal();
+    } finally {
+      this.musicTextReconcileInFlight = false;
+    this.musicTextProgressHideTimer = null;
+    }
+  }
+
+  applyMusicTextJobTerminal(jobId, status) {
+    const result = resetMusicTextJob(this.musicTextItems, jobId, status);
+    if (!result.changed) return;
+    this.musicTextItems = pruneMusicTextTerminalItems(result.items, { autoRemoveTerminal: this.musicTextAutoRemoveTerminal });
+    this.musicTextProgress = null;
+    this.saveMusicTextItems();
+    this.renderMusicTextImportModal();
+  }
+
+  ensureMusicTextImportModal() {
+    let backdrop = document.getElementById('ytliveMusicTextModal');
+    if (backdrop) return backdrop;
+
+    backdrop = document.createElement('div');
+    backdrop.id = 'ytliveMusicTextModal';
+    backdrop.className = 'custom-modal-backdrop ytlive-music-text-backdrop';
+    backdrop.setAttribute('aria-hidden', 'true');
+    backdrop.innerHTML = `
+      <section class="custom-modal ytlive-music-text-modal" role="dialog" aria-modal="true" aria-labelledby="ytliveMusicTextTitle">
+        <header class="custom-modal__header">
+          <div class="custom-modal__content">
+            <h2 id="ytliveMusicTextTitle" class="custom-modal__title"></h2>
+            <div id="ytliveMusicTextSubtitle" class="custom-modal__message"></div>
+          </div>
+          <button type="button" class="ytlive-music-text-close" data-music-text-close aria-label="Close">×</button>
+        </header>
+        <div class="custom-modal__body ytlive-music-text-body">
+          <div class="ytlive-music-text-format">
+            <strong data-music-text-format-title></strong>
+            <code>Sanatçı – Şarkı</code>
+            <span data-music-text-format-hint></span>
+          </div>
+          <textarea id="ytliveMusicTextInput" rows="8" spellcheck="false"></textarea>
+          <div class="ytlive-music-text-add-row">
+            <span class="muted" data-music-text-paste-hint></span>
+            <button id="ytliveMusicTextAdd" class="secondary-button" type="button"></button>
+          </div>
+          <div class="ytlive-music-text-summary" data-music-text-summary></div>
+          <div class="ytlive-music-text-progress" data-music-text-progress aria-live="polite" hidden></div>
+          <div id="ytliveMusicTextList" class="ytlive-music-text-list"></div>
+        </div>
+        <footer class="custom-modal__footer ytlive-music-text-footer">
+          <label class="ytlive-music-text-auto-remove" for="ytliveMusicTextAutoRemove">
+            <input id="ytliveMusicTextAutoRemove" type="checkbox" />
+            <span data-music-text-auto-remove-label></span>
+          </label>
+          <div class="ytlive-music-text-footer-actions">
+            <button class="secondary-button" type="button" data-music-text-close data-music-text-done></button>
+            <button id="ytliveMusicTextStart" class="primary-button" type="button"></button>
+          </div>
+        </footer>
+      </section>`;
+    document.body.appendChild(backdrop);
+
+    backdrop.querySelectorAll('[data-music-text-close]').forEach((button) => {
+      button.addEventListener('click', () => this.closeMusicTextImportModal());
+    });
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) this.closeMusicTextImportModal();
+    });
+    backdrop.querySelector('#ytliveMusicTextAdd')?.addEventListener('click', () => this.addMusicTextInput());
+    backdrop.querySelector('#ytliveMusicTextStart')?.addEventListener('click', () => this.startMusicTextImport());
+    backdrop.querySelector('#ytliveMusicTextAutoRemove')?.addEventListener('change', (event) => {
+      this.musicTextAutoRemoveTerminal = !!event.target.checked;
+      if (this.musicTextAutoRemoveTerminal && !['matching', 'queueing'].includes(this.musicTextOperation?.phase)) {
+        this.musicTextItems = pruneMusicTextTerminalItems(this.musicTextItems, { autoRemoveTerminal: true });
+      }
+      this.saveMusicTextItems();
+      this.renderMusicTextImportModal();
+    });
+    backdrop.querySelector('#ytliveMusicTextList')?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-music-text-remove]');
+      if (!button) return;
+      const id = Number(button.dataset.musicTextRemove);
+      const item = this.musicTextItems.find((entry) => entry.id === id);
+      if (!item || item.status === 'running') return;
+      this.musicTextItems = this.musicTextItems.filter((entry) => entry.id !== id);
+      if (this.musicTextOperation?.phase !== 'matching') {
+        this.musicTextOperation = null;
+        this.musicTextProgress = null;
+      }
+      this.saveMusicTextItems();
+      this.renderMusicTextImportModal();
+    });
+    return backdrop;
+  }
+
+  openMusicTextImportModal() {
+    const backdrop = this.ensureMusicTextImportModal();
+    if (!this.musicTextRunning) this.syncMusicTextItemsFromShared();
+    void this.resumeMusicTextMatchOperation();
+    void this.reconcileMusicTextQueuedJobs();
+    this.renderMusicTextImportModal();
+    backdrop.classList.add('is-open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    backdrop.querySelector('#ytliveMusicTextInput')?.focus();
+  }
+
+  closeMusicTextImportModal() {
+    const backdrop = document.getElementById('ytliveMusicTextModal');
+    if (!backdrop) return;
+    backdrop.classList.remove('is-open');
+    backdrop.setAttribute('aria-hidden', 'true');
+    document.getElementById('bulkMusicTextBtn')?.focus();
+  }
+
+  addMusicTextInput() {
+    this.musicTextItems = loadMusicTextQueue();
+    this.musicTextNextId = Math.max(1, ...this.musicTextItems.map((item) => Number(item.id) + 1 || 1));
+    const input = document.getElementById('ytliveMusicTextInput');
+    const parsed = parseMusicTextList(input?.value || '');
+    if (!parsed.length) {
+      this.notify(this.tt('musicQueue.textNoItems', 'Yapıştırılan metinde kullanılabilir parça adı bulunamadı.'), 'info');
+      return;
+    }
+    const existing = new Set(this.musicTextItems.map((item) => String(item.query || '').toLocaleLowerCase()));
+    let added = 0;
+    for (const entry of parsed) {
+      const key = String(entry.query || '').toLocaleLowerCase();
+      if (!key || existing.has(key)) continue;
+      existing.add(key);
+      this.musicTextItems.push({
+        id: this.musicTextNextId++,
+        artist: entry.artist,
+        title: entry.title,
+        query: entry.query,
+        status: 'pending',
+        error: null,
+        match: null,
+        jobId: null
+      });
+      added += 1;
+    }
+    if (added && input) input.value = '';
+    if (added) {
+      this.musicTextProgress = null;
+      this.musicTextOperation = null;
+    }
+    this.saveMusicTextItems();
+    this.renderMusicTextImportModal();
+    this.notify(this.tt('musicQueue.textAdded', '{count} parça listeye eklendi.', { count: added }), added ? 'success' : 'info');
+  }
+
+  musicTextStatusLabel(status) {
+    const key = {
+      pending: 'musicQueue.status.pending',
+      running: 'musicQueue.status.matching',
+      matched: 'musicQueue.status.matched',
+      queued: 'musicQueue.status.queued',
+      completed: 'musicQueue.status.completed',
+      'not-found': 'musicQueue.status.notFound',
+      error: 'musicQueue.status.error'
+    }[status] || 'musicQueue.status.pending';
+    return this.tt(key, status);
+  }
+
+  renderMusicTextProgress(modal = document.getElementById('ytliveMusicTextModal')) {
+    const progress = modal?.querySelector('[data-music-text-progress]');
+    if (!progress) return;
+    const state = this.musicTextProgress;
+    if (!state) {
+      this.clearMusicTextProgressHideTimer();
+      progress.hidden = true;
+      progress.className = 'ytlive-music-text-progress';
+      progress.innerHTML = '';
+      return;
+    }
+    const phase = state.phase || 'matching';
+    if (phase === 'done') this.scheduleMusicTextProgressHide(state);
+    else this.clearMusicTextProgressHideTimer();
+    const text = phase === 'matching'
+      ? this.tt('musicQueue.textProgressMatching', '{count} parça eşleştiriliyor…', { count: state.total })
+      : phase === 'queueing'
+        ? this.tt('musicQueue.textProgressQueueing', '{matched} parça eşleşti, {failed} bulunamadı. İndirme kuyruğuna ekleniyor…', { matched: state.matched, failed: state.failed })
+        : phase === 'done'
+          ? this.tt('musicQueue.textProgressDone', '{matched} eşleşti • {failed} bulunamadı • işlem tamamlandı.', { matched: state.matched, failed: state.failed })
+          : this.tt('musicQueue.textProgressError', 'İşlem durdu: {error}', { error: state.message || this.tt('musicQueue.unknownError', 'Bilinmeyen hata') });
+    progress.hidden = false;
+    progress.className = `ytlive-music-text-progress is-${phase}`;
+    progress.innerHTML = `${phase === 'matching' || phase === 'queueing' ? '<span class="ytlive-music-text-spinner" aria-hidden="true"></span>' : ''}<span>${this.escapeHtml(text)}</span>`;
+  }
+
+  renderMusicTextImportModal() {
+    const modal = document.getElementById('ytliveMusicTextModal');
+    if (!modal) return;
+    const setText = (selector, text) => {
+      const node = modal.querySelector(selector);
+      if (node) node.textContent = text;
+    };
+    setText('#ytliveMusicTextTitle', this.tt('musicQueue.tabText', 'Müzik listesi yapıştır'));
+    setText('#ytliveMusicTextSubtitle', this.tt('musicQueue.textPasteHint', 'ChatGPT veya başka bir yerden aldığın listeyi yapıştır, sonra listeye ekle.'));
+    setText('[data-music-text-format-title]', this.tt('musicQueue.textFormatTitle', 'Liste formatı:'));
+    setText('[data-music-text-format-hint]', this.tt('musicQueue.textFormatHint', 'Her satırda bir parça. Numaralandırma ve açıklamalar otomatik ayıklanır.'));
+    setText('[data-music-text-paste-hint]', this.tt('musicQueue.textPasteHint', 'Listeyi yapıştır ve ekle.'));
+    setText('[data-music-text-summary]', this.tt('musicQueue.textSummary', 'Listede {count} parça adı var', { count: this.musicTextItems.length }));
+    setText('#ytliveMusicTextAdd', this.tt('musicQueue.textAdd', 'Listeye ekle'));
+    setText('[data-music-text-done]', this.tt('musicQueue.done', 'Tamam'));
+    setText('[data-music-text-auto-remove-label]', this.tt('musicQueue.textAutoRemove', 'Tamamlanan ve bulunamayan parçaları otomatik kaldır'));
+    const autoRemove = modal.querySelector('#ytliveMusicTextAutoRemove');
+    if (autoRemove) autoRemove.checked = this.musicTextAutoRemoveTerminal;
+    const start = modal.querySelector('#ytliveMusicTextStart');
+    if (start) {
+      const phase = this.musicTextProgress?.phase;
+      start.textContent = this.musicTextRunning
+        ? (phase === 'queueing'
+          ? this.tt('musicQueue.textQueueingButton', 'Kuyruğa ekleniyor…')
+          : this.tt('musicQueue.textMatchingButton', 'Eşleştiriliyor…'))
+        : this.tt('musicQueue.textStart', 'Eşleştir ve indir');
+      start.disabled = this.musicTextRunning || !this.musicTextItems.some((item) => ['pending', 'error', 'not-found', 'matched'].includes(item.status));
+      start.classList.toggle('is-loading', this.musicTextRunning);
+      start.setAttribute('aria-busy', this.musicTextRunning ? 'true' : 'false');
+    }
+    const add = modal.querySelector('#ytliveMusicTextAdd');
+    if (add) add.disabled = this.musicTextRunning;
+    this.renderMusicTextProgress(modal);
+    const input = modal.querySelector('#ytliveMusicTextInput');
+    if (input) {
+      input.placeholder = this.tt('musicQueue.textPlaceholder', '1. Sanatçı – Şarkı — açıklama');
+      input.disabled = this.musicTextRunning;
+    }
+
+    const list = modal.querySelector('#ytliveMusicTextList');
+    if (!list) return;
+    if (!this.musicTextItems.length) {
+      list.innerHTML = `<div class="ytlive-music-text-empty">${this.escapeHtml(this.tt('musicQueue.textEmpty', 'Henüz parça adı eklenmedi.'))}</div>`;
+      return;
+    }
+    list.innerHTML = this.musicTextItems.map((item, index) => `
+      <article class="ytlive-music-text-item is-${this.escapeHtml(item.status)}">
+        <span class="ytlive-music-text-index">${index + 1}</span>
+        <div class="ytlive-music-text-main">
+          <div class="ytlive-music-text-meta">
+            <strong>${this.escapeHtml(item.artist || this.tt('musicQueue.textUnknownArtist', 'Bilinmeyen sanatçı'))}</strong>
+            <span class="ytlive-music-text-status is-${this.escapeHtml(item.status)}">${this.escapeHtml(this.musicTextStatusLabel(item.status))}</span>
+          </div>
+          <div class="ytlive-music-text-query">${this.escapeHtml(item.title || item.query)}</div>
+          ${item.match?.title ? `<div class="ytlive-music-text-match">${this.escapeHtml(item.match.title)}${item.match.uploader ? ` • ${this.escapeHtml(item.match.uploader)}` : ''}</div>` : ''}
+          ${item.error ? `<div class="ytlive-music-text-error">${this.escapeHtml(item.error)}</div>` : ''}
+        </div>
+        <button class="ytlive-music-text-remove" type="button" data-music-text-remove="${item.id}" ${item.status === 'running' ? 'disabled' : ''} aria-label="Remove">×</button>
+      </article>`).join('');
+  }
+
+  applyMusicTextMatchOperationProgress(serverOperation, seed = {}) {
+    const previous = this.musicTextOperation || {};
+    const itemIds = Array.isArray(seed.itemIds) && seed.itemIds.length
+      ? seed.itemIds.map(String)
+      : (Array.isArray(serverOperation?.itemIds) && serverOperation.itemIds.length
+        ? serverOperation.itemIds.map(String)
+        : (previous.itemIds || []).map(String));
+    const queueItemIds = Array.isArray(seed.queueItemIds) && seed.queueItemIds.length
+      ? seed.queueItemIds.map(String)
+      : (previous.queueItemIds || itemIds).map(String);
+    const baseMatched = Number(seed.baseMatched ?? previous.baseMatched ?? 0);
+    const outputPayload = seed.outputPayload || previous.outputPayload || null;
+    const playlistTitle = seed.playlistTitle || previous.playlistTitle || this.tt('musicQueue.textPlaylistTitle', 'Yapıştırılan müzik listesi');
+
+    this.musicTextItems = applyMusicTextMatchProgress(this.musicTextItems, { ...(serverOperation || {}), itemIds });
+    const serverMatched = Number(serverOperation?.matched || 0);
+    const serverFailed = Number(serverOperation?.failed || 0);
+    const serverCompleted = Number(serverOperation?.completed || 0);
+    this.musicTextOperation = {
+      id: String(serverOperation?.id || previous.id || ''),
+      phase: 'matching',
+      itemIds,
+      queueItemIds,
+      baseMatched,
+      total: queueItemIds.length || (baseMatched + Number(serverOperation?.total || itemIds.length)),
+      completed: Math.min(queueItemIds.length || Number.MAX_SAFE_INTEGER, baseMatched + serverCompleted),
+      matched: baseMatched + serverMatched,
+      failed: serverFailed,
+      outputPayload,
+      playlistTitle,
+      updatedAt: Date.now()
+    };
+    this.musicTextProgress = this.progressFromMusicTextOperation(this.musicTextOperation);
+    this.saveMusicTextItems();
+    this.renderMusicTextImportModal();
+  }
+
+  async queueResolvedMusicTextOperation() {
+    const operation = this.musicTextOperation;
+    if (!operation) return null;
+    const queueIds = new Set((operation.queueItemIds?.length ? operation.queueItemIds : operation.itemIds || []).map(String));
+    const queueItems = this.musicTextItems.filter((item) => queueIds.has(String(item.id)));
+    const matchedEntries = queueItems
+      .filter((item) => item.status === 'matched' && item.match?.id)
+      .map((item) => ({
+        id: item.id,
+        artist: item.artist,
+        title: item.title,
+        query: item.query,
+        matched: true,
+        match: item.match
+      }));
+    const failed = queueItems.filter((item) => ['not-found', 'error'].includes(item.status)).length;
+
+    this.musicTextOperation = {
+      ...operation,
+      phase: matchedEntries.length ? 'queueing' : 'done',
+      total: queueItems.length,
+      completed: queueItems.length,
+      matched: matchedEntries.length,
+      failed,
+      updatedAt: Date.now()
+    };
+    this.musicTextProgress = this.progressFromMusicTextOperation(this.musicTextOperation);
+
+    if (!matchedEntries.length) {
+      if (this.musicTextAutoRemoveTerminal) {
+        this.musicTextItems = pruneMusicTextTerminalItems(this.musicTextItems, { autoRemoveTerminal: true });
+      }
+      this.saveMusicTextItems();
+      this.renderMusicTextImportModal();
+      this.notify(this.tt('musicQueue.textMatchNone', 'Hiçbir parça eşleştirilemedi.'), 'error');
+      return { matched: 0, failed };
+    }
+    this.saveMusicTextItems();
+    this.renderMusicTextImportModal();
+
+    const payload = buildMusicTextJobPayload(
+      matchedEntries,
+      operation.outputPayload || this.getOutputPayload(),
+      { title: operation.playlistTitle || this.tt('musicQueue.textPlaylistTitle', 'Yapıştırılan müzik listesi') }
+    );
+    const job = payload ? await this.submitJob(payload) : null;
+    if (!job?.id) throw new Error(this.tt('musicQueue.textQueueFailed', 'Liste indirme kuyruğuna eklenemedi.'));
+
+    const matchedIds = new Set(matchedEntries.map((entry) => String(entry.id)));
+    for (const item of this.musicTextItems) {
+      if (!matchedIds.has(String(item.id))) continue;
+      item.status = 'queued';
+      item.jobId = job.id;
+      item.error = null;
+    }
+    this.musicTextOperation = {
+      ...this.musicTextOperation,
+      phase: 'done',
+      matched: matchedEntries.length,
+      failed,
+      updatedAt: Date.now()
+    };
+    this.musicTextProgress = this.progressFromMusicTextOperation(this.musicTextOperation);
+    if (this.musicTextAutoRemoveTerminal) {
+      this.musicTextItems = pruneMusicTextTerminalItems(this.musicTextItems, { autoRemoveTerminal: true });
+    }
+    this.saveMusicTextItems();
+    this.renderMusicTextImportModal();
+    this.notify(this.tt('musicQueue.textQueued', '{matched} eşleşen parça kuyruğa eklendi; {failed} parça eşleşmedi.', {
+      matched: matchedEntries.length,
+      failed
+    }), failed === 0 ? 'success' : 'info');
+    return { matched: matchedEntries.length, failed, jobId: job.id };
+  }
+
+  async resumeMusicTextMatchOperation() {
+    if (this.musicTextResumePromise) return this.musicTextResumePromise;
+    const state = loadMusicTextQueueState();
+    const operation = state.operation;
+    if (!operation || operation.phase !== 'matching' || !operation.id) return null;
+
+    this.musicTextItems = state.items;
+    this.musicTextOperation = operation;
+    this.musicTextProgress = this.progressFromMusicTextOperation(operation);
+    const matchIds = new Set((operation.itemIds || []).map(String));
+    const matchItems = this.musicTextItems.filter((item) => matchIds.has(String(item.id)));
+    if (!matchItems.length) return null;
+
+    this.musicTextRunning = true;
+    this.renderMusicTextImportModal();
+    this.musicTextResumePromise = (async () => {
+      try {
+        await matchMusicTextItems(matchItems, {
+          operationId: operation.id,
+          concurrency: this.getSpotifyConcurrency(),
+          onProgress: (progress) => this.applyMusicTextMatchOperationProgress(progress)
+        });
+        return await this.queueResolvedMusicTextOperation();
+      } catch (error) {
+        for (const item of this.musicTextItems) {
+          if (item.status === 'running') {
+            item.status = item.match?.id ? 'matched' : 'error';
+            item.error = item.match?.id ? null : (error?.message || String(error));
+          }
+        }
+        this.musicTextOperation = {
+          ...this.musicTextOperation,
+          phase: 'error',
+          message: error?.message || String(error),
+          updatedAt: Date.now()
+        };
+        this.musicTextProgress = this.progressFromMusicTextOperation(this.musicTextOperation);
+        this.saveMusicTextItems();
+        this.renderMusicTextImportModal();
+        return null;
+      } finally {
+        this.musicTextRunning = false;
+        this.musicTextResumePromise = null;
+        this.renderMusicTextImportModal();
+      }
+    })();
+    return this.musicTextResumePromise;
+  }
+
+  async startMusicTextImport() {
+    if (this.musicTextRunning) return null;
+    const state = loadMusicTextQueueState();
+    this.musicTextItems = state.items;
+    this.musicTextOperation = state.operation;
+    if (this.musicTextOperation?.phase === 'matching' && this.musicTextOperation?.id) {
+      return this.resumeMusicTextMatchOperation();
+    }
+
+    const runnable = this.musicTextItems.filter((item) => ['pending', 'error', 'not-found', 'matched'].includes(item.status));
+    if (!runnable.length) return null;
+
+    const reusable = runnable.filter((item) => item.status === 'matched' && item.match?.id);
+    const needsMatch = runnable.filter((item) => !(item.status === 'matched' && item.match?.id));
+    const outputPayload = this.getOutputPayload();
+    const playlistTitle = this.tt('musicQueue.textPlaylistTitle', 'Yapıştırılan müzik listesi');
+
+    if (!needsMatch.length) {
+      this.musicTextRunning = true;
+      this.musicTextOperation = {
+        id: '',
+        phase: 'queueing',
+        itemIds: [],
+        queueItemIds: runnable.map((item) => String(item.id)),
+        baseMatched: reusable.length,
+        total: runnable.length,
+        completed: runnable.length,
+        matched: reusable.length,
+        failed: 0,
+        outputPayload,
+        playlistTitle,
+        updatedAt: Date.now()
+      };
+      this.musicTextProgress = this.progressFromMusicTextOperation(this.musicTextOperation);
+      this.saveMusicTextItems();
+      this.renderMusicTextImportModal();
+      try {
+        return await this.queueResolvedMusicTextOperation();
+      } catch (error) {
+        this.musicTextOperation = { ...this.musicTextOperation, phase: 'error', message: error?.message || String(error), updatedAt: Date.now() };
+        this.musicTextProgress = this.progressFromMusicTextOperation(this.musicTextOperation);
+        this.saveMusicTextItems();
+        this.renderMusicTextImportModal();
+        this.notify(error?.message || String(error), 'error');
+        return null;
+      } finally {
+        this.musicTextRunning = false;
+        this.renderMusicTextImportModal();
+      }
+    }
+
+    this.musicTextRunning = true;
+    this.musicTextProgress = { phase: 'matching', total: runnable.length, completed: reusable.length, matched: reusable.length, failed: 0 };
+    this.renderMusicTextImportModal();
+
+    try {
+      const result = await matchMusicTextItems(needsMatch, {
+        concurrency: this.getSpotifyConcurrency(),
+        onOperation: (serverOperation) => {
+          this.applyMusicTextMatchOperationProgress(serverOperation, {
+            itemIds: needsMatch.map((item) => String(item.id)),
+            queueItemIds: runnable.map((item) => String(item.id)),
+            baseMatched: reusable.length,
+            outputPayload,
+            playlistTitle
+          });
+        },
+        onProgress: (progress) => this.applyMusicTextMatchOperationProgress(progress, {
+          itemIds: needsMatch.map((item) => String(item.id)),
+          queueItemIds: runnable.map((item) => String(item.id)),
+          baseMatched: reusable.length,
+          outputPayload,
+          playlistTitle
+        })
+      });
+
+      this.applyMusicTextMatchOperationProgress(result.operation || {
+        id: result.operationId,
+        status: 'completed',
+        items: result.items,
+        total: needsMatch.length,
+        completed: needsMatch.length,
+        matched: result.matched,
+        failed: result.failed,
+        itemIds: needsMatch.map((item) => String(item.id))
+      }, {
+        itemIds: needsMatch.map((item) => String(item.id)),
+        queueItemIds: runnable.map((item) => String(item.id)),
+        baseMatched: reusable.length,
+        outputPayload,
+        playlistTitle
+      });
+      return await this.queueResolvedMusicTextOperation();
+    } catch (error) {
+      for (const item of runnable) {
+        if (item.status === 'running') {
+          item.status = item.match?.id ? 'matched' : 'error';
+          item.error = item.match?.id ? null : (error?.message || String(error));
+        }
+      }
+      this.musicTextOperation = {
+        ...(this.musicTextOperation || {}),
+        phase: 'error',
+        total: runnable.length,
+        matched: runnable.filter((item) => item.status === 'matched').length,
+        failed: runnable.filter((item) => ['error', 'not-found'].includes(item.status)).length,
+        message: error?.message || String(error),
+        updatedAt: Date.now()
+      };
+      this.musicTextProgress = this.progressFromMusicTextOperation(this.musicTextOperation);
+      this.saveMusicTextItems();
+      this.renderMusicTextImportModal();
+      this.notify(error?.message || String(error), 'error');
+      return null;
+    } finally {
+      this.musicTextRunning = false;
+      this.renderMusicTextImportModal();
+    }
   }
 
   setupQueueHoverIntent() {
@@ -4402,6 +5048,7 @@ class YTLiveMusicApp {
         this.renderJobs();
 
         if (this.isTerminalJob(job)) {
+          this.applyMusicTextJobTerminal(id, job.status);
           stream.close();
           this.jobStreams.delete(jobId);
           this.refreshQueueStatus();

@@ -52,3 +52,22 @@ test('catalog scoring tolerates spacing variants and prefers concise YouTube tit
 
   assert.ok(clean > noisy, `clean=${clean} noisy=${noisy}`);
 });
+
+test('catalog search and scoring treat Cafe/Kafe as the same safe title spelling', () => {
+  assert.deepEqual(
+    buildCatalogMusicSearchQueries('Bulutsuzluk Özlemi', 'Bağdat Cafe'),
+    [
+      'Bulutsuzluk Özlemi Bağdat Cafe',
+      'Bağdat Cafe',
+      'Bulutsuzluk Özlemi Bağdat kafe',
+      'Bağdat kafe'
+    ]
+  );
+  const score = scoreCatalogMusicCandidateText(
+    'Bulutsuzluk Özlemi',
+    'Bağdat Cafe',
+    'Bağdat Kafe',
+    'Bulutsuzluk Özlemi - Topic'
+  );
+  assert.ok(score >= 6, `score=${score}`);
+});
