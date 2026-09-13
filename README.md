@@ -2,9 +2,10 @@
 
 [![CI](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml) [![CodeQL](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml)
 
-<img width="1774" height="887"
+<img width="1672" height="941"
      alt="Gharmonize & YTLive"
-     src="https://github.com/user-attachments/assets/b0423223-7ae9-48e9-9450-2a2dbef91c1e" />
+     src="https://github.com/user-attachments/assets/fed7956a-c610-4d46-9221-ea103cbfb012" />
+
 
 ---
 
