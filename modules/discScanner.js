@@ -103,6 +103,65 @@ function parseCommandJson(rawOutput, label = "command output") {
   throw error;
 }
 
+// Blu-ray-aware tools expose MPLS durations in nanoseconds. Prefer that value
+// over ffprobe's virtual bluray input duration: malformed timestamps or clipped
+// play items can make ffprobe report the backing stream's timeline instead.
+function resolveBluRayPlaylistDuration(properties = {}, info = {}, ffprobeDuration = 0) {
+  const nanosecondValues = [
+    properties.playlist_duration,
+    Array.isArray(info.playlist) ? info.playlist[0]?.playlist_duration : null,
+    properties.duration
+  ];
+
+  for (const value of nanosecondValues) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed / 1_000_000_000;
+  }
+
+  const fallback = Number(ffprobeDuration);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+}
+
+// mkvmerge's playlist_size counts the complete backing M2TS file once per play
+// item. That can inflate a short MPLS which reuses ranges from the same file to
+// many times the physical disc size. Estimate clipped playlists from the
+// unique source files' average byte rate, retaining the reported size when the
+// two measurements already agree closely.
+function calculateBluRayPlaylistSize(durationSeconds, sourceStats = [], reportedSizeBytes = 0) {
+  const unique = new Map();
+  for (const raw of Array.isArray(sourceStats) ? sourceStats : []) {
+    const key = String(raw?.path || raw?.file || "");
+    const size = Number(raw?.size || 0);
+    const duration = Number(raw?.duration || 0);
+    if (!key || unique.has(key) || !Number.isFinite(size) || size <= 0) continue;
+    unique.set(key, {
+      size,
+      duration: Number.isFinite(duration) && duration > 0 ? duration : 0
+    });
+  }
+
+  const totalBytes = [...unique.values()].reduce((sum, item) => sum + item.size, 0);
+  const totalDuration = [...unique.values()].reduce((sum, item) => sum + item.duration, 0);
+  const playlistDuration = Number(durationSeconds);
+  const reported = Number(reportedSizeBytes);
+
+  if (Number.isFinite(playlistDuration) && playlistDuration > 0 && totalBytes > 0 && totalDuration > 0) {
+    const estimated = Math.round((totalBytes / totalDuration) * playlistDuration);
+    if (Number.isFinite(reported) && reported > 0) {
+      const differenceRatio = Math.abs(estimated - reported) / reported;
+      if (differenceRatio <= 0.05) {
+        return { sizeBytes: reported, estimated: false };
+      }
+    }
+    return { sizeBytes: estimated, estimated: true };
+  }
+
+  return {
+    sizeBytes: Number.isFinite(reported) && reported > 0 ? reported : totalBytes,
+    estimated: false
+  };
+}
+
 // Reads blu ray meta for disc scanning and ripping.
 async function readBluRayMeta(rawPath) {
   try {
@@ -406,6 +465,7 @@ async function scanBluRay(sourcePath) {
     sendScanLogKey("disc.log.playlistFilesFound", { count: mplsFiles.length });
 
     const titles = [];
+    const streamInfoCache = new Map();
     let foundCount = 0;
     let skippedCount = 0;
 
@@ -424,7 +484,7 @@ async function scanBluRay(sourcePath) {
 
       try {
         sendScanLogKey("disc.log.analyzingPlaylist", { file: mplsFile });
-        const titleInfo = await analyzeBluRayPlaylist(playlistPathFull);
+        const titleInfo = await analyzeBluRayPlaylist(playlistPathFull, streamInfoCache);
 
         const hasTracks =
           (titleInfo.audioTracks && titleInfo.audioTracks.length > 0) ||
@@ -498,6 +558,7 @@ async function scanBluRay(sourcePath) {
     }
 
     titles.sort((a, b) => b.duration - a.duration);
+    if (titles.length > 0) titles[0].isMainFeatureCandidate = true;
 
     sendScanLogKey("disc.log.scanCompletedStats", {
       found: foundCount,
@@ -537,7 +598,7 @@ async function scanBluRay(sourcePath) {
 }
 
 // Handles analyze blu ray playlist data in disc scanning and ripping.
-async function analyzeBluRayPlaylist(playlistPath) {
+async function analyzeBluRayPlaylist(playlistPath, streamInfoCache = new Map()) {
   const playlistFileName = path.basename(playlistPath);
   const playlistNumber = parseInt(playlistFileName.replace(".mpls", ""), 10);
   const discRoot = path.resolve(playlistPath, "../../..");
@@ -547,70 +608,80 @@ async function analyzeBluRayPlaylist(playlistPath) {
   const subtitleTracks = [];
   let chapters = [];
   let sizeBytes = 0;
-
-  try {
-    const ffprobeArgs = [
-      "-v", "error", "-playlist", String(playlistNumber),
-      "-show_entries", "format=duration", "-of", "json", `bluray:${discRoot}`
-    ];
-
-    sendScanLogKey("disc.log.runningFfprobe", { file: playlistFileName });
-
-    const { stdout } = await runScanCommand(FFPROBE_BIN, ffprobeArgs);
-    const probeData = parseCommandJson(stdout, `ffprobe ${playlistFileName}`);
-
-    if (probeData.format && probeData.format.duration) {
-      duration = parseFloat(probeData.format.duration) || 0;
-    }
-
-    sendScanLogKey("disc.log.ffprobeResult", {
-      file: playlistFileName,
-      duration: duration.toFixed(2)
-    });
-  } catch (error) {
-    sendScanLogKey("disc.log.ffprobeFailed", {
-      file: playlistFileName,
-      error: error.message
-    });
-  }
+  let sizeEstimated = false;
 
   try {
     const { stdout } = await runScanCommand(MKVMERGE_BIN, ["-J", playlistPath]);
     const info = parseCommandJson(stdout, `mkvmerge ${playlistFileName}`);
     const props = info.container?.properties || {};
 
-    if (!duration || duration === 0) {
-      if (typeof props.playlist_duration === "number") {
-        duration = props.playlist_duration / 1000000000;
-      } else if (typeof props.duration === "number") {
-        duration = props.duration / 1000000000;
-      } else if (
-        Array.isArray(info.playlist) &&
-        info.playlist[0]?.playlist_duration
-      ) {
-        duration = info.playlist[0].playlist_duration / 1000000000;
+    duration = resolveBluRayPlaylistDuration(props, info);
+
+    if (!duration) {
+      try {
+        const ffprobeArgs = [
+          "-v", "error", "-playlist", String(playlistNumber),
+          "-show_entries", "format=duration", "-of", "json", `bluray:${discRoot}`
+        ];
+        sendScanLogKey("disc.log.runningFfprobe", { file: playlistFileName });
+        const { stdout: probeStdout } = await runScanCommand(FFPROBE_BIN, ffprobeArgs);
+        const probeData = parseCommandJson(probeStdout, `ffprobe ${playlistFileName}`);
+        duration = resolveBluRayPlaylistDuration({}, {}, probeData.format?.duration);
+        sendScanLogKey("disc.log.ffprobeResult", {
+          file: playlistFileName,
+          duration: duration.toFixed(2)
+        });
+      } catch (error) {
+        sendScanLogKey("disc.log.ffprobeFailed", {
+          file: playlistFileName,
+          error: error.message
+        });
       }
     }
 
-    if (typeof props.playlist_size === "number" && props.playlist_size > 0) {
-      sizeBytes = props.playlist_size;
-    } else if (
-      Array.isArray(props.playlist_file) &&
-      props.playlist_file.length > 0
-    ) {
-      for (const filePath of props.playlist_file) {
-        const streamRoot = path.resolve(discRoot, "BDMV", "STREAM");
-        const relativeFile = path.basename(String(filePath || ""));
-        const fullPath = assertPathWithinAny(path.resolve(streamRoot, relativeFile), [streamRoot]);
+    const streamRoot = path.resolve(discRoot, "BDMV", "STREAM");
+    const uniquePlaylistFiles = [...new Set(
+      (Array.isArray(props.playlist_file) ? props.playlist_file : [])
+        .map((filePath) => path.basename(String(filePath || "")))
+        .filter(Boolean)
+    )];
+    const sourceStats = [];
 
-        try {
+    for (const relativeFile of uniquePlaylistFiles) {
+      const fullPath = assertPathWithinAny(path.resolve(streamRoot, relativeFile), [streamRoot]);
+      let statPromise = streamInfoCache.get(fullPath);
+      if (!statPromise) {
+        statPromise = (async () => {
           const st = await fs.stat(fullPath);
-          sizeBytes += st.size;
-        } catch (err) {
-          sendScanLogKey("disc.log.m2tsSizeError", { file: filePath });
-        }
+          let sourceDuration = 0;
+          try {
+            const { stdout: streamStdout } = await runScanCommand(FFPROBE_BIN, [
+              "-v", "error", "-show_entries", "format=duration", "-of", "json", fullPath
+            ]);
+            const streamProbe = parseCommandJson(streamStdout, `ffprobe ${relativeFile}`);
+            sourceDuration = Number(streamProbe.format?.duration || 0);
+          } catch {
+          }
+          return { path: fullPath, size: st.size, duration: sourceDuration };
+        })();
+        streamInfoCache.set(fullPath, statPromise);
+      }
+
+      try {
+        sourceStats.push(await statPromise);
+      } catch {
+        streamInfoCache.delete(fullPath);
+        sendScanLogKey("disc.log.m2tsSizeError", { file: relativeFile });
       }
     }
+
+    const sizeResult = calculateBluRayPlaylistSize(
+      duration,
+      sourceStats,
+      props.playlist_size
+    );
+    sizeBytes = sizeResult.sizeBytes;
+    sizeEstimated = sizeResult.estimated;
 
     if (info.chapters && info.chapters.length > 0) {
       const chapterEntry = info.chapters[0];
@@ -658,7 +729,8 @@ async function analyzeBluRayPlaylist(playlistPath) {
       audioTracks,
       subtitleTracks,
       chapters,
-      sizeBytes
+      sizeBytes,
+      sizeEstimated
     };
   } catch (error) {
       sendScanLogKey("disc.log.playlistAnalysisError", {
@@ -1024,4 +1096,11 @@ function runScanCommand(command, args = []) {
   });
 }
 
-export { scanDisc, detectDiscType, cancelScan };
+export {
+  scanDisc,
+  detectDiscType,
+  cancelScan,
+  resolveBluRayPlaylistDuration,
+  calculateBluRayPlaylistSize,
+  analyzeBluRayPlaylist
+};

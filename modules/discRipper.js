@@ -77,6 +77,99 @@ function parseCommandJson(rawOutput, label = "command output") {
   throw error;
 }
 
+// Picks a single backing stream only when it is overwhelmingly dominant and
+// the playlist would otherwise append a clip with an incompatible video codec.
+function selectDominantBluRayStreamCandidate(streams = []) {
+  const candidates = streams
+    .filter((entry) => entry && typeof entry.path === "string")
+    .map((entry) => ({
+      ...entry,
+      size: Number(entry.size) || 0,
+      videoCodec: String(entry.videoCodec || "").trim()
+    }))
+    .filter((entry) => entry.size > 0);
+
+  if (candidates.length < 2) return null;
+
+  const totalSize = candidates.reduce((sum, entry) => sum + entry.size, 0);
+  const dominant = candidates.reduce((largest, entry) =>
+    entry.size > largest.size ? entry : largest
+  );
+  if (!dominant.videoCodec || dominant.size / totalSize < 0.95) return null;
+
+  const hasIncompatibleVideo = candidates.some(
+    (entry) => entry !== dominant && entry.videoCodec && entry.videoCodec !== dominant.videoCodec
+  );
+  return hasIncompatibleVideo ? dominant : null;
+}
+
+function addMkvmergeFailureDetail(error) {
+  const output = sanitizeMkvToolNixOutput(
+    [error?.stderr, error?.stdout].filter(Boolean).join("\n")
+  );
+  const detail = output
+    .split(/\r?\n/)
+    .find((line) => /^Error:/i.test(line.trim()));
+
+  if (detail && !String(error?.message || "").includes(detail)) {
+    error.message = `${error.message}: ${detail.replace(/^Error:\s*/i, "")}`;
+  }
+  return error;
+}
+
+async function resolveBluRayMuxInput(sourcePath, playlistPath, playlistInfo) {
+  try {
+    const playlistFiles = playlistInfo?.container?.properties?.playlist_file;
+    if (!Array.isArray(playlistFiles)) {
+      return { inputPath: playlistPath, trackInfo: playlistInfo, expectedSizeBytes: 0, fallback: false };
+    }
+
+    const streamRoot = path.resolve(sourcePath, "BDMV", "STREAM");
+    const sourceFiles = [...new Set(playlistFiles.map((filePath) =>
+      assertPathWithinAny(
+        path.resolve(streamRoot, path.basename(String(filePath || ""))),
+        [streamRoot]
+      )
+    ))];
+    if (sourceFiles.length < 2) {
+      return { inputPath: playlistPath, trackInfo: playlistInfo, expectedSizeBytes: 0, fallback: false };
+    }
+
+    const streams = await Promise.all(sourceFiles.map(async (sourceFile) => {
+      const [stats, result] = await Promise.all([
+        fs.stat(sourceFile),
+        execJsonUnlimited(MKVMERGE_BIN, ["-J", sourceFile], null)
+      ]);
+      const trackInfo = parseCommandJson(result.stdout, `mkvmerge ${path.basename(sourceFile)}`);
+      const videoTrack = (trackInfo.tracks || []).find((track) => track.type === "video");
+      return {
+        path: sourceFile,
+        size: stats.size,
+        videoCodec: videoTrack?.codec || videoTrack?.properties?.codec_id || "",
+        trackInfo
+      };
+    }));
+
+    const dominant = selectDominantBluRayStreamCandidate(streams);
+    if (!dominant) {
+      return { inputPath: playlistPath, trackInfo: playlistInfo, expectedSizeBytes: 0, fallback: false };
+    }
+
+    return {
+      inputPath: dominant.path,
+      trackInfo: dominant.trackInfo,
+      expectedSizeBytes: dominant.size,
+      fallback: true
+    };
+  } catch (error) {
+    console.warn(
+      "Blu-ray stream compatibility analysis failed, using playlist:",
+      sanitizeLogValue(error?.message)
+    );
+    return { inputPath: playlistPath, trackInfo: playlistInfo, expectedSizeBytes: 0, fallback: false };
+  }
+}
+
 // Handles exec json unlimited in disc scanning and ripping.
 function execJsonUnlimited(command, args = [], progressCallback = null) {
   if (progressCallback) {
@@ -621,6 +714,8 @@ async function ripBluRayTitle(
     let audioTrackIds = [];
     let subtitleTrackIds = [];
     let mkvmergeInfo = null;
+    let muxInputPath = playlistPath;
+    let fallbackExpectedSizeBytes = 0;
 
     try {
       const { stdout: tracksJson } = await execJsonUnlimited(
@@ -630,9 +725,20 @@ async function ripBluRayTitle(
         tracksJson,
         `mkvmerge ${path.basename(playlistPath)}`
       );
-      mkvmergeInfo = info;
+      const muxInput = await resolveBluRayMuxInput(sourcePath, playlistPath, info);
+      mkvmergeInfo = muxInput.trackInfo;
+      muxInputPath = muxInput.inputPath;
+      fallbackExpectedSizeBytes = muxInput.expectedSizeBytes;
 
-      (info.tracks || []).forEach((track) => {
+      if (muxInput.fallback && progressCallback) {
+        progressCallback(20, {
+          __i18n: true,
+          key: "disc.progress.usingDominantBlurayStream",
+          vars: { file: path.basename(muxInputPath) }
+        });
+      }
+
+      (mkvmergeInfo.tracks || []).forEach((track) => {
         if (track.type === "audio") {
           audioTrackIds.push(track.id);
         } else if (track.type === "subtitles") {
@@ -683,13 +789,13 @@ async function ripBluRayTitle(
       }
     }
 
-    args.push(playlistPath);
+    args.push(muxInputPath);
 
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
     console.log("Blu-ray rip args:", sanitizeLogValue([MKVMERGE_BIN, ...args].join(" ")));
 
-    let expectedSizeBytes = 0;
-    if (mkvmergeInfo) {
+    let expectedSizeBytes = fallbackExpectedSizeBytes;
+    if (!expectedSizeBytes && mkvmergeInfo) {
       expectedSizeBytes = await estimateBluRayTitleSize(
         sourcePath,
         mkvmergeInfo
@@ -737,7 +843,7 @@ async function ripBluRayTitle(
       } catch {
       }
 
-      throw execError;
+      throw addMkvmergeFailureDetail(execError);
     }
 
     if (progressCallback) {
@@ -942,4 +1048,9 @@ async function getMainVOBFilesForTitle(videoTsPath, titleIndex) {
   }
 }
 
-export { ripTitle, cancelRip };
+export {
+  ripTitle,
+  cancelRip,
+  selectDominantBluRayStreamCandidate,
+  resolveBluRayMuxInput
+};

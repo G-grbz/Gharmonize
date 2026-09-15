@@ -796,7 +796,9 @@ function buildTitleStatsLine(title, listIndex) {
 
   const sizeText = formatSizeGiB(title.sizeBytes || title.estimatedSizeBytes || 0);
   const sizeLabel = sizeText
-    ? (t('disc.title.sizeLabel', { size: sizeText }) || `Boyut: ${sizeText}`)
+    ? (title.sizeEstimated
+      ? (t('disc.title.estimatedSizeLabel', { size: sizeText }) || `Tahmini boyut: ~${sizeText}`)
+      : (t('disc.title.sizeLabel', { size: sizeText }) || `Boyut: ${sizeText}`))
     : null;
 
   const statsPieces = [
@@ -856,6 +858,9 @@ function displayTitles(titles) {
   titles.forEach((title, listIndex) => {
     const realIndex = title.index ?? (listIndex + 1);
     const statsLine = buildTitleStatsLine(title, listIndex);
+    const mainFeatureBadge = title.isMainFeatureCandidate
+      ? `⭐ ${t('disc.title.mainFeatureCandidate') || 'Ana film adayı'} • `
+      : '';
 
     const item = document.createElement('div');
     item.className = 'title-item';
@@ -871,7 +876,7 @@ function displayTitles(titles) {
           data-list-index="${listIndex}"
         >
         <div class="title-meta">
-          <strong>${title.discTitle || title.name || `Title ${realIndex}`}</strong>
+          <strong>${mainFeatureBadge}${title.discTitle || title.name || `Title ${realIndex}`}</strong>
           <div class="title-stats" data-title-index="${listIndex}">
             <small class="title-stats-line">${statsLine}</small>
             ${title.playlistFile ? `<small class="title-playlist">Playlist: ${title.playlistFile}</small>` : ''}
