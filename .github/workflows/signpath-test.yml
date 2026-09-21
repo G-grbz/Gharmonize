@@ -1,0 +1,121 @@
+name: SignPath test signing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  sign-windows-test-build:
+    if: github.repository == 'G-grbz/Gharmonize'
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+      - name: Build unsigned Windows packages
+        run: npx electron-builder --win nsis portable --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Prepare unsigned executables
+        id: prepare
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $setup = Get-ChildItem dist -File -Filter '*.exe' |
+            Where-Object { $_.Name -match 'Setup' } |
+            Select-Object -First 1
+          $portable = Get-ChildItem dist -File -Filter '*.exe' |
+            Where-Object { $_.Name -notmatch 'Setup' } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+
+          if (-not $setup) { throw 'NSIS installer not found' }
+          if (-not $portable) { throw 'Portable EXE not found' }
+
+          New-Item -ItemType Directory -Force -Path unsigned/setup | Out-Null
+          New-Item -ItemType Directory -Force -Path unsigned/portable | Out-Null
+          Copy-Item $setup.FullName "unsigned/setup/Gharmonize-x64.Setup.v$version.exe"
+          Copy-Item $portable.FullName "unsigned/portable/Gharmonize-x64.Portable.v$version.exe"
+
+      - name: Upload unsigned Setup EXE
+        id: upload-setup
+        uses: actions/upload-artifact@v7
+        with:
+          name: signpath-unsigned-setup-${{ github.run_id }}
+          path: unsigned/setup/*.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign Setup EXE with SignPath test certificate
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: 47b5600b-86be-4620-92c7-1b0aa4e3ad6a
+          project-slug: Gharmonize
+          signing-policy-slug: test-signing
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/setup
+          skip-decompress: true
+
+      - name: Upload unsigned Portable EXE
+        id: upload-portable
+        uses: actions/upload-artifact@v7
+        with:
+          name: signpath-unsigned-portable-${{ github.run_id }}
+          path: unsigned/portable/*.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign Portable EXE with SignPath test certificate
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: 47b5600b-86be-4620-92c7-1b0aa4e3ad6a
+          project-slug: Gharmonize
+          signing-policy-slug: test-signing
+          github-artifact-id: ${{ steps.upload-portable.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/portable
+          skip-decompress: true
+
+      - name: Verify signed executables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $executables = Get-ChildItem signed -Recurse -File -Filter '*.exe'
+          if ($executables.Count -ne 2) {
+            throw "Expected two signed executables, found $($executables.Count)"
+          }
+
+          foreach ($executable in $executables) {
+            $signature = Get-AuthenticodeSignature $executable.FullName
+            if (-not $signature.SignerCertificate) {
+              throw "No Authenticode signer certificate found: $($executable.FullName)"
+            }
+            Write-Host "$($executable.Name): $($signature.Status) — $($signature.SignerCertificate.Subject)"
+          }
+
+      - name: Upload signed test artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: gharmonize-windows-signpath-test
+          path: signed/**/*.exe
+          if-no-files-found: error
+          retention-days: 7
