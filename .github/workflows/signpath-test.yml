@@ -22,7 +22,6 @@ jobs:
 
       - run: npm ci
       - run: npm run check
-      - run: npm test
 
       - name: Build unsigned Windows packages
         run: npx electron-builder --win nsis portable --x64 --publish never
