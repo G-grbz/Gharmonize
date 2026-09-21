@@ -46,6 +46,14 @@ For guidance on unofficial downloads, impersonation, and reporting suspicious di
 
 ---
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+The signing roles, trusted-build requirements, artifact coverage, and verification process are documented in the [Gharmonize Code Signing Policy](CODE_SIGNING_POLICY.md). Runtime data handling and external network connections are documented in the [Privacy Policy](PRIVACY.md).
+
+---
+
 ## Quick Start
 
 > **Prebuilt desktop builds:** Official Gharmonize **Windows EXE** and **Linux AppImage** releases already include the Node.js runtime required by the application through Electron. You **do not need to install Node.js separately** to use these packaged builds. Some third-party download sites may incorrectly list Node.js as an additional prerequisite; that notice can be ignored for official prebuilt Gharmonize binaries. Node.js is only required when running or building Gharmonize from source.
@@ -135,6 +143,8 @@ Full details in [docs/FEATURES.md](docs/FEATURES.md).
 | [docs/COOKIES.md](docs/COOKIES.md) | Cookies, age-restricted content, environment comparison |
 | [docs/HOMEPAGE_WIDGET.md](docs/HOMEPAGE_WIDGET.md) | Homepage dashboard widget setup |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues & fixes |
+| [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) | SignPath roles, trusted builds, and Windows release signing policy |
+| [PRIVACY.md](PRIVACY.md) | Local data handling and external network connections |
 | [LICENSE.md](LICENSE.md) | GPL-3.0 license & redistribution rules |
 | [TRADEMARK.md](TRADEMARK.md) | Gharmonize name, logo, and branding policy |
 | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) | Bundled third-party tool licenses |

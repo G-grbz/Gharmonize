@@ -181,4 +181,16 @@ jobs:
             echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite published assets." >&2
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes --title "Gharmonize $GITHUB_REF_NAME"
+          SIGNING_NOTICE="$(cat <<EOF
+          ## Code signing policy
+
+          Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+          See the [Gharmonize Code Signing Policy](https://github.com/G-grbz/Gharmonize/blob/${GITHUB_REF_NAME}/CODE_SIGNING_POLICY.md) and [Privacy Policy](https://github.com/G-grbz/Gharmonize/blob/${GITHUB_REF_NAME}/PRIVACY.md).
+          EOF
+          )"
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag \
+            --generate-notes \
+            --notes "$SIGNING_NOTICE" \
+            --title "Gharmonize $GITHUB_REF_NAME"
