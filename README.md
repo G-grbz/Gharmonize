@@ -97,9 +97,16 @@ docker compose \
 
 > **Important:** `docker-compose-local-nvidia.yml` is an **override**, not a standalone Compose stack. Always load it **after** `docker-compose.local.yml`. It adds the NVIDIA-specific settings (`gpus: all`, NVIDIA runtime/environment, root user, and privileged mode) to the base `web` service. Do **not** run the NVIDIA override by itself. Without the override, the local Compose stack does not request NVIDIA devices or the NVIDIA container runtime.
 
+
+
+
 Docker runtime binaries (FFmpeg, FFprobe, MKVToolNix, yt-dlp, and Deno) are checked at startup and cached under `/opt/gharmonize/cache`; missing or outdated managed binaries can be refreshed automatically. On a new Docker installation, the generated initial admin password is stored at `/opt/gharmonize/cache/INITIAL_ADMIN_PASSWORD.txt`.
 
 Full Docker setup, bind mounts, permissions, `MUSIC_DIR`, NVIDIA Container Toolkit requirements, and `docker run` examples are documented in [docs/DOCKER.md](docs/DOCKER.md).
+
+## Hosted option
+
+If you don’t want to self-host with Docker or desktop builds, [Vid Kraken](https://vidkraken.com) is a managed YouTube download API (info / mp3 / mp4 endpoints).
 
 ---
 
