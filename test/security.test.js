@@ -186,6 +186,18 @@ test('Linux tray blocks the known-broken Electron 43 runtime', () => {
   assert.ok(dependabot.includes('versions: ["43.x"]'));
 });
 
+test('Electron recovers a long-hidden or crashed desktop renderer', () => {
+  const main = fs.readFileSync(path.join('electron', 'main.mjs'), 'utf8');
+
+  assert.ok(main.includes('backgroundThrottling: false'));
+  assert.ok(main.includes('function repaintMainWindow(win)'));
+  assert.ok(main.includes('win.webContents.invalidate()'));
+  assert.ok(main.includes("win.webContents.on('render-process-gone'"));
+  assert.ok(main.includes("win.on('unresponsive'"));
+  assert.ok(main.includes("powerMonitor.on('resume'"));
+  assert.ok(main.includes("powerMonitor.on('unlock-screen'"));
+});
+
 
 test('managed Windows MKVToolNix command paths do not depend on remote version text', () => {
   const binaries = fs.readFileSync(path.join('modules', 'binaries.js'), 'utf8');

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification, Tray } from 'electron'
+import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification, Tray, powerMonitor } from 'electron'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
@@ -127,6 +127,20 @@ function hasKnownBrokenLinuxTrayRuntime() {
   return major === 43;
 }
 
+// Repaints a window after it returns from the tray or system suspension. On
+// Wayland, a long-hidden Chromium surface can otherwise remain blank even
+// though the renderer and the local Gharmonize server are still healthy.
+function repaintMainWindow(win) {
+  if (!win || win.isDestroyed()) return;
+
+  for (const delay of [0, 80, 260]) {
+    setTimeout(() => {
+      if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+      try { win.webContents.invalidate(); } catch {}
+    }, delay);
+  }
+}
+
 // Shows main window in the Electron runtime bridge.
 function showMainWindow(win) {
   if (!win || win.isDestroyed()) return;
@@ -134,10 +148,12 @@ function showMainWindow(win) {
   try { win.restore?.(); } catch {}
   try { win.show(); } catch {}
   try { win.focus(); } catch {}
+  repaintMainWindow(win);
   try { win.setAlwaysOnTop(true); } catch {}
   setTimeout(() => {
     try { win.setAlwaysOnTop(false); } catch {}
     try { win.focus(); } catch {}
+    repaintMainWindow(win);
   }, 120);
 }
 
@@ -996,9 +1012,62 @@ function createWindow() {
       nodeIntegration: false,
       enableRemoteModule: false,
       sandbox: true,
+      // Gharmonize can intentionally stay hidden in the tray for hours. Keep
+      // Chromium from suspending the window's frame production while hidden.
+      backgroundThrottling: false,
       preload: path.join(path.dirname(fileURLToPath(import.meta.url)), 'preload.cjs')
     },
     show: false
+  });
+
+  let rendererRecoveryInProgress = false;
+  let unresponsiveRecoveryTimer = null;
+
+  const recoverRenderer = (reason, forceCrash = false) => {
+    if (rendererRecoveryInProgress || win.isDestroyed() || win.webContents.isDestroyed()) return;
+    rendererRecoveryInProgress = true;
+    console.error(`[window] recovering renderer after ${reason}`);
+
+    try {
+      if (forceCrash) win.webContents.forcefullyCrashRenderer();
+      win.webContents.reload();
+    } catch (error) {
+      rendererRecoveryInProgress = false;
+      console.error('[window] renderer recovery failed:', error?.stack || error?.message || error);
+    }
+  };
+
+  win.on('show', () => repaintMainWindow(win));
+  win.on('restore', () => repaintMainWindow(win));
+
+  win.on('unresponsive', () => {
+    console.error('[window] renderer became unresponsive');
+    clearTimeout(unresponsiveRecoveryTimer);
+    unresponsiveRecoveryTimer = setTimeout(() => {
+      if (!win.isDestroyed() && win.isVisible()) recoverRenderer('an unresponsive visible window', true);
+    }, 5000);
+  });
+
+  win.on('responsive', () => {
+    clearTimeout(unresponsiveRecoveryTimer);
+    unresponsiveRecoveryTimer = null;
+    repaintMainWindow(win);
+  });
+
+  win.on('closed', () => {
+    clearTimeout(unresponsiveRecoveryTimer);
+    unresponsiveRecoveryTimer = null;
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[window] renderer process gone:', details?.reason || 'unknown');
+    if (details?.reason === 'clean-exit') return;
+    recoverRenderer(`renderer exit (${details?.reason || 'unknown'})`);
+  });
+
+  win.webContents.on('did-finish-load', () => {
+    rendererRecoveryInProgress = false;
+    repaintMainWindow(win);
   });
 
   win.webContents.on('context-menu', (event, params) => {
@@ -1254,6 +1323,18 @@ app.whenReady().then(async () => {
   });
 
   app.setAppUserModelId('com.gharmonize.app');
+
+  powerMonitor.on('resume', () => {
+    setTimeout(() => {
+      if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
+      if (mainWindowRef.isVisible()) showMainWindow(mainWindowRef);
+      else repaintMainWindow(mainWindowRef);
+    }, 350);
+  });
+
+  powerMonitor.on('unlock-screen', () => {
+    if (mainWindowRef && !mainWindowRef.isDestroyed()) repaintMainWindow(mainWindowRef);
+  });
 
   try {
     if (app.isPackaged) checkDesktopBinaries();
