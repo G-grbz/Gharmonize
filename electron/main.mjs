@@ -30,6 +30,25 @@ if (process.platform === 'linux') {
   // Keep Chromium's Wayland app_id/X11 WM_CLASS aligned with gharmonize.desktop.
   app.commandLine.appendSwitch('class', LINUX_DESKTOP_ID);
   app.setDesktopName?.(LINUX_DESKTOP_FILE);
+
+  const requestedOzonePlatform = String(process.env.GHARMONIZE_OZONE_PLATFORM || '').trim().toLowerCase();
+  if (['x11', 'wayland'].includes(requestedOzonePlatform)) {
+    app.commandLine.appendSwitch('ozone-platform', requestedOzonePlatform);
+    console.log(`[display] using requested Ozone platform: ${requestedOzonePlatform}`);
+  }
+
+  const hardwareAccelerationSetting = String(
+    process.env.GHARMONIZE_DISABLE_HARDWARE_ACCELERATION || ''
+  ).trim().toLowerCase();
+  const explicitlyDisabled = ['1', 'true', 'yes', 'on'].includes(hardwareAccelerationSetting);
+  const explicitlyEnabled = ['0', 'false', 'no', 'off'].includes(hardwareAccelerationSetting);
+  if (explicitlyDisabled || (process.env.APPIMAGE && !explicitlyEnabled)) {
+    // UI acceleration has crashed both native Wayland and XWayland GPU
+    // processes on affected Linux drivers. Media acceleration remains
+    // available to the separate FFmpeg process.
+    app.disableHardwareAcceleration();
+    console.log('[display] Chromium hardware acceleration disabled for AppImage stability');
+  }
 }
 
 const TRACK_EXTRACTOR_VIDEO_EXTS = new Set([
@@ -63,6 +82,10 @@ let creatingWindowPromise = null;
 let showOnWindowReady = false;
 let rendererTrackExtractorReady = false;
 let pendingTrackExtractorFiles = [];
+let windowRecoveryInProgress = false;
+let rendererCreationDeferred = process.argv.includes('--hidden');
+const windowsBeingReplaced = new WeakSet();
+const unresponsiveWindows = new WeakSet();
 
 // Cleans up windows run entries for the Electron runtime bridge.
 async function cleanupWindowsRunEntries() {
@@ -93,17 +116,51 @@ async function cleanupWindowsRunEntries() {
 }
 
 // Creates window once for the Electron runtime bridge.
-function createWindowOnce() {
+function createWindowOnce(options = {}) {
   if (mainWindowRef && !mainWindowRef.isDestroyed()) return mainWindowRef;
   if (creatingWindowPromise) return creatingWindowPromise;
   creatingWindowPromise = Promise.resolve().then(() => {
-    const win = createWindow();
+    const win = createWindow(options);
     mainWindowRef = win;
     return win;
   }).finally(() => {
     creatingWindowPromise = null;
   });
   return creatingWindowPromise;
+}
+
+// Replaces a wedged Chromium surface without restarting the local server or
+// interrupting downloads/conversions that run in Electron's main process.
+function replaceMainWindow(win, reason, { forceShow = win?.isVisible?.() ?? true } = {}) {
+  if (windowRecoveryInProgress || !win || win.isDestroyed()) return;
+  windowRecoveryInProgress = true;
+
+  let bounds = null;
+  let wasMaximized = false;
+  try {
+    bounds = win.getBounds();
+    wasMaximized = win.isMaximized();
+  } catch {}
+
+  console.error(`[window] replacing unresponsive window after ${reason}`);
+
+  try {
+    const replacement = createWindow({ forceShow, restoreBounds: bounds, wasMaximized });
+    mainWindowRef = replacement;
+    windowsBeingReplaced.add(win);
+    win.destroy();
+
+    const finishRecovery = () => {
+      if (mainWindowRef !== replacement) return;
+      windowRecoveryInProgress = false;
+      console.log('[window] replacement window is ready');
+    };
+    replacement.webContents.once('did-finish-load', finishRecovery);
+    setTimeout(finishRecovery, 15000);
+  } catch (error) {
+    windowRecoveryInProgress = false;
+    console.error('[window] replacement failed:', error?.stack || error?.message || error);
+  }
 }
 
 // Resolves tray icon for the Electron runtime bridge.
@@ -144,6 +201,10 @@ function repaintMainWindow(win) {
 // Shows main window in the Electron runtime bridge.
 function showMainWindow(win) {
   if (!win || win.isDestroyed()) return;
+  if (unresponsiveWindows.has(win)) {
+    replaceMainWindow(win, 'a show request for an unresponsive renderer', { forceShow: true });
+    return;
+  }
 
   try { win.restore?.(); } catch {}
   try { win.show(); } catch {}
@@ -155,6 +216,23 @@ function showMainWindow(win) {
     try { win.focus(); } catch {}
     repaintMainWindow(win);
   }, 120);
+}
+
+// Creates the renderer only when the user actually asks to see it. Autostart
+// can therefore keep the backend and tray available without leaving a hidden
+// Chromium page running for hours.
+async function openMainWindow(reason = 'a user request') {
+  try {
+    const win = await createWindowOnce({ forceShow: true });
+    rendererCreationDeferred = false;
+    showMainWindow(win);
+    flushPendingTrackExtractorFiles();
+    console.log(`[window] open requested after ${reason}`);
+    return win;
+  } catch (error) {
+    console.error('[window] open failed:', error?.stack || error?.message || error);
+    return null;
+  }
 }
 
 // Returns prefs path used for the Electron runtime bridge.
@@ -575,14 +653,14 @@ function isLaunchedByAutoStart() {
 
 // Handles refresh tray menu in the Electron runtime bridge.
 async function refreshTrayMenu() {
-  if (!tray || !mainWindowRef) return;
+  if (!tray) return;
 
   const prefs = await loadPrefs();
 
   trayMenu = Menu.buildFromTemplate([
     {
       label: t('tray.show', 'Show'),
-      click: () => showMainWindow(mainWindowRef)
+      click: () => void openMainWindow('the tray menu')
     },
     {
       label: t('tray.autostart', 'Start on login'),
@@ -638,9 +716,8 @@ async function refreshTrayMenu() {
 
 // Handles ensure tray in the Electron runtime bridge.
 async function ensureTray(win) {
+  if (win && !win.isDestroyed()) mainWindowRef = win;
   if (tray) return tray;
-
-  mainWindowRef = win;
 
   if (hasKnownBrokenLinuxTrayRuntime()) {
     console.warn(`[tray] disabled on Electron ${process.versions.electron} for Linux because of the upstream StatusNotifierItem regression`);
@@ -655,12 +732,14 @@ async function ensureTray(win) {
     await refreshTrayMenu();
 
     tray.on('click', () => {
-      if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
-      if (mainWindowRef.isVisible()) mainWindowRef.hide();
-      else showMainWindow(mainWindowRef);
+      if (mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isVisible()) {
+        mainWindowRef.hide();
+        return;
+      }
+      void openMainWindow('a tray click');
     });
 
-    tray.on('double-click', () => showMainWindow(mainWindowRef));
+    tray.on('double-click', () => void openMainWindow('a tray double-click'));
     tray.on('right-click', () => tray?.popUpContextMenu());
     tray.on('mouse-up', (event) => {
       if (event.button === 2) tray?.popUpContextMenu();
@@ -878,7 +957,10 @@ function buildAndShowContextMenu(win, params) {
     { label: t('contextMenu.back', 'Back'), role: 'back', enabled: canGoBack },
     { label: t('contextMenu.forward', 'Forward'), role: 'forward', enabled: canGoForward },
     { type: 'separator' },
-    { label: t('contextMenu.reload', 'Reload'), role: 'reload' },
+    {
+      label: t('contextMenu.reload', 'Reload'),
+      click: () => replaceMainWindow(win, 'a manual reload')
+    },
     { type: 'separator' }
   );
 
@@ -997,7 +1079,7 @@ async function safeOpenExternal(rawUrl) {
 }
 
 // Creates window for the Electron runtime bridge.
-function createWindow() {
+function createWindow({ forceShow = false, restoreBounds = null, wasMaximized = false } = {}) {
   rendererTrackExtractorReady = false;
   const win = new BrowserWindow({
     width: 1280,
@@ -1012,62 +1094,97 @@ function createWindow() {
       nodeIntegration: false,
       enableRemoteModule: false,
       sandbox: true,
-      // Gharmonize can intentionally stay hidden in the tray for hours. Keep
-      // Chromium from suspending the window's frame production while hidden.
-      backgroundThrottling: false,
       preload: path.join(path.dirname(fileURLToPath(import.meta.url)), 'preload.cjs')
     },
     show: false
   });
 
-  let rendererRecoveryInProgress = false;
   let unresponsiveRecoveryTimer = null;
+  let initialVisibilitySettled = false;
 
-  const recoverRenderer = (reason, forceCrash = false) => {
-    if (rendererRecoveryInProgress || win.isDestroyed() || win.webContents.isDestroyed()) return;
-    rendererRecoveryInProgress = true;
-    console.error(`[window] recovering renderer after ${reason}`);
+  const settleInitialVisibility = async (trigger) => {
+    if (initialVisibilitySettled || win.isDestroyed()) return;
+    initialVisibilitySettled = true;
 
     try {
-      if (forceCrash) win.webContents.forcefullyCrashRenderer();
-      win.webContents.reload();
+      const trayInstance = await ensureTray(win);
+      if (win.isDestroyed()) return;
+
+      if (restoreBounds) {
+        try { win.setBounds(restoreBounds); } catch {}
+      }
+      if (wasMaximized) {
+        try { win.maximize(); } catch {}
+      }
+
+      const startHidden = !forceShow && await shouldStartHidden();
+      if (startHidden && trayInstance) {
+        win.hide();
+        return;
+      }
+      if (startHidden && !trayInstance) {
+        console.warn('[tray] start-minimized requested, but tray is unavailable; showing the main window instead');
+      }
+
+      win.show();
+      win.focus();
+      win.setMenuBarVisibility(true);
+      repaintMainWindow(win);
+      console.log(`[window] shown after ${trigger}`);
     } catch (error) {
-      rendererRecoveryInProgress = false;
-      console.error('[window] renderer recovery failed:', error?.stack || error?.message || error);
+      initialVisibilitySettled = false;
+      console.error('[window] initial visibility failed:', error?.stack || error?.message || error);
     }
   };
 
-  win.on('show', () => repaintMainWindow(win));
+  win.on('show', () => {
+    if (unresponsiveWindows.has(win)) {
+      replaceMainWindow(win, 'an unresponsive window becoming visible', { forceShow: true });
+      return;
+    }
+    repaintMainWindow(win);
+  });
   win.on('restore', () => repaintMainWindow(win));
 
   win.on('unresponsive', () => {
     console.error('[window] renderer became unresponsive');
+    unresponsiveWindows.add(win);
     clearTimeout(unresponsiveRecoveryTimer);
     unresponsiveRecoveryTimer = setTimeout(() => {
-      if (!win.isDestroyed() && win.isVisible()) recoverRenderer('an unresponsive visible window', true);
+      if (win.isDestroyed()) return;
+      if (win.isVisible()) {
+        replaceMainWindow(win, 'an unresponsive visible renderer', { forceShow: true });
+      } else {
+        console.warn('[window] hidden renderer remains unresponsive; replacement deferred until it is shown');
+      }
     }, 5000);
   });
 
   win.on('responsive', () => {
+    unresponsiveWindows.delete(win);
     clearTimeout(unresponsiveRecoveryTimer);
     unresponsiveRecoveryTimer = null;
     repaintMainWindow(win);
   });
 
   win.on('closed', () => {
+    unresponsiveWindows.delete(win);
     clearTimeout(unresponsiveRecoveryTimer);
     unresponsiveRecoveryTimer = null;
+    if (mainWindowRef === win) mainWindowRef = null;
   });
 
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error('[window] renderer process gone:', details?.reason || 'unknown');
     if (details?.reason === 'clean-exit') return;
-    recoverRenderer(`renderer exit (${details?.reason || 'unknown'})`);
+    replaceMainWindow(win, `renderer exit (${details?.reason || 'unknown'})`);
   });
 
   win.webContents.on('did-finish-load', () => {
-    rendererRecoveryInProgress = false;
     repaintMainWindow(win);
+  });
+  win.webContents.once('did-finish-load', () => {
+    setTimeout(() => void settleInitialVisibility('page load'), 100);
   });
 
   win.webContents.on('context-menu', (event, params) => {
@@ -1076,7 +1193,7 @@ function createWindow() {
   });
 
   win.on('close', async (e) => {
-    if (isQuitting || isHidingToTray) return;
+    if (isQuitting || isHidingToTray || windowsBeingReplaced.has(win)) return;
 
     e.preventDefault();
 
@@ -1102,21 +1219,8 @@ function createWindow() {
     }
   });
 
-  win.once('ready-to-show', async () => {
-    const trayInstance = await ensureTray(win);
-
-    const startHidden = await shouldStartHidden();
-    if (startHidden && trayInstance) {
-      win.hide();
-    } else {
-      if (startHidden && !trayInstance) {
-        console.warn('[tray] start-minimized requested, but tray is unavailable; showing the main window instead');
-      }
-      win.show();
-      win.focus();
-      win.setMenuBarVisibility(true);
-    }
-  });
+  win.once('ready-to-show', () => void settleInitialVisibility('ready-to-show'));
+  setTimeout(() => void settleInitialVisibility('startup fallback'), 5000);
 
   attachDownloads(win);
   createAppMenu(win);
@@ -1299,12 +1403,11 @@ if (!gotLock) {
     try {
       const files = parseTrackExtractorLaunchArgs(_commandLine);
       if (files.length) queueTrackExtractorFiles(files);
-      if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-        showMainWindow(mainWindowRef);
-        flushPendingTrackExtractorFiles();
-      } else {
+      if (!app.isReady()) {
         showOnWindowReady = true;
+        return;
       }
+      await openMainWindow('a second application launch');
     } catch (e) {
       console.error('second-instance handler failed:', e);
     }
@@ -1340,10 +1443,20 @@ app.whenReady().then(async () => {
     if (app.isPackaged) checkDesktopBinaries();
     await startServerIfPackaged();
     await applyTrackExtractorShellIntegration();
-    const win = await createWindowOnce();
-    if (showOnWindowReady) {
+    const startHidden = await shouldStartHidden();
+    const queuedShow = showOnWindowReady;
+    if (queuedShow || !startHidden) {
       showOnWindowReady = false;
-      showMainWindow(win);
+      await openMainWindow(queuedShow ? 'a queued launch request' : 'normal startup');
+    } else {
+      rendererCreationDeferred = true;
+      const trayInstance = await ensureTray(null);
+      if (trayInstance) {
+        console.log('[window] renderer creation deferred until the hidden app is opened');
+      } else {
+        rendererCreationDeferred = false;
+        await openMainWindow('tray initialization failure');
+      }
     }
   } catch (error) {
     console.error('❌ Failed to start Gharmonize:', error);
@@ -1356,10 +1469,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (BrowserWindow.getAllWindows().length === 0) void openMainWindow('application activation');
 });
 
 app.on('window-all-closed', () => {
+  if (windowRecoveryInProgress) return;
+  if (rendererCreationDeferred && !isQuitting) return;
   if (keepAliveInTray && tray && !isQuitting) return;
 
   if (process.platform !== 'darwin') app.quit();

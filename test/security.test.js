@@ -189,8 +189,20 @@ test('Linux tray blocks the known-broken Electron 43 runtime', () => {
 test('Electron recovers a long-hidden or crashed desktop renderer', () => {
   const main = fs.readFileSync(path.join('electron', 'main.mjs'), 'utf8');
 
-  assert.ok(main.includes('backgroundThrottling: false'));
+  assert.ok(!main.includes('backgroundThrottling: false'));
+  assert.ok(main.includes('GHARMONIZE_OZONE_PLATFORM'));
+  assert.ok(main.includes('GHARMONIZE_DISABLE_HARDWARE_ACCELERATION'));
+  assert.ok(main.includes('app.disableHardwareAcceleration()'));
   assert.ok(main.includes('function repaintMainWindow(win)'));
+  assert.ok(main.includes('function replaceMainWindow(win, reason,'));
+  assert.ok(main.includes('const unresponsiveWindows = new WeakSet()'));
+  assert.ok(main.includes("replaceMainWindow(win, 'a show request for an unresponsive renderer'"));
+  assert.ok(main.includes('function openMainWindow(reason'));
+  assert.ok(main.includes('[window] renderer creation deferred until the hidden app is opened'));
+  assert.ok(main.includes('rendererCreationDeferred && !isQuitting'));
+  assert.ok(main.includes("settleInitialVisibility('page load')"));
+  assert.ok(main.includes("settleInitialVisibility('startup fallback')"));
+  assert.ok(!main.includes('forcefullyCrashRenderer()'));
   assert.ok(main.includes('win.webContents.invalidate()'));
   assert.ok(main.includes("win.webContents.on('render-process-gone'"));
   assert.ok(main.includes("win.on('unresponsive'"));
