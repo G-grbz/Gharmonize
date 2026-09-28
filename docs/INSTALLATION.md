@@ -84,6 +84,8 @@ You can edit environment variables later from the **Settings** panel.
 npm run desktop:build:appimage
 ```
 
+Official tagged Linux releases also publish a matching `.AppImage.zsync` file and embed GitHub Releases update information in the AppImage. Compatible AppImage update tools can therefore download only changed blocks instead of fetching the entire AppImage again. The release workflow repacks the Electron-generated AppImage with a pinned static AppImage runtime, so the published build does not require the legacy `libfuse2` runtime dependency.
+
 **NSIS installer (Windows)**
 
 ```bash

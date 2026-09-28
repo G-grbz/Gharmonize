@@ -31,7 +31,7 @@ When administrator-gated application access is enabled, Gharmonize enforces the 
 
 ## Release verification
 
-Official tagged releases publish a CycloneDX SBOM, a GPG-signed `SHA256SUMS` manifest, the public release-signing key, and GitHub artifact attestations. The public GPG key is itself covered by GitHub provenance, so authenticate the key before importing it:
+Official tagged releases publish a CycloneDX SBOM, AppImage `.zsync` delta-update metadata, a GPG-signed `SHA256SUMS` manifest, the public release-signing key, and GitHub artifact attestations. The public GPG key is itself covered by GitHub provenance, so authenticate the key before importing it:
 
 ```bash
 gh attestation verify Gharmonize-release-signing-key.asc --repo G-grbz/Gharmonize

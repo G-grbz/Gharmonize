@@ -82,15 +82,22 @@ jobs:
       - run: npm run desktop:build:appimage
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-      - name: Package AppImage
+      - name: Install AppImage delta-update tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsync
+      - name: Package updateable AppImage and zsync metadata
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release
           APPIMAGE="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
           test -n "$APPIMAGE"
-          cp "$APPIMAGE" "release/Gharmonize-x86_64.v${VERSION}.AppImage"
-          chmod +x "release/Gharmonize-x86_64.v${VERSION}.AppImage"
+          scripts/package-appimage-release.sh \
+            "$APPIMAGE" \
+            "release/Gharmonize-x86_64.v${VERSION}.AppImage"
       - uses: actions/upload-artifact@v7
         with:
           name: release-linux

@@ -1,6 +1,6 @@
 <div align="center">
 
-[![CI](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml) [![CodeQL](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml)
+[![CI](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml) [![CodeQL](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml) [![AppImageHub](https://img.shields.io/badge/AppImageHub-Listed-2ea44f?logo=appimage&logoColor=white)](https://appimage.github.io/Gharmonize/)
 
 <img width="1672" height="941"
      alt="Gharmonize & YTLive"
@@ -181,7 +181,7 @@ Gharmonize is licensed under the **GPL-3.0 license**.
 
 Gharmonize uses scrypt admin password hashing, AES-256-GCM encryption for supported sensitive settings, configurable server-side application access gating with optional administrator-approved temporary sessions, loopback-by-default native serving, trusted-proxy CIDR validation, SSRF/path hardening, Electron sandbox/IPC restrictions, and runtime-binary origin/digest checks. See [SECURITY.md](SECURITY.md) for the reporting policy and deployment notes.
 
-Official tagged releases are built by GitHub Actions for Windows and Linux and publish Windows NSIS/portable artifacts, a Linux AppImage, a source archive, CycloneDX SBOM, a GPG-signed `SHA256SUMS` manifest, the public release-signing key, and GitHub artifact attestations.
+Official tagged releases are built by GitHub Actions for Windows and Linux and publish Windows NSIS/portable artifacts, a Linux AppImage with AppImageUpdate-compatible `.zsync` metadata, a source archive, CycloneDX SBOM, a GPG-signed `SHA256SUMS` manifest, the public release-signing key, and GitHub artifact attestations.
 
 ```bash
 # First authenticate the published release key against the official repository provenance.

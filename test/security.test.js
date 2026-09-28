@@ -227,6 +227,21 @@ test('release workflow preserves Linux artifact name for publish collection', ()
   assert.equal(workflow.includes('archive: false'), false);
 });
 
+test('release workflow publishes AppImage zsync metadata with pinned tooling', () => {
+  const workflow = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
+  const packager = fs.readFileSync(path.join('scripts', 'package-appimage-release.sh'), 'utf8');
+
+  assert.ok(workflow.includes('sudo apt-get install -y --no-install-recommends zsync'));
+  assert.ok(workflow.includes('scripts/package-appimage-release.sh'));
+  assert.ok(packager.includes('gh-releases-zsync|G-grbz|Gharmonize|latest|Gharmonize-x86_64.v*.AppImage.zsync'));
+  assert.ok(packager.includes('APPIMAGETOOL_VERSION="1.9.1"'));
+  assert.ok(packager.includes('APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"'));
+  assert.ok(packager.includes('APPIMAGE_RUNTIME_TAG="20251108"'));
+  assert.ok(packager.includes('APPIMAGE_RUNTIME_SHA256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"'));
+  assert.ok(packager.includes('test -s "${OUTPUT_APPIMAGE}.zsync"'));
+  assert.ok(packager.includes('readelf --string-dump=.upd_info'));
+});
+
 
 test('filesystem boundary rejects traversal outside an allowed root', () => {
   const root = path.join(temp, 'root');
