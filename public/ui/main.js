@@ -69,12 +69,6 @@ window.focusFileInputAndClose = function() {
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // This overlay is exclusively for runtime binary preparation. Start its
-    // check immediately and remove it as soon as the tools are usable instead
-    // of keeping it over unrelated application startup work.
-    const runtimeBinariesReady = waitForRuntimeBinariesReady();
-    runtimeBinariesReady.then(hideRuntimeBinariesOverlay);
-
     try {
         await window.i18nInit();
     } catch (error) {
@@ -86,6 +80,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     await accessManager.ensureAccess();
+    // The binary status route requires application access. Wait until the
+    // login/approval gate resolves before starting its readiness poll.
+    const runtimeBinariesReady = waitForRuntimeBinariesReady();
+    runtimeBinariesReady.then(hideRuntimeBinariesOverlay);
 
     const loadingScreen = document.getElementById('loading-screen');
     const mainContent = document.querySelector('.main-content');

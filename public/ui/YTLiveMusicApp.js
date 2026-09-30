@@ -167,11 +167,6 @@ class YTLiveMusicApp {
   }
 
   async initialize() {
-    // The startup overlay only represents runtime binary preparation. Do not
-    // leave it visible while the rest of YTLive loads after the tools are ready.
-    const runtimeBinariesReady = waitForRuntimeBinariesReady();
-    runtimeBinariesReady.then(hideRuntimeBinariesOverlay);
-
     try {
       await window.i18nInit?.();
     } catch (error) {
@@ -179,6 +174,10 @@ class YTLiveMusicApp {
     }
 
     await accessManager.ensureAccess();
+    // The status endpoint is protected by the access gate. Only poll it after
+    // authorization, and remove the overlay as soon as the tools are ready.
+    const runtimeBinariesReady = waitForRuntimeBinariesReady();
+    runtimeBinariesReady.then(hideRuntimeBinariesOverlay);
     await runtimeBinariesReady;
 
     window.app = {

@@ -80,6 +80,8 @@ let isQuitting = false;
 let isHidingToTray = false;
 let creatingWindowPromise = null;
 let showOnWindowReady = false;
+let windowShowRequestSerial = 0;
+let lastTrayToggleAt = 0;
 let rendererTrackExtractorReady = false;
 let pendingTrackExtractorFiles = [];
 let windowRecoveryInProgress = false;
@@ -131,7 +133,7 @@ function createWindowOnce(options = {}) {
 
 // Replaces a wedged Chromium surface without restarting the local server or
 // interrupting downloads/conversions that run in Electron's main process.
-function replaceMainWindow(win, reason, { forceShow = win?.isVisible?.() ?? true } = {}) {
+function replaceMainWindow(win, reason, { forceShow = Boolean(win?.isVisible?.() && !win?.isMinimized?.()) } = {}) {
   if (windowRecoveryInProgress || !win || win.isDestroyed()) return;
   windowRecoveryInProgress = true;
 
@@ -150,16 +152,48 @@ function replaceMainWindow(win, reason, { forceShow = win?.isVisible?.() ?? true
     windowsBeingReplaced.add(win);
     win.destroy();
 
+    let recoveryTimeout = null;
+    let recoverySettled = false;
     const finishRecovery = () => {
-      if (mainWindowRef !== replacement) return;
+      if (recoverySettled) return;
+      recoverySettled = true;
+      clearTimeout(recoveryTimeout);
       windowRecoveryInProgress = false;
-      console.log('[window] replacement window is ready');
+      if (mainWindowRef === replacement) console.log('[window] replacement window is ready');
     };
     replacement.webContents.once('did-finish-load', finishRecovery);
-    setTimeout(finishRecovery, 15000);
+    replacement.once('closed', finishRecovery);
+    recoveryTimeout = setTimeout(finishRecovery, 15000);
   } catch (error) {
     windowRecoveryInProgress = false;
     console.error('[window] replacement failed:', error?.stack || error?.message || error);
+  }
+}
+
+// Only release a window that has never been shown. Once the user has opened the
+// UI, destroying its renderer would discard the current page, forms and lists.
+function parkMainWindow(win, reason) {
+  if (!win || win.isDestroyed() || !tray) return;
+  rendererCreationDeferred = true;
+  if (mainWindowRef === win) mainWindowRef = null;
+  windowsBeingReplaced.add(win);
+  win.destroy();
+  console.log(`[window] renderer released after ${reason}`);
+}
+
+// Hiding already removes the surface from the dock and backgrounds its page.
+// Do not minimize first: a long-hidden Wayland renderer can remain stuck in
+// Chromium's minimized state when the tray restores the same window.
+function hideMainWindowToTray(win) {
+  if (!win || win.isDestroyed() || !tray) return false;
+  try {
+    windowShowRequestSerial += 1;
+    try { win.setAlwaysOnTop(false); } catch {}
+    win.hide();
+    return true;
+  } catch (error) {
+    console.error('[window] could not hide to tray:', error);
+    return false;
   }
 }
 
@@ -206,16 +240,32 @@ function showMainWindow(win) {
     return;
   }
 
-  try { win.restore?.(); } catch {}
+  const showRequest = ++windowShowRequestSerial;
+  try { if (win.isMinimized()) win.restore?.(); } catch {}
   try { win.show(); } catch {}
+  try { if (win.isMinimized()) win.restore?.(); } catch {}
   try { win.focus(); } catch {}
   repaintMainWindow(win);
   try { win.setAlwaysOnTop(true); } catch {}
   setTimeout(() => {
+    if (showRequest !== windowShowRequestSerial || win.isDestroyed()) return;
     try { win.setAlwaysOnTop(false); } catch {}
-    try { win.focus(); } catch {}
-    repaintMainWindow(win);
+    if (win.isVisible() && !win.isMinimized()) {
+      try { win.focus(); } catch {}
+      repaintMainWindow(win);
+    }
   }, 120);
+  setTimeout(() => {
+    if (showRequest !== windowShowRequestSerial || win.isDestroyed()) return;
+    if (!win.isVisible() || win.isMinimized()) {
+      try { win.restore?.(); } catch {}
+      try { win.show(); } catch {}
+    }
+    if (win.isVisible() && !win.isMinimized() && !win.isFocused()) {
+      try { win.moveTop?.(); } catch {}
+      try { win.focus(); } catch {}
+    }
+  }, 350);
 }
 
 // Creates the renderer only when the user actually asks to see it. Autostart
@@ -731,15 +781,22 @@ async function ensureTray(win) {
 
     await refreshTrayMenu();
 
-    tray.on('click', () => {
-      if (mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isVisible()) {
-        mainWindowRef.hide();
+    const toggleFromTray = (reason) => {
+      const now = Date.now();
+      // Some trays emit click twice plus double-click for one gesture. Toggle
+      // only once so a restore cannot immediately hide the same window again.
+      if (now - lastTrayToggleAt < 550) {
         return;
       }
-      void openMainWindow('a tray click');
-    });
-
-    tray.on('double-click', () => void openMainWindow('a tray double-click'));
+      lastTrayToggleAt = now;
+      if (mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isVisible() && !mainWindowRef.isMinimized()) {
+        hideMainWindowToTray(mainWindowRef);
+      } else {
+        void openMainWindow(reason);
+      }
+    };
+    tray.on('click', () => toggleFromTray('a tray click'));
+    tray.on('double-click', () => toggleFromTray('a tray double-click'));
     tray.on('right-click', () => tray?.popUpContextMenu());
     tray.on('mouse-up', (event) => {
       if (event.button === 2) tray?.popUpContextMenu();
@@ -1119,7 +1176,7 @@ function createWindow({ forceShow = false, restoreBounds = null, wasMaximized = 
 
       const startHidden = !forceShow && await shouldStartHidden();
       if (startHidden && trayInstance) {
-        win.hide();
+        parkMainWindow(win, 'hidden startup');
         return;
       }
       if (startHidden && !trayInstance) {
@@ -1152,10 +1209,10 @@ function createWindow({ forceShow = false, restoreBounds = null, wasMaximized = 
     clearTimeout(unresponsiveRecoveryTimer);
     unresponsiveRecoveryTimer = setTimeout(() => {
       if (win.isDestroyed()) return;
-      if (win.isVisible()) {
+      if (win.isVisible() && !win.isMinimized()) {
         replaceMainWindow(win, 'an unresponsive visible renderer', { forceShow: true });
       } else {
-        console.warn('[window] hidden renderer remains unresponsive; replacement deferred until it is shown');
+        console.warn('[window] background renderer remains unresponsive; replacement deferred until it is shown');
       }
     }, 5000);
   });
@@ -1164,7 +1221,7 @@ function createWindow({ forceShow = false, restoreBounds = null, wasMaximized = 
     unresponsiveWindows.delete(win);
     clearTimeout(unresponsiveRecoveryTimer);
     unresponsiveRecoveryTimer = null;
-    repaintMainWindow(win);
+    if (win.isVisible() && !win.isMinimized()) repaintMainWindow(win);
   });
 
   win.on('closed', () => {
@@ -1177,6 +1234,10 @@ function createWindow({ forceShow = false, restoreBounds = null, wasMaximized = 
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error('[window] renderer process gone:', details?.reason || 'unknown');
     if (details?.reason === 'clean-exit') return;
+    if (!win.isVisible() || win.isMinimized()) {
+      unresponsiveWindows.add(win);
+      return;
+    }
     replaceMainWindow(win, `renderer exit (${details?.reason || 'unknown'})`);
   });
 
@@ -1204,7 +1265,7 @@ function createWindow({ forceShow = false, restoreBounds = null, wasMaximized = 
         const trayInstance = await ensureTray(win);
         if (trayInstance) {
           isHidingToTray = true;
-          win.hide();
+          hideMainWindowToTray(win);
           isHidingToTray = false;
           return;
         }
@@ -1430,13 +1491,14 @@ app.whenReady().then(async () => {
   powerMonitor.on('resume', () => {
     setTimeout(() => {
       if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
-      if (mainWindowRef.isVisible()) showMainWindow(mainWindowRef);
-      else repaintMainWindow(mainWindowRef);
+      if (mainWindowRef.isVisible() && !mainWindowRef.isMinimized()) showMainWindow(mainWindowRef);
     }, 350);
   });
 
   powerMonitor.on('unlock-screen', () => {
-    if (mainWindowRef && !mainWindowRef.isDestroyed()) repaintMainWindow(mainWindowRef);
+    if (mainWindowRef && !mainWindowRef.isDestroyed() && mainWindowRef.isVisible() && !mainWindowRef.isMinimized()) {
+      repaintMainWindow(mainWindowRef);
+    }
   });
 
   try {
@@ -1469,7 +1531,9 @@ app.whenReady().then(async () => {
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) void openMainWindow('application activation');
+  if (!mainWindowRef || mainWindowRef.isDestroyed() || !mainWindowRef.isVisible() || mainWindowRef.isMinimized()) {
+    void openMainWindow('application activation');
+  }
 });
 
 app.on('window-all-closed', () => {

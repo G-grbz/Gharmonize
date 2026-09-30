@@ -56,6 +56,15 @@ test('application access gate is server-side and temporary authorization stays n
   assert.ok(ytliveInbox.includes('data-ytlive-access-revoke'));
 });
 
+test('both UIs wait for access before polling the protected runtime binary status', () => {
+  for (const file of ['public/ui/main.js', 'public/ui/YTLiveMusicApp.js']) {
+    const source = fs.readFileSync(file, 'utf8');
+    const accessReady = source.indexOf('await accessManager.ensureAccess();');
+    const binaryPoll = source.indexOf('const runtimeBinariesReady = waitForRuntimeBinariesReady();');
+    assert.ok(accessReady >= 0 && binaryPoll > accessReady, file);
+  }
+});
+
 
 test('loopback reverse proxies are trusted without trusting direct LAN spoofed forwarded headers', () => {
   const app = fs.readFileSync('app.js', 'utf8');

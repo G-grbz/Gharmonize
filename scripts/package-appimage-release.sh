@@ -49,14 +49,18 @@ mkdir -p "$WORK_DIR/extract"
 test -d "$WORK_DIR/extract/squashfs-root"
 rm -f "$OUTPUT_APPIMAGE" "${OUTPUT_APPIMAGE}.zsync"
 
-ARCH=x86_64 \
-VERSION="${VERSION:-}" \
-APPIMAGE_EXTRACT_AND_RUN=1 \
-  "$APPIMAGETOOL" \
-  --updateinformation "$UPDATE_INFORMATION" \
-  --runtime-file "$RUNTIME_FILE" \
-  "$WORK_DIR/extract/squashfs-root" \
-  "$OUTPUT_APPIMAGE"
+(
+  # appimagetool writes the .zsync file to its working directory.
+  cd "$(dirname "$OUTPUT_APPIMAGE")"
+  ARCH=x86_64 \
+  VERSION="${VERSION:-}" \
+  APPIMAGE_EXTRACT_AND_RUN=1 \
+    "$APPIMAGETOOL" \
+    --updateinformation "$UPDATE_INFORMATION" \
+    --runtime-file "$RUNTIME_FILE" \
+    "$WORK_DIR/extract/squashfs-root" \
+    "$(basename "$OUTPUT_APPIMAGE")"
+)
 
 chmod +x "$OUTPUT_APPIMAGE"
 test -s "${OUTPUT_APPIMAGE}.zsync"

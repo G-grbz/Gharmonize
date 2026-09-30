@@ -69,22 +69,64 @@ class AccessManager {
     gate.hidden = true;
     gate.innerHTML = `
       <div class="access-gate__card" role="dialog" aria-modal="true" aria-labelledby="accessGateTitle">
-        <img class="access-gate__logo" src="/src/logo.png" alt="Gharmonize" />
-        <h1 id="accessGateTitle" class="access-gate__title">Gharmonize</h1>
-        <p id="accessGateSubtitle" class="access-gate__subtitle"></p>
-        <form id="accessGateLoginForm" class="access-gate__form" autocomplete="off">
-          <label class="access-gate__label" for="accessGatePassword"></label>
-          <input id="accessGatePassword" class="access-gate__input" type="password" autocomplete="current-password" />
-          <div id="accessGateError" class="access-gate__error" role="alert" hidden></div>
-          <div class="access-gate__actions">
-            <button id="accessGateLoginBtn" class="access-gate__button access-gate__button--primary" type="submit"></button>
-            <button id="accessGateRequestBtn" class="access-gate__button access-gate__button--secondary" type="button"></button>
+        <div class="access-gate__brand" aria-hidden="true">
+          <div class="access-gate__brand-glow"></div>
+          <div class="access-gate__brand-logo-wrap">
+            <img class="access-gate__logo" src="/src/logo.png" alt="" />
           </div>
-        </form>
-        <div id="accessGateWaiting" class="access-gate__waiting" hidden>
-          <div class="access-gate__spinner" aria-hidden="true"></div>
-          <strong id="accessGateWaitingTitle"></strong>
-          <span id="accessGateWaitingText"></span>
+          <div class="access-gate__brand-lines">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="access-gate__brand-dots"><span></span><span></span><span></span></div>
+        </div>
+
+        <div class="access-gate__content">
+          <div class="access-gate__heading">
+            <div class="access-gate__lock-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="5" y="10" width="14" height="10" rx="2.5"></rect>
+                <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
+              </svg>
+            </div>
+            <div>
+              <h1 id="accessGateTitle" class="access-gate__title"></h1>
+              <p id="accessGateSubtitle" class="access-gate__subtitle"></p>
+            </div>
+          </div>
+
+          <form id="accessGateLoginForm" class="access-gate__form" autocomplete="off">
+            <label class="access-gate__label" for="accessGatePassword"></label>
+            <div class="access-gate__input-wrap">
+              <svg class="access-gate__input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="5" y="10" width="14" height="10" rx="2.5"></rect>
+                <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
+                <path d="M12 14v2"></path>
+              </svg>
+              <input id="accessGatePassword" class="access-gate__input" type="password" autocomplete="current-password" />
+            </div>
+            <div id="accessGateError" class="access-gate__error" role="alert" hidden></div>
+            <button id="accessGateLoginBtn" class="access-gate__button access-gate__button--primary" type="submit">
+              <span></span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12h13"></path><path d="m14 7 5 5-5 5"></path>
+              </svg>
+            </button>
+            <div id="accessGateRequestBlock" class="access-gate__request-block">
+              <div class="access-gate__divider"><span></span><em id="accessGateOr"></em><span></span></div>
+              <button id="accessGateRequestBtn" class="access-gate__button access-gate__button--secondary" type="button"></button>
+            </div>
+          </form>
+
+          <div id="accessGateWaiting" class="access-gate__waiting" hidden>
+            <div class="access-gate__spinner-wrap" aria-hidden="true">
+              <div class="access-gate__spinner"></div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 6 9 17l-5-5"></path>
+              </svg>
+            </div>
+            <strong id="accessGateWaitingTitle"></strong>
+            <span id="accessGateWaitingText"></span>
+          </div>
         </div>
       </div>
     `;
@@ -107,10 +149,15 @@ class AccessManager {
       const el = this.gate.querySelector(selector);
       if (el) el.textContent = value;
     };
-    set('#accessGateSubtitle', this.t('access.subtitle', 'Bu Gharmonize sunucusuna erişmek için yetkilendirme gerekiyor.'));
+    const canRequest = !!this.status?.temporaryRequestsEnabled;
+    set('#accessGateTitle', this.t('access.signInTitle', 'Gharmonize’a giriş yapın'));
+    set('#accessGateSubtitle', canRequest
+      ? this.t('access.subtitleWithRequest', 'Devam etmek için yönetici şifrenizle giriş yapın veya kullanım izni isteyin.')
+      : this.t('access.subtitle', 'Devam etmek için yönetici şifrenizle giriş yapın.'));
     set('.access-gate__label', this.t('settings.adminPassword', 'Yönetici Şifresi'));
-    set('#accessGateLoginBtn', this.t('btn.login', 'Giriş yap'));
+    set('#accessGateLoginBtn span', this.t('btn.login', 'Giriş yap'));
     set('#accessGateRequestBtn', this.t('access.requestButton', 'Kullanım izni iste'));
+    set('#accessGateOr', this.t('access.or', 'veya'));
     set('#accessGateWaitingTitle', this.t('access.waitingTitle', 'Yönetici onayı bekleniyor'));
     set('#accessGateWaitingText', this.t('access.waitingText', 'İsteğiniz yöneticiye iletildi. Bu ekranı açık bırakabilirsiniz.'));
   }
@@ -158,7 +205,10 @@ class AccessManager {
     this.refreshGateText();
     this.status = status || this.status || {};
     const requestBtn = this.gate.querySelector('#accessGateRequestBtn');
+    const requestBlock = this.gate.querySelector('#accessGateRequestBlock');
     if (requestBtn) requestBtn.hidden = !this.status.temporaryRequestsEnabled;
+    if (requestBlock) requestBlock.hidden = !this.status.temporaryRequestsEnabled;
+    this.refreshGateText();
     const error = this.gate.querySelector('#accessGateError');
     if (errorMessage && error) {
       error.textContent = errorMessage;
