@@ -1,5 +1,7 @@
 import fetch from "node-fetch";
 import { resolveMarket, withMarketFallback } from "./market.js";
+import { metadataDeadline } from "./metadataDeadline.js";
+import { cleanCatalogTitleForSearch, catalogSearchTextVariants, catalogQueryKey } from "./catalogSearchText.js";
 
 const APPLE_SEARCH_CACHE = new Map();
 const APPLE_SEARCH_CACHE_MAX = 500;
@@ -767,7 +769,7 @@ function scoreResult(result, { artist = "", title = "", album = "", targetDurati
 }
 
 // Searches Apple tracks through the iTunes search API for Apple mapping and metadata flow.
-async function searchAppleTracks(query, { market, limit = 8 } = {}) {
+async function searchAppleTracks(query, { market, limit = 8, signal } = {}) {
   const params = new URLSearchParams({
     term: query,
     entity: "song",
@@ -780,6 +782,7 @@ async function searchAppleTracks(query, { market, limit = 8 } = {}) {
   }
 
   const res = await fetch(`https://itunes.apple.com/search?${params.toString()}`, {
+    signal,
     headers: {
       "user-agent": "Gharmonize/1.2"
     }
@@ -794,7 +797,7 @@ async function searchAppleTracks(query, { market, limit = 8 } = {}) {
 }
 
 // Looks up Apple collection metadata by collection id for Apple mapping and metadata flow.
-async function lookupAppleCollection(collectionId, { market } = {}) {
+async function lookupAppleCollection(collectionId, { market, signal } = {}) {
   const id = numberOrNull(collectionId);
   if (!id || id <= 0) return null;
 
@@ -812,6 +815,7 @@ async function lookupAppleCollection(collectionId, { market } = {}) {
   }
 
   const res = await fetch(`https://itunes.apple.com/lookup?${params.toString()}`, {
+    signal,
     headers: {
       "user-agent": "Gharmonize/1.2"
     }
@@ -1478,11 +1482,13 @@ export async function findAppleTrackMetaByQuery(
     market = "",
     targetDurationMs = null,
     targetDurationSec = null,
-    limit = 8
+    limit = 8,
+    signal: parentSignal,
+    timeoutMs = 6000
   } = {}
 ) {
   const artistSafe = String(artist || "").trim();
-  const titleSafe = String(title || "").trim();
+  const titleSafe = cleanCatalogTitleForSearch(title);
   if (!titleSafe) return null;
 
   const durationMs =
@@ -1507,26 +1513,30 @@ export async function findAppleTrackMetaByQuery(
   const push = (value = "") => {
     const v = String(value || "").trim();
     if (!v) return;
-    const key = norm(v);
+    const key = catalogQueryKey(v);
     if (!key || seen.has(key)) return;
     seen.add(key);
     queries.push(v);
   };
 
   for (const artistVariant of buildArtistQueryVariants(artistSafe)) {
-    push(`${artistVariant} ${titleSafe}`);
-    push(`${titleSafe} ${artistVariant}`);
+    for (const query of catalogSearchTextVariants(`${artistVariant} ${titleSafe}`)) push(query);
+    for (const query of catalogSearchTextVariants(`${titleSafe} ${artistVariant}`)) push(query);
   }
-  push(titleSafe);
+  for (const query of catalogSearchTextVariants(titleSafe)) push(query);
 
   let bestResult = null;
   let bestScore = -1;
+  let failed = false;
+  const signal = metadataDeadline(parentSignal, timeoutMs);
 
   for (const query of queries) {
+    if (signal.aborted) break;
     let results = [];
     try {
-      results = await searchAppleTracks(query, { market, limit });
+      results = await searchAppleTracks(query, { market, limit, signal });
     } catch {
+      failed = true;
       continue;
     }
 
@@ -1549,13 +1559,16 @@ export async function findAppleTrackMetaByQuery(
   }
 
   let collectionResult = null;
-  if (bestScore >= 4) {
+  if (bestScore >= 4 && !signal.aborted) {
     try {
-      collectionResult = await lookupAppleCollection(bestResult?.collectionId, { market });
+      collectionResult = await lookupAppleCollection(bestResult?.collectionId, { market, signal });
     } catch {}
   }
 
   const meta = bestScore >= 4 ? appleTrackToMeta(bestResult, collectionResult) : null;
-  cacheSet(APPLE_SEARCH_CACHE, cacheKey, meta, APPLE_SEARCH_CACHE_MAX);
+  // An outage is not a permanent negative match; retry enrichment next time.
+  if (meta || (!failed && !signal.aborted)) {
+    cacheSet(APPLE_SEARCH_CACHE, cacheKey, meta, APPLE_SEARCH_CACHE_MAX);
+  }
   return meta;
 }

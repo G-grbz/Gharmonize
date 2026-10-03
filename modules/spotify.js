@@ -3,6 +3,7 @@ import SpotifyWebApi from "spotify-web-api-node";
 import { resolveMarket, withMarketFallback } from "./market.js";
 import fetch from "node-fetch";
 import { findAppleTrackMetaByQuery } from "./apple.js";
+import { cleanCatalogTitleForSearch, catalogSearchTextVariants, catalogQueryKey } from "./catalogSearchText.js";
 
 let _spotifyApiSingleton = null;
 let _spotifyAccessToken = null;
@@ -656,7 +657,7 @@ function _buildSearchQueries(artist, title) {
   const push = (q = "") => {
     const v = String(q || "").trim();
     if (!v) return;
-    const key = _norm(v);
+    const key = catalogQueryKey(v);
     if (!key || seen.has(key)) return;
     seen.add(key);
     queries.push(v);
@@ -665,8 +666,8 @@ function _buildSearchQueries(artist, title) {
   const main = [artist, title].filter(Boolean).join(" ").trim();
   const cross = [title, artist].filter(Boolean).join(" ").trim();
 
-  push(main);
-  push(cross);
+  for (const query of catalogSearchTextVariants(main)) push(query);
+  for (const query of catalogSearchTextVariants(cross)) push(query);
 
   return queries;
 }
@@ -689,15 +690,15 @@ function _buildTitleOnlyQueries(title, titleRaw) {
   const push = (q = "") => {
     const v = String(q || "").trim();
     if (!v) return;
-    const key = _norm(v);
+    const key = catalogQueryKey(v);
     if (!key || seen.has(key)) return;
     seen.add(key);
     queries.push(v);
   };
 
-  push(title);
-  push(_stripTitleSearchNoise(title));
-  push(_stripTitleSearchNoise(titleRaw));
+  for (const text of [title, _stripTitleSearchNoise(title), _stripTitleSearchNoise(cleanCatalogTitleForSearch(titleRaw))]) {
+    for (const query of catalogSearchTextVariants(text)) push(query);
+  }
 
   return queries;
 }
@@ -724,6 +725,8 @@ export async function searchSpotifyBestTrackStrict(
   } = {}
 ) {
   try {
+    title = cleanCatalogTitleForSearch(title);
+    titleRaw = cleanCatalogTitleForSearch(titleRaw || title);
     const api = await makeSpotify();
     const queries = _buildSearchQueries(artist, title);
     if (!queries.length) return null;

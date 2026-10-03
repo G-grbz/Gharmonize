@@ -66,9 +66,14 @@ export class JobManager {
         this.currentJobs.set(jobId, eventSource);
 
         let firstUpdate = (retryCount === 0);
+        let lastPayload = null;
 
         eventSource.onmessage = (event) => {
+        // The server also sends unchanged snapshots as heartbeats. Do not
+        // recreate the result DOM and restart progress animations for those.
+        if (event.data === lastPayload) return;
         const incoming = JSON.parse(event.data);
+        lastPayload = event.data;
         const prevJob = this.jobStates.get(jobId) || {};
         const job = this.mergeJobState(prevJob, incoming);
 

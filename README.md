@@ -48,6 +48,8 @@ For guidance on unofficial downloads, impersonation, and reporting suspicious di
 
 ## Code signing policy
 
+**Windows signing status (v1.4.1): Windows downloads do not yet carry a trusted Authenticode signature.** The SignPath Foundation production certificate is pending; test certificates are not used for public releases. Windows may show publisher/SmartScreen warnings or block execution under managed security policies. The GPG-signed checksum manifest is not a substitute for Authenticode signing.
+
 Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
 The signing roles, trusted-build requirements, artifact coverage, and verification process are documented in the [Gharmonize Code Signing Policy](CODE_SIGNING_POLICY.md). Runtime data handling and external network connections are documented in the [Privacy Policy](PRIVACY.md).

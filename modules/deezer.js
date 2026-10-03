@@ -1,5 +1,7 @@
 import fetch from "node-fetch";
 import { normalizeDeezerArl } from "./security.js";
+import { metadataDeadline } from "./metadataDeadline.js";
+import { cleanCatalogTitleForSearch, catalogSearchTextVariants, catalogQueryKey } from "./catalogSearchText.js";
 
 const DEEZER_API_BASE = "https://api.deezer.com";
 const DEEZER_WEB_GATEWAY = "https://www.deezer.com/ajax/gw-light.php";
@@ -360,7 +362,7 @@ async function resolveDeezerCanonicalUrl(url = "") {
 }
 
 // Fetches Deezer JSON payloads with shared headers for Deezer metadata flow.
-async function fetchDeezerJson(url = "") {
+async function fetchDeezerJson(url = "", { signal } = {}) {
   const target = new URL(String(url || ""));
   const host = target.hostname.toLowerCase();
   if (
@@ -372,6 +374,7 @@ async function fetchDeezerJson(url = "") {
     throw new Error("Unsafe Deezer API URL");
   }
   const res = await fetch(target.toString(), {
+    signal,
     headers: DEEZER_WEB_HEADERS,
     redirect: "error"
   });
@@ -723,14 +726,14 @@ function scoreResult(
 }
 
 // Searches Deezer tracks by free text for metadata lookup flow.
-async function searchDeezerTracks(query, { limit = 8 } = {}) {
+async function searchDeezerTracks(query, { limit = 8, signal } = {}) {
   const parsed = new URL(`${DEEZER_API_BASE}/search/track`);
   parsed.searchParams.set(
     "limit",
     String(Math.max(1, Math.min(25, Number(limit) || 8)))
   );
   parsed.searchParams.set("q", String(query || "").trim());
-  const data = await fetchDeezerJson(parsed.toString());
+  const data = await fetchDeezerJson(parsed.toString(), { signal });
   return Array.isArray(data?.data) ? data.data : [];
 }
 
@@ -907,7 +910,7 @@ async function resolveDeezerArtistSearch(parsed, options = {}) {
 }
 
 // Loads a Deezer track entity by id for metadata flow.
-async function lookupDeezerTrack(trackId) {
+async function lookupDeezerTrack(trackId, { signal } = {}) {
   const id = numberOrNull(trackId);
   if (!id || id <= 0) return null;
 
@@ -916,18 +919,17 @@ async function lookupDeezerTrack(trackId) {
   if (cached !== undefined) return cached;
 
   try {
-    const track = await fetchDeezerJson(`${DEEZER_API_BASE}/track/${Math.round(id)}`);
+    const track = await fetchDeezerJson(`${DEEZER_API_BASE}/track/${Math.round(id)}`, { signal });
     const resolved = numberOrNull(track?.id) ? track : null;
     cacheSet(DEEZER_TRACK_CACHE, cacheKey, resolved, DEEZER_TRACK_CACHE_MAX);
     return resolved;
   } catch {
-    cacheSet(DEEZER_TRACK_CACHE, cacheKey, null, DEEZER_TRACK_CACHE_MAX);
     return null;
   }
 }
 
 // Loads a Deezer album entity by id for metadata flow.
-async function lookupDeezerAlbum(albumId) {
+async function lookupDeezerAlbum(albumId, { signal } = {}) {
   const id = numberOrNull(albumId);
   if (!id || id <= 0) return null;
 
@@ -936,12 +938,11 @@ async function lookupDeezerAlbum(albumId) {
   if (cached !== undefined) return cached;
 
   try {
-    const album = await fetchDeezerJson(`${DEEZER_API_BASE}/album/${Math.round(id)}`);
+    const album = await fetchDeezerJson(`${DEEZER_API_BASE}/album/${Math.round(id)}`, { signal });
     const resolved = numberOrNull(album?.id) ? album : null;
     cacheSet(DEEZER_ALBUM_CACHE, cacheKey, resolved, DEEZER_ALBUM_CACHE_MAX);
     return resolved;
   } catch {
-    cacheSet(DEEZER_ALBUM_CACHE, cacheKey, null, DEEZER_ALBUM_CACHE_MAX);
     return null;
   }
 }
@@ -1580,11 +1581,13 @@ export async function findDeezerTrackMetaByQuery(
     album = "",
     targetDurationMs = null,
     targetDurationSec = null,
-    limit = 8
+    limit = 8,
+    signal: parentSignal,
+    timeoutMs = 4000
   } = {}
 ) {
   const artistSafe = String(artist || "").trim();
-  const titleSafe = String(title || "").trim();
+  const titleSafe = cleanCatalogTitleForSearch(title);
   if (!titleSafe) return null;
 
   const durationMs =
@@ -1607,26 +1610,34 @@ export async function findDeezerTrackMetaByQuery(
   const seen = new Set();
   const push = (value = "") => {
     const raw = String(value || "").trim();
-    const key = norm(raw);
+    const key = catalogQueryKey(raw);
     if (!raw || !key || seen.has(key)) return;
     seen.add(key);
     queries.push(raw);
   };
 
-  push([artistSafe, `"${titleSafe}"`].filter(Boolean).join(" "));
-  push([artistSafe, titleSafe, album].filter(Boolean).join(" "));
-  push([artistSafe, titleSafe].filter(Boolean).join(" "));
-  push([titleSafe, artistSafe].filter(Boolean).join(" "));
-  push(titleSafe);
+  for (const query of [
+    [artistSafe, `"${titleSafe}"`].filter(Boolean).join(" "),
+    [artistSafe, titleSafe, album].filter(Boolean).join(" "),
+    [artistSafe, titleSafe].filter(Boolean).join(" "),
+    [titleSafe, artistSafe].filter(Boolean).join(" "),
+    titleSafe
+  ]) {
+    for (const variant of catalogSearchTextVariants(query)) push(variant);
+  }
 
   let bestResult = null;
   let bestScore = -1;
+  let failed = false;
+  const signal = metadataDeadline(parentSignal, timeoutMs);
 
   for (const query of queries) {
+    if (signal.aborted) break;
     let results = [];
     try {
-      results = await searchDeezerTracks(query, { limit });
+      results = await searchDeezerTracks(query, { limit, signal });
     } catch {
+      failed = true;
       continue;
     }
 
@@ -1649,23 +1660,20 @@ export async function findDeezerTrackMetaByQuery(
   }
 
   if (!bestResult || bestScore < 4) {
-    cacheSet(DEEZER_SEARCH_CACHE, cacheKey, null, DEEZER_SEARCH_CACHE_MAX);
+    if (!failed && !signal.aborted) {
+      cacheSet(DEEZER_SEARCH_CACHE, cacheKey, null, DEEZER_SEARCH_CACHE_MAX);
+    }
     return null;
   }
 
-  let meta = null;
-  try {
-    meta = await findDeezerTrackMetaById(bestResult.id);
-  } catch {}
-
-  if (!meta) {
-    try {
-      const albumBundle = await lookupDeezerAlbumBundle(bestResult?.album?.id);
-      meta = deezerTrackToMeta(bestResult, albumBundle?.album || null);
-    } catch {
-      meta = deezerTrackToMeta(bestResult, null);
-    }
-  }
+  // Query enrichment needs one track and album, not the album's entire tracklist.
+  const track = !signal.aborted
+    ? await lookupDeezerTrack(bestResult.id, { signal }) || bestResult
+    : bestResult;
+  const albumResult = !signal.aborted
+    ? await lookupDeezerAlbum(track?.album?.id, { signal })
+    : null;
+  const meta = deezerTrackToMeta(track, albumResult);
 
   cacheSet(DEEZER_SEARCH_CACHE, cacheKey, meta, DEEZER_SEARCH_CACHE_MAX);
   return meta;

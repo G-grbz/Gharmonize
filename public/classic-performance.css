@@ -1,0 +1,6 @@
+/* Large cards already have a near-opaque background. Blurring the page behind
+   every card adds software compositing work without improving their content. */
+.card-grid > .card {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

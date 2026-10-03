@@ -196,8 +196,13 @@ jobs:
           See the [Gharmonize Code Signing Policy](https://github.com/G-grbz/Gharmonize/blob/${GITHUB_REF_NAME}/CODE_SIGNING_POLICY.md) and [Privacy Policy](https://github.com/G-grbz/Gharmonize/blob/${GITHUB_REF_NAME}/PRIVACY.md).
           EOF
           )"
+          RELEASE_NOTES="$SIGNING_NOTICE"
+          VERSION_NOTES_FILE="docs/releases/${GITHUB_REF_NAME}.md"
+          if [[ -f "$VERSION_NOTES_FILE" ]]; then
+            RELEASE_NOTES="$(< "$VERSION_NOTES_FILE")"$'\n\n'"$SIGNING_NOTICE"
+          fi
           gh release create "$GITHUB_REF_NAME" release/* \
             --verify-tag \
             --generate-notes \
-            --notes "$SIGNING_NOTICE" \
+            --notes "$RELEASE_NOTES" \
             --title "Gharmonize $GITHUB_REF_NAME"

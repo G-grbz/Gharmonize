@@ -6,6 +6,7 @@ import { modalManager } from './ModalManager.js';
 import { versionManager } from './VersionManager.js';
 import { TrackExtractorManager } from './TrackExtractorManager.js';
 import { accessManager } from './AccessManager.js';
+import { setupTitlePositioning } from './ClassicLayout.js';
 
 async function waitForRuntimeBinariesReady() {
     const overlay = document.getElementById('binaryStartupOverlay');
@@ -178,65 +179,4 @@ function setupCollapsibleSections() {
         jobsHeader.classList.remove('collapsed');
         jobsContent.classList.remove('collapsed');
     }
-}
-
-// Updates title positioning used for the browser UI layer.
-function setupTitlePositioning() {
-  const title = document.querySelector('.title-section');
-  const container = document.querySelector('.container');
-  const firstCard = document.querySelector('.card-grid .card:first-child');
-  const logoImg = document.querySelector('.app-logo-large');
-
-  if (!title || !container || !firstCard) return;
-
-  const GAP = 8;
-
-  // Checks whether measure is allowed for the browser UI layer.
-  function canMeasure() {
-    const cont = container.getBoundingClientRect();
-    const card = firstCard.getBoundingClientRect();
-    const titleH = title.offsetHeight;
-    return cont.width > 0 && card.width > 0 && titleH > 0;
-  }
-
-  // Handles place title in the browser UI layer.
-  function placeTitle() {
-    const cont = container.getBoundingClientRect();
-    const card = firstCard.getBoundingClientRect();
-    if (!(cont.width > 0 && card.width > 0)) return;
-
-    title.style.visibility = 'hidden';
-    title.style.left = '0px';
-    title.style.top = '0px';
-
-    const titleH = title.offsetHeight;
-    const left = card.left - cont.left;
-    const top = card.top - cont.top - titleH - GAP;
-
-    title.style.left = left + 'px';
-    title.style.top = top + 'px';
-    title.style.visibility = 'visible';
-  }
-
-  // Handles wait and place in the browser UI layer.
-  async function waitAndPlace() {
-    try { await document.fonts.ready; } catch(e) {}
-    if (logoImg && logoImg.decode) {
-      try { await logoImg.decode(); } catch(e) {}
-    }
-    let tries = 0;
-    while (!canMeasure() && tries < 10) {
-      await new Promise(r => requestAnimationFrame(r));
-      tries++;
-    }
-    placeTitle();
-  }
-
-  waitAndPlace();
-
-  window.addEventListener('resize', placeTitle, { passive: true });
-  window.addEventListener('scroll', placeTitle, { passive: true });
-
-  const ro = new ResizeObserver(() => placeTitle());
-  ro.observe(document.documentElement);
 }

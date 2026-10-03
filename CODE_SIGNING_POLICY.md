@@ -7,6 +7,20 @@ This policy applies to Windows binaries distributed through the official
 Test-signed workflow artifacts are for validation only and are not official
 releases.
 
+## Current release status
+
+The Windows artifacts in **v1.4.1 do not carry a trusted Authenticode signature**.
+The SignPath Foundation production certificate is still pending. This includes
+the NSIS installer, the standalone portable executable, and the application
+executable inside the portable-folder ZIP. Self-signed test certificates are
+not used in this public release.
+
+Windows may show an unknown-publisher or SmartScreen warning, and managed
+security policies may block execution. The GPG-signed checksum manifest and
+GitHub artifact attestations provide separate release-integrity verification;
+they do not provide Windows Authenticode trust. Users should not disable security
+protections or install a test certificate to run an official release.
+
 ## Project roles
 
 | Role | Members |

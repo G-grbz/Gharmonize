@@ -12,7 +12,7 @@ import {
   FFMPEG_BIN as BINARY_FFMPEG_BIN,
   getBinaryRuntimeEnv
 } from "./binaries.js";
-import { parseSafeYtDlpExtra } from "./security.js";
+import { parseSafeYtDlpExtra, sanitizeLogValue } from "./security.js";
 import { requestYtMusicJson, createYtMusicRequestGate } from "./ytMusicRequest.js";
 import { createYtMusicSharedCache } from "./ytMusicSharedCache.js";
 import {
@@ -5643,6 +5643,7 @@ async function downloadSelectedIdsParallel(
       args = [
         "--ignore-config", "--no-warnings",
         "--socket-timeout", "15",
+        "--retries", "3", "--fragment-retries", "3", "--retry-sleep", "1",
         "--user-agent", DEFAULT_USER_AGENT,
         ...headersToArgs(isYouTubeUrl(String(url || "")) ? DEFAULT_HEADERS : null),
         "--no-playlist",
@@ -5678,6 +5679,7 @@ async function downloadSelectedIdsParallel(
       let stderrBuf = "";
       let mediaDestAbs = null;
       let emittedDone = false;
+      const downloadStartedAt = Date.now();
 
       const child = spawnSafe(ytDlpBin, args, getYtDlpJobSpawnOptions());
       try { registerJobProcess(jobId, child); } catch {}
@@ -5712,6 +5714,7 @@ async function downloadSelectedIdsParallel(
           fallbackAbsPathById();
         if (!donePath) return;
         emittedDone = true;
+        console.log(`[youtube ${sanitizeLogValue(jobId)}] Downloaded ${sanitizeLogValue(selectedIds[index])} in ${((Date.now() - downloadStartedAt) / 1000).toFixed(1)}s; preparing metadata`);
 
         completedCount++;
         overallProgress();
@@ -6255,14 +6258,14 @@ export function buildEntriesMap(ytMetadata) {
 }
 
 // Handles media probe data youtube music meta in the yt-dlp YouTube download pipeline.
-export async function probeYoutubeMusicMeta(input) {
+export async function probeYoutubeMusicMeta(input, { timeoutMs = 20000 } = {}) {
   const url = typeof input === "string" && !/^https?:\/\//i.test(input)
     ? `https://www.youtube.com/watch?v=${input}`
     : input;
   const data = await runYtJson([
     "--no-playlist",
     url
-  ], "yt-music-probe", 20000);
+  ], "yt-music-probe", Math.max(1, Math.min(20000, Number(timeoutMs) || 20000)));
 
   const d = Array.isArray(data?.entries) ? data.entries[0] : data;
   if (!d) return null;

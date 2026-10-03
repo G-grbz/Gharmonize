@@ -87,7 +87,7 @@ export class LyricsFetcher {
       const apiUrl = `${this.baseURL}/get?${params}`;
       console.log(`🌐 LRCLib API request: ${apiUrl}`);
 
-      const response = await fetch(apiUrl);
+      const response = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -376,7 +376,8 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
     embedLyrics = false,
     jobId = null,
     onLog = null,
-    onLyricsStats = null
+    onLyricsStats = null,
+    returnDetails = false
   } = options;
 
   if (!includeLyrics && !embedLyrics) {
@@ -510,9 +511,10 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
       return null;
     }
 
+    let embedded = false;
     if (embedLyrics && lyricsContentForEmbed) {
       try {
-        await embedLyricsInMedia(filePath, lyricsContentForEmbed, {
+        embedded = await embedLyricsInMedia(filePath, lyricsContentForEmbed, {
           onLog,
           metadata
         });
@@ -534,7 +536,9 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
       emitLog(onLog, attachedLogMsg);
     }
 
-    return lyricsPath;
+    // Keep the legacy sidecar path API; callers requesting details can distinguish
+    // successful embed-only operations from missing lyrics.
+    return returnDetails ? { found: true, embedded, lyricsPath } : lyricsPath;
   } catch (error) {
     const attachmentErrorLogMsg = {
       logKey: "log.lyrics.attachmentError",

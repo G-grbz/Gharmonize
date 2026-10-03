@@ -457,7 +457,9 @@ export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
     const baseDir = path.resolve(process.env.DATA_DIR || process.cwd());
     const allowedRoots = [path.join(baseDir, 'outputs'), path.join(baseDir, 'temp'), path.join(baseDir, 'uploads')];
     const safeBase = assertPathWithinAny(path.resolve(String(destBasePathNoExt || '')), allowedRoots);
-    const res = await fetchSafeRemote(thumbnailUrl, {}, { maxRedirects: 3 });
+    const res = await fetchSafeRemote(thumbnailUrl, {
+      signal: AbortSignal.timeout(5000)
+    }, { maxRedirects: 3 });
     if (!res.ok) return null;
     const maxCoverBytes = 25 * 1024 * 1024;
     const declaredLength = Number(res.headers.get("content-length") || 0);
@@ -3491,27 +3493,32 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       };
 
       try {
-        const lyricsPath = await attachLyricsToMedia(actualOutputPath, metadata, {
+        const lyricsResult = await attachLyricsToMedia(actualOutputPath, metadata, {
           includeLyrics: includeLyricsFlag,
           embedLyrics: embedLyricsFlag,
           jobId: jobId.split("_")[0],
           onLog: lyricsLogCallback,
-          onLyricsStats: opts.onLyricsStats
+          onLyricsStats: opts.onLyricsStats,
+          returnDetails: true
         });
 
-        if (lyricsPath) {
-          console.log(`✅ lyrics added successfully: ${lyricsPath}`);
-          result.lyricsPath = toResultDownloadPath(lyricsPath);
+        const lyricsPath = lyricsResult?.lyricsPath;
+        if (lyricsResult?.found) {
+          if (lyricsPath) {
+            console.log(`✅ lyrics added successfully: ${lyricsPath}`);
+            result.lyricsPath = toResultDownloadPath(lyricsPath);
+          } else if (lyricsResult.embedded) {
+            console.log("✅ Lyrics embedded successfully (no sidecar requested)");
+          }
 
           const job = jobs.get(jobId.split("_")[0]);
           if (job) {
-            job.lastLog = `🎼 Lyrics file added: ${path.basename(
-              lyricsPath
-            )}`;
-            if (!job.metadata.lyricsStats) {
-              job.metadata.lyricsStats = { found: 0, notFound: 0 };
+            if (lyricsPath) job.lastLog = `🎼 Lyrics file added: ${path.basename(lyricsPath)}`;
+            // The caller's statistics callback already counted this result.
+            if (!opts.onLyricsStats) {
+              job.metadata.lyricsStats ||= { found: 0, notFound: 0 };
+              job.metadata.lyricsStats.found++;
             }
-            job.metadata.lyricsStats.found++;
           }
         } else {
           console.log("ℹ️ Lyrics could not be found or added");
@@ -3520,10 +3527,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
             job.lastLog = `🎼 Lyrics not found: ${
               metadata.title || "Unknown"
             }`;
-            if (!job.metadata.lyricsStats) {
-              job.metadata.lyricsStats = { found: 0, notFound: 0 };
+            if (!opts.onLyricsStats) {
+              job.metadata.lyricsStats ||= { found: 0, notFound: 0 };
+              job.metadata.lyricsStats.notFound++;
             }
-            job.metadata.lyricsStats.notFound++;
           }
         }
       } catch (lyricsError) {

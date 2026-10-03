@@ -373,15 +373,18 @@ async function enrichMetaFromApple(base, {
   if (!titleSafe) return base;
 
   try {
+    const signal = AbortSignal.timeout(10000);
     const appleMeta = await findAppleTrackMetaByQuery(artistSafe, titleSafe, {
+      signal,
       album: base?.album || "",
       market,
       targetDurationMs: Number(base?.duration_ms || 0) || null
     });
     let fallbackMeta = appleMeta;
-    if (!fallbackMeta) {
+    if (!fallbackMeta && !signal.aborted) {
       try {
         fallbackMeta = await findDeezerTrackMetaByQuery(artistSafe, titleSafe, {
+          signal,
           album: base?.album || "",
           targetDurationMs: Number(base?.duration_ms || 0) || null
         });
@@ -1480,6 +1483,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             .basename(filePath, path.extname(filePath))
             .replace(/^\d+\s*-\s*/, "");
           let title = toNFC(entry?.title || fallbackTitle);
+          const preparationStartedAt = Date.now();
           const totalTracks = job.playlist?.total || totalGuess || 1;
           const nativeTrackNumber =
             Number(entry?.track_number) ||
@@ -1536,7 +1540,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             upload_date: entry?.upload_date || flat.upload_date || "",
             track_number:
               nativeTrackNumber ||
-              (Number.isFinite(playlistIndex) ? Number(playlistIndex) : null),
+              (Array.isArray(selectedIds) ? stableIndex + 1 :
+                (Number.isFinite(playlistIndex) ? Number(playlistIndex) : null)),
             disc_number: nativeDiscNumber,
             track_total:
               nativeTrackTotal ||
@@ -1575,10 +1580,12 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
           try {
             const ytMusic = await probeYoutubeMusicMeta(
-              entry?.webpage_url || entry?.id
+              entry?.webpage_url || entry?.id,
+              { timeoutMs: 8000 }
             );
             fileMeta = mergeMeta(fileMeta, ytMusic);
           } catch {}
+          const youtubeMetadataMs = Date.now() - preparationStartedAt;
           fileMeta = normalizeYtMusicAlbumMeta(fileMeta, {
             parentMeta: ytMeta || flat || {},
             playlistTitle: job.metadata?.frozenTitle || flat.album || flat.title || "",
@@ -1614,6 +1621,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             }
           }
 
+          const providerStartedAt = Date.now();
           fileMeta = await enrichMetaFromApple(fileMeta, {
             artist: fileMeta.artist || fileMeta.uploader,
             title: fileMeta.track || fileMeta.title,
@@ -1625,6 +1633,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             preferDiscTotal: true
           });
 
+          const providerMetadataMs = Date.now() - providerStartedAt;
+          const coverStartedAt = Date.now();
           let itemCover = null;
           const baseNoExt = filePath.replace(/\.[^.]+$/, "");
           const sidecarJpg = `${baseNoExt}.jpg`;
@@ -1633,6 +1643,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             fallbackSidecarPath: sidecarJpg,
             fallbackCoverPath: coverPath
           });
+          console.log(`[youtube ${sanitizeLogValue(jobId)}] Prepared ${sanitizeLogValue(fileId || stableIndex + 1)}: YouTube metadata=${youtubeMetadataMs}ms, provider metadata=${providerMetadataMs}ms, cover=${Date.now() - coverStartedAt}ms`);
 
           try {
             const strictMeta = await resolveId3StrictForYouTube(
@@ -1863,9 +1874,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             if (
               progress &&
               typeof progress === "object" &&
-              progress.__event &&
-              progress.type === "file-done"
+              progress.__event
             ) {
+              // Skip/summary events are not numeric progress percentages.
+              if (progress.type !== "file-done") return;
               const t = Number(progress.total || tGuess || 0);
               job.counters.dlTotal = t || tGuess;
               job.counters.dlDone = Math.min(

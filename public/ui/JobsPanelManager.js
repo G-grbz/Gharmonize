@@ -26,6 +26,10 @@ export class JobsPanelManager {
         this.progressCache = new Map();
         this.completedAtCache = new Map();
         this.storageKey = 'gharmonize_jobs_panel_state';
+        this.lastSavedItems = null;
+        this.lastServerItems = null;
+        this.lastServerCheckAt = 0;
+        this.incomingTask = Promise.resolve();
     }
 
     // Initializes startup state for the browser UI layer.
@@ -156,6 +160,7 @@ export class JobsPanelManager {
         if (!panel) return;
         panel.setAttribute('aria-hidden', 'false');
         panel.removeAttribute('inert');
+        this.render();
         this.overlay && (this.overlay.hidden = false);
         document.body.style.overflow = 'hidden';
         requestAnimationFrame(() => {
@@ -462,37 +467,31 @@ export class JobsPanelManager {
     startSSE() {
     try {
             const token = localStorage.getItem(this.tokenKey) || "";
+            if (this.eventSource && this.eventSource.readyState !== 2 && this.streamToken === token) return;
+            this.eventSource?.close();
+            if (this.pollingInterval) {
+                clearInterval(this.pollingInterval);
+                this.pollingInterval = null;
+            }
+            this.streamToken = token;
+            this.lastServerItems = null;
             this.eventSource = new EventSource(`/api/stream?token=${encodeURIComponent(token)}`);
+            const source = this.eventSource;
 
             this.eventSource.onmessage = async (ev) => {
     try {
+        if (this.eventSource !== source) return;
         const incoming = JSON.parse(ev.data) || { items: [] };
-        const { hasUpdate, latestVersion, releaseUrl } = this.state;
-        const serverItems = Array.isArray(incoming.items) ? incoming.items : [];
-        const cleanedItems = await this.cleanupServerItems(serverItems);
-        const existingAfterReconcile = await this.reconcileLostJobs(
-            this.state.items || [],
-            cleanedItems
-        );
-        const mergedItems = this.mergeItems(existingAfterReconcile, cleanedItems);
-        const limitedItems = this.limitCompleted(mergedItems, 15);
-
-        this.state = {
-            items: limitedItems,
-            hasUpdate,
-            latestVersion,
-            releaseUrl
-        };
-
-        this.saveState();
-        this.render();
+        await this.receiveServerItems(Array.isArray(incoming.items) ? incoming.items : []);
             } catch (e) {
                 console.error('SSE parse error:', e);
             }
         };
 
             this.eventSource.onerror = () => {
-                this.eventSource?.close();
+                if (this.eventSource !== source) return;
+                source.close();
+                this.eventSource = null;
                 this.startPolling();
             };
         } catch (e) {
@@ -501,8 +500,32 @@ export class JobsPanelManager {
         }
     }
 
+    receiveServerItems(serverItems) {
+        // Serialize asynchronous output checks so an older snapshot cannot
+        // overwrite a newer progress update when its HTTP requests finish late.
+        this.incomingTask = this.incomingTask.catch(() => {}).then(async () => {
+            const signature = JSON.stringify(serverItems);
+            const now = Date.now();
+            if (signature === this.lastServerItems && now - this.lastServerCheckAt < 15000) return;
+            // Output pruning may mutate existing rows in place. Compare with the
+            // pre-check snapshot so removed files still update visible results.
+            const previousItems = JSON.stringify(this.state.items);
+            const cleaned = await this.cleanupServerItems(serverItems);
+            const existing = await this.reconcileLostJobs(this.state.items || [], cleaned);
+            const items = this.limitCompleted(this.mergeItems(existing, cleaned), 15);
+            this.lastServerItems = signature;
+            this.lastServerCheckAt = now;
+            if (JSON.stringify(items) === previousItems) return;
+            this.state = { ...this.state, items };
+            this.saveState();
+            this.render();
+        });
+        return this.incomingTask;
+    }
+
     // Handles start polling in the browser UI layer.
     startPolling() {
+        if (this.pollingInterval) return;
         // Handles poll in the browser UI layer.
         const poll = () => {
             const token = localStorage.getItem(this.tokenKey) || "";
@@ -530,27 +553,7 @@ export class JobsPanelManager {
             })
             .then(async d => {
             if (d) {
-            const { hasUpdate, latestVersion, releaseUrl } = this.state;
-            const serverItems = Array.isArray(d.items) ? d.items : [];
-            const cleanedItems = await this.cleanupServerItems(serverItems);
-
-            const existingAfterReconcile = await this.reconcileLostJobs(
-                this.state.items || [],
-                cleanedItems
-            );
-
-            const mergedItems = this.mergeItems(existingAfterReconcile, cleanedItems);
-            const limitedItems = this.limitCompleted(mergedItems, 15);
-
-            this.state = {
-                items: limitedItems,
-                hasUpdate,
-                latestVersion,
-                releaseUrl
-            };
-
-            this.saveState();
-            this.render();
+                await this.receiveServerItems(Array.isArray(d.items) ? d.items : []);
                 }
             })
             .catch(e => {
@@ -1107,6 +1110,8 @@ export class JobsPanelManager {
         saveState() {
         try {
             const items = this.limitCompleted(this.state.items || [], 15);
+            const signature = JSON.stringify(items);
+            if (signature === this.lastSavedItems) return;
 
             const payload = {
                 items,
@@ -1115,6 +1120,7 @@ export class JobsPanelManager {
             };
 
             localStorage.setItem(this.storageKey, JSON.stringify(payload));
+            this.lastSavedItems = signature;
         } catch (e) {
             console.warn('[JobsPanel] saveState error:', e);
         }
@@ -1130,7 +1136,9 @@ export class JobsPanelManager {
             if (!data || !Array.isArray(data.items)) return;
 
             const cleaned = await this.cleanupServerItems(data.items || []);
-            const limited = this.limitCompleted(cleaned, 15);
+            // A live snapshot may have arrived while cached output paths were
+            // checked. Restore history without replacing fresher live progress.
+            const limited = this.limitCompleted(this.mergeItems(cleaned, this.state.items || []), 15);
             const { hasUpdate, latestVersion, releaseUrl } = this.state;
             this.state = {
                 items: limited,
@@ -1209,6 +1217,9 @@ export class JobsPanelManager {
 
     // Renders render in the browser UI layer.
     render() {
+    this.updateJobsBell();
+    // Keep state current while closed; build the panel only when it is visible.
+    if (this.panel?.getAttribute('aria-hidden') === 'true') return;
     if (!this.list) return;
     const prevScrollTop = this.list.scrollTop;
 
@@ -1231,8 +1242,6 @@ export class JobsPanelManager {
             if (sb === 'completed' && sa !== 'completed') return 1;
             return 0;
         });
-
-      this.updateJobsBell();
 
     if (this.filter === 'access') {
         this.renderAccessRequests(prevScrollTop);
