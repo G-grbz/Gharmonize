@@ -51,7 +51,6 @@ import {
   normalizeYtMusicAlbumTitle,
   pickYtMusicAlbumArtist
 } from "../modules/ytMusicMetadata.js";
-import "dotenv/config";
 import {
   isYouTubeUrl,
   isDailymotionUrl,

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification, Tray, powerMonitor } from 'electron'
+import './runtimeEnvironment.mjs';
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
@@ -15,6 +16,7 @@ import {
 } from '../modules/binaries.js';
 import { isSafeExternalUrl } from '../modules/security.js';
 import { execFileSafe } from '../modules/safeProcess.js';
+import { resolveOutputsLocation } from '../modules/runtimeEnvironment.js';
 
 const execFileAsync = promisify(execFileSafe);
 const HOST = '127.0.0.1'
@@ -917,22 +919,7 @@ async function startServerIfPackaged() {
   PORT = await resolveDesktopServerPort()
 
   const serverPath = path.join(process.resourcesPath, 'app.asar', 'bootstrap.mjs')
-  const defaultEnv = path.join(process.resourcesPath, 'app.asar', '.env.default')
-  const userEnv = path.join(app.getPath('userData'), '.env')
-  const dataDir = app.getPath('userData')
-
-  process.env.ENV_DEFAULT_PATH = defaultEnv
-  process.env.ENV_USER_PATH = userEnv
-  process.env.DATA_DIR = dataDir
-  process.env.GHARMONIZE_DESKTOP_DATA_DIR = dataDir
   process.env.PORT = PORT
-
-  try {
-    if (!fs.existsSync(userEnv) && fs.existsSync(defaultEnv)) {
-      fs.mkdirSync(path.dirname(userEnv), { recursive: true })
-      fs.copyFileSync(defaultEnv, userEnv)
-    }
-  } catch {}
 
   const serverUrl = pathToFileURL(serverPath).href
   await import(serverUrl)
@@ -962,24 +949,7 @@ function getNavState(webContents) {
 
 // Resolves safest existing output root for open-folder actions.
 function resolveOutputOpenRootDir() {
-  const baseDir = process.env.DATA_DIR || process.cwd();
-  const outputDir = path.resolve(baseDir, 'outputs');
-  const displayRaw = String(process.env.OUTPUTS_DISPLAY_DIR || '').trim();
-  const displayDir = displayRaw
-    ? (path.isAbsolute(displayRaw) ? path.resolve(displayRaw) : path.resolve(baseDir, displayRaw))
-    : '';
-
-  const candidates = [displayDir, outputDir];
-  for (const c of candidates) {
-    if (!c) continue;
-    try {
-      if (!fs.existsSync(c)) continue;
-      if (!fs.statSync(c).isDirectory()) continue;
-      return c;
-    } catch {
-    }
-  }
-  return outputDir;
+  return resolveOutputsLocation().outputDir;
 }
 
 // Resolves output subdir safely against root.

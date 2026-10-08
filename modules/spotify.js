@@ -1,9 +1,9 @@
-import 'dotenv/config';
 import SpotifyWebApi from "spotify-web-api-node";
 import { resolveMarket, withMarketFallback } from "./market.js";
 import fetch from "node-fetch";
 import { findAppleTrackMetaByQuery } from "./apple.js";
 import { cleanCatalogTitleForSearch, catalogSearchTextVariants, catalogQueryKey } from "./catalogSearchText.js";
+import { normalizeMusicDisplayText } from "./musicDisplayText.js";
 
 let _spotifyApiSingleton = null;
 let _spotifyAccessToken = null;
@@ -422,7 +422,7 @@ async function _resolveSpotifyPlaylistViaPathfinder(id) {
 
   while (offset < 10000) {
     const playlist = await _fetchSpotifyPathfinderPlaylistPage(token, id, offset, pageSize);
-    title = playlist?.name || title;
+    title = normalizeMusicDisplayText(playlist?.name || title);
 
     const pageItems = Array.isArray(playlist?.content?.items)
       ? playlist.content.items
@@ -555,7 +555,7 @@ async function _resolveSpotifyUrlPublic(url) {
 
     return {
       kind: "playlist",
-      title: entity?.title || entity?.name || "Spotify Playlist",
+      title: normalizeMusicDisplayText(entity?.title || entity?.name || "Spotify Playlist"),
       items
     };
   }
@@ -1236,7 +1236,7 @@ async function _resolveSpotifyUrlViaApi(url, { market } = {}) {
         fields: "name",
         ...(resolvedMarket ? { market: resolvedMarket } : {})
       })).body;
-      plTitle = pl?.name || plTitle;
+      plTitle = normalizeMusicDisplayText(pl?.name || plTitle);
     } catch {}
     let items;
     try {
@@ -1335,7 +1335,7 @@ export async function resolveSpotifyUrlTitle(url) {
   if (!id || type === "unknown") throw new Error("Unsupported Spotify URL");
 
   const entity = await _fetchSpotifyEmbedEntity(type, id);
-  const name = String(entity?.title || entity?.name || "").trim();
+  const name = normalizeMusicDisplayText(entity?.title || entity?.name || "").trim();
   if (!name) throw new Error("Spotify title could not be resolved");
 
   if (type === "track") {

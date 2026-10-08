@@ -186,17 +186,77 @@ YOUTUBE_DISCOVER_DEBUG=0
 ## Data Directories
 
 ### `DATA_DIR`
-Root directory for all application data. If empty, defaults to `process.cwd()` (the app's working directory).
+Root directory for application storage. It is loaded before routes and workers
+choose their paths. An explicit process/Compose environment value takes precedence
+over `.env`; the user `.env` takes precedence over packaged defaults.
+
+If empty, Node/Docker defaults to `process.cwd()` (the app's working directory).
+Packaged Electron (Windows installer, portable EXE/folder, and Linux AppImage)
+defaults to Electron's `userData` directory. A configured `DATA_DIR` is honored
+in all three runtimes; it is no longer forced to the desktop profile directory.
+Relative paths resolve against the working directory for Node/Docker and the
+profile directory for packaged Electron. Absolute paths are recommended.
 
 Typical structure:
 - `DATA_DIR/outputs/` → exported / processed files
 - `DATA_DIR/uploads/` → uploaded files / merged chunks
 - `DATA_DIR/local-inputs/` → source directory for `/api/local-files` (if enabled)
+- `DATA_DIR/temp/`, `cache/`, `cookies/` → temporary files, persisted jobs/cache, and cookies
 
 ```dotenv
 DATA_DIR=/var/lib/gharmonize
 DATA_DIR=/home/youruser/gharmonize-data
+# Windows: files are saved in D:/Gharmonize-data/outputs
+DATA_DIR=D:/Gharmonize-data
 ```
+
+In packaged Electron, edit `.env` in the existing Gharmonize profile
+(`%APPDATA%/Gharmonize/.env` on Windows, normally
+`~/.config/Gharmonize/.env` on Linux). This file and the default encryption key
+remain in the profile even when storage moves, so saved encrypted credentials
+remain usable. Chromium's session/profile also stays there. In Node/Docker,
+settings are saved to the `.env` actually loaded (`ENV_USER_PATH`, `ENV_PATH`,
+or the working-directory `.env`), not to a new file under `DATA_DIR`.
+
+Restart the entire application after changing directory settings (including
+quitting the Electron tray process). Existing outputs/cache are **not** moved
+automatically. For Node/Docker, preserve the existing `.gharmonize-key` when
+moving storage, or explicitly point `GHARMONIZE_MASTER_KEY_FILE` to it before
+restarting; otherwise encrypted settings and sessions cannot use the old key.
+The configured directory must be accessible/writable; an invalid path is not
+silently replaced with another storage location.
+
+### `OUTPUTS_DISPLAY_DIR`
+
+Optional **display-only alias** for `DATA_DIR/outputs`. It does not change where
+files are written, served, converted, retagged, or opened locally. If empty, the
+UI shows the actual output directory. Relative aliases resolve under `DATA_DIR`;
+absolute host paths (including Windows drive/UNC paths on a Linux container)
+can be displayed without requiring them to exist inside the container.
+
+There is currently no separate `OUTPUT_DIR` configuration variable. To change
+storage in Electron/Node, set `DATA_DIR` (outputs are stored in its `outputs`
+subdirectory). In Docker, change the output bind mount's **host side**:
+
+```yaml
+environment:
+  - DATA_DIR=/usr/src/app
+  - OUTPUTS_DISPLAY_DIR=/mnt/music-downloads
+volumes:
+  - /mnt/music-downloads:/usr/src/app/outputs
+```
+
+The container writes `/usr/src/app/outputs`; Docker stores those files in
+`/mnt/music-downloads` on the host. Do not put an unmounted host path in the
+container's `DATA_DIR`.
+
+Retag works **in place** in the selected music directory; it never redirects
+the music files to `outputs`. Its temporary assets use `DATA_DIR/temp`. Desktop
+directory access still requires the trusted Electron bridge; web/Node/Docker
+access still requires administrator authentication and is restricted to
+`RETAG_ROOTS` when set. Without explicit roots, existing `/music`,
+`LOCAL_INPUT_DIR`, and the actual `DATA_DIR/outputs` are offered. A display alias
+is never added to the allowed retag roots.
 
 ### `LOCAL_INPUT_DIR`
 Relative directory under `DATA_DIR` for local file browsing. Resolved as:
@@ -379,7 +439,7 @@ The duration fields are combined. Months are treated as 30 days and years as 365
 A visitor can then choose **Request access** on the login screen. Gharmonize records the server-observed client IP (`req.ip`). Reverse proxies connected through loopback are trusted automatically; additional proxy networks are trusted only when `TRUST_PROXY` is enabled and their peers match `TRUSTED_PROXY_CIDRS`. Signed-in administrators see pending requests in the Classic **Access requests** jobs-bell tab and in the YTLive access bell. Requests remain pending until explicitly approved or rejected (a server restart or access-policy change clears the in-memory pending queue). Only one pending request or active temporary grant is allowed per observed IP. Rejected IPs are subject to a server-enforced 15-minute retry cooldown. Approval creates a persisted grant plus an HttpOnly, SameSite cookie bound to that grant, the client IP, expiration time, and the persistent access-policy revision. Active grants remain visible to administrators and can be revoked individually; revocation is enforced server-side immediately even if the client still holds an unexpired cookie. Temporary access permits normal application use but does **not** become an administrator session, so administrator-only routes remain protected. Active grants survive a normal server restart, while changing the access policy or admin password revokes them.
 
 ### Encryption master key
-Sensitive settings are encrypted at rest with AES-256-GCM. By default Gharmonize creates `.gharmonize-key` under `DATA_DIR` with mode `0600`. For production, keep the key separate from the database/configuration using either:
+Sensitive settings are encrypted at rest with AES-256-GCM. By default Gharmonize creates `.gharmonize-key` under `DATA_DIR` with mode `0600`; packaged Electron keeps it in the existing profile directory when storage is moved. For production, keep the key separate from the database/configuration using either:
 
 ```dotenv
 GHARMONIZE_MASTER_KEY=<32-byte key encoded as hex/base64>
@@ -509,6 +569,29 @@ YTDLP_UA=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, li
 ---
 
 ## Media Tagging / FFmpeg
+
+### Music matching tolerance
+Spotify, Apple Music, Deezer, TIDAL and pasted-list matching share the same
+YouTube identity and duration checks. Collaborator credits (`feat.`, `ft.`, commas
+and `&`) and explicitly labelled original-project/soundtrack context are normalized
+for matching only; musical versions such as live, acoustic, remix and numbered
+versions remain distinct.
+
+With strong title/artist evidence, the default duration tolerance is the larger
+of **45 seconds** or **22%** of the source duration. Candidates must also be between
+**65% and 145%** of the source length. Weaker text matches require a closer duration:
+the larger of **12 seconds** or **6%**. This allows ordinary intro/outro and release
+differences without matching a one-minute excerpt to a full song or compilation.
+Existing `MAPPED_MUSIC_YT_DURATION_*` and `MAPPED_MUSIC_YT_TIGHT_DURATION_*`
+environment overrides still take precedence. Failed searches are cached for only
+30 seconds, so retrying later does not require restarting the application.
+
+### `MP3_WRITE_XING`
+MP3 duration and seek headers (Xing/Info) are enabled by default. This prevents
+players from showing an estimated, incorrect duration for variable-bitrate files.
+VBR conversions, ringtones, retagging and lyrics embedding always write this header.
+The legacy value `0` disables it only for explicitly constant-bitrate conversions;
+leaving this variable unset is recommended.
 
 ### `MEDIA_COMMENT`
 Any text you place here will be written into the ID3 comment tag of generated files.

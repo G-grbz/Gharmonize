@@ -222,10 +222,20 @@ function startYtDlpDownloadProcess(
   return child;
 }
 // Handles cached data get in core application logic.
-function _cacheGet(k) { return _searchCache.has(k) ? _searchCache.get(k) : undefined; }
+function _cacheGet(k) {
+  const entry = _searchCache.get(k);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    _searchCache.delete(k);
+    return undefined;
+  }
+  return entry.value;
+}
 // Handles cached data set in core application logic.
 function _cacheSet(k, v) {
-  _searchCache.set(k, v);
+  // A negative search is transient: allow another attempt in the same app
+  // session instead of freezing a missing match until Electron is restarted.
+  _searchCache.set(k, { value: v, expiresAt: Date.now() + (v ? 30 * 60 * 1000 : 30 * 1000) });
   if (_searchCache.size > _SEARCH_CACHE_MAX) {
     const first = _searchCache.keys().next().value;
     _searchCache.delete(first);

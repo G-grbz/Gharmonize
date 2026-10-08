@@ -12,6 +12,7 @@ import { sendError, sendOk } from "../modules/utils.js";
 const router = express.Router();
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const TEMP_DIR = path.resolve(BASE_DIR, "temp");
+const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
 const LOCAL_INPUT_DIR = process.env.LOCAL_INPUT_DIR
   ? path.resolve(process.env.LOCAL_INPUT_DIR)
   : path.resolve(BASE_DIR, "local-inputs");
@@ -53,7 +54,7 @@ function configuredWebRoots() {
     .filter(Boolean);
   const candidates = configured.length
     ? configured
-    : ["/music", LOCAL_INPUT_DIR];
+    : ["/music", LOCAL_INPUT_DIR, OUTPUT_DIR];
   const roots = [];
 
   for (const candidate of candidates) {

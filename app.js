@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+import './modules/loadEnvironment.js';
 import net from "node:net";
 import express from 'express'
 import multer from 'multer'
@@ -34,27 +34,6 @@ import {
 } from './modules/binaries.js'
 
 const defaultEnv = process.env.ENV_DEFAULT_PATH
-const userEnv = process.env.ENV_USER_PATH
-const desktopDataDir = process.env.GHARMONIZE_DESKTOP_DATA_DIR
-
-if (defaultEnv && fs.existsSync(defaultEnv)) {
-  dotenv.config({ path: defaultEnv })
-  console.log('✅ Loaded default environment:', defaultEnv)
-}
-if (userEnv && fs.existsSync(userEnv)) {
-  dotenv.config({ path: userEnv, override: true })
-  console.log('✅ Loaded user environment overrides:', userEnv)
-} else {
-  const localEnv = path.join(process.cwd(), '.env')
-  if (fs.existsSync(localEnv)) {
-    dotenv.config({ path: localEnv, override: true })
-    console.log('✅ Loaded local .env file:', localEnv)
-  }
-}
-
-if (desktopDataDir) {
-  process.env.DATA_DIR = desktopDataDir
-}
 
 const encryptedEnvKeys = [
   'SPOTIFY_CLIENT_SECRET',

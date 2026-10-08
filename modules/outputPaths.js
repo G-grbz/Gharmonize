@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { normalizeMusicDisplayText } from "./musicDisplayText.js";
 import {
   isYtMusicAlbumContext,
   normalizeYtMusicAlbumTitle,
@@ -137,7 +138,8 @@ export function pickPlaylistOutputName(job) {
     extracted.title,
     meta.originalName
   ];
-  const first = candidates.find((v) => typeof v === "string" && v.trim());
+  const selectedTitle = candidates.find((v) => typeof v === "string" && v.trim());
+  const first = selectedTitle ? normalizeMusicDisplayText(selectedTitle) : selectedTitle;
   const normalizedFirst = meta.source === "youtube"
     ? normalizeYtMusicAlbumTitle(first || "", {
         meta: {
@@ -211,7 +213,7 @@ function ensureSafeAbs(root, rel) {
 
 function allocateUniquePlaylistSubdir(root, preferredName) {
   const sanitizePlaylistFolderName = (value, fallback = "playlist") => {
-    const src = String(value || "").trim();
+    const src = normalizeMusicDisplayText(value).trim();
     const cleaned = src
       .replace(/[<>:"|?*\\/]+/g, "-")
       .replace(/\s+/g, " ")

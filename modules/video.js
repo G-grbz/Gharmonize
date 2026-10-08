@@ -9,7 +9,6 @@ import {
 } from "./yt.js";
 import { sanitizeFilename, normalizeTitle, parseIdFromPath } from "./utils.js"
 import { convertMedia } from "./media.js";
-import "dotenv/config";
 import { spawnSafe } from "./safeProcess.js";
 import { jobs, registerJobProcess, markJobCompleted } from "./store.js";
 import { toDownloadPath } from "./outputPaths.js";

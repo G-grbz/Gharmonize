@@ -5,32 +5,16 @@ import { spawnSafe } from "../modules/safeProcess.js";
 import { resolveDownloadPathToAbs } from "../modules/outputPaths.js";
 import { sanitizeLogValue } from "../modules/security.js";
 import { rateLimit } from "../modules/rateLimit.js";
+import { resolveOutputsLocation } from "../modules/runtimeEnvironment.js";
 
 const router = express.Router();
-const BASE_DIR = process.env.DATA_DIR || process.cwd();
-const OUTPUT_DIR = path.resolve(BASE_DIR, "outputs");
-const OUTPUTS_DISPLAY_DIR_RAW = String(process.env.OUTPUTS_DISPLAY_DIR || "").trim();
-const OUTPUTS_DISPLAY_DIR = OUTPUTS_DISPLAY_DIR_RAW
-  ? (path.isAbsolute(OUTPUTS_DISPLAY_DIR_RAW)
-      ? path.resolve(OUTPUTS_DISPLAY_DIR_RAW)
-      : path.resolve(BASE_DIR, OUTPUTS_DISPLAY_DIR_RAW))
-  : OUTPUT_DIR;
+const OUTPUTS_LOCATION = resolveOutputsLocation();
+const OUTPUT_DIR = OUTPUTS_LOCATION.outputDir;
 const MAX_OUTPUT_EXISTENCE_PATHS = 250;
 const MAX_OUTPUT_PATH_LENGTH = 4096;
 
 // Resolves safest existing output root for open-folder operations.
 function resolveOpenRootDir() {
-  const candidates = [OUTPUTS_DISPLAY_DIR, OUTPUT_DIR];
-  for (const c of candidates) {
-    try {
-      const abs = path.resolve(String(c || ""));
-      if (!abs) continue;
-      if (!fs.existsSync(abs)) continue;
-      if (!fs.statSync(abs).isDirectory()) continue;
-      return abs;
-    } catch {
-    }
-  }
   return OUTPUT_DIR;
 }
 
@@ -226,16 +210,7 @@ function handleDownload(req, res) {
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
 router.get("/api/outputs/location", rateLimit(120, 60_000), (_req, res) => {
-  const isWindows = process.platform === "win32";
-  const linuxPath = isWindows ? OUTPUTS_DISPLAY_DIR.replace(/\\/g, "/") : OUTPUTS_DISPLAY_DIR;
-  const windowsPath = isWindows ? OUTPUTS_DISPLAY_DIR : OUTPUTS_DISPLAY_DIR.replace(/\//g, "\\");
-
-  res.json({
-    outputDir: OUTPUT_DIR,
-    displayDir: OUTPUTS_DISPLAY_DIR,
-    linuxPath,
-    windowsPath
-  });
+  res.json(OUTPUTS_LOCATION);
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.

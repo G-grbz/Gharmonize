@@ -7,9 +7,9 @@ import { sanitizeFilename, findOnPATH, isExecutable } from "./utils.js";
 import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
 import { rewriteId3v11Tag, writeRichId3v2Tag } from "./id3.js";
+import { mp3DurationHeaderArgs } from "./mp3Muxer.js";
 import { toDownloadPath, resolveDownloadPathToAbs } from "./outputPaths.js";
 import { ensureOwnership } from "./fsOwnership.js";
-import "dotenv/config";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 import { getFfmpegCaps } from "./ffmpegCaps.js";
 import { assertPathWithinAny, fetchSafeRemote, sanitizeLogValue } from "./security.js";
@@ -575,7 +575,6 @@ const getCommentText = () => {
 };
 
 const shouldWriteId3v1 = () => process.env.WRITE_ID3V1 !== "0";
-const shouldWriteMp3Xing = () => process.env.MP3_WRITE_XING === "1";
 
 const VIDEO_HWACCEL = (process.env.VIDEO_HWACCEL || "off").toLowerCase();
 const NVENC_PRESET  = process.env.NVENC_PRESET  || "fast";
@@ -797,6 +796,8 @@ export async function retagMediaFile(
       if (f === "mp3") {
         args.push("-id3v2_version", "3");
         if (shouldWriteId3v1()) args.push("-write_id3v1", "1");
+        // The input may be VBR; rebuild duration/seek information during remux.
+        args.push(...mp3DurationHeaderArgs());
       }
 
       args.push(tmpOut);
@@ -2745,7 +2746,10 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
               FINAL_SAMPLE_RATE !== null ? String(FINAL_SAMPLE_RATE) : String(SR_NORM)
             );
           }
-          args.push("-write_xing", (ringtone || shouldWriteMp3Xing()) ? "1" : "0");
+          args.push(...mp3DurationHeaderArgs({
+            vbr: bitrate === "auto" || bitrate === "0" || bitrate === "lossless",
+            force: !!ringtone,
+          }));
           break;
         case "m4r": {
           const m4rBitrate =

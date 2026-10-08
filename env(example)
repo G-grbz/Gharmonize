@@ -1,4 +1,8 @@
 SPOTIFY_CLIENT_ID=
+# Restart after changing paths. Empty DATA_DIR uses cwd (Node/Docker) or userData (Electron).
+# Actual downloads go to DATA_DIR/outputs. OUTPUTS_DISPLAY_DIR is a display-only host alias.
+DATA_DIR=
+OUTPUTS_DISPLAY_DIR=
 SPOTIFY_CLIENT_SECRET=
 DEEZER_ARL=
 ADMIN_PASSWORD=

@@ -4,6 +4,7 @@ import { spawnSafe } from "./safeProcess.js";
 import { getCache, setCache } from "./cache.js";
 import { FFMPEG_BIN } from "./binaries.js";
 import { rewriteId3v11Tag } from "./id3.js";
+import { mp3DurationHeaderArgs } from "./mp3Muxer.js";
 import { assertPathWithinAny, sanitizeLogValue } from "./security.js";
 
 const LYRICS_CACHE_TTL = 24 * 60 * 60 * 1000;
@@ -306,6 +307,7 @@ async function embedLyricsInMedia(filePath, lyricsContent, options = {}) {
   if (isMp3) {
     args.push("-id3v2_version", "3");
     if (process.env.WRITE_ID3V1 !== "0") args.push("-write_id3v1", "1");
+    args.push(...mp3DurationHeaderArgs());
   }
   args.push(tmpPath);
 

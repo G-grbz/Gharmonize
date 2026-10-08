@@ -1,4 +1,3 @@
-import "dotenv/config";
 import os from "os";
 import { parseSafeYtDlpExtra } from "./security.js";
 

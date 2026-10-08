@@ -73,6 +73,28 @@ MUSIC_DIR=/home/your-user/Music docker compose up -d
 
 Because retagging replaces metadata and embedded cover art in the original files, the container user (`PUID`/`PGID`) must have write permission on this directory.
 
+### Output storage vs. the displayed host path
+
+`DATA_DIR` is a **container path**. With `DATA_DIR=/usr/src/app`, Gharmonize
+writes downloads to `/usr/src/app/outputs`. To change where they appear on the
+host, change the left-hand side of the output bind mount, for example:
+
+```yaml
+environment:
+  - DATA_DIR=/usr/src/app
+  - OUTPUTS_DISPLAY_DIR=/mnt/music-downloads
+volumes:
+  - /mnt/music-downloads:/usr/src/app/outputs
+```
+
+`OUTPUTS_DISPLAY_DIR` only labels the location in the UI; it does not redirect
+writes or grant retag access to the host path. Explicit Compose environment
+values take precedence over values in the mounted `.env`, so a host-only
+`DATA_DIR` accidentally left in that file cannot override the container mount
+configuration. Changing the container-side data root requires matching writable
+mounts for outputs, uploads, temp, cache, cookies, and local inputs. Keep the
+existing encryption key accessible as documented in [CONFIGURATION.md](CONFIGURATION.md).
+
 ### 7. Runtime binaries in Docker
 
 The provided `docker-compose.yml` enables runtime binary management inside the container:

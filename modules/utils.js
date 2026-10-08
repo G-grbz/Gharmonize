@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { DENO_BIN } from "./binaries.js";
+import { normalizeMusicDisplayText } from "./musicDisplayText.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const TEMP_COOKIE_DIR = path.resolve(BASE_DIR, "temp", "yt-dlp-cookies");
@@ -122,7 +123,7 @@ export function findOnPATH(name) {
   return null;
 }
 
-export const toNFC = (s) => (typeof s === "string" ? s.normalize("NFC") : s);
+export const toNFC = (s) => (typeof s === "string" ? normalizeMusicDisplayText(s) : s);
 
 // Handles sanitize filename in core application logic.
 export function sanitizeFilename(name, replacement = "_") {

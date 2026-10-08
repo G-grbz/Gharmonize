@@ -1,3 +1,6 @@
+import { cleanCatalogTitleForSearch } from './catalogSearchText.js';
+import { normalizeMusicDisplayText } from './musicDisplayText.js';
+
 const CATALOG_MUSIC_PROVIDERS = new Set([
   'spotify',
   'apple',
@@ -37,27 +40,27 @@ export const MAPPED_MUSIC_YT_SEARCH_STAGGER_MS = Math.max(
 );
 export const MAPPED_MUSIC_YT_DURATION_BASE_TOLERANCE_SEC = Math.max(
   10,
-  Number(process.env.MAPPED_MUSIC_YT_DURATION_BASE_TOLERANCE_SEC || 35)
+  Number(process.env.MAPPED_MUSIC_YT_DURATION_BASE_TOLERANCE_SEC || 45)
 );
 export const MAPPED_MUSIC_YT_DURATION_RATIO_TOLERANCE = Math.max(
   0.05,
-  Math.min(0.50, Number(process.env.MAPPED_MUSIC_YT_DURATION_RATIO_TOLERANCE || 0.18))
+  Math.min(0.50, Number(process.env.MAPPED_MUSIC_YT_DURATION_RATIO_TOLERANCE || 0.22))
 );
 export const MAPPED_MUSIC_YT_DURATION_MIN_RATIO = Math.max(
   0.1,
-  Math.min(1, Number(process.env.MAPPED_MUSIC_YT_DURATION_MIN_RATIO || 0.70))
+  Math.min(1, Number(process.env.MAPPED_MUSIC_YT_DURATION_MIN_RATIO || 0.65))
 );
 export const MAPPED_MUSIC_YT_DURATION_MAX_RATIO = Math.max(
   1,
-  Number(process.env.MAPPED_MUSIC_YT_DURATION_MAX_RATIO || 1.35)
+  Number(process.env.MAPPED_MUSIC_YT_DURATION_MAX_RATIO || 1.45)
 );
 export const MAPPED_MUSIC_YT_TIGHT_DURATION_BASE_SEC = Math.max(
   3,
-  Number(process.env.MAPPED_MUSIC_YT_TIGHT_DURATION_BASE_SEC || 10)
+  Number(process.env.MAPPED_MUSIC_YT_TIGHT_DURATION_BASE_SEC || 12)
 );
 export const MAPPED_MUSIC_YT_TIGHT_DURATION_RATIO = Math.max(
   0.01,
-  Math.min(0.20, Number(process.env.MAPPED_MUSIC_YT_TIGHT_DURATION_RATIO || 0.05))
+  Math.min(0.20, Number(process.env.MAPPED_MUSIC_YT_TIGHT_DURATION_RATIO || 0.06))
 );
 
 function norm(value = '') {
@@ -95,6 +98,71 @@ function compactNorm(value = '') {
   return norm(value).replace(/\s+/g, '');
 }
 
+function identityTitleKey(value) {
+  return norm(value).replace(/\bakustik\b/g, 'acoustic').replace(/\s+/g, '');
+}
+
+function artistNames(value = '') {
+  return String(value || '').split(/\s*(?:[,;]|&|\s+(?:feat\.?|ft\.?|featuring|with|and|x)\s+)\s*/i)
+    .map(norm).filter(Boolean);
+}
+
+function hasName(text, name) {
+  return !!name && ` ${norm(text)} `.includes(` ${name} `);
+}
+
+function isArtistCredit(text, artist) {
+  const names = artistNames(artist);
+  if (norm(text) === norm(artist)) return !!names.length;
+  // Credit separators may differ, but no unrelated words may be discarded.
+  let remaining = ` ${norm(text)} `;
+  let matchedName = false;
+  for (const name of names) {
+    if (remaining.includes(` ${name} `)) matchedName = true;
+    remaining = remaining.replace(` ${name} `, ' ');
+  }
+  return matchedName && !remaining.replace(/\b(?:feat|ft|featuring|with|and|x)\b/g, '').trim();
+}
+
+function titleWithoutCredits(value, artist) {
+  let title = cleanCatalogTitleForSearch(normalizeMusicDisplayText(value));
+  const parts = title.split(/\s+[-–—|]\s+/);
+  if (parts.length > 1 && isArtistCredit(parts[0], artist)) title = parts.slice(1).join(' - ');
+  return title.replace(/\(([^()]*)\)|\[([^\[\]]*)\]/g, (label, round, square) =>
+    isArtistCredit(round ?? square, artist) ? ' ' : label).replace(/\s+/g, ' ').trim();
+}
+
+function musicalVersions(value) {
+  const text = norm(value);
+  const versions = ['live', 'acoustic', 'akustik', 'remix', 'cover', 'instrumental', 'karaoke', 'slowed', 'reverb', 'sped up', 'radio edit', 'extended'];
+  const found = versions.filter((version) => ` ${text} `.includes(` ${version} `));
+  // Keep numbered versions such as 2.0 distinct; do not treat project Vol.1
+  // or promotional 4K labels as a musical version number.
+  for (const version of String(value).matchAll(/\b\d+\.\d+\b/g)) found.push(version[0]);
+  return [...new Set(found.map((version) => version === 'akustik' ? 'acoustic' : version))].sort().join('|');
+}
+
+function titleIdentity(value, artist) {
+  const title = titleWithoutCredits(value, artist);
+  const project = /\b(?:orijinal\s+proje(?:\s+muzikleri)?|original\s+project(?:\s+music)?|original\s+(?:motion\s+picture\s+)?soundtrack)\b/;
+  const withoutProjectLabels = title.replace(/\(([^()]*)\)|\[([^\[\]]*)\]/g, (label, round, square) => {
+    const text = round ?? square;
+    return project.test(norm(text)) && musicalVersions(text) === '' ? ' ' : label;
+  }).replace(/\s+/g, ' ').trim();
+  // Keep the project marker for finding the full trailing context, e.g.
+  // "Song - Project name - Original Project Music Vol.1".
+  const parts = title.split(/\s+[-–—|]\s+/);
+  const context = parts.slice(1).join(' ');
+  // Movement/part identifiers are musical identity, even if a soundtrack
+  // annotation follows them. Do not collapse two different movements.
+  const musicalQualifier = /\b(?:movement|mvt|part|pt|act|scene|no|op|allegro|adagio|andante|largo|presto|moderato)\b/;
+  // Explicit release/project annotations may include a project name before
+  // the label. Only ignore that context when no musical version is lost.
+  const core = parts.length > 1 && parts.slice(1).some((part) => project.test(norm(part)))
+    && musicalVersions(context) === '' && !musicalQualifier.test(norm(context)) ? parts[0] : withoutProjectLabels;
+  return { title: core, versions: musicalVersions(title) };
+}
+
 export function scoreCatalogMusicCandidateText(
   artist = '',
   title = '',
@@ -107,6 +175,9 @@ export function scoreCatalogMusicCandidateText(
   const ch = norm(candidateChannel);
   const tCompact = compactNorm(title);
   const etCompact = compactNorm(candidateTitle);
+  const sourceIdentity = titleIdentity(title, artist);
+  const candidateIdentity = titleIdentity(candidateTitle, artist);
+  if (sourceIdentity.versions !== candidateIdentity.versions) return 0;
 
   let score = 0;
   let titleMatched = false;
@@ -158,7 +229,29 @@ export function scoreCatalogMusicCandidateText(
     }
   }
 
-  if (titleMatched && artistMatched) score += 2;
+  // Artist lists are credits, not one literal channel name. A channel owned by
+  // the lead artist, or a title crediting all collaborators, establishes identity.
+  if (!artistMatched) {
+    const names = artistNames(artist);
+    if (names.length > 1 && hasName(candidateChannel, names[0])) {
+      score += 3;
+      artistMatched = true;
+    } else if (names.length > 1 && names.every((name) => hasName(candidateTitle, name))) {
+      score += 2;
+      artistMatched = true;
+    }
+  }
+
+  // Clean identity comparisons require artist evidence. Do not boost a generic
+  // short title on an unrelated artist's video merely because its duration fits.
+  if (artistMatched && identityTitleKey(sourceIdentity.title)
+    && identityTitleKey(sourceIdentity.title) === identityTitleKey(candidateIdentity.title)) {
+    score = Math.max(score, 8);
+    titleMatched = true;
+  }
+
+  if (!titleMatched) return 0;
+  if (artistMatched) score += 2;
   if (/\btopic\b/.test(ch)) score += 1;
 
   return Math.max(0, score);
@@ -182,16 +275,20 @@ export function isCatalogMusicProvider(provider = '') {
 }
 
 export function buildCatalogMusicSearchQueries(artist = '', title = '') {
-  const rawTitle = String(title || '').trim();
+  const rawTitle = normalizeMusicDisplayText(title).trim();
   const kafeTitle = rawTitle.replace(/\bcafe\b/gi, 'kafe');
   const cafeTitle = rawTitle.replace(/\bkafe\b/gi, 'cafe');
+  const coreTitle = titleIdentity(rawTitle, artist).title;
+  const primaryArtist = String(artist || '').split(/\s*(?:[,;]|&|\s+(?:feat\.?|ft\.?|featuring|with|and|x)\s+)\s*/i)[0].trim();
   return uniqueQueries([
     `${artist || ''} ${rawTitle}`,
     rawTitle,
     `${artist || ''} ${kafeTitle}`,
     kafeTitle,
     `${artist || ''} ${cafeTitle}`,
-    cafeTitle
+    cafeTitle,
+    ...(coreTitle !== rawTitle ? [`${artist || ''} ${coreTitle}`, coreTitle] : []),
+    ...(primaryArtist && primaryArtist !== String(artist || '').trim() ? [`${primaryArtist} ${coreTitle}`] : [])
   ]);
 }
 

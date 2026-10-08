@@ -11,8 +11,8 @@
   },
   "main": "electron/main.mjs",
   "scripts": {
-    "start": "cross-env ENV_DEFAULT_PATH= ENV_USER_PATH= DATA_DIR= node app.js",
-    "dev": "cross-env ENV_DEFAULT_PATH= ENV_USER_PATH= DATA_DIR= node --watch app.js",
+    "start": "node app.js",
+    "dev": "node --watch app.js",
     "desktop:dev": "wait-on tcp:127.0.0.1:5174 && electron .",
     "desktop:build:nsis": "electron-builder --win nsis --x64 --publish never",
     "download:binaries": "node scripts/download-binaries.mjs",
