@@ -1,6 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
+import { terminateProcess } from "./processTermination.js";
+import { prepareBinaryTempProcess } from "./binaryTemp.js";
 
 const CONTROL_CHARS = /[\u0000\r\n\u2028\u2029]/;
 const CONTROL_CHARS_WITH_MULTILINE = /[\u0000\u2028\u2029]/;
@@ -352,16 +354,84 @@ export function execMkvpropeditSafe(resolvedCommand, args = [], options = {}, ca
 export function spawnSafe(command, args = [], options = {}) {
   const token = canonicalExecutableToken(command);
   const safeArgs = assertSafeProcessArgs(token, args);
-  return spawnLiteral(token, safeArgs, buildExecOptions(command, options));
+  const execOptions = buildExecOptions(command, options);
+  const ytdlp = token === "yt-dlp" || token === "yt-dlp.exe";
+  if (ytdlp && process.platform !== "win32") execOptions.detached = true;
+  const lease = ytdlp ? prepareBinaryTempProcess(execOptions.env) : null;
+  let child;
+  try { child = spawnLiteral(token, safeArgs, execOptions); }
+  catch (error) { lease?.failed(); throw error; }
+  child.gharmonizeDetached = execOptions.detached === true;
+  lease?.attach(child);
+  return child;
+}
+
+// execFile does not forward detached to spawn. yt-dlp's one-file bootloader
+// has its own Python child, so use spawn and retain execFile's buffered API.
+function execYtDlpBuffered(token, args, options, callback) {
+  const child = spawnLiteral(token, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+  child.gharmonizeDetached = options.detached === true;
+  const chunks = { stdout: [], stderr: [] };
+  const sizes = { stdout: 0, stderr: 0 };
+  const maxBuffer = options.maxBuffer ?? 1024 * 1024;
+  let failure;
+  for (const name of ["stdout", "stderr"]) {
+    child[name].on("data", (chunk) => {
+      if (failure) return; // continue draining pipes without unbounded buffering
+      sizes[name] += chunk.length;
+      if (sizes[name] > maxBuffer) {
+        failure = Object.assign(new RangeError(`${name} maxBuffer length exceeded`), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+        terminateProcess(child);
+        return;
+      }
+      chunks[name].push(chunk);
+    });
+  }
+  child.once("error", (error) => { failure ||= error; if (error.code === "ABORT_ERR") terminateProcess(child); });
+  child.once("close", (code, signal) => {
+    const output = (name) => {
+      const buffer = Buffer.concat(chunks[name]);
+      return options.encoding === null || options.encoding === "buffer" ? buffer : buffer.toString(options.encoding || "utf8");
+    };
+    if (!failure && (code !== 0 || signal)) {
+      failure = Object.assign(new Error(`yt-dlp exited with ${signal || code}`), { code, signal, killed: child.killed });
+    }
+    callback(failure || null, output("stdout"), output("stderr"));
+  });
+  return child;
 }
 
 export function execFileSafe(command, args = [], options = {}, callback) {
   const token = canonicalExecutableToken(command);
   const safeArgs = assertSafeProcessArgs(token, args);
-  if (typeof options === "function") {
-    return execFileLiteral(token, safeArgs, buildExecOptions(command, {}), options);
+  if (typeof options === "function") { callback = options; options = {}; }
+  const execOptions = buildExecOptions(command, options);
+  const ytdlp = token === "yt-dlp" || token === "yt-dlp.exe";
+  if (ytdlp && process.platform !== "win32") execOptions.detached = true;
+  const timeout = ytdlp ? Number(execOptions.timeout) : 0;
+  let timer;
+  let timedOut = false;
+  // Native execFile timeout sends just one signal. Supply bounded escalation
+  // for yt-dlp while preserving its callback and promisified output shape.
+  if (timeout > 0) execOptions.timeout = 0;
+  const lease = ytdlp ? prepareBinaryTempProcess(execOptions.env) : null;
+  let child;
+  const run = ytdlp ? execYtDlpBuffered : execFileLiteral;
+  try { child = run(token, safeArgs, execOptions, (error, stdout, stderr) => {
+    clearTimeout(timer);
+    if (timedOut) error = Object.assign(new Error(`yt-dlp timed out after ${timeout}ms`), { code: "ETIMEDOUT", killed: true });
+    callback?.(error, stdout, stderr);
+  }); } catch (error) { lease?.failed(); throw error; }
+  child.gharmonizeDetached = execOptions.detached === true;
+  lease?.attach(child);
+  if (timeout > 0) {
+    timer = setTimeout(() => { timedOut = true; terminateProcess(child); }, timeout);
+    timer.unref?.();
+    const clear = () => clearTimeout(timer);
+    child.once("exit", clear);
+    child.once("close", clear);
   }
-  return execFileLiteral(token, safeArgs, buildExecOptions(command, options), callback);
+  return child;
 }
 
 // Preserves Node execFile's native promisified { stdout, stderr } result shape.

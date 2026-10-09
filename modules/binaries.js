@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { execFileSafe } from "./safeProcess.js";
+import { createBinaryTempManager } from "./binaryTemp.js";
 import { assertPathWithinAny } from "./security.js";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -216,8 +217,10 @@ function resolveBinaryRuntimeTmpDir() {
   return fallback;
 }
 
+let binaryTempManager;
 export function getBinaryRuntimeEnv(extraEnv = {}) {
-  const tmpDir = resolveBinaryRuntimeTmpDir();
+  binaryTempManager ||= createBinaryTempManager(resolveBinaryRuntimeTmpDir());
+  const tmpDir = binaryTempManager.directory;
   return {
     ...process.env,
     TMPDIR: tmpDir,

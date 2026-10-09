@@ -1,7 +1,7 @@
 import fs from "fs";
 import crypto from "crypto";
 import path from "path";
-import { execFileSafe } from "./safeProcess.js";
+import { terminateProcess } from "./processTermination.js";
 import { resolveDownloadPathToAbs } from "./outputPaths.js";
 import { uniqueId } from "./utils.js";
 
@@ -451,35 +451,6 @@ export function registerJobProcess(jobId, child) {
   child.on?.('close', cleanup);
 }
 
-function signalJobChild(child, signal = "SIGTERM") {
-  const pid = Number(child?.pid);
-  if (!pid) return false;
-
-  if (process.platform === "win32") {
-    try {
-      execFileSafe("taskkill", ["/pid", String(pid), "/T", signal === "SIGKILL" ? "/F" : ""].filter(Boolean), {
-        windowsHide: true
-      }, () => {});
-      return true;
-    } catch {
-      try { child.kill?.(signal); return true; } catch {}
-      return false;
-    }
-  }
-
-  try {
-    process.kill(-pid, signal);
-    return true;
-  } catch {}
-
-  try {
-    child.kill?.(signal);
-    return true;
-  } catch {}
-
-  return false;
-}
-
 // Handles kill job state processes in core application logic.
 export function killJobProcesses(jobId) {
   const set = procByJob.get(jobId);
@@ -487,10 +458,7 @@ export function killJobProcesses(jobId) {
   let killed = 0;
   for (const ch of Array.from(set)) {
     try {
-      if (signalJobChild(ch, "SIGTERM")) {
-        setTimeout(() => {
-          signalJobChild(ch, "SIGKILL");
-        }, 500);
+      if (terminateProcess(ch)) {
         killed++;
       }
     } catch {}

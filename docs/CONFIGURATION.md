@@ -87,6 +87,36 @@ YTDLP_BIN=/usr/local/bin/yt-dlp
 YTDLP_BIN=C:\tools\yt-dlp.exe
 ```
 
+### Binary extraction temporary files
+
+`GHARMONIZE_BINARY_TMP_DIR` optionally selects the executable-capable parent
+directory for runtime tool temporary files. By default this is `tmp/` inside
+the managed binary cache. Gharmonize creates private per-instance subdirectories;
+do not point this variable at a shared or world-writable directory. The location
+is not forced to system `/tmp`, which can be mounted with `noexec` and prevent
+PyInstaller-based yt-dlp executables from starting.
+
+On Linux, yt-dlp processes run in dedicated process groups. Timeouts, watchdogs
+and cancellation send SIGTERM first, with up to **5 seconds** for shutdown before
+SIGKILL. A finished child cancels the delayed force-kill. Windows tree termination
+similarly attempts `taskkill /T` before escalating to `/T /F`; Windows does not
+provide POSIX signal semantics.
+
+Linux runtime sessions record pending launches, process groups and their PID
+namespace. Once all tracked groups have exited, leftover `_MEI*` extraction
+directories can be reclaimed without touching active work. Startup and hourly
+maintenance also collect inactive extractions older than one hour. Only private,
+owned directories with the expected names are eligible; symlinks and unrelated
+files are never followed or swept.
+
+Legacy/untracked extractions additionally require readable Linux `/proc`
+environment and memory-map information. If that inspection is incomplete, they
+are retained rather than guessed inactive. Docker only collects complete managed
+leases from its own PID namespace, not unknown host/sibling-container remnants.
+Windows/macOS do not perform the Linux orphan sweep. Normal PyInstaller shutdown
+remains the primary cleanup mechanism on all platforms. Configuration and download
+files are not part of this cleanup.
+
 ### `YTDLP_EXTRA`
 Extra yt-dlp arguments applied to all audio downloads (`downloadSelectedIds`, `downloadSelectedIdsParallel`, `downloadStandard` in audio mode). Space-separated string; each token becomes an argument.
 

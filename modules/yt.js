@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs";
 import { spawnSafe } from "./safeProcess.js";
+import { terminateProcess } from "./processTermination.js";
 import { createHash } from "crypto";
 import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
@@ -152,18 +153,8 @@ function getYtDlpJobSpawnOptions(options = {}) {
   };
 }
 
-function terminateYtDlpJobProcess(child, signal = "SIGTERM") {
-  const pid = Number(child?.pid);
-  if (!pid) return;
-
-  if (process.platform !== "win32") {
-    try {
-      process.kill(-pid, signal);
-      return;
-    } catch {}
-  }
-
-  try { child.kill(signal); } catch {}
+function terminateYtDlpJobProcess(child) {
+  return terminateProcess(child);
 }
 
 // Checks whether yt-dlp destination should count as a media item.
@@ -608,20 +599,19 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
     const finalArgs = buildBaseArgs(args, { sourceUrl });
     let stdoutData = "", stderrData = "";
 
-    const process = spawnSafe(YTDLP_BIN, finalArgs, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: getBinaryRuntimeEnv()
-    });
+    const child = spawnSafe(YTDLP_BIN, finalArgs, getYtDlpJobSpawnOptions({
+      stdio: ["ignore", "pipe", "pipe"]
+    }));
 
     const timeoutId = setTimeout(() => {
-      try { process.kill("SIGKILL"); } catch {}
+      terminateProcess(child);
       reject(new Error(`[${label}] timeout (${timeout}ms)`));
     }, timeout);
 
-    process.stdout.on("data", chunk => stdoutData += chunk.toString());
-    process.stderr.on("data", chunk => stderrData += chunk.toString());
+    child.stdout.on("data", chunk => stdoutData += chunk.toString());
+    child.stderr.on("data", chunk => stderrData += chunk.toString());
 
-    process.on("close", (code) => {
+    child.on("close", (code) => {
       clearTimeout(timeoutId);
 
       if (code === 0) {
@@ -636,7 +626,7 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
       }
     });
 
-    process.on("error", (error) => {
+    child.on("error", (error) => {
       clearTimeout(timeoutId);
       reject(new Error(`[${label}] failed to start: ${error.message}`));
     });
@@ -3348,12 +3338,11 @@ function exportBrowserCookiesForMusicHome(timeoutMs = 5000) {
 
   return new Promise((resolve, reject) => {
     let stderrData = "";
-    const child = spawnSafe(YTDLP_BIN, args, {
-      stdio: ["ignore", "ignore", "pipe"],
-      env: getBinaryRuntimeEnv()
-    });
+    const child = spawnSafe(YTDLP_BIN, args, getYtDlpJobSpawnOptions({
+      stdio: ["ignore", "ignore", "pipe"]
+    }));
     const timeoutId = setTimeout(() => {
-      try { child.kill("SIGKILL"); } catch {}
+      terminateProcess(child);
     }, timeoutMs);
 
     child.stderr.on("data", (chunk) => {
@@ -5141,12 +5130,11 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
 
       console.warn("[yt-meta-debug]", label, "args:", args.join(" "));
 
-      const child = spawnSafe(YTDLP_BIN, args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: getBinaryRuntimeEnv()
-      });
+      const child = spawnSafe(YTDLP_BIN, args, getYtDlpJobSpawnOptions({
+        stdio: ["ignore", "pipe", "pipe"]
+      }));
       const timeoutId = setTimeout(() => {
-        try { child.kill("SIGKILL"); } catch {}
+        terminateProcess(child);
         reject(new Error(`[${label}] timeout`));
       }, 30000);
 

@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
 import { execFileSafe } from "./safeProcess.js";
+import { terminateProcess } from "./processTermination.js";
+import { getBinaryRuntimeEnv } from "./binaries.js";
 import { resolveYtDlp, withYT403Workarounds, isMusicEnabled } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
@@ -117,34 +119,6 @@ function getDownloadActivitySignature(downloadDir, fileId) {
   }
 }
 
-function killDownloadProcessTree(child, signal = "SIGKILL") {
-  const pid = Number(child?.pid);
-  if (!pid) return false;
-
-  if (process.platform === "win32") {
-    try {
-      execFileSafe(
-        "taskkill",
-        ["/pid", String(pid), "/T", "/F"],
-        { windowsHide: true },
-        () => {}
-      );
-      return true;
-    } catch {}
-  } else {
-    try {
-      process.kill(-pid, signal);
-      return true;
-    } catch {}
-  }
-
-  try {
-    return !!child.kill?.(signal);
-  } catch {
-    return false;
-  }
-}
-
 function startYtDlpDownloadProcess(
   YTDLP_BIN,
   args,
@@ -176,6 +150,7 @@ function startYtDlpDownloadProcess(
     {
       maxBuffer: 1024 * 1024 * 1024,
       windowsHide: true,
+      env: getBinaryRuntimeEnv(),
       // A dedicated process group lets cancellation/watchdog kills include
       // yt-dlp helper processes such as ffmpeg on POSIX systems.
       detached: process.platform !== "win32"
@@ -201,14 +176,14 @@ function startYtDlpDownloadProcess(
 
     watchdogReason = `yt-dlp stalled for ${Math.round(YT_DOWNLOAD_STALL_TIMEOUT_MS / 1000)}s`;
     clearWatchdog();
-    killDownloadProcessTree(child, "SIGKILL");
+    terminateProcess(child);
   }, YT_DOWNLOAD_WATCHDOG_POLL_MS);
   watchdogInterval.unref?.();
 
   hardTimer = setTimeout(() => {
     watchdogReason = `yt-dlp exceeded ${Math.round(YT_DOWNLOAD_HARD_TIMEOUT_MS / 1000)}s hard timeout`;
     clearWatchdog();
-    killDownloadProcessTree(child, "SIGKILL");
+    terminateProcess(child);
   }, YT_DOWNLOAD_HARD_TIMEOUT_MS);
   hardTimer.unref?.();
 
@@ -323,7 +298,7 @@ async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEA
     execFileSafe(
       YTDLP_BIN,
       args,
-      { maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs },
+      { maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs, env: getBinaryRuntimeEnv() },
       (err, stdout, stderr) => {
         if (err) {
           const tail = String(stderr || "").split("\n").slice(-10).join("\n");
@@ -528,7 +503,7 @@ async function probeYouTubeCandidate(entry = null) {
     execFileSafe(
       YTDLP_BIN,
       args,
-      { maxBuffer: 32 * 1024 * 1024, timeout: YT_MATCH_PROBE_TIMEOUT_MS },
+      { maxBuffer: 32 * 1024 * 1024, timeout: YT_MATCH_PROBE_TIMEOUT_MS, env: getBinaryRuntimeEnv() },
       (err, stdout, stderr) => {
         if (err) {
           const tail = String(stderr || '').split('\n').slice(-10).join('\n');
