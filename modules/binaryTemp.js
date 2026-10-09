@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 const MEI_NAME = /^_MEI[A-Za-z0-9_-]{6,64}$/;
 const SESSION_NAME = /^gharmonize-runtime-[0-9]+-[a-f0-9]{16}$/;
 const OWNER_FILE = ".gharmonize-owner.json";
+const MAX_OWNER_BYTES = 4096;
 const STALE_AGE_MS = 60 * 60 * 1000;
 const managers = new Map();
 
@@ -59,6 +60,39 @@ async function activeTempPaths(root, procRoot) {
   return active;
 }
 
+// Open once, reject symlinks atomically, and inspect/read only this descriptor.
+// O_NONBLOCK also prevents a substituted FIFO from hanging maintenance.
+export async function readBinaryTempOwner(ownerPath) {
+  if (!Number.isInteger(fs.constants.O_NOFOLLOW)) {
+    throw new Error("Safe no-follow lease reads are unavailable");
+  }
+  const handle = await fs.promises.open(ownerPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.uid !== process.getuid() || before.size > MAX_OWNER_BYTES) {
+      throw new Error("Invalid binary temporary process lease file");
+    }
+    // Size may change after fstat. Read at most one byte over the limit rather
+    // than allowing readFile to allocate for an arbitrarily growing file.
+    const buffer = Buffer.alloc(MAX_OWNER_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const after = await handle.stat();
+    if (length > MAX_OWNER_BYTES || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
+      throw new Error("Binary temporary process lease changed while reading");
+    }
+    return JSON.parse(buffer.subarray(0, length).toString("utf8"));
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function cleanupStaleBinaryTemp(root, {
   now = Date.now(), minAgeMs = STALE_AGE_MS, procRoot = "/proc",
   platform = process.platform, currentSession = "", leasedOnly = false,
@@ -91,9 +125,7 @@ export async function cleanupStaleBinaryTemp(root, {
       if (inUse(session)) { result.skipped++; continue; }
       try {
         const ownerPath = path.join(session, OWNER_FILE);
-        const ownerStat = await fs.promises.lstat(ownerPath);
-        if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || ownerStat.size > 4096) continue;
-        const owner = JSON.parse(await fs.promises.readFile(ownerPath, "utf8"));
+        const owner = await readBinaryTempOwner(ownerPath);
         if (owner.version !== 1 || !Number.isSafeInteger(owner.pid) || owner.pid <= 0) continue;
         if (!dir.name.startsWith(`gharmonize-runtime-${owner.pid}-`)) continue;
         const ours = session === currentSession && owner.pid === process.pid;

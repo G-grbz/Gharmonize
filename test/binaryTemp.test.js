@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { cleanupStaleBinaryTemp, createBinaryTempManager } from "../modules/binaryTemp.js";
+import { cleanupStaleBinaryTemp, createBinaryTempManager, readBinaryTempOwner } from "../modules/binaryTemp.js";
 const test = (name, fn) => nodeTest(name, { skip: process.platform === "win32" }, fn);
 
 function fixture(t) {
@@ -134,4 +134,95 @@ test("dead complete leases clean up without /proc access; pending and foreign na
   const result = await cleanupStaleBinaryTemp(root, { ...options, docker: true });
   assert.deepEqual(result.removed, [safe]);
   for (const target of [pending, foreign, unknown]) assert.ok(fs.existsSync(target));
+});
+
+test("owner reads inspect and read one descriptor even if its pathname is replaced", async (t) => {
+  const { dir } = fixture(t);
+  const ownerPath = path.join(dir, ".gharmonize-owner.json");
+  const outside = path.join(dir, "outside.json");
+  const original = { version: 1, pid: process.pid, pending: 1 };
+  fs.writeFileSync(ownerPath, JSON.stringify(original));
+  fs.writeFileSync(outside, JSON.stringify({ version: 1, pid: 1073741823, pending: 0 }));
+  const open = fs.promises.open.bind(fs.promises);
+  let closed = 0;
+  t.mock.method(fs.promises, "open", async (file, flags) => {
+    assert.ok(flags & fs.constants.O_NOFOLLOW);
+    assert.ok(flags & fs.constants.O_NONBLOCK);
+    const handle = await open(file, flags);
+    const close = handle.close.bind(handle);
+    handle.close = async () => { closed++; return close(); };
+    fs.renameSync(ownerPath, path.join(dir, "original-owner.json"));
+    fs.symlinkSync(outside, ownerPath);
+    return handle;
+  });
+  assert.deepEqual(await readBinaryTempOwner(ownerPath), original);
+  assert.equal(closed, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(outside, "utf8")), { version: 1, pid: 1073741823, pending: 0 });
+});
+
+test("replacement by a symlink immediately before open cannot authorize cleanup", async (t) => {
+  const { root, options, mei, dir } = fixture(t);
+  const session = path.join(root, "gharmonize-runtime-1073741823-1111111111111111");
+  fs.mkdirSync(session, { mode: 0o700 });
+  const ownerPath = path.join(session, ".gharmonize-owner.json");
+  fs.writeFileSync(ownerPath, JSON.stringify({ version: 1, pid: process.pid }));
+  const outside = path.join(dir, "outside.json");
+  fs.writeFileSync(outside, JSON.stringify({ version: 1, pid: 1073741823 }));
+  const target = mei("_MEIabc123", session);
+  const open = fs.promises.open.bind(fs.promises);
+  t.mock.method(fs.promises, "open", async (file, flags) => {
+    if (file === ownerPath) {
+      fs.renameSync(ownerPath, path.join(session, "original-owner.json"));
+      fs.symlinkSync(outside, ownerPath);
+    }
+    return open(file, flags);
+  });
+  const result = await cleanupStaleBinaryTemp(root, options);
+  assert.deepEqual(result.removed, []);
+  assert.ok(result.skipped > 0);
+  assert.ok(fs.existsSync(target)); assert.ok(fs.existsSync(outside));
+});
+
+test("invalid owner files close their descriptors and never read oversized payloads", async (t) => {
+  const { dir } = fixture(t);
+  const open = fs.promises.open.bind(fs.promises);
+  let closed = 0, reads = 0;
+  t.mock.method(fs.promises, "open", async (...args) => {
+    const handle = await open(...args);
+    const close = handle.close.bind(handle); const read = handle.read.bind(handle);
+    handle.close = async () => { closed++; return close(); };
+    handle.read = async (...params) => { reads++; return read(...params); };
+    return handle;
+  });
+  const oversized = path.join(dir, "oversized.json"); fs.writeFileSync(oversized, "x".repeat(4097));
+  await assert.rejects(readBinaryTempOwner(oversized), /Invalid binary/);
+  assert.equal(reads, 0); assert.equal(closed, 1);
+  await assert.rejects(readBinaryTempOwner(dir), /Invalid binary/);
+  assert.equal(reads, 0); assert.equal(closed, 2);
+  const corrupt = path.join(dir, "corrupt.json"); fs.writeFileSync(corrupt, "{not json");
+  await assert.rejects(readBinaryTempOwner(corrupt), SyntaxError);
+  assert.equal(closed, 3);
+});
+
+test("an owner file growing after fstat is bounded and rejected", async (t) => {
+  const { dir } = fixture(t);
+  const ownerPath = path.join(dir, ".gharmonize-owner.json");
+  fs.writeFileSync(ownerPath, JSON.stringify({ version: 1, pid: process.pid }));
+  const open = fs.promises.open.bind(fs.promises);
+  let closed = 0, largestRead = 0;
+  t.mock.method(fs.promises, "open", async (...args) => {
+    const handle = await open(...args);
+    const stat = handle.stat.bind(handle); const read = handle.read.bind(handle); const close = handle.close.bind(handle);
+    let first = true;
+    handle.stat = async () => {
+      const value = await stat();
+      if (first) { first = false; fs.appendFileSync(ownerPath, " ".repeat(8192)); }
+      return value;
+    };
+    handle.read = async (...params) => { largestRead = Math.max(largestRead, params[2]); return read(...params); };
+    handle.close = async () => { closed++; return close(); };
+    return handle;
+  });
+  await assert.rejects(readBinaryTempOwner(ownerPath), /changed while reading/);
+  assert.equal(largestRead, 4097); assert.equal(closed, 1);
 });
