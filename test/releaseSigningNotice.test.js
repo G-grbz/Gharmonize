@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-test('v1.4.1 versions agree and release notes disclose unsigned Windows artifacts', () => {
+test('current release versions agree and release notes disclose unsigned Windows artifacts', () => {
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);
-  const notes = fs.readFileSync('docs/releases/v1.4.1.md', 'utf8');
+  const tag = `v${pkg.version}`;
+  const notes = fs.readFileSync(`docs/releases/${tag}.md`, 'utf8');
+  assert.ok(notes.includes(tag));
   for (const text of [
     'do not carry a trusted Authenticode signature',
     'Self-signed test certificates are not used',
@@ -16,7 +18,7 @@ test('v1.4.1 versions agree and release notes disclose unsigned Windows artifact
   ]) assert.ok(notes.includes(text), text);
   for (const file of ['README.md', 'CODE_SIGNING_POLICY.md']) {
     const source = fs.readFileSync(file, 'utf8');
-    assert.ok(source.includes('v1.4.1'));
+    assert.ok(source.includes(tag));
     assert.ok(source.includes('trusted Authenticode signature'));
   }
 });
