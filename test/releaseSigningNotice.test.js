@@ -38,6 +38,6 @@ test('automatic release publishing includes version-specific notes and keeps tes
 test('v1.4.3 release notes credit the local-file authorization reporter', () => {
   const notes = fs.readFileSync('docs/releases/v1.4.3.md', 'utf8');
   assert.ok(notes.includes('requires an administrator session'));
-  assert.ok(notes.includes('https://github.com/Artur12555'));
-  assert.ok(notes.includes('Thanks to [@Artur12555]'));
+  const creditLine = 'Thanks to [@Artur12555](https://github.com/Artur12555) for catching the missing check and reporting it.';
+  assert.ok(notes.split(/\r?\n/).some(line => line === creditLine));
 });

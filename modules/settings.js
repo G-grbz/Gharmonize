@@ -650,11 +650,16 @@ function authMiddleware(req, res, next) {
 
 export function requireAuth(req, res, next) { return authMiddleware(req, res, next) }
 
-// Local media remains administrator-only even when general application access
-// is public or a visitor has an approved temporary-access session. Run this
+// Verify the administrator session for every job request, independently of its
+// source. Only a verified session may authorize server-local media; ordinary
+// uploads and remote URLs keep their existing application-access policy. Run
 // after multipart parsing and before resolving paths or creating queued jobs.
 export function requireLocalJobAuth(req, res, next) {
-  if (req.body?.localPath) return requireAuth(req, res, next)
+  const admin = verify(getTokenFromReq(req))
+  req.adminAuth = admin
+  if (!admin && req.body?.localPath) {
+    return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } })
+  }
   return next()
 }
 

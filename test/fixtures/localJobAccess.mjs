@@ -19,7 +19,7 @@ fs.writeFileSync(path.join(process.env.LOCAL_INPUT_DIR, 'private.mp3'), 'private
 const { hashPassword } = await import('../../modules/security.js');
 process.env.ADMIN_PASSWORD_HASH = hashPassword('FixturePassword9');
 const { default: express } = await import('express');
-const { default: settings, appAccessMiddleware } = await import('../../modules/settings.js');
+const { default: settings, appAccessMiddleware, requireLocalJobAuth } = await import('../../modules/settings.js');
 const { default: jobsRouter } = await import('../../routes/jobs.js');
 const { jobs } = await import('../../modules/store.js');
 const app = express();
@@ -68,13 +68,39 @@ async function allowed(body, cookie = '', multipart = false, source) {
 }
 
 try {
+  // The middleware must verify credentials even for ordinary jobs, clear any
+  // unverified request context, and never infer administrator status from input.
+  for (const body of [
+    undefined, {}, { url: 'https://www.youtube.com/watch?v=abcdefghijk' },
+    { localPath: '' }, { localPath: 'private.mp3' },
+    { localPath: ['private.mp3'] }, { localPath: { path: 'private.mp3' } }
+  ]) {
+    let credentialReads = 0;
+    let continued = false;
+    let denied = false;
+    const req = {
+      body,
+      adminAuth: { role: 'admin' },
+      get() { credentialReads += 1; return ''; }
+    };
+    const res = {
+      status(code) { assert.equal(code, 401); denied = true; return this; },
+      json(payload) { assert.equal(payload.error.code, 'UNAUTHORIZED'); return this; }
+    };
+    requireLocalJobAuth(req, res, () => { continued = true; });
+    assert.ok(credentialReads > 0, 'every job request must verify administrator credentials');
+    assert.equal(req.adminAuth, null, 'unverified administrator context must be cleared');
+    assert.equal(denied, Boolean(body?.localPath));
+    assert.equal(continued, !denied);
+  }
+
   const login = await post('/api/auth/login', { password: 'FixturePassword9' });
   assert.equal(login.status, 200);
   const admin = cookieFrom(login);
   if (mode === 'none') {
     await blocked({ localPath: 'private.mp3' });
     await blocked({ localPath: 'not-present.mp3' }); // No existence oracle before authorization.
-    await blocked({ localPath: 'private.mp3' }, '', true);
+    await blocked({ localPath: 'private.mp3', file: true }, '', true);
     await blocked({ localPath: 'private.mp3', adminAuth: { role: 'admin' }, finalUploadPath: path.join(root, 'uploads', 'missing.mp3') });
     await blocked({ localPath: 'private.mp3' }, 'gharmonize_admin_session=invalid.token');
     await allowed({ url: 'https://www.youtube.com/watch?v=abcdefghijk' }, '', false, 'youtube');
@@ -105,6 +131,7 @@ try {
 
     await blocked({ localPath: 'private.mp3' }, temporary);
     await blocked({ localPath: 'private.mp3' }, temporary, true);
+    await blocked({ localPath: 'private.mp3', file: true }, temporary, true);
     await blocked({ localPath: 'not-present.mp3' }, temporary);
     await blocked({ localPath: 'private.mp3', adminAuth: { role: 'admin' } }, temporary);
     await allowed({ url: 'https://www.youtube.com/watch?v=abcdefghijk' }, temporary, false, 'youtube');
