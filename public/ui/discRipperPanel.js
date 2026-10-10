@@ -1,3 +1,5 @@
+import { DiscProgressStream } from './DiscProgressStream.js';
+
 let currentDiscInfo = null;
 let selectedTitleIndexes = new Set();
 let isScanning = false;
@@ -7,6 +9,7 @@ let discModalOpened = false;
 let selectedAudioTracksByTitle = new Map();
 let selectedSubtitleTracksByTitle = new Map();
 let pendingRipResolvers = new Map();
+let discProgressStream = null;
 
 let currentProgress = {
   current: 0,
@@ -491,25 +494,9 @@ function showDiscModal(type, title, message, onConfirm = null, onCancel = null) 
 
 // Initializes disc metadata progress stream payload for the browser UI layer.
 function initDiscProgressStream() {
-  try {
-    const es = new EventSource(`${API_BASE}/api/disc/stream`);
-
-    es.onmessage = (ev) => {
-      if (!ev.data) return;
-      try {
-        const data = JSON.parse(ev.data);
-        handleProgressUpdate(data);
-      } catch (e) {
-        console.error('disc progress parse error:', e);
-      }
-    };
-
-    es.onerror = (err) => {
-      console.warn('disc progress stream error:', err);
-    };
-  } catch (e) {
-    console.error('disc progress stream init error:', e);
-  }
+  if (discProgressStream) return;
+  discProgressStream = new DiscProgressStream(handleProgressUpdate);
+  discProgressStream.start();
 }
 
 // Handles reset progress in the browser UI layer.

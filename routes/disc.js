@@ -115,9 +115,30 @@ router.get("/api/disc/stream", requireAuth, rateLimit(30, 60_000), (req, res) =>
   res.write(`: ping\n\n`);
   discClients.add(res);
 
-  req.on("close", () => {
+  // Keep an idle admin connection alive through reverse proxies. A single
+  // initial ping is not enough when no scan/rip is currently sending events.
+  let closed = false;
+  const heartbeat = setInterval(() => {
+    if (closed) return;
+    if (res.destroyed || res.writableEnded) return cleanup();
+    try {
+      res.write(`: ping\n\n`);
+    } catch {
+      cleanup();
+      res.destroy();
+    }
+  }, 15_000);
+  heartbeat.unref?.();
+
+  function cleanup() {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
     discClients.delete(res);
-  });
+  }
+  res.once("close", cleanup);
+  res.once("error", cleanup);
+  req.once("aborted", cleanup);
 });
 
 // Sends scan progress log in Express API request handling.

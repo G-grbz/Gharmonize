@@ -28,7 +28,7 @@ import { isTidalUrl, resolveTidalUrl } from "../modules/tidal.js";
 import { isSoundCloudUrl, resolveSoundCloudUrl } from "../modules/soundcloud.js";
 import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
 import { resolveMarket } from "../modules/market.js";
-import { requireAuth } from "../modules/settings.js"
+import { requireAuth, requireLocalJobAuth } from "../modules/settings.js"
 import { rateLimit, concurrencyLimit } from "../modules/rateLimit.js";
 import { probeMediaFile, parseStreams, getDefaultStreamSelection } from "../modules/probe.js";
 import { attachLyricsToMedia, lyricsFetcher } from "../modules/lyrics.js";
@@ -1109,7 +1109,7 @@ router.post('/api/upload/chunk', rateLimit(600, 60_000), concurrencyLimit(4), up
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
-router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), async (req, res) => {
+router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), requireLocalJobAuth, async (req, res) => {
   try {
     const body = req.body || {};
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.

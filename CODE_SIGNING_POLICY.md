@@ -9,7 +9,7 @@ releases.
 
 ## Current release status
 
-The Windows artifacts in **v1.4.2 do not carry a trusted Authenticode signature**.
+The Windows artifacts in **v1.4.3 do not carry a trusted Authenticode signature**.
 The SignPath Foundation production certificate is still pending. This includes
 the NSIS installer, the standalone portable executable, and the application
 executable inside the portable-folder ZIP. Self-signed test certificates are

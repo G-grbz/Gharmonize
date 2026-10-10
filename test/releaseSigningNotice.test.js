@@ -34,3 +34,10 @@ test('automatic release publishing includes version-specific notes and keeps tes
   assert.ok(signingTest.includes('workflow_dispatch:'));
   assert.ok(!signingTest.includes('gh release create'));
 });
+
+test('v1.4.3 release notes credit the local-file authorization reporter', () => {
+  const notes = fs.readFileSync('docs/releases/v1.4.3.md', 'utf8');
+  assert.ok(notes.includes('requires an administrator session'));
+  assert.ok(notes.includes('https://github.com/Artur12555'));
+  assert.ok(notes.includes('Thanks to [@Artur12555]'));
+});

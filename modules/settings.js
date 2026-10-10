@@ -650,6 +650,14 @@ function authMiddleware(req, res, next) {
 
 export function requireAuth(req, res, next) { return authMiddleware(req, res, next) }
 
+// Local media remains administrator-only even when general application access
+// is public or a visitor has an approved temporary-access session. Run this
+// after multipart parsing and before resolving paths or creating queued jobs.
+export function requireLocalJobAuth(req, res, next) {
+  if (req.body?.localPath) return requireAuth(req, res, next)
+  return next()
+}
+
 function clientKey(req) { return String(req.ip || req.socket?.remoteAddress || 'unknown') }
 function isRateLimited(req) {
   const key = clientKey(req)

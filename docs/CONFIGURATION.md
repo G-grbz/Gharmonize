@@ -351,6 +351,13 @@ path.resolve(DATA_DIR || process.cwd(), LOCAL_INPUT_DIR)
 Used by:
 - `/api/local-files` → recursively lists supported media
 - `/api/probe/local` → only accepts files under this directory (security check)
+- `/api/jobs` with `localPath` → creates a conversion job for a file under this directory
+
+Listing, probing, and creating jobs from server-local files all require an
+administrator session, including in `none` application access mode. Approved
+temporary access does not grant access to local files. Ordinary uploads and
+remote-URL jobs continue to follow the configured general application access
+policy.
 
 Default (when empty) is usually `local-inputs`.
 
