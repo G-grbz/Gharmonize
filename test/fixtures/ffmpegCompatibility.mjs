@@ -170,5 +170,7 @@ if (mode === 'explicit') {
 assert.ok(!fs.existsSync(path.join(root, 'host-used')), 'implicit host FFmpeg was executed');
 assert.ok(!fs.existsSync(path.join(cache, 'ffmpeg-candidate')));
 assert.ok(!fs.existsSync(path.join(cache, 'ffprobe-candidate')));
-assert.equal(fs.readdirSync(cache).some((name) => /extract-|\.tar\.xz|\.download$/.test(name)), false, 'owned extraction/archive staging was not cleaned');
+assert.equal(fs.readdirSync(cache).some((name) =>
+  name.includes('extract-') || name.includes('.tar.xz') || name.endsWith('.download')
+), false, 'owned extraction/archive staging was not cleaned');
 console.log('FFMPEG_COMPATIBILITY_OK');
