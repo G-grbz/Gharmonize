@@ -4,13 +4,13 @@ import path from "path";
 import { terminateProcess } from "./processTermination.js";
 import { resolveDownloadPathToAbs } from "./outputPaths.js";
 import { uniqueId } from "./utils.js";
+import { resolveRuntimeCacheDir } from "./runtimeEnvironment.js";
 
 export const jobs = new Map();
 export const spotifyMapTasks = new Map();
 export const spotifyDownloadTasks = new Map();
 
-const BASE_DIR = process.env.DATA_DIR || process.cwd();
-const DEFAULT_CACHE_DIR = path.resolve(BASE_DIR, "cache");
+const DEFAULT_CACHE_DIR = resolveRuntimeCacheDir();
 const JOBS_STATE_VERSION = 1;
 const GC_INTERVAL_MS = 60 * 60 * 1000;
 const PERSIST_INTERVAL_MS = 5 * 1000;

@@ -585,6 +585,7 @@
   "settings.ffmpegChannel": "Canal de actualización de FFmpeg. stable sigue la rama de versión más reciente y es la opción recomendada; master sigue compilaciones de desarrollo. La selección se usa en la próxima actualización de binarios o después de reiniciar.",
   "settings.ffmpegChannelStable": "stable (recomendado)",
   "settings.ffmpegChannelMaster": "master (desarrollo)",
+  "settings.ffmpegChannelMasterWarning": "⚠ Master es una versión de desarrollo. Con una GPU NVIDIA, NVENC requiere un controlador compatible con la API 13.1. En dispositivos incompatibles, la codificación por hardware NVIDIA puede no funcionar; FFmpeg/FFprobe y la conversión por software siguen disponibles. Aun así puede elegir master.",
   "settings.workarounds": "Contiene ajustes para eludir bloqueos de acceso (errores 403 Forbidden) (1 = sí)",
   "settings.ytdlpCookies": "Ruta de cookies (incluyendo .txt). Si se deja vacío, se usará BASE_DIR/cookies/cookies.txt",
   "settings.ytdlpBrowser": "Navegador del que se extraerán las cookies. Desactívalo al usar Docker",

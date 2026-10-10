@@ -87,6 +87,47 @@ YTDLP_BIN=/usr/local/bin/yt-dlp
 YTDLP_BIN=C:\tools\yt-dlp.exe
 ```
 
+### FFmpeg / FFprobe and NVIDIA compatibility
+
+Packaged Electron uses bundled or managed FFmpeg/FFprobe, not an automatic
+system `PATH` fallback. Explicit `FFMPEG_BIN` / `FFPROBE_BIN` overrides are still
+honored. If a new managed FFmpeg fails NVIDIA driver compatibility checks,
+Gharmonize retains an NVENC-tested active/last-known-good pair on the `stable`
+channel. On a fresh installation without one, it tries up to three official
+BtbN compatibility candidates: current older release branches first, then
+archived snapshots. Candidates are grouped by the provider's current SDK bands:
+13.1 (FFmpeg 8.2+), 13.0 (8.0/8.1), and 11.1 (older release branches).
+When the runtime reports its available NVENC API, incompatible newer bands are
+skipped. These version mappings are selection hints, not proof of compatibility.
+It verifies their SHA-256 digests and runs a real H.264 NVENC encoding
+probe before activating both tools together. Failed candidates never replace
+the active pair. A successful compatibility pair is cached, so rejected updates
+are not downloaded again on every startup; a manual refresh retries immediately.
+If none passes, a latest pair that passed basic executable and software audio
+conversion checks is retained instead: FFmpeg/FFprobe remain available, with
+NVENC reported as unavailable. Absence of NVIDIA hardware or its driver does
+not prevent installation. Failed downloads and failed basic conversion checks
+are not accepted as working binaries. Linux and Windows use their own matching
+archive formats; a working H.264 NVENC probe does not guarantee that a GPU
+supports every other hardware codec or pixel format.
+
+### Electron UI rendering (Linux / AppImage)
+
+AppImage keeps Chromium's automatic GPU acceleration enabled by default.
+Disabling it forces software compositing and can significantly increase CPU
+usage while scrolling, independently of FFmpeg/NVENC compatibility.
+If a particular graphics driver has rendering problems, opt out explicitly:
+
+```dotenv
+GHARMONIZE_DISABLE_HARDWARE_ACCELERATION=1
+```
+
+Remove the override or set it to `0` to use default GPU acceleration. Restart
+the desktop app after changing it. `GHARMONIZE_OZONE_PLATFORM=x11` or `wayland`
+can explicitly select the Linux display backend; neither overrides this setting.
+Browser/Docker UI rendering is controlled by the browser, not these Electron
+settings. Existing tray, resume and unresponsive-window recovery remain enabled.
+
 ### Binary extraction temporary files
 
 `GHARMONIZE_BINARY_TMP_DIR` optionally selects the executable-capable parent
@@ -231,7 +272,19 @@ Typical structure:
 - `DATA_DIR/outputs/` → exported / processed files
 - `DATA_DIR/uploads/` → uploaded files / merged chunks
 - `DATA_DIR/local-inputs/` → source directory for `/api/local-files` (if enabled)
-- `DATA_DIR/temp/`, `cache/`, `cookies/` → temporary files, persisted jobs/cache, and cookies
+- `DATA_DIR/temp/`, `cookies/` → temporary files and cookies
+- `DATA_DIR/cache/` (Node/Docker) or `DATA_DIR/Cache/` (packaged Electron) → persisted jobs/cache; managed tools live in its `binaries/` subdirectory
+
+Packaged Electron uses `Cache` to share the same top-level directory as
+Chromium's `Cache_Data` and other browser caches when `DATA_DIR` is the default
+profile directory. With a custom `DATA_DIR`, Chromium stays in the profile and
+application caches use `DATA_DIR/Cache`. Existing lowercase `cache` directories
+are not moved, deleted, or reused on case-sensitive systems: missing managed
+tools download again at startup, and job history / saved YTLive lists start
+fresh (the old files remain in place). Windows normally treats `Cache` and
+`cache` as the same directory, so capitalization alone does not force a fresh
+download there. Explicit `GHARMONIZE_WEB_CACHE_DIR`, `CACHE_DIR`,
+`JOBS_STATE_DIR`, and `YTLIVE_DOWNLOAD_LISTS_DIR` overrides remain honored.
 
 ```dotenv
 DATA_DIR=/var/lib/gharmonize
@@ -639,7 +692,7 @@ FFMPEG_BIN=C:\ffmpeg\bin\ffmpeg.exe
 ```
 
 ### `GHARMONIZE_FFMPEG_CHANNEL`
-Selects the BtbN channel used by the automatic FFmpeg manager. `stable` is the default and selects the newest release-branch build. `master` is available only as an explicit opt-in. New candidates are runtime-tested before activation and a last-known-good pair is preserved for rollback.
+Selects the BtbN channel used by the automatic FFmpeg manager. `stable` is the default and selects the newest compatible release-branch build. `master` is an unrestricted explicit opt-in to the latest development snapshot: it does **not** silently downgrade to an older stable build just because NVENC is unavailable. Settings displays a warning below the master selection: NVIDIA hardware encoding currently requires an API-13.1-compatible driver; software conversion remains available on incompatible devices. New candidates must still pass executable and software conversion checks, and a last-known-good pair is preserved for rollback. Switching channels takes effect on the next binary refresh or restart, even if the old channel's cache is still fresh.
 
 ```dotenv
 GHARMONIZE_FFMPEG_CHANNEL=stable

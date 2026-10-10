@@ -590,6 +590,7 @@
   "settings.ffmpegChannel": "FFmpeg güncelleme kanalı. stable en güncel kararlı sürüm dalını takip eder ve önerilir; master geliştirme anlık sürümlerini takip eder. Seçim bir sonraki binary güncellemesinde veya yeniden başlatmada kullanılır.",
   "settings.ffmpegChannelStable": "stable (önerilen)",
   "settings.ffmpegChannelMaster": "master (geliştirme)",
+  "settings.ffmpegChannelMasterWarning": "⚠ Master geliştirme sürümüdür. NVIDIA ekran kartı kullanıyorsanız NVENC için API 13.1 destekleyen uyumlu bir sürücü gerekir. Uyumsuz cihazlarda NVIDIA donanım kodlaması çalışmayabilir; FFmpeg/FFprobe ve yazılımsal dönüşüm kullanılabilir kalır. Yine de master seçebilirsiniz.",
   "settings.workarounds": "Erişim engellerini aşmak (403 Forbidden hataları) için düzenlemeler içerir (1 = evet)",
   "settings.ytdlpCookies": "Cookies yolu (.txt dahil) boş bırakılırsa BASE_DIR/cookies/cookies.txt kullanılacaktır",
   "settings.ytdlpBrowser": "Cookie'lerin Alınacağı Tarayıcı, docker kullanımında kapalı tutun",

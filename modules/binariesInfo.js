@@ -57,7 +57,9 @@ function getVersionFromDynamicMetadata(toolName, binPath) {
   const backingPath = String(entry.backingPath || '').trim();
   const tag = normalizeVersionToken(entry.tag);
 
-  if (!tag) return null;
+  // Release labels such as "latest" or "autobuild-..." are channels, not
+  // executable versions. Never let them replace a valid FFmpeg build token.
+  if (!tag || !isLikelyVersionForTool(toolName, tag)) return null;
   if (!currentPath) return tag;
   if (currentPath === metaPath || currentPath === backingPath) return tag;
   return null;
@@ -79,14 +81,15 @@ function isLikelyVersionForTool(toolName, version) {
     return /^\d+\.\d+(?:\.\d+)?$/.test(value);
   }
   if (tool === 'ffmpeg' || tool === 'ffprobe') {
-    return /^N-\d+(?:-g[0-9a-f]+)?-\d{8}$/i.test(value) || /^[a-z]?\d+\.\d+(?:\.\d+)?$/i.test(value);
+    return /^N-\d+(?:-g[0-9a-f]+)?(?:-\d{8})?$/i.test(value) ||
+      /^n?\d+\.\d+(?:\.\d+)?(?:-\d+-g[0-9a-f]+(?:-\d{8})?)?$/i.test(value);
   }
 
   return true;
 }
 
 // Parses version metadata from process output for core application logic.
-function parseVersionFromOutput(output, toolName = '') {
+export function parseVersionFromOutput(output, toolName = '') {
   if (!output) return null;
   const tool = String(toolName || '').trim().toLowerCase();
 

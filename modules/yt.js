@@ -16,6 +16,7 @@ import {
 import { parseSafeYtDlpExtra, sanitizeLogValue } from "./security.js";
 import { requestYtMusicJson, createYtMusicRequestGate } from "./ytMusicRequest.js";
 import { createYtMusicSharedCache } from "./ytMusicSharedCache.js";
+import { resolveRuntimeCacheDir } from "./runtimeEnvironment.js";
 import {
   normalizeYtMusicAlbumEntry,
   normalizeYtMusicAlbumMeta,
@@ -70,7 +71,7 @@ const YTM_HOME_RESULT_CACHE_TTL_MS = Math.max(
 );
 const ytmSharedCache = createYtMusicSharedCache({
   file: process.env.YTM_SHARED_CACHE_PERSIST === "0" ? null : path.resolve(
-    process.env.DATA_DIR || process.cwd(), "cache", "youtube-music-cache.json"
+    resolveRuntimeCacheDir(), "youtube-music-cache.json"
   )
 });
 process.once("exit", () => ytmSharedCache.close());
@@ -427,6 +428,9 @@ function resolveYtDlpFfmpegLocation() {
   const fromEnv = String(process.env.FFMPEG_BIN || "").trim();
   if (fromEnv && isExecutable(fromEnv)) return fromEnv;
   if (BINARY_FFMPEG_BIN && isExecutable(BINARY_FFMPEG_BIN)) return BINARY_FFMPEG_BIN;
+  if (process.env.GHARMONIZE_DESKTOP_DATA_DIR) {
+    throw new Error("Managed FFmpeg is not ready; desktop system fallback is disabled.");
+  }
   return null;
 }
 

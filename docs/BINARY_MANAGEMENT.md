@@ -12,7 +12,8 @@ Gharmonize supports two binary workflows for its runtime dependencies: **ffmpeg*
 - Uses BtbN **release-branch/stable** FFmpeg builds by default instead of `master-latest`
 - Stages a new FFmpeg/ffprobe pair as a candidate, validates it, and only then promotes it
 - Preserves a **last-known-good** FFmpeg pair and rolls back when a candidate regresses a previously working NVENC runtime
-- Rejects explicit NVENC API/driver mismatches (for example, a build requiring a newer NVIDIA driver) and keeps a compatible fallback when available
+- On `stable`, searches modern (SDK 13.1), compatible (13.0), and legacy (11.1) build bands, skipping API levels the driver explicitly cannot support
+- Keeps verified FFmpeg/ffprobe available for software conversion even when NVENC is absent or no compatible NVENC candidate succeeds
 
 This means manual setup is no longer required in the common case — on first launch (with internet access), Gharmonize fetches what it needs automatically.
 
@@ -21,6 +22,14 @@ The default FFmpeg channel is `stable`. Advanced users can explicitly opt into B
 ```dotenv
 GHARMONIZE_FFMPEG_CHANNEL=master
 ```
+
+Master remains selectable on every device. A warning beneath the Settings
+selection explains that NVIDIA NVENC currently requires API 13.1 support;
+an incompatible NVIDIA GPU/driver does not block master installation or
+software conversion. Master does not silently switch to an older stable build
+on an NVENC-only failure. Both channels still require working FFmpeg/ffprobe
+executables and a successful software conversion probe. Previously verified
+cached tools remain usable when an update cannot be downloaded.
 
 ---
 

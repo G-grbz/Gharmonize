@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import path from "node:path";
+import fs from "node:fs";
 import { promisify } from "node:util";
 import { terminateProcess } from "./processTermination.js";
 import { prepareBinaryTempProcess } from "./binaryTemp.js";
@@ -234,6 +235,13 @@ function buildExecOptions(resolvedCommand, options = {}) {
 
   if (path.isAbsolute(trustedPath) || dir !== ".") {
     const resolvedDir = path.resolve(dir);
+    // Literal dispatch uses PATH to keep executable tokens static for CodeQL.
+    // An explicit missing FFmpeg path must not accidentally select a different
+    // host executable further down PATH (especially on portable desktops).
+    if (/^ff(?:mpeg|probe)(?:-(?:candidate|lkg))?(?:\.exe)?$/i.test(path.basename(trustedPath))) {
+      fs.accessSync(path.resolve(trustedPath), fs.constants.X_OK);
+      if (!fs.statSync(path.resolve(trustedPath)).isFile()) throw new Error("FFmpeg executable is not a regular file");
+    }
     env.PATH = [resolvedDir, env.PATH || ""].filter(Boolean).join(path.delimiter);
   }
 

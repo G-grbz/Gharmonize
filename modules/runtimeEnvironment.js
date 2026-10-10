@@ -11,6 +11,14 @@ export function resolveRuntimeDataDir(env, { cwd = process.cwd(), desktopDataDir
   return pathApi.resolve(base, String(env.DATA_DIR || '').trim() || base);
 }
 
+// Packaged desktop caches share Chromium's capitalization. Keep Node/Docker
+// defaults unchanged so existing volumes and deployment paths remain valid.
+// No legacy-cache migration or fallback: desktop starts with a fresh cache.
+export function resolveRuntimeCacheDir(env = process.env, pathApi = path) {
+  const name = String(env.GHARMONIZE_DESKTOP_DATA_DIR || '').trim() ? 'Cache' : 'cache';
+  return pathApi.resolve(env.DATA_DIR || process.cwd(), name);
+}
+
 export function initializeRuntimeEnvironment({ env = process.env, cwd = process.cwd(), desktopDataDir = '' } = {}) {
   if (env === process.env && initialized) return initialized;
   const inherited = { ...env };

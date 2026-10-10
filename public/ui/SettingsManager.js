@@ -305,6 +305,7 @@ export class SettingsManager {
                     <option value="stable" data-i18n="settings.ffmpegChannelStable">stable (recommended)</option>
                     <option value="master" data-i18n="settings.ffmpegChannelMaster">master (development)</option>
                 </select>
+                <div id="ffmpegMasterWarning" class="settings-field-hint muted" role="status" hidden data-i18n="settings.ffmpegChannelMasterWarning">⚠ Master is a development build. If you use an NVIDIA GPU, NVENC requires a compatible driver supporting API 13.1. On incompatible devices, NVIDIA hardware encoding may not work; FFmpeg/FFprobe and software conversion remain available. You can still choose master.</div>
                 </div>
 
                 <div class="form-group">
@@ -703,6 +704,7 @@ export class SettingsManager {
 
     document.getElementById('reloadBtn').onclick = () => this.loadSettings();
     document.getElementById('saveBtn').onclick = () => this.saveSettings();
+    document.getElementById('f_GHARMONIZE_FFMPEG_CHANNEL')?.addEventListener('change', () => this.syncFfmpegChannelWarning());
     document.getElementById('changePassBtn').onclick = () => this.changePassword();
     document.getElementById('f_GHARMONIZE_ACCESS_MODE')?.addEventListener('change', () => this.syncAccessControls());
     document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED')?.addEventListener('change', () => this.syncAccessControls());
@@ -935,6 +937,12 @@ export class SettingsManager {
         }
     }
 
+    syncFfmpegChannelWarning() {
+        const select = document.getElementById('f_GHARMONIZE_FFMPEG_CHANNEL');
+        const warning = document.getElementById('ffmpegMasterWarning');
+        if (warning) warning.hidden = select?.value !== 'master';
+    }
+
     // Loads settings for the browser UI layer.
     async loadSettings() {
         const token = localStorage.getItem(this.tokenKey) || "";
@@ -980,6 +988,7 @@ export class SettingsManager {
             document.getElementById('f_MEDIA_COMMENT').value = s.MEDIA_COMMENT || 'Gharmonize';
             document.getElementById('f_FFMPEG_BIN').value = s.FFMPEG_BIN || '';
             document.getElementById('f_GHARMONIZE_FFMPEG_CHANNEL').value = s.GHARMONIZE_FFMPEG_CHANNEL === 'master' ? 'master' : 'stable';
+            this.syncFfmpegChannelWarning();
             document.getElementById('f_TRUST_PROXY').value = s.TRUST_PROXY || '0';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';

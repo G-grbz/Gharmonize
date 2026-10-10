@@ -1539,6 +1539,8 @@ export class MediaConverterApp {
             // Handles shorten version metadata in the browser UI layer.
             const shortenVersion = (v) => {
                 if (!v) return '';
+                const stable = v.match(/^n?(\d+\.\d+(?:\.\d+)?)(?:-\d+-g[0-9a-f]+(?:-\d{8})?)?$/i);
+                if (stable) return stable[1];
                 const nightly = v.match(/^N-(\d+)-(?:g[0-9a-f]+-)?(\d{8})$/);
                 if (nightly) {
                     return nightly[2];

@@ -248,6 +248,10 @@ function resolveFfmpegBin() {
     return BINARY_FFMPEG_BIN;
   }
 
+  if (process.env.GHARMONIZE_DESKTOP_DATA_DIR) {
+    throw new Error("Managed FFmpeg is not ready; desktop system fallback is disabled. Check runtime binary initialization.");
+  }
+
   const fromPATH = findOnPATH(exe);
   if (fromPATH && isExecutable(fromPATH)) {
     return fromPATH;

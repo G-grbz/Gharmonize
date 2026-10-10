@@ -4,9 +4,9 @@ import os from "os";
 import path from "path";
 import { uniqueId } from "./utils.js";
 import { normalizeYtMusicByline } from "./ytMusicMetadata.js";
+import { resolveRuntimeCacheDir } from "./runtimeEnvironment.js";
 
-const BASE_DIR = process.env.DATA_DIR || process.cwd();
-const DEFAULT_CACHE_DIR = path.resolve(BASE_DIR, "cache");
+const DEFAULT_CACHE_DIR = resolveRuntimeCacheDir();
 const STATE_VERSION = 1;
 const MAX_LISTS = 100;
 const MAX_ITEMS_PER_LIST = 20000;

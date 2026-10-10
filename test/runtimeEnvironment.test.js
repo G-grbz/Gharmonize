@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { initializeRuntimeEnvironment, resolveRuntimeDataDir, resolveOutputsLocation } from '../modules/runtimeEnvironment.js';
+import { initializeRuntimeEnvironment, resolveRuntimeDataDir, resolveRuntimeCacheDir, resolveOutputsLocation } from '../modules/runtimeEnvironment.js';
 
 const execFileAsync = promisify(execFile);
 const repository = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -16,6 +16,14 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+test('packaged desktop cache shares Chromium capitalization without changing Node/Docker defaults', () => {
+  const data = '/storage/Gharmonize';
+  assert.equal(resolveRuntimeCacheDir({ DATA_DIR: data }, path.posix), `${data}/cache`);
+  assert.equal(resolveRuntimeCacheDir({ DATA_DIR: data, GHARMONIZE_DESKTOP_DATA_DIR: '  ' }, path.posix), `${data}/cache`);
+  assert.equal(resolveRuntimeCacheDir({ DATA_DIR: data, GHARMONIZE_DESKTOP_DATA_DIR: '/profile' }, path.posix), `${data}/Cache`);
+  assert.equal(resolveRuntimeCacheDir({ DATA_DIR: 'D:\\Gharmonize', GHARMONIZE_DESKTOP_DATA_DIR: 'C:\\Profile' }, path.win32), 'D:\\Gharmonize\\Cache');
+});
 
 test('Node loads custom DATA_DIR before consumers and keeps the original configuration file', (t) => {
   const root = fixture(t);

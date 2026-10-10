@@ -22,6 +22,7 @@ import { assertSafeRemoteUrl, createTrustedProxyPredicate, decryptSecret } from 
 import { rateLimit } from './modules/rateLimit.js'
 import discRouter from './routes/disc.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
+import { resolveRuntimeCacheDir } from './modules/runtimeEnvironment.js'
 import {
   FFMPEG_BIN,
   YTDLP_BIN,
@@ -60,7 +61,7 @@ const BASE_DIR = process.env.DATA_DIR || process.cwd()
 const UPLOAD_DIR = path.resolve(BASE_DIR, 'uploads')
 const OUTPUT_DIR = path.resolve(BASE_DIR, 'outputs')
 const TEMP_DIR = path.resolve(BASE_DIR, 'temp')
-const CACHE_DIR = path.resolve(BASE_DIR, 'cache')
+const CACHE_DIR = resolveRuntimeCacheDir()
 const COOKIE_DIR = path.resolve(BASE_DIR, 'cookies')
 const LOCAL_INPUTS_DIR = process.env.LOCAL_INPUT_DIR
   ? path.resolve(process.env.LOCAL_INPUT_DIR)

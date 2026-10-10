@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { initializeRuntimeEnvironment } from '../../modules/runtimeEnvironment.js';
+import { initializeRuntimeEnvironment, resolveRuntimeCacheDir } from '../../modules/runtimeEnvironment.js';
 
 const [root, mode] = process.argv.slice(2);
 const profile = path.join(root, 'profile');
@@ -58,7 +58,13 @@ assert.equal(OUTPUT_ROOT_DIR, path.join(data, 'outputs'));
 const playlist = { format: 'mp3', metadata: { isPlaylist: true, frozenTitle: 'Fixture playlist' } };
 assert.ok(resolveJobOutputDir(playlist).startsWith(OUTPUT_ROOT_DIR + path.sep));
 assert.equal(toDownloadPath(path.join(OUTPUT_ROOT_DIR, 'present.mp3')), '/download/present.mp3');
-assert.ok(fs.existsSync(path.join(data, 'cache'))); // The actual job store.
+assert.ok(fs.existsSync(resolveRuntimeCacheDir())); // The actual job store.
+if (mode === 'desktop') {
+  assert.equal(resolveRuntimeCacheDir(), path.join(data, 'Cache'));
+  assert.ok(!fs.existsSync(path.join(data, 'cache')));
+  const { initializeDynamicBinaries } = await import('../../modules/binaries.js');
+  assert.equal((await initializeDynamicBinaries()).cacheDir, path.join(data, 'Cache', 'binaries'));
+}
 if (mode === 'desktop') {
   assert.equal(process.env.SPOTIFY_CLIENT_SECRET, 'previous-account-secret');
   assert.equal(process.env.GHARMONIZE_MASTER_KEY_FILE, path.join(profile, '.gharmonize-key'));

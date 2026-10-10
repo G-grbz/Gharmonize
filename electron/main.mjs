@@ -43,13 +43,15 @@ if (process.platform === 'linux') {
     process.env.GHARMONIZE_DISABLE_HARDWARE_ACCELERATION || ''
   ).trim().toLowerCase();
   const explicitlyDisabled = ['1', 'true', 'yes', 'on'].includes(hardwareAccelerationSetting);
-  const explicitlyEnabled = ['0', 'false', 'no', 'off'].includes(hardwareAccelerationSetting);
-  if (explicitlyDisabled || (process.env.APPIMAGE && !explicitlyEnabled)) {
-    // UI acceleration has crashed both native Wayland and XWayland GPU
-    // processes on affected Linux drivers. Media acceleration remains
-    // available to the separate FFmpeg process.
+  if (explicitlyDisabled) {
+    // Keep an opt-out for drivers with rendering problems, but do not disable
+    // GPU compositing for every AppImage: software painting makes scrolling
+    // expensive even when there is no application work running.
+    // This setting is independent of the separate FFmpeg/NVENC process.
     app.disableHardwareAcceleration();
-    console.log('[display] Chromium hardware acceleration disabled for AppImage stability');
+    console.log('[display] Chromium hardware acceleration disabled by explicit configuration');
+  } else {
+    console.log('[display] Chromium hardware acceleration left enabled (automatic GPU selection)');
   }
 }
 
