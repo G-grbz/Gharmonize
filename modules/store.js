@@ -5,6 +5,7 @@ import { terminateProcess } from "./processTermination.js";
 import { resolveDownloadPathToAbs } from "./outputPaths.js";
 import { uniqueId } from "./utils.js";
 import { resolveRuntimeCacheDir } from "./runtimeEnvironment.js";
+import { initializeJobTiming, serializeJobTiming } from "./jobTiming.js";
 
 export const jobs = new Map();
 export const spotifyMapTasks = new Map();
@@ -189,6 +190,7 @@ function serializeCompletedJob(job) {
     canceledBy: job.canceledBy || null,
     metadata: pickPersistedMetadata(job.metadata || {}),
     counters: normalizeCounters(job.counters),
+    timing: serializeJobTiming(job),
   };
 }
 
@@ -287,7 +289,7 @@ function loadPersistedJobs() {
       if (!item || item.status !== "completed" || !item.id) continue;
       if (!jobHasAnyExistingOutput(item)) continue;
 
-      jobs.set(item.id, {
+      const restoredJob = {
         id: item.id,
         status: "completed",
         canceled: false,
@@ -310,7 +312,9 @@ function loadPersistedJobs() {
         lastLog: item.lastLog || null,
         canceledBy: item.canceledBy || null,
         error: null,
-      });
+      };
+      initializeJobTiming(restoredJob, item.timing);
+      jobs.set(item.id, restoredJob);
     }
   } catch (error) {
     console.warn("[store] Failed to load persisted completed jobs:", error);
@@ -422,6 +426,7 @@ export function createJob(initial = {}) {
     id,
     createdAt: initial.createdAt || new Date(),
   };
+  initializeJobTiming(job);
   jobs.set(id, job);
   return job;
 }

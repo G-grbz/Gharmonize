@@ -11,6 +11,7 @@ export class VideoSettingsManager {
       scaleMode: 'auto',
       targetWidth: '',
       heightMode: 'auto',
+      autoCropBlackBars: false,
       targetHeight: '',
       allowUpscale: false,
       orientation: 'auto',
@@ -233,6 +234,7 @@ export class VideoSettingsManager {
       this.videoSettings.scaleMode = this.videoSettings.scaleMode || 'auto';
       this.videoSettings.targetWidth = this.videoSettings.targetWidth ?? '';
       this.videoSettings.heightMode = this.videoSettings.heightMode || 'auto';
+      this.videoSettings.autoCropBlackBars = this.videoSettings.autoCropBlackBars === true;
       this.videoSettings.targetHeight = this.videoSettings.targetHeight ?? '';
       this.videoSettings.allowUpscale = !!this.videoSettings.allowUpscale;
       this.videoSettings.hdrMode = this.videoSettings.hdrMode || 'none';
@@ -592,6 +594,7 @@ export class VideoSettingsManager {
     this.videoSettings.scaleMode = v('#widthModeSelect') || 'auto';
     this.videoSettings.targetWidth = (this.videoSettings.scaleMode === 'custom') ? v('#customWidthInput') : '';
     this.videoSettings.heightMode = v('#heightModeSelect') || 'auto';
+    this.videoSettings.autoCropBlackBars = this.videoSettings.heightMode === 'auto' && b('#autoCropBlackBarsCheckbox');
     this.videoSettings.targetHeight = (this.videoSettings.heightMode === 'custom') ? v('#customHeightInput') : '';
     this.videoSettings.allowUpscale = (this.videoSettings.heightMode === 'custom') ? b('#allowUpscaleCheckbox') : false;
     this.videoSettings.orientation = v('#orientationSelect') || 'auto';
@@ -1305,6 +1308,13 @@ export class VideoSettingsManager {
 
                 <div class="muted vs-help">
                   <span data-i18n="option.heightNote">${this.t('option.heightNote', '')}</span>
+                </div>
+                <div id="autoCropBlackBarsControls">
+                  <label class="switch">
+                    <input type="checkbox" role="switch" id="autoCropBlackBarsCheckbox" aria-describedby="autoCropBlackBarsHelp" />
+                    <span data-i18n="label.autoCropBlackBars">${this.t('label.autoCropBlackBars', 'Crop black borders')}</span>
+                  </label>
+                  <div id="autoCropBlackBarsHelp" class="muted vs-help" data-i18n="option.autoCropBlackBarsNote">${this.t('option.autoCropBlackBarsNote', 'Sample the video before scaling and calculate height from the cropped aspect ratio. Uncertain results keep the original frame. Manual cropping takes priority; video transcoding is required.')}</div>
                 </div>
               </div>
             </div>
@@ -2146,6 +2156,7 @@ export class VideoSettingsManager {
       const isCustom = mode === 'custom';
       if (customHeightInput) customHeightInput.disabled = !isCustom;
       if (allowUpscaleCheckbox) allowUpscaleCheckbox.disabled = !isCustom;
+      this.syncAutoCropControls();
     };
 
     heightModeSelect?.addEventListener('change', (e) => {
@@ -2170,6 +2181,11 @@ export class VideoSettingsManager {
 
     allowUpscaleCheckbox?.addEventListener('change', (e) => {
       this.videoSettings.allowUpscale = !!e.target.checked;
+      this.saveToStorage();
+    });
+
+    this.modalEl.querySelector('#autoCropBlackBarsCheckbox')?.addEventListener('change', (e) => {
+      this.videoSettings.autoCropBlackBars = this.videoSettings.heightMode === 'auto' && !!e.target.checked;
       this.saveToStorage();
     });
 
@@ -2374,6 +2390,7 @@ export class VideoSettingsManager {
     const isCustomH = (this.videoSettings.heightMode === 'custom');
     if (customHeightInput) customHeightInput.disabled = !isCustomH;
     if (allowUpscaleCheckbox) allowUpscaleCheckbox.disabled = !isCustomH;
+    this.syncAutoCropControls();
 
     const audioTranscodeCheckbox = this.modalEl.querySelector('#audioTranscodeCheckbox');
     if (audioTranscodeCheckbox) audioTranscodeCheckbox.checked = !!this.videoSettings.audioTranscodeEnabled;
@@ -2446,8 +2463,22 @@ export class VideoSettingsManager {
       }
     }
 
+  syncAutoCropControls() {
+    const enabled = this.videoSettings.heightMode === 'auto';
+    const controls = this.modalEl?.querySelector('#autoCropBlackBarsControls');
+    const checkbox = this.modalEl?.querySelector('#autoCropBlackBarsCheckbox');
+    if (controls) controls.style.display = enabled ? '' : 'none';
+    if (checkbox) {
+      checkbox.disabled = !enabled;
+      checkbox.checked = this.videoSettings.autoCropBlackBars === true;
+    }
+  }
+
   // Returns settings used for the browser UI layer.
   getSettings() {
-    return { ...this.videoSettings };
+    return {
+      ...this.videoSettings,
+      autoCropBlackBars: this.videoSettings.heightMode === 'auto' && this.videoSettings.autoCropBlackBars === true
+    };
   }
 }

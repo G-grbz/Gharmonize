@@ -432,6 +432,7 @@ export async function mapMappedMusicWithCache(
     concurrency = 4,
     onUpdate = null,
     onLog = null,
+    onStage = null,
     shouldCancel = null,
     forceRefresh = false,
     // A missing match can be caused by a transient yt-dlp/network/configuration
@@ -455,6 +456,7 @@ export async function mapMappedMusicWithCache(
 
   for (let localIndex = 0; localIndex < items.length; localIndex++) {
     const sourceItem = items[localIndex];
+    try { onStage?.(localIndex, 'queued', sourceItem); } catch {}
     const sourceItemKey = getMappedMusicSourceItemKey(sourceItem, sourceProvider);
     const cached = existingByKey.get(sourceItemKey);
     const requiredMatchValidationVersion = sourceProvider === "soundcloud"
@@ -488,6 +490,8 @@ export async function mapMappedMusicWithCache(
       output[localIndex] = mapped;
       currentEntries[localIndex] = entry;
       cacheHits++;
+      try { onStage?.(localIndex, 'cached', sourceItem); } catch {}
+      try { onStage?.(localIndex, mapped.id ? 'queued' : 'not_found', sourceItem); } catch {}
       if (onUpdate) onUpdate(localIndex, mapped, { cached: true, sourceItemKey, entry });
       continue;
     }
@@ -520,6 +524,7 @@ export async function mapMappedMusicWithCache(
       {
         concurrency,
         onLog,
+        onStage: (index, phase, item) => { try { onStage?.(missingIndexes[index], phase, item); } catch {} },
         shouldCancel
       }
     );

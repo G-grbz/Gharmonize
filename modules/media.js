@@ -8,6 +8,9 @@ import { attachLyricsToMedia } from "./lyrics.js";
 import { jobs } from "./store.js";
 import { rewriteId3v11Tag, writeRichId3v2Tag } from "./id3.js";
 import { mp3DurationHeaderArgs } from "./mp3Muxer.js";
+import { shouldDetectBlackBars, cropAnalysisGeometry, detectBlackBars } from "./autoCrop.js";
+import { videoTimelineFilters } from "./videoTimeline.js";
+import { resolveTimingTrack } from "./jobTiming.js";
 import { toDownloadPath, resolveDownloadPathToAbs } from "./outputPaths.js";
 import { ensureOwnership } from "./fsOwnership.js";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
@@ -697,6 +700,8 @@ export async function retagMediaFile(
   coverPath = null,
   opts = {}
 ) {
+  const timing = resolveTimingTrack(jobs, opts.jobId, metadata);
+  const reportStage = phase => { try { (opts.onStage || timing)(phase); } catch {} };
   const tempFilesToCleanup = [];
   let tmpOut = null;
   // Handles safe unlink in the FFmpeg media conversion pipeline.
@@ -715,6 +720,7 @@ export async function retagMediaFile(
       return null;
     }
 
+    reportStage('retagging');
     const ffmpegBin = opts?.ffmpegBin || resolveFfmpegBin();
     const tempDir = opts?.tempDir || path.dirname(absOutputPath);
     const jobId = opts?.jobId || "retag";
@@ -847,6 +853,7 @@ export async function retagMediaFile(
     console.warn("⚠️ retag warning:", sanitizeLogValue(e?.message || e));
     return null;
   } finally {
+    reportStage('ready');
     safeUnlink(tmpOut);
     for (const p of tempFilesToCleanup) {
       safeUnlink(p);
@@ -890,6 +897,9 @@ export async function convertMedia(
   tempDir,
   opts = {}
 ) {
+  const timing = resolveTimingTrack(jobs, jobId, metadata);
+  const reportStage = phase => { try { (opts.onStage || timing)(phase); } catch {} };
+  reportStage('preparing');
   const tempFilesToCleanup = [];
   const outputRootDir = opts?.outputRootDir
     ? path.resolve(opts.outputRootDir)
@@ -1456,6 +1466,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   }
 
   const analysisInputArgs = args.slice();
+  let videoTimelineFilter = null;
+  let audioTimelineFilter = null;
 
     if (isCanceled()) return reject(new Error("CANCELED"));
 
@@ -1759,6 +1771,29 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     const resizeMode = String(videoSettings?.resizeMode || "scale").toLowerCase();
     const cropEdgesFilter = buildCropEdgesFilter(videoSettings);
     const orientFilter = buildOrientationFilter(videoSettings?.orientation);
+    let autoCropFilter = null;
+    if (isVideo && hasVideoFlag && shouldDetectBlackBars(videoSettings)) {
+      emitLog(opts.onLog, { logKey: 'log.video.blackBarsDetecting', logVars: {}, fallback: '🔍 Detecting black borders from short video samples…' });
+      const inputSeek = analysisInputArgs.indexOf('-ss');
+      const seekValue = inputSeek >= 0 ? analysisInputArgs[inputSeek + 1] : 0;
+      const analysisStart = timecodeToSeconds(seekValue);
+      const start = Number.isFinite(analysisStart) ? analysisStart : Number(seekValue) || 0;
+      const duration = clipDuration ?? Math.max(0, (Number(srcInfo?.duration) || Number(metadata.duration) || 0) - start);
+      const geometry = cropAnalysisGeometry(srcInfo || { width: SRC_W, height: SRC_H }, orientationMode);
+      const crop = await detectBlackBars({
+        ffmpegBin, inputPath, ...geometry, duration, start,
+        orientation: orientationMode, orientationFilter: orientFilter,
+        onProcess: opts.onProcess, isCanceled
+      });
+      autoCropFilter = crop?.filter || null;
+      emitLog(opts.onLog, {
+        logKey: crop ? 'log.video.blackBarsCropped' : 'log.video.blackBarsUnchanged',
+        logVars: crop ? { sourceWidth: geometry.width, sourceHeight: geometry.height, width: crop.w, height: crop.h } : {},
+        fallback: crop
+          ? `✂ Black borders removed: ${geometry.width}×${geometry.height} → ${crop.w}×${crop.h}; scaling with the cropped aspect ratio.`
+          : 'ℹ No consistent black borders detected or analysis was inconclusive; keeping the original frame.'
+      });
+    }
 
     const evenizeFilter = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
 
@@ -1882,6 +1917,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       }
 
       if (orientFilter) chain.push(orientFilter);
+      if (autoCropFilter) chain.push(autoCropFilter);
       if (cropEdgesFilter) chain.push(cropEdgesFilter);
 
       const colForPad = normalizeHexColor(videoSettings?.borderColor);
@@ -1900,7 +1936,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       );
       if (borderFilterNew) chain.push(borderFilterNew);
 
-      if (targetFps) chain.push(`fps=${targetFps}`);
+      if (videoTimelineFilter) chain.push(videoTimelineFilter);
       chain.push(evenizeFilter);
 
       return chain.length ? chain.join(",") : null;
@@ -2107,7 +2143,13 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     const useQsv   = hwMode === "qsv";
     const useVaapi = hwMode === "vaapi";
     effectiveHwMode = useNvenc ? "nvenc" : useQsv ? "qsv" : useVaapi ? "vaapi" : "off";
-    const baseVf = buildBaseVf(selectedCodec);
+    const timeline = videoTimelineFilters({
+      isVideo, videoTranscoded: hasVideoFlag && selectedCodec.encoder !== 'copy',
+      sourceFps: srcInfo?.frameRate, targetFps, audioCodec
+    });
+    videoTimelineFilter = timeline.video;
+    audioTimelineFilter = timeline.audio;
+    const baseVf = selectedCodec.encoder === 'copy' ? null : buildBaseVf(selectedCodec);
 
     // Handles qsv pix fmt for in the FFmpeg media conversion pipeline.
     const qsvPixFmtFor = (enc, bitDepth) => {
@@ -2414,6 +2456,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         }
       }
       if (orientFilter) pre.push(orientFilter);
+      if (autoCropFilter) pre.push(autoCropFilter);
       if (cropEdgesFilter) pre.push(cropEdgesFilter);
 
       const col = normalizeHexColor(videoSettings?.borderColor);
@@ -2441,14 +2484,15 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         if (borderFrag) pre.push(borderFrag);
 
         pre.push(evenizeFilter);
+        if (videoTimelineFilter) pre.push(videoTimelineFilter);
         const uploadFmt = (shouldKeepHdr && (selectedCodec.bitDepth === 10)) ? "p010le" : "nv12";
         pre.push(`format=${uploadFmt}`, "hwupload");
 
         let vaapiFilter = pre.join(",");
-        if (targetFps) vaapiFilter += `,fps=${targetFps}`;
         args.push("-vaapi_device", vaapiDevice, "-vf", vaapiFilter);
       } else {
         pre.push(evenizeFilter);
+        if (videoTimelineFilter) pre.push(videoTimelineFilter);
         const uploadFmt = (shouldKeepHdr && (selectedCodec.bitDepth === 10)) ? "p010le" : "nv12";
         pre.push(`format=${uploadFmt}`, "hwupload");
         let vaapiFilter = pre.join(",");
@@ -2458,7 +2502,6 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
           const hExpr = (targetHeight > 0) ? targetHeight : -2;
           vaapiFilter += `,scale_vaapi=w=${wExpr}:h=${hExpr}`;
         }
-        if (targetFps) vaapiFilter += `,fps=${targetFps}`;
         args.push("-vaapi_device", vaapiDevice, "-vf", vaapiFilter);
       }
 
@@ -2870,6 +2913,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     const canApplyAudioFilters =
       hasAudioOutputSelected &&
       (!isVideo || String(audioCodec || "").toLowerCase() !== "copy");
+    // Run synchronization before atempo/volume/loudnorm, so intentional tempo
+    // presets are not undone and both loudnorm passes analyze the same audio.
+    if (audioTimelineFilter && canApplyAudioFilters) preLoudnormFilters.push(audioTimelineFilter);
 
     const runLoudnormAnalysisPass = async (filterChain, config) => {
       if (!canApplyAudioFilters) return null;
@@ -3062,6 +3108,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
     console.log("🔧 FFmpeg arguments:", sanitizeLogValue(args.join(" ")));
 
+    reportStage('converting');
     let triedFallback = false;
     let ffmpeg = spawnSafe(ffmpegBin, args);
     try {
@@ -3441,6 +3488,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       );
     }
 
+    reportStage(isCanceled() ? 'canceled' : 'error');
     throw transcodeError;
   }
 
@@ -3465,6 +3513,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     console.log(lyricsCheckLog);
 
     if (shouldProcessLyrics && !isVideo && result && result.outputPath) {
+      reportStage('lyrics_search');
       console.log("🎵 Adding lyrics...");
       const actualOutputPath = resolveResultDownloadPath(result.outputPath);
       if (!actualOutputPath) {
@@ -3478,6 +3527,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
       // Handles lyrics metadata log callback in the FFmpeg media conversion pipeline.
       const lyricsLogCallback = (message) => {
+        if (message?.logKey === 'log.lyrics.embedding') reportStage('lyrics_embed');
         const line =
           typeof message === "object" && message?.fallback
             ? message.fallback
@@ -3573,10 +3623,12 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     }
 
     await ensureResultOwnership(result);
+    reportStage('ready');
     return result;
   } catch (error) {
     console.error("❌ Lyrics processing error:", error);
     await ensureResultOwnership(result);
+    reportStage('ready');
     return result;
     } finally {
     for (const p of tempFilesToCleanup) {

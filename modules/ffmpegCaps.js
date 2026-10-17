@@ -1,5 +1,6 @@
 import { spawnSafe } from "./safeProcess.js";
 import path from "path";
+import { safeFrameRate } from "./videoTimeline.js";
 
 const _cache = new Map();
 
@@ -116,7 +117,7 @@ async function runFfprobeMaybe(ffmpegBin, inputPath, timeoutMs) {
     "-show_streams",
     "-show_format",
     "-show_entries",
-    "stream=index,codec_name,codec_type,width,height,pix_fmt,profile,level,color_range,color_space,color_transfer,color_primaries,side_data_list,tags",
+    "stream=index,codec_name,codec_type,width,height,pix_fmt,profile,level,r_frame_rate,avg_frame_rate,color_range,color_space,color_transfer,color_primaries,side_data_list,tags",
     inputPath
   ];
 
@@ -224,6 +225,9 @@ export async function probeVideoStreamInfo(ffmpegBin, inputPath, timeoutMs = 150
         pixFmt: vs.pix_fmt || null,
         width: Number(vs.width) || 0,
         height: Number(vs.height) || 0,
+        duration: Number(obj.format?.duration) || Number(vs.duration) || 0,
+        rotation: Number(vs.side_data_list?.find(item => item.rotation != null)?.rotation ?? vs.tags?.rotate) || 0,
+        frameRate: safeFrameRate(vs.r_frame_rate) || safeFrameRate(vs.avg_frame_rate),
 
         color_transfer: vs.color_transfer || null,
         color_primaries: vs.color_primaries || null,

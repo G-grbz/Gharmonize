@@ -35,6 +35,7 @@ import {
   pickPlaylistOutputName
 } from "./outputPaths.js";
 import { queueOwnershipFix } from "./fsOwnership.js";
+import { setTrackStage } from "./jobTiming.js";
 import {
   resolveSpotifyConcurrency
 } from "./concurrency.js";
@@ -729,8 +730,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
         : "";
     if (!text) return;
     job.lastLog = text;
-    job.lastLogKey = null;
-    job.lastLogVars = null;
+    job.lastLogKey = typeof payload === 'object' ? payload.logKey || null : null;
+    job.lastLogVars = job.lastLogKey ? payload.logVars || {} : null;
   };
   // Builds live conversion log with elapsed/duration and real fps.
   const buildLiveVideoConvertLog = (progress, details = {}, label = "") => {
@@ -1483,6 +1484,8 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             .basename(filePath, path.extname(filePath))
             .replace(/^\d+\s*-\s*/, "");
           let title = toNFC(entry?.title || fallbackTitle);
+          const trackStage = phase => setTrackStage(job, `track:${stableIndex}`, phase, { title, artist: entry.artist || entry.uploader });
+          trackStage('youtube_metadata');
           const preparationStartedAt = Date.now();
           const totalTracks = job.playlist?.total || totalGuess || 1;
           const nativeTrackNumber =
@@ -1594,6 +1597,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           });
 
           if (process.env.ENRICH_SPOTIFY_FOR_YT === "1") {
+            trackStage('provider_metadata');
             try {
               const spMeta = await findSpotifyMetaByQuery(
                 fileMeta.artist,
@@ -1622,6 +1626,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           }
 
           const providerStartedAt = Date.now();
+          trackStage('provider_metadata');
           fileMeta = await enrichMetaFromApple(fileMeta, {
             artist: fileMeta.artist || fileMeta.uploader,
             title: fileMeta.track || fileMeta.title,
@@ -1635,6 +1640,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
           const providerMetadataMs = Date.now() - providerStartedAt;
           const coverStartedAt = Date.now();
+          trackStage('cover');
           let itemCover = null;
           const baseNoExt = filePath.replace(/\.[^.]+$/, "");
           const sidecarJpg = `${baseNoExt}.jpg`;
@@ -1646,6 +1652,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           console.log(`[youtube ${sanitizeLogValue(jobId)}] Prepared ${sanitizeLogValue(fileId || stableIndex + 1)}: YouTube metadata=${youtubeMetadataMs}ms, provider metadata=${providerMetadataMs}ms, cover=${Date.now() - coverStartedAt}ms`);
 
           try {
+            trackStage('provider_metadata');
             const strictMeta = await resolveId3StrictForYouTube(
               {
                 title: fileMeta.title,
@@ -1813,6 +1820,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                   compressionLevel: job.metadata?.compressionLevel ?? null,
                   isCanceled: () => !!jobs.get(jobId)?.canceled,
                   onLog: handleLyricsLog,
+                  onStage: trackStage,
                   volumeGain: effectiveVolumeGain,
                   loudnorm: effectiveLoudnorm,
                   loudnormMode: effectiveLoudnormMode,
@@ -1823,6 +1831,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 }
               );
             } catch (err) {
+              trackStage(String(err?.message || '').toUpperCase() === 'CANCELED' ? 'canceled' : 'error');
               if (String(err?.message || "").toUpperCase() === "CANCELED") {
                 const jobRef = jobs.get(jobId);
                 if (jobRef) {
@@ -1843,6 +1852,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           }
 
           results[stableIndex] = r;
+          trackStage(r?.outputPath ? 'completed' : 'error');
           updateParallelConversionProgress(
             job,
             youtubeConvertProgressByIndex,
@@ -1930,6 +1940,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
               ? qualityToHeight(bitrate)
               : undefined,
             youtubeConcurrency,
+            onTrackStage: ({ id, playlistIndex, phase }) => {
+              const index = resolveYouTubePlaylistSlot('', playlistIndex, id);
+              setTrackStage(job, `track:${index}`, phase, frozenById.get(id) || {});
+            },
             sourceUrl: job.metadata?.url || "",
             frozenEntries: Array.isArray(job.metadata?.frozenEntries)
               ? job.metadata.frozenEntries
