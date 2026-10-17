@@ -16,6 +16,7 @@ import {
 } from "../modules/spotify.js";
 import { spotifyMapTasks, jobs, killJobProcesses, createJob, registerJobProcess, getJobProcessCount, markJobCompleted } from "../modules/store.js";
 import { convertMedia, downloadThumbnail, retagMediaFile } from "../modules/media.js";
+import { setTrackStage } from "../modules/jobTiming.js";
 import { ZipArchive } from "archiver";
 import { resolveMarket } from "../modules/market.js";
 import { isVideoFormat, processYouTubeVideoJob } from "../modules/video.js";
@@ -750,6 +751,8 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       const filePath = dlResult.filePath;
       const entry = dlResult.item;
       const logicalIndex = (dlResult.index != null ? dlResult.index - 1 : idxZeroBased);
+      const trackStage = phase => setTrackStage(job, `track:${logicalIndex}`, phase, entry);
+      trackStage('provider_metadata');
 
       let spInfo = Array.isArray(sp.items) ? (sp.items[logicalIndex] || null) : null;
       if (!spInfo && Array.isArray(sp.items) && sp.items.length) {
@@ -821,6 +824,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
       }
 
       let itemCover = null;
+      trackStage('cover');
       const baseNoExt = filePath.replace(/\.[^.]+$/, "");
 
       if (preferSpotify && preferredCoverUrl) {
@@ -884,6 +888,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           outputDir,
           TEMP_DIR,
           {
+            onStage: trackStage,
             outputRootDir: OUTPUT_DIR,
             onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
             includeLyrics: !!job.metadata.includeLyrics,
@@ -925,8 +930,10 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 
         try {
           const abs = outputAbsByIndex.get(logicalIndex);
+          trackStage('provider_metadata');
           const rich = await metadataPromises[logicalIndex];
           if (abs && rich && fs.existsSync(abs)) {
+            trackStage('cover');
             const coverPath = await resolveCoverForRetag({
               absOutputPath: abs,
               preferUrl: rich.coverUrl || coverUrlByIndex.get(logicalIndex) || null,
@@ -939,6 +946,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
               { ...rich, playlist_title: job.metadata.spotifyTitle },
               coverPath,
               {
+                onStage: trackStage,
                 jobId,
                 tempDir: TEMP_DIR,
                 onProcess: (child) => {
@@ -952,7 +960,9 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         job.lastLogKey = 'log.converting.ok';
         job.lastLogVars = { title: entry.title };
         job.lastLog = `✅ Converted: ${entry.title}`;
+        trackStage('completed');
       } catch (convertError) {
+        trackStage(isCanceledError(convertError) ? 'canceled' : 'error');
         if (isCanceledError(convertError)) {
           console.log(`[music-match ${jobId}] Conversion canceled for: ${entry.title}`);
           return;
@@ -973,6 +983,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
     const dlQueue = !isVideoFormatFlag
       ? createDownloadQueue(jobId, {
           concurrency: parallel,
+          onStage: (index, phase, item) => setTrackStage(job, `track:${index}`, phase, item),
           onProgress: (done, _queueTotal) => {
           job.playlist.downloaded = done;
           const totalForProgress = Math.max(1, Number(job.playlist.total) || totalItems || 1);
@@ -1029,6 +1040,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
           shouldCancel,
           replaceManifest,
           indexOffset,
+          onStage: (index, phase, item) => setTrackStage(job, `track:${indexOffset + index}`, phase, item),
           onUpdate: (localIdx, item) => {
             if (shouldCancel()) return;
             const idx = indexOffset + localIdx;
@@ -1301,6 +1313,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
 async function processSingleTrack(jobId, sp, format, bitrate) {
   const job = jobs.get(jobId);
   if (!job) return;
+  const trackStage = phase => setTrackStage(job, 'single', phase, sp.items?.[0] || {});
   let filePath = null;
   const source = String(job.metadata?.source || "spotify").toLowerCase();
 
@@ -1323,6 +1336,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       url: job.metadata?.spotifyUrl || "",
       source,
       concurrency: 1,
+      onStage: (_index, phase) => trackStage(phase),
       shouldCancel,
       onUpdate: (_idx, item) => {
       if (shouldCancel()) return;
@@ -1361,6 +1375,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
 
     const dlQueue = createDownloadQueue(jobId, {
       concurrency: 1,
+      onStage: (_index, phase) => trackStage(phase),
       shouldCancel,
       onProgress: (done, total) => {
         job.playlist.done = done;
@@ -1408,6 +1423,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     const preferSpotify = process.env.PREFER_SPOTIFY_TAGS === "1";
     const spInfo = sp.items[0];
     let richNow = null;
+    trackStage('provider_metadata');
     try {
       richNow = await findMappedTrackMeta(
         spInfo,
@@ -1470,6 +1486,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
         fileMeta.imageUrl = undefined;
       }
 
+      trackStage('cover');
       let itemCover = null;
       const baseNoExt = filePath.replace(/\.[^.]+$/, "");
 
@@ -1506,6 +1523,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       outputDir,
       TEMP_DIR,
       {
+        onStage: trackStage,
         outputRootDir: OUTPUT_DIR,
         onProcess: (child) => { try { registerJobProcess(jobId, child); } catch {} },
         includeLyrics: !!job.metadata.includeLyrics,
@@ -1528,6 +1546,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
       }
     );
 
+    trackStage('completed');
     job.resultPath = result;
     markJobCompleted(job);
     job.progress = 100;

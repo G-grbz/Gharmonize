@@ -8,6 +8,7 @@ import { findDeezerTrackMetaByQuery } from "./deezer.js";
 import { searchSpotifyBestTrackStrict, trackToId3Meta } from "./spotify.js";
 import { resolveMarket } from "./market.js";
 import { markJobCompleted, registerJobProcess } from "./store.js";
+import { setTrackStage } from "./jobTiming.js";
 import { sanitizeFilename } from "./utils.js";
 
 const RETAGGABLE_EXTENSIONS = new Set([".mp3", ".flac", ".m4a"]);
@@ -366,22 +367,27 @@ export async function processRetagDirectoryJob(job, { directoryPath, tempRoot })
       providers: {}
     };
     job.lastLog = `🏷️ ${files.length} file(s) found. Retagging started.`;
+    files.forEach((filePath, index) => setTrackStage(job, `track:${index}`, 'queued', { title: path.basename(filePath) }));
 
     for (let index = 0; index < files.length; index += 1) {
       if (job.canceled || job.status === "canceled") break;
 
       const filePath = files[index];
       const fileName = path.basename(filePath);
+      const trackStage = (phase, metadata = {}) => setTrackStage(job, `track:${index}`, phase, metadata);
+      trackStage('preparing');
       job.lastLog = `🏷️ Retagging: ${fileName}`;
       let cover = { path: null, temporary: false };
 
       try {
         const parsed = await parseFile(filePath, { duration: true, skipCovers: true });
         const existingMeta = metadataFromParsed(filePath, parsed, directoryPath);
+        trackStage('provider_metadata', existingMeta);
         const onlineResult = await resolveOnlineMetadata(existingMeta);
         const metadata = onlineResult
           ? mergePresent(existingMeta, onlineResult.metadata)
           : existingMeta;
+        trackStage('cover', metadata);
         cover = await resolveCover(filePath, metadata, jobTempDir, index);
 
         const result = await retagMediaFile(
@@ -391,6 +397,7 @@ export async function processRetagDirectoryJob(job, { directoryPath, tempRoot })
           cover.path,
           {
             jobId: job.id,
+            onStage: trackStage,
             tempDir: jobTempDir,
             onProcess: (child) => registerJobProcess(job.id, child)
           }
@@ -398,6 +405,7 @@ export async function processRetagDirectoryJob(job, { directoryPath, tempRoot })
 
         if (!result) throw new Error("The media tags could not be rewritten");
         const renameResult = renameRetaggedFile(result, metadata);
+        trackStage('completed', metadata);
         job.metadata.retagStats.tagged += 1;
         if (onlineResult) {
           job.metadata.retagStats.onlineMatched += 1;
@@ -417,6 +425,7 @@ export async function processRetagDirectoryJob(job, { directoryPath, tempRoot })
           : fileName;
         job.lastLog = `✅ Retagged (${sourceLabel}): ${renamedLabel}`;
       } catch (error) {
+        trackStage(job.canceled || job.status === 'canceled' ? 'canceled' : 'error');
         if (job.canceled || job.status === "canceled") break;
         job.metadata.retagStats.failed += 1;
         job.errorsCount = job.metadata.retagStats.failed;

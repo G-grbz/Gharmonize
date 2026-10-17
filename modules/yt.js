@@ -5549,6 +5549,9 @@ async function downloadSelectedIdsParallel(
   fs.mkdirSync(playlistDir, { recursive: true });
 
   const preExisting = getDownloadedFiles(playlistDir, true);
+  for (const id of selectedIds) {
+    try { opts.onTrackStage?.({ id, playlistIndex: idToIndex.get(id), phase: 'queued' }); } catch {}
+  }
   if (preExisting.length >= selectedIds.length) {
     if (progressCallback) progressCallback(100);
     return preExisting;
@@ -5607,9 +5610,14 @@ async function downloadSelectedIdsParallel(
   };
 
   const makeTask = (url, index) => async () => {
+    const stage = phase => {
+      try { opts.onTrackStage?.({ id: selectedIds[index], playlistIndex: idToIndex.get(selectedIds[index]), phase }); } catch {}
+    };
     if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
+      stage('canceled');
       throw new Error("CANCELED");
     }
+    stage('downloading');
 
     const outputTemplate = path.join(playlistDir, `%(id)s.%(ext)s`);
 
@@ -5706,6 +5714,7 @@ async function downloadSelectedIdsParallel(
           fallbackAbsPathById();
         if (!donePath) return;
         emittedDone = true;
+        stage('queued');
         console.log(`[youtube ${sanitizeLogValue(jobId)}] Downloaded ${sanitizeLogValue(selectedIds[index])} in ${((Date.now() - downloadStartedAt) / 1000).toFixed(1)}s; preparing metadata`);
 
         completedCount++;
@@ -5764,11 +5773,13 @@ async function downloadSelectedIdsParallel(
 
       child.on("close", (code, signal) => {
         if (signal === "SIGTERM" || signal === "SIGKILL") {
+          stage('canceled');
           return reject(new Error("CANCELED"));
         }
 
         if (code === 0) {
           emitFileDoneOnce();
+          if (!emittedDone) stage('skipped');
           return resolve();
         }
 
@@ -5776,13 +5787,16 @@ async function downloadSelectedIdsParallel(
 
         if (SKIP_RE.test(tail) || ERROR_WORD.test(tail)) {
           emitFileDoneOnce();
+          if (!emittedDone) stage(SKIP_RE.test(tail) ? 'skipped' : 'error');
           return resolve();
         }
 
+        stage('error');
         return reject(new Error(`yt-dlp error (parallel id ${index + 1}): ${code}\n${tail}`));
       });
 
       child.on("error", (err) => {
+        stage('error');
         reject(new Error(`yt-dlp failed to start: ${err.message}`));
       });
     });
@@ -5791,7 +5805,15 @@ async function downloadSelectedIdsParallel(
   const conc = normalizeConcurrency(opts.youtubeConcurrency);
   const tasks = urls.map((url, idx) => makeTask(url, idx));
 
-  await runWithConcurrency(conc, tasks);
+  try {
+    await runWithConcurrency(conc, tasks);
+  } finally {
+    if (typeof ctrl?.isCanceled === 'function' && ctrl.isCanceled()) {
+      for (const id of selectedIds) {
+        try { opts.onTrackStage?.({ id, playlistIndex: idToIndex.get(id), phase: 'canceled' }); } catch {}
+      }
+    }
+  }
 
   const files = getDownloadedFiles(playlistDir, true);
   const finalSkipped = Math.max(0, totalCount - files.length);

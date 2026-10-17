@@ -11,6 +11,7 @@ import { sanitizeFilename, normalizeTitle, parseIdFromPath } from "./utils.js"
 import { convertMedia } from "./media.js";
 import { spawnSafe } from "./safeProcess.js";
 import { jobs, registerJobProcess, markJobCompleted } from "./store.js";
+import { setTrackStage } from "./jobTiming.js";
 import { toDownloadPath } from "./outputPaths.js";
 import { ensureOwnership } from "./fsOwnership.js";
 
@@ -448,6 +449,7 @@ export async function processYouTubeVideoJob(job, {
         : titleRaw;
 
       const cleanTitle = sanitizeFilename(baseTitle) || "video";
+      setTrackStage(job, `video:${i + 1}`, 'preparing', { title: titleRaw, artist: artistRaw });
       console.log(`🎧 ${sourceLabel} cleanTitle:`, { cleanTitle, artistRaw, titleRaw });
 
       if (!transcodeEnabled) {
@@ -463,6 +465,7 @@ export async function processYouTubeVideoJob(job, {
           outputPath: downloadPath,
           fileSize: fs.statSync(targetAbs).size
         });
+        setTrackStage(job, `video:${i + 1}`, 'completed');
 
         job.playlist.done   = i + 1;
         job.counters.cvDone = i + 1;
@@ -540,6 +543,7 @@ export async function processYouTubeVideoJob(job, {
         );
 
         results.push(convResult);
+        setTrackStage(job, `video:${i + 1}`, convResult?.outputPath ? 'completed' : 'error');
 
         job.playlist.done   = i + 1;
         job.counters.cvDone = i + 1;
@@ -895,6 +899,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, OUTPUT_ROOT_DIR, TEMP_D
       : titleRaw;
 
     const cleanTitle = sanitizeFilename(baseTitle) || "video";
+    setTrackStage(job, `video:${i + 1}`, 'preparing', { title: titleRaw, artist: artistRaw });
 
     job.lastLogKey = 'log.spotify.videoConverting';
     job.lastLogVars = {
@@ -920,6 +925,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, OUTPUT_ROOT_DIR, TEMP_D
         outputPath: downloadPath,
         fileSize: fs.statSync(targetAbs).size
       });
+      setTrackStage(job, `video:${i + 1}`, 'completed');
 
       job.playlist.done   = i + 1;
       job.counters.cvDone = i + 1;
@@ -1014,6 +1020,7 @@ async function processSpotifyVideoJob(job, { OUTPUT_DIR, OUTPUT_ROOT_DIR, TEMP_D
       );
 
       results.push(convResult);
+      setTrackStage(job, `video:${i + 1}`, convResult?.outputPath ? 'completed' : 'error');
 
       job.playlist.done   = i + 1;
       job.counters.cvDone = i + 1;

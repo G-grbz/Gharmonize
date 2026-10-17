@@ -1,4 +1,5 @@
 import { collectJobOutputPaths, outputExistenceClient } from './OutputExistenceClient.js';
+import { jobTimingMarkup, escapeTimingHtml } from './JobTimingView.js';
 
 export class JobsPanelManager {
     // Initializes class state and defaults for the browser UI layer.
@@ -1408,8 +1409,8 @@ export class JobsPanelManager {
         }
 
         return `
-            <div class="job-card" data-job-id="${j.id}">
-                <div class="job-title">${this.statusDot(j)}<span>${titleText}</span></div>
+            <div class="job-card status-${escapeTimingHtml(this.norm(j.status))}" data-job-id="${escapeTimingHtml(j.id)}">
+                <div class="job-title">${this.statusDot(j)}<span title="${escapeTimingHtml(titleText)}">${escapeTimingHtml(titleText)}</span></div>
 
                 <div class="job-meta">
                     <span class="pill">${this.sourcePill(j)}</span>
@@ -1475,6 +1476,7 @@ export class JobsPanelManager {
 
                 ${cancelInfo}
                 ${completedAtInfo}
+                ${jobTimingMarkup(j, key => this.t(key))}
 
                 <div class="progress panel" role="progressbar"
                      aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}">

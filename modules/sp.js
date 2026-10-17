@@ -571,10 +571,14 @@ async function verifyCatalogCandidate(entry, sourceMs) {
   }
 }
 
-async function waitForCatalogSearchCooldown(provider) {
+async function waitForCatalogSearchCooldown(provider, onStage) {
   if (!isCatalogMusicProvider(provider)) return;
   const remaining = _catalogSearchCooldownUntil - Date.now();
-  if (remaining > 0) await sleep(remaining);
+  if (remaining > 0) {
+    onStage?.('waiting');
+    await sleep(remaining);
+    onStage?.('matching');
+  }
 }
 
 function isYouTubeSearchRateLimitError(error) {
@@ -582,13 +586,13 @@ function isYouTubeSearchRateLimitError(error) {
   return /(?:\b429\b|too many requests|rate.?limit|sign in to confirm you.?re not a bot)/i.test(message);
 }
 
-async function runMappedMusicSearchQuery(query, resultLimit, provider) {
+async function runMappedMusicSearchQuery(query, resultLimit, provider, onStage) {
   const catalogProvider = isCatalogMusicProvider(provider);
   const attempts = catalogProvider ? (1 + MAPPED_MUSIC_YT_SEARCH_RETRIES) : 1;
   let lastError = null;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
-    await waitForCatalogSearchCooldown(provider);
+    await waitForCatalogSearchCooldown(provider, onStage);
     try {
       return await runYtJsonLite([`ytsearch${resultLimit}:${query}`], 'ytm-search-lite', YT_SEARCH_TIMEOUT_MS);
     } catch (error) {
@@ -602,7 +606,9 @@ async function runMappedMusicSearchQuery(query, resultLimit, provider) {
       }
       if (attempt + 1 >= attempts) break;
       const jitter = Math.floor(Math.random() * 150);
+      onStage?.('retrying');
       await sleep(MAPPED_MUSIC_YT_SEARCH_RETRY_BACKOFF_MS + jitter);
+      onStage?.('matching');
     }
   }
   throw lastError || new Error('YouTube search failed');
@@ -636,7 +642,7 @@ export async function searchYtmBestMatch(artist, title, options = {}) {
     const query = queries[queryIndex];
     let data = null;
     try {
-      data = await runMappedMusicSearchQuery(query, resultLimit, provider);
+      data = await runMappedMusicSearchQuery(query, resultLimit, provider, options.onStage);
     } catch (error) {
       if (provider !== 'soundcloud' && !isCatalogMusicProvider(provider)) throw error;
       if (isCatalogMusicProvider(provider) && isYouTubeSearchRateLimitError(error)) throw error;
@@ -770,7 +776,7 @@ function getYtDlpCommonArgs() {
 export async function mapSpotifyToYtm(
   sp,
   onUpdate,
-  { concurrency = 3, onLog = null, shouldCancel = null } = {}
+  { concurrency = 3, onLog = null, shouldCancel = null, onStage = null } = {}
 ) {
   if (!Array.isArray(sp?.items) || sp.items.length === 0) {
     return [];
@@ -815,13 +821,16 @@ export async function mapSpotifyToYtm(
               logVars: { artist: it.artist, title: it.title },
               fallback: `🔍 Searching: ${it.artist} - ${it.title}`,
             });
+          const stage = phase => { try { onStage?.(idx, phase, it); } catch {} };
+          stage('matching');
           let ytMatch = null;
+          let searchFailed = false;
           try {
             const searchArtist = it.match_artist || it.matchArtist || it.artist;
             const searchTitle = it.match_title || it.matchTitle || it.title;
             ytMatch = await searchYtmBestMatch(searchArtist, searchTitle, {
               provider: sp?.provider || it?.source_provider || "",
-              sourceItem: it
+              sourceItem: it, onStage: stage
             });
             if (onLog && ytMatch?.id)
               onLog({
@@ -836,6 +845,8 @@ export async function mapSpotifyToYtm(
                 fallback: `❌ Not found: ${it.artist} - ${it.title}`,
               });
           } catch (e) {
+            searchFailed = true;
+            stage('error');
             if (onLog)
               onLog({
                 logKey: "log.searchError",
@@ -848,6 +859,7 @@ export async function mapSpotifyToYtm(
               });
           }
           const vid = ytMatch?.id || null;
+          if (!searchFailed) stage(vid ? 'queued' : 'not_found');
           const item = {
             index: idx + 1,
             id: vid,
@@ -1125,11 +1137,12 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
 }
 
 // Downloads single you tube video with outer retry in core application logic.
-export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
+export async function downloadSingleYouTubeVideo(url, fileId, downloadDir, onStage = null) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= YT_DOWNLOAD_RETRY_ATTEMPTS; attempt++) {
     try {
+      onStage?.('downloading');
       return await downloadSingleYouTubeVideoOnce(url, fileId, downloadDir);
     } catch (error) {
       lastError = error;
@@ -1142,6 +1155,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
       );
 
       if (YT_DOWNLOAD_RETRY_BACKOFF_MS > 0) {
+        onStage?.('retrying');
         await sleep(YT_DOWNLOAD_RETRY_BACKOFF_MS * attempt);
       }
     }
@@ -1153,7 +1167,7 @@ export async function downloadSingleYouTubeVideo(url, fileId, downloadDir) {
 // Creates download metadata queue for core application logic.
 export function createDownloadQueue(
   jobId,
-  { concurrency = 4, onProgress, onLog, shouldCancel, onItemDone } = {}
+  { concurrency = 4, onProgress, onLog, shouldCancel, onItemDone, onStage = null } = {}
 ) {
   const downloadDir = path.join(TEMP_DIR, jobId);
   fs.mkdirSync(downloadDir, { recursive: true });
@@ -1177,6 +1191,7 @@ export function createDownloadQueue(
       const task = q.shift();
       running++;
       const { item, idx } = task;
+      const stage = phase => { try { onStage?.(idx, phase, item); } catch {} };
       if (onLog)
         onLog({
           logKey: "log.downloading.start",
@@ -1192,7 +1207,7 @@ export function createDownloadQueue(
         const filePath = await downloadSingleYouTubeVideo(
           item.webpage_url,
           `${jobId}_${idx}`,
-          downloadDir
+          downloadDir, stage
         );
 
         const dlResult = {
@@ -1205,6 +1220,7 @@ export function createDownloadQueue(
         };
 
         results.push(dlResult);
+        stage('queued');
 
         if (onLog)
           onLog({
@@ -1221,6 +1237,7 @@ export function createDownloadQueue(
           }
         }
       } catch (e) {
+        stage(shouldCancel?.() ? 'canceled' : 'error');
         const dlResult = {
           index: item.index,
           idxZeroBased: idx,
@@ -1262,6 +1279,7 @@ export function createDownloadQueue(
     // Handles enqueue in core application logic.
     enqueue(item, idxZeroBased) {
       total++;
+      try { onStage?.(idxZeroBased, 'queued', item); } catch {}
       q.push({ item, idx: idxZeroBased });
       pump();
     },

@@ -5,6 +5,7 @@ import crypto from "crypto";
 import multer from "multer";
 import { sendOk, sendError, ERR, isDirectMediaUrl, sanitizeFilename } from "../modules/utils.js";
 import { sanitizeLogValue } from "../modules/security.js";
+import { getJobTiming } from "../modules/jobTiming.js";
 import {
   jobs,
   spotifyMapTasks,
@@ -783,6 +784,13 @@ router.get("/api/jobs/:id", rateLimit(120, 60_000), (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return sendError(res, ERR.JOB_NOT_FOUND, "Job not found", 404);
   return sendOk(res, job);
+});
+
+// Same access boundary as the existing job snapshot; no local paths or secrets.
+router.get("/api/jobs/:id/timing", rateLimit(120, 60_000), (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return sendError(res, ERR.JOB_NOT_FOUND, "Job not found", 404);
+  res.json({ ok: true, timing: getJobTiming(job, req.query.offset, req.query.limit) });
 });
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
@@ -1663,6 +1671,7 @@ router.get("/api/jobs", requireAuth, rateLimit(120, 60_000), (req, res) => {
       downloadProgress: j.downloadProgress ?? 0,
       convertProgress: j.convertProgress ?? 0,
       currentPhase: j.currentPhase || "queued",
+      timing: j.timing || null,
       format: j.format,
       bitrate: j.bitrate,
       videoSettings: j.videoSettings || null,
@@ -1735,6 +1744,7 @@ router.get("/api/stream", requireAuth, rateLimit(120, 60_000), (req, res) => {
       downloadProgress: j.downloadProgress ?? 0,
       convertProgress: j.convertProgress ?? 0,
       currentPhase: j.currentPhase || "queued",
+      timing: j.timing || null,
       format: j.format,
       bitrate: j.bitrate,
       videoSettings: j.videoSettings || null,

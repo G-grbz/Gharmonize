@@ -1,4 +1,5 @@
 import { settingsManager } from './SettingsManager.js';
+import { jobTimingMarkup } from './JobTimingView.js';
 import { accessManager } from './AccessManager.js';
 import { accessInboxManager } from './AccessInboxManager.js';
 import {
@@ -5433,6 +5434,7 @@ class YTLiveMusicApp {
             <span style="width:${progress}%"></span>
           </div>
           <div class="job-card__meta">${progress}%</div>
+          ${jobTimingMarkup(job, key => this.tt(key, key))}
           ${links}
         </article>
       `;

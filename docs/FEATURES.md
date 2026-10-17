@@ -38,6 +38,16 @@ Full guide: [YTLIVE.md](YTLIVE.md)
 
 ---
 
+## Job Stages and Timings
+
+* Classic and YTLive job cards show elapsed time and a **Stages and timings** details button.
+* Music mapping and selected YouTube/automix audio tracks report independent stages for matching, downloading, metadata, artwork, conversion, lyrics, and retagging where applicable. Other workflows show overall job stages; detailed per-track coverage is being expanded.
+* Cached music matches are identified separately. Directory retag jobs have per-file timings, and video collection conversions have independent completion times. Cards and details follow the light/dark theme and keep long names contained; click a name in the details view to expand it.
+* Parallel stages overlap, so total elapsed time is not the sum of all track durations. Retries, rate-limit waits, missing matches, failures, and cancellations are tracked separately in instrumented flows.
+* Details are loaded on demand in 50-track pages, with up to 1,000 track histories per job. Use **Refresh** to fetch the latest stages; elapsed clocks do not trigger background network polling. Completed measurements are retained with job history; older jobs have no invented timings.
+
+---
+
 ## Phone Ringtone Output
 
 * Export ringtone-ready files for **iPhone** and **Android**
@@ -54,6 +64,7 @@ Full guide: [YTLIVE.md](YTLIVE.md)
 * FFmpeg-based conversion with reliability-first defaults
 * Convert to **mp3 / flac / wav / ogg / opus / m4a / alac / mp4 / mkv**
 * Ready-made **FPS adjustment presets** for **AC3 / EAC3 / AAC** sync fixes
+* Video re-encoding uses the source's nominal FPS (or the selected FPS) as a constant frame rate and aligns re-encoded audio samples with their timestamps. Gaps, overlaps, and delayed audio starts are materialized as frames/samples instead of relying only on container timing. Stream-copy modes retain the copied tracks' original timing. Extracting raw tracks still discards codec-delay metadata, so a small fixed encoder delay may require correction when remuxing.
 * Hardware acceleration for local video transcoding with **NVIDIA NVENC**, **VAAPI**, and **Intel Quick Sync (QSV)**
 
 ---

@@ -1,4 +1,5 @@
 import { collectJobOutputPaths, outputExistenceClient } from './OutputExistenceClient.js';
+import { jobTimingMarkup } from './JobTimingView.js';
 
 export class JobManager {
     // Initializes class state and defaults for the browser UI layer.
@@ -1661,7 +1662,7 @@ updateJobUI(job, batchId = null) {
 
     const jobContent = `
     <div class="job-item-content">
-        <strong>${this.app.escapeHtml(jobTitle)}</strong>
+        <strong title="${this.app.escapeHtml(jobTitle)}">${this.app.escapeHtml(jobTitle)}</strong>
         <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
             ${phaseInfo}
             ${skippedBadge}
@@ -1672,6 +1673,7 @@ updateJobUI(job, batchId = null) {
         ${cancelInfo}
         ${completedAtInfo}
         ${phaseDetails}
+        ${jobTimingMarkup(job, key => this.app.t(key))}
 
         ${(() => {
             const nt = this.uiNowTitle(job);
@@ -1737,7 +1739,7 @@ updateJobUI(job, batchId = null) {
             if (header && body) {
                 const titleSpan = header.querySelector('.job-item-header__title');
                 const statusSpan = header.querySelector('.job-item-header__status');
-                if (titleSpan) titleSpan.textContent = this.app.escapeHtml(jobTitle);
+                if (titleSpan) titleSpan.textContent = jobTitle;
                 if (statusSpan) statusSpan.textContent = statusText[job.status];
                 statusSpan.className = `job-item-header__status status status-${job.status}`;
 
