@@ -48,7 +48,7 @@ For guidance on unofficial downloads, impersonation, and reporting suspicious di
 
 ## Code signing policy
 
-**Windows signing status (v1.4.3): Windows downloads do not yet carry a trusted Authenticode signature.** Test certificates are not used for public releases. Windows may show publisher/SmartScreen warnings or block execution under managed security policies. The GPG-signed checksum manifest is not a substitute for Authenticode signing.
+**Windows signing status (v1.4.4): Windows downloads do not yet carry a trusted Authenticode signature.** Test certificates are not used for public releases. Windows may show publisher/SmartScreen warnings or block execution under managed security policies. The GPG-signed checksum manifest is not a substitute for Authenticode signing.
 
 The signing roles, trusted-build requirements, artifact coverage, and verification process are documented in the [Gharmonize Code Signing Policy](CODE_SIGNING_POLICY.md). Runtime data handling and external network connections are documented in the [Privacy Policy](PRIVACY.md).
 

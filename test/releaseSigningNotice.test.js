@@ -24,7 +24,7 @@ test('current release versions agree and release notes disclose unsigned Windows
 });
 
 test('public documentation makes no signing-provider claims while Windows artifacts remain unsigned', () => {
-  const files = ['README.md', 'SECURITY.md', 'CODE_SIGNING_POLICY.md', 'PRIVACY.md',
+  const files = ['README.md', 'SECURITY.md', 'CODE_SIGNING_POLICY.md', 'PRIVACY.md', '.github/workflows/release.yml',
     ...fs.readdirSync('docs/releases').filter(file => file.endsWith('.md')).map(file => `docs/releases/${file}`)];
   for (const file of files) {
     assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /signpath/i, file);

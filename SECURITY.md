@@ -31,7 +31,7 @@ When administrator-gated application access is enabled, Gharmonize enforces the 
 
 ## Release verification
 
-**Windows downloads in v1.4.3 do not carry a trusted Authenticode signature.**
+**Windows downloads in v1.4.4 do not carry a trusted Authenticode signature.**
 The Setup installer, Portable EXE, and application executable in the Portable
 Folder ZIP may trigger unknown-publisher or SmartScreen warnings. Test
 certificates are not used for public releases. Do not disable Windows security
