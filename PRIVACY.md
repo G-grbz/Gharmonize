@@ -52,10 +52,6 @@ handling of those requests. Common policies include
 [SoundCloud](https://soundcloud.com/pages/privacy). Users should also review the
 policy of any other site whose URL they submit to Gharmonize.
 
-Gharmonize does not send runtime or end-user data to SignPath. SignPath is used
-only by the official release build pipeline to sign project-produced Windows
-binaries.
-
 ## Cookies and service credentials
 
 Browser cookies, exported cookie files, API credentials, and service tokens are

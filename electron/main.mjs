@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification, Tray, powerMonitor } from 'electron'
+import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification, Tray, powerMonitor, nativeImage, nativeTheme } from 'electron'
 import './runtimeEnvironment.mjs';
+import { createTrayIconManager, normalizeTrayIconMode, TRAY_ICON_MODES } from './trayIcon.mjs';
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import net from 'node:net'
@@ -78,6 +79,8 @@ const TRACK_EXTRACTOR_CONTEXT_MENU_ASSOCIATIONS = [
 
 let tray = null;
 let trayMenu = null;
+let trayIconManager = null;
+let creatingTrayPromise = null;
 let mainWindowRef = null;
 let keepAliveInTray = false;
 let isQuitting = false;
@@ -710,11 +713,28 @@ async function refreshTrayMenu() {
   if (!tray) return;
 
   const prefs = await loadPrefs();
+  const iconMode = normalizeTrayIconMode(prefs.trayIconMode);
+  trayIconManager?.setMode(iconMode);
 
   trayMenu = Menu.buildFromTemplate([
     {
       label: t('tray.show', 'Show'),
       click: () => void openMainWindow('the tray menu')
+    },
+    {
+      label: t('tray.icon', 'Tray icon'),
+      submenu: TRAY_ICON_MODES.map(mode => ({
+        label: t(`tray.icon.${mode}`, { original: 'Original', dark: 'Dark', light: 'Light', auto: 'Automatic' }[mode]),
+        type: 'radio',
+        checked: iconMode === mode,
+        click: async () => {
+          const p = await loadPrefs();
+          p.trayIconMode = mode;
+          p.updated = new Date().toISOString();
+          await savePrefs(p);
+          await refreshTrayMenu();
+        }
+      }))
     },
     {
       label: t('tray.autostart', 'Start on login'),
@@ -772,7 +792,17 @@ async function refreshTrayMenu() {
 async function ensureTray(win) {
   if (win && !win.isDestroyed()) mainWindowRef = win;
   if (tray) return tray;
+  if (creatingTrayPromise) return creatingTrayPromise;
 
+  creatingTrayPromise = createTray();
+  try {
+    return await creatingTrayPromise;
+  } finally {
+    creatingTrayPromise = null;
+  }
+}
+
+async function createTray() {
   if (hasKnownBrokenLinuxTrayRuntime()) {
     console.warn(`[tray] disabled on Electron ${process.versions.electron} for Linux because of the upstream StatusNotifierItem regression`);
     return null;
@@ -780,7 +810,16 @@ async function ensureTray(win) {
 
   const iconPath = resolveTrayIcon();
   try {
-    tray = new Tray(iconPath);
+    trayIconManager?.dispose();
+    trayIconManager = createTrayIconManager({
+      nativeImage, nativeTheme, platform: process.platform,
+      assetDir: fileURLToPath(new URL('./assets/', import.meta.url)),
+      originalIconPath: iconPath
+    });
+    const prefs = await loadPrefs();
+    trayIconManager.setMode(prefs.trayIconMode);
+    tray = new Tray(trayIconManager.getImage());
+    trayIconManager.attach(tray);
     tray.setToolTip('Gharmonize');
 
     await refreshTrayMenu();
@@ -809,6 +848,9 @@ async function ensureTray(win) {
     console.log('[tray] ready:', iconPath);
     return tray;
   } catch (error) {
+    trayIconManager?.dispose();
+    trayIconManager = null;
+    try { tray?.destroy(); } catch {}
     tray = null;
     trayMenu = null;
     console.error('[tray] creation failed:', error?.stack || error?.message || error);
@@ -1518,6 +1560,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  trayIconManager?.dispose();
 });
 
 process.on('uncaughtException', (error) => {

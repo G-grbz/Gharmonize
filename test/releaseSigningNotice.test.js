@@ -16,10 +16,18 @@ test('current release versions agree and release notes disclose unsigned Windows
     'Setup installer', 'Portable EXE', 'Portable Folder ZIP',
     'not** a Windows Authenticode signature'
   ]) assert.ok(notes.includes(text), text);
-  for (const file of ['README.md', 'CODE_SIGNING_POLICY.md']) {
+  for (const file of ['README.md', 'SECURITY.md', 'CODE_SIGNING_POLICY.md']) {
     const source = fs.readFileSync(file, 'utf8');
     assert.ok(source.includes(tag));
     assert.ok(source.includes('trusted Authenticode signature'));
+  }
+});
+
+test('public documentation makes no signing-provider claims while Windows artifacts remain unsigned', () => {
+  const files = ['README.md', 'SECURITY.md', 'CODE_SIGNING_POLICY.md', 'PRIVACY.md',
+    ...fs.readdirSync('docs/releases').filter(file => file.endsWith('.md')).map(file => `docs/releases/${file}`)];
+  for (const file of files) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /signpath/i, file);
   }
 });
 
