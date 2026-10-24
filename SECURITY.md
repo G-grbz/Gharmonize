@@ -31,6 +31,13 @@ When administrator-gated application access is enabled, Gharmonize enforces the 
 
 ## Release verification
 
+**Windows downloads in v1.4.3 do not carry a trusted Authenticode signature.**
+The Setup installer, Portable EXE, and application executable in the Portable
+Folder ZIP may trigger unknown-publisher or SmartScreen warnings. Test
+certificates are not used for public releases. Do not disable Windows security
+protections or install a test certificate to run Gharmonize. The checksums and
+attestations below verify release integrity, not Windows Authenticode trust.
+
 Official tagged releases publish a CycloneDX SBOM, AppImage `.zsync` delta-update metadata, a GPG-signed `SHA256SUMS` manifest, the public release-signing key, and GitHub artifact attestations. The public GPG key is itself covered by GitHub provenance, so authenticate the key before importing it:
 
 ```bash

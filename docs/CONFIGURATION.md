@@ -128,6 +128,17 @@ can explicitly select the Linux display backend; neither overrides this setting.
 Browser/Docker UI rendering is controlled by the browser, not these Electron
 settings. Existing tray, resume and unresponsive-window recovery remain enabled.
 
+### Tray icon (Windows / Linux)
+
+Right-click the tray icon and open **Tray icon** to select **Original**, **Dark**,
+**Light**, or **Automatic (system theme)**. Original keeps the existing colored
+icon and is the default. Dark and Light select fixed monochrome icons. Automatic
+uses a light icon on a dark system theme and a dark icon on a light system theme,
+updating without restarting the application. Windows follows the taskbar/system
+theme, which can differ from the application theme. The selection is saved in
+the desktop profile's `preferences.json` as `trayIconMode`, independently of
+Classic/YTLive theme settings. It also applies when starting directly in the tray.
+
 ### Binary extraction temporary files
 
 `GHARMONIZE_BINARY_TMP_DIR` optionally selects the executable-capable parent

@@ -48,9 +48,7 @@ For guidance on unofficial downloads, impersonation, and reporting suspicious di
 
 ## Code signing policy
 
-**Windows signing status (v1.4.3): Windows downloads do not yet carry a trusted Authenticode signature.** The SignPath Foundation production certificate is pending; test certificates are not used for public releases. Windows may show publisher/SmartScreen warnings or block execution under managed security policies. The GPG-signed checksum manifest is not a substitute for Authenticode signing.
-
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+**Windows signing status (v1.4.3): Windows downloads do not yet carry a trusted Authenticode signature.** Test certificates are not used for public releases. Windows may show publisher/SmartScreen warnings or block execution under managed security policies. The GPG-signed checksum manifest is not a substitute for Authenticode signing.
 
 The signing roles, trusted-build requirements, artifact coverage, and verification process are documented in the [Gharmonize Code Signing Policy](CODE_SIGNING_POLICY.md). Runtime data handling and external network connections are documented in the [Privacy Policy](PRIVACY.md).
 
@@ -145,7 +143,7 @@ Full details in [docs/FEATURES.md](docs/FEATURES.md).
 | [docs/COOKIES.md](docs/COOKIES.md) | Cookies, age-restricted content, environment comparison |
 | [docs/HOMEPAGE_WIDGET.md](docs/HOMEPAGE_WIDGET.md) | Homepage dashboard widget setup |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues & fixes |
-| [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) | SignPath roles, trusted builds, and Windows release signing policy |
+| [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) | Windows signing status, artifact coverage, and release verification |
 | [PRIVACY.md](PRIVACY.md) | Local data handling and external network connections |
 | [LICENSE.md](LICENSE.md) | GPL-3.0 license & redistribution rules |
 | [TRADEMARK.md](TRADEMARK.md) | Gharmonize name, logo, and branding policy |
