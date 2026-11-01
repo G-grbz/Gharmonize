@@ -44,20 +44,11 @@
   "overrides": {
     "lodash": "4.18.1",
     "@electron/get": "5.1.0",
-    "readdir-glob@3.0.0": {
-      "minimatch@^10.2.2": "^11.0.3"
-    },
-    "app-builder-lib@26.18.1": {
-      "minimatch@^10.2.5": "^11.0.3",
-      "@electron/universal@2.0.3": "^3.0.6"
-    },
+    "@electron/universal": "^3.0.6",
+    "minimatch": "^11.0.3",
     "@electron/asar": {
       ".": "^4.3.1",
-      "minimatch@^10.0.1": "^11.0.3",
       "glob@^13.0.2": "^14.0.3"
-    },
-    "filelist@1.0.6": {
-      "minimatch@^5.1.9": "^11.0.3"
     },
     "temp@0.9.4": {
       "rimraf@~2.6.2": "file:../../vendor/temp-cleanup"
