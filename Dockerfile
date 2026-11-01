@@ -25,7 +25,8 @@ RUN set -eux; \
     \
     rm -rf /var/lib/apt/lists/*
 
-COPY package*.json ./
+COPY package*.json .npmrc ./
+COPY vendor/temp-cleanup ./vendor/temp-cleanup
 
 RUN set -eux; \
     export NPM_CONFIG_LOGLEVEL=warn; \

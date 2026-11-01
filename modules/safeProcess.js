@@ -46,7 +46,7 @@ const YTDLP_ALLOWED_COOKIE_BROWSERS = new Set([
 
 function assertSafeYtDlpFfmpegLocation(value) {
   const location = assertPlainProcessString(value, "yt-dlp ffmpeg location", 4096, { allowEmpty: false }).trim();
-  if (!path.isAbsolute(location) || location.endsWith(path.sep)) {
+  if (!path.isAbsolute(location) || /[\\/]$/.test(location)) {
     throw new Error(`Unsafe yt-dlp ffmpeg location is blocked: ${location}`);
   }
 

@@ -174,7 +174,7 @@ test('tray startup restores the saved icon before construction, coalesces concur
     refreshTrayMenu: async () => {}, Tray: FakeTray, console: { log() {}, error() {} },
     hideMainWindowToTray: () => { hides++; }, openMainWindow: () => { opens++; }
   });
-  vm.runInContext(source.slice(start, end).replaceAll('import.meta.url', '"file:///fixture/electron/main.mjs"'), context);
+  vm.runInContext(source.slice(start, end).replaceAll('import.meta.url', JSON.stringify(new URL('../electron/main.mjs', import.meta.url).href)), context);
   const [first, second] = await Promise.all([context.ensureTray(window), context.ensureTray(window)]);
   assert.equal(creates, 1);
   assert.equal(first, second);

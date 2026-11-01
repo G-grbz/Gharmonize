@@ -511,6 +511,6 @@ setInterval(() => {
       spotifyMapTasks.delete(id);
     }
   }
-}, GC_INTERVAL_MS);
+}, GC_INTERVAL_MS).unref?.();
 
 export { procByJob };

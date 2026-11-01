@@ -70,7 +70,7 @@ export function selectBlackBarCrop(samples, width, height) {
 export async function detectBlackBars({
   ffmpegBin, inputPath, width, height, duration, start = 0,
   orientation = 'auto', orientationFilter = null,
-  onProcess, isCanceled = () => false, spawn = spawnSafe,
+  onProcess, isCanceled = () => false, spawn = spawnSafe, terminate = terminateProcess,
   // Accurate clip seeking must decode the preceding GOP before producing a
   // sample. Give clipped 4K/HEVC inputs more time without seeking outside them.
   timeoutMs = Number(start) > 0 ? 60_000 : 30_000,
@@ -120,7 +120,7 @@ export async function detectBlackBars({
       };
       const stop = () => {
         failed = true;
-        terminateProcess(child, { graceMs: 1000 });
+        terminate(child, { graceMs: 1000 });
         if (!settled) forceFinish = setTimeout(() => finish(1), 2500);
       };
       const timer = setTimeout(stop, Math.min(sampleTimeoutMs, remaining));

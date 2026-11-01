@@ -49,6 +49,10 @@ try {
   assert.equal(data.items[0].timing.trackCount, 120);
   assert.ok(data.items[0].timing.tracks.length <= 24);
   controller.abort();
+  await reader.cancel().catch(() => {});
+  reader.releaseLock();
   console.log('JOB_TIMING_API_OK');
-} finally { server.close(); }
-process.exit(0);
+} finally {
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
+}

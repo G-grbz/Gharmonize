@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { cleanupStaleBinaryTemp, createBinaryTempManager, readBinaryTempOwner } from "../modules/binaryTemp.js";
+import { cleanupStaleBinaryTemp, createBinaryTempManager, readBinaryTempOwner, prepareBinaryTempProcess } from "../modules/binaryTemp.js";
 const test = (name, fn) => nodeTest(name, { skip: process.platform === "win32" }, fn);
 
 function fixture(t) {
@@ -225,4 +225,65 @@ test("an owner file growing after fstat is bounded and rejected", async (t) => {
   });
   await assert.rejects(readBinaryTempOwner(ownerPath), /changed while reading/);
   assert.equal(largestRead, 4097); assert.equal(closed, 1);
+});
+
+
+function portableLeaseFixture(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gharmonize-lease-test-"));
+  const root = path.join(dir, "binary-tmp");
+  fs.mkdirSync(root, { mode: 0o700 });
+  const manager = createBinaryTempManager(root);
+  t.after(async () => {
+    manager.close();
+    await manager.cleanup();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  return { root, manager, ownerPath: path.join(manager.directory, ".gharmonize-owner.json") };
+}
+
+nodeTest("process leases can be prepared, failed and reused on Windows and Unix", async (t) => {
+  const { manager, ownerPath } = portableLeaseFixture(t);
+  await manager.cleanup();
+  const owner = () => JSON.parse(fs.readFileSync(ownerPath, "utf8"));
+  const first = prepareBinaryTempProcess({ TMPDIR: manager.directory });
+  assert.equal(owner().pending, 1);
+  const second = prepareBinaryTempProcess({ TMPDIR: manager.directory });
+  assert.equal(owner().pending, 2);
+  first.failed();
+  assert.equal(owner().pending, 1);
+  second.failed();
+  assert.equal(owner().pending, 0);
+  const third = prepareBinaryTempProcess({ TMPDIR: manager.directory });
+  third.failed();
+  assert.equal(owner().pending, 0);
+});
+
+nodeTest("a replaced lease is rejected before it can be truncated", async (t) => {
+  const { manager, ownerPath } = portableLeaseFixture(t);
+  await manager.cleanup();
+  const moved = path.join(manager.directory, "original-owner.json");
+  const original = fs.readFileSync(ownerPath, "utf8");
+  fs.renameSync(ownerPath, moved);
+  const replacement = '{"replacement":"must remain unchanged"}';
+  fs.writeFileSync(ownerPath, replacement);
+  assert.throws(() => prepareBinaryTempProcess({ TMPDIR: manager.directory }), /Cannot safely record/);
+  assert.equal(fs.readFileSync(ownerPath, "utf8"), replacement);
+  assert.equal(fs.readFileSync(moved, "utf8"), original);
+});
+
+nodeTest("successful leases do not enable unsupported Windows or macOS cleanup", async (t) => {
+  const { manager } = portableLeaseFixture(t);
+  await manager.cleanup();
+  const target = path.join(manager.directory, "_MEIabc123");
+  fs.mkdirSync(target);
+  fs.writeFileSync(path.join(target, "keep.txt"), "active extraction");
+  fs.utimesSync(target, new Date(0), new Date(0));
+  const lease = prepareBinaryTempProcess({ TMPDIR: manager.directory });
+  lease.failed();
+  for (const platform of ["win32", "darwin"]) {
+    const result = await manager.cleanup({ platform, minAgeMs: 0 });
+    assert.equal(result.unavailable, true);
+    assert.deepEqual(result.removed, []);
+    assert.equal(fs.readFileSync(path.join(target, "keep.txt"), "utf8"), "active extraction");
+  }
 });

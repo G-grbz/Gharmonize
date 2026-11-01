@@ -10,8 +10,8 @@ if (!flag) {
 }
 
 console.log('Post-installation: electron-builder dependency installation begins…');
-const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const result = spawnSync(npx, ['electron-builder', 'install-app-deps'], {
+const cli = require.resolve('electron-builder/cli.js');
+const result = spawnSync(process.execPath, [cli, 'install-app-deps'], {
   stdio: 'inherit',
   shell: false,
   windowsHide: true

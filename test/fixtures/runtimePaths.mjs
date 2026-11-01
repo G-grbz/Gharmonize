@@ -61,7 +61,8 @@ assert.equal(toDownloadPath(path.join(OUTPUT_ROOT_DIR, 'present.mp3')), '/downlo
 assert.ok(fs.existsSync(resolveRuntimeCacheDir())); // The actual job store.
 if (mode === 'desktop') {
   assert.equal(resolveRuntimeCacheDir(), path.join(data, 'Cache'));
-  assert.ok(!fs.existsSync(path.join(data, 'cache')));
+  const cacheFolders = fs.readdirSync(data).filter(name => name.toLowerCase() === 'cache');
+  assert.deepEqual(cacheFolders, ['Cache'], 'only the correctly capitalized cache directory is created');
   const { initializeDynamicBinaries } = await import('../../modules/binaries.js');
   assert.equal((await initializeDynamicBinaries()).cacheDir, path.join(data, 'Cache', 'binaries'));
 }
@@ -116,6 +117,4 @@ try {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
 }
-// The production store intentionally retains a GC timer; this isolated probe
-// has closed its server and must not wait an hour for that timer.
-process.exit(0);
+// Let Node close its handles naturally after the server and store are idle.

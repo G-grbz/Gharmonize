@@ -143,6 +143,4 @@ try {
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
 }
-// The real job store has long-lived maintenance timers; all HTTP connections
-// are closed and the stub queue never executes a worker.
-process.exit(0);
+// All HTTP connections are closed; the stub queue never executes a worker.

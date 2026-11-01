@@ -1815,7 +1815,7 @@ function cleanupOldChunks() {
   }
 }
 
-setInterval(cleanupOldChunks, 30 * 60 * 1000);
-setTimeout(cleanupOldChunks, 5000);
+setInterval(cleanupOldChunks, 30 * 60 * 1000).unref?.();
+setTimeout(cleanupOldChunks, 5000).unref?.();
 
 export default router;

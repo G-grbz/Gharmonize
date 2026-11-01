@@ -192,7 +192,7 @@ test('actual timing endpoint preserves the application access gate and paginates
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gharmonize-timing-api-'));
   try {
     const stdout = execFileSync(process.execPath, [
-      '--loader', fileURLToPath(new URL('./fixtures/localJobAccessLoader.mjs', import.meta.url)),
+      '--loader', new URL('./fixtures/localJobAccessLoader.mjs', import.meta.url).href,
       fileURLToPath(new URL('./fixtures/jobTimingApi.mjs', import.meta.url)), root
     ], { cwd: root, timeout: 30_000, maxBuffer: 1_000_000, encoding: 'utf8',
       env: { ...process.env, DATA_DIR: root, CACHE_DIR: path.join(root, 'cache') } });

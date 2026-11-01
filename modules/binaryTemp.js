@@ -163,12 +163,28 @@ export function createBinaryTempManager(root) {
   fs.mkdirSync(session, { mode: 0o700 });
   const ownerPath = path.join(session, OWNER_FILE);
   const owner = { version: 1, pid: process.pid, namespace: pidNamespace(), pending: 0, groups: [] };
-  fs.writeFileSync(ownerPath, JSON.stringify(owner), { mode: 0o600, flag: "wx" });
+  const ownerFd = fs.openSync(ownerPath, "wx", 0o600);
+  let ownerIdentity;
+  try {
+    fs.writeFileSync(ownerFd, JSON.stringify(owner));
+    ownerIdentity = fs.fstatSync(ownerFd, { bigint: true });
+  } finally { fs.closeSync(ownerFd); }
   let trustworthy = true;
   const persist = () => {
     try {
-      const fd = fs.openSync(ownerPath, fs.constants.O_WRONLY | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0));
-      try { fs.writeFileSync(fd, JSON.stringify(owner)); } finally { fs.closeSync(fd); }
+      // Windows rejects O_TRUNC when reopening an existing file without O_CREAT.
+      // Open without truncation, verify the original file identity, then truncate
+      // only this descriptor. Preserve no-follow/non-blocking guards on Unix.
+      const fd = fs.openSync(ownerPath, fs.constants.O_RDWR
+        | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+      try {
+        const stat = fs.fstatSync(fd, { bigint: true });
+        if (!stat.isFile() || stat.dev !== ownerIdentity.dev || stat.ino !== ownerIdentity.ino) {
+          throw new Error("Binary temporary process lease file was replaced");
+        }
+        fs.ftruncateSync(fd, 0);
+        fs.writeFileSync(fd, JSON.stringify(owner));
+      } finally { fs.closeSync(fd); }
       return true;
     } catch { trustworthy = false; return false; }
   };

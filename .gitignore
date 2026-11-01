@@ -37,3 +37,7 @@ Thumbs.db
 
 # Runtime temporary access grant state
 temporary-access-grants.json
+
+# Local investigation and release drafts; public notes live on GitHub Releases
+/docs/security/
+/docs/releases/

@@ -24,7 +24,7 @@ for (const mode of ['none', 'admin']) {
       if (/^(?:ENV_|DATA_DIR$|LOCAL_INPUT_DIR$|OUTPUTS_DISPLAY_DIR$|ADMIN_|GHARMONIZE_|JOBS_STATE_DIR$|CACHE_DIR$|PUID$|PGID$|SPOTIFY_|DEEZER_)/.test(key)) delete env[key];
     }
     const { stdout } = await execFileAsync(process.execPath, [
-      '--loader', path.join(repository, 'test/fixtures/localJobAccessLoader.mjs'),
+      '--loader', new URL('./fixtures/localJobAccessLoader.mjs', import.meta.url).href,
       path.join(repository, 'test/fixtures/localJobAccess.mjs'), root, mode
     ], { cwd: root, env, timeout: 30_000, maxBuffer: 1024 * 1024 });
     assert.ok(stdout.includes('LOCAL_JOB_ACCESS_OK'), stdout);

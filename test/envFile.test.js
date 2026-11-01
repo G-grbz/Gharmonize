@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import { writeEnvFileSync } from '../modules/envFile.js'
 
 function fakeFs({ renameError = null, firstWriteError = null } = {}) {
@@ -28,7 +29,8 @@ test('env writer keeps atomic rename for ordinary files', () => {
 
   const writes = fsImpl.calls.filter(([name]) => name === 'writeFileSync')
   assert.equal(writes.length, 1)
-  assert.match(writes[0][1], /^\/data\/\.gharmonize-env\./)
+  assert.equal(path.dirname(writes[0][1]), path.normalize(path.dirname('/data/.env')))
+  assert.match(path.basename(writes[0][1]), /^\.gharmonize-env\./)
   assert.equal(writes[0][2], 'A=1\n')
   assert.deepEqual(fsImpl.calls.find(([name]) => name === 'renameSync')?.slice(2), ['/data/.env'])
   assert.equal(fsImpl.calls.some(([name]) => name === 'rmSync'), true)
@@ -54,7 +56,8 @@ test('env writer falls back to the mounted file when read-only root blocks temp 
 
   const writes = fsImpl.calls.filter(([name]) => name === 'writeFileSync')
   assert.equal(writes.length, 2)
-  assert.match(writes[0][1], /^\/usr\/src\/app\/\.gharmonize-env\./)
+  assert.equal(path.dirname(writes[0][1]), path.normalize(path.dirname('/usr/src/app/.env')))
+  assert.match(path.basename(writes[0][1]), /^\.gharmonize-env\./)
   assert.equal(writes[1][1], '/usr/src/app/.env')
   assert.equal(writes[1][2], 'ADMIN_PASSWORD_HASH=scrypt\n')
   assert.equal(fsImpl.calls.some(([name]) => name === 'renameSync'), false)

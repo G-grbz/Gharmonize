@@ -197,10 +197,6 @@ jobs:
           EOF
           )"
           RELEASE_NOTES="$SIGNING_NOTICE"
-          VERSION_NOTES_FILE="docs/releases/${GITHUB_REF_NAME}.md"
-          if [[ -f "$VERSION_NOTES_FILE" ]]; then
-            RELEASE_NOTES="$(< "$VERSION_NOTES_FILE")"$'\n\n'"$SIGNING_NOTICE"
-          fi
           gh release create "$GITHUB_REF_NAME" release/* \
             --verify-tag \
             --generate-notes \

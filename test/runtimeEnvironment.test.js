@@ -17,6 +17,14 @@ function fixture(t) {
   return root;
 }
 
+function runtimeEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (/^(?:ENV_|DATA_DIR$|OUTPUTS_DISPLAY_DIR$|LOCAL_INPUT_DIR$|RETAG_|ADMIN_|SPOTIFY_|DEEZER_|GHARMONIZE_|JOBS_STATE_DIR$|CACHE_DIR$|PUID$|PGID$)/.test(key)) delete env[key];
+  }
+  return env;
+}
+
 test('packaged desktop cache shares Chromium capitalization without changing Node/Docker defaults', () => {
   const data = '/storage/Gharmonize';
   assert.equal(resolveRuntimeCacheDir({ DATA_DIR: data }, path.posix), `${data}/cache`);
@@ -97,13 +105,10 @@ test('Windows drive paths and UNC paths resolve correctly independently of the b
 for (const mode of ['node', 'desktop', 'desktop-dev', 'docker']) {
   test(`${mode}: real routes share custom output/temp roots, settings stay anchored, and retag authorization remains bounded`, async (t) => {
     const root = fixture(t);
-    const env = { ...process.env };
-    for (const key of Object.keys(env)) {
-      if (/^(?:ENV_|DATA_DIR$|OUTPUTS_DISPLAY_DIR$|LOCAL_INPUT_DIR$|RETAG_|ADMIN_|SPOTIFY_|DEEZER_|GHARMONIZE_|JOBS_STATE_DIR$|CACHE_DIR$|PUID$|PGID$)/.test(key)) delete env[key];
-    }
+    const env = runtimeEnv();
     env.GHARMONIZE_WEB_BINARIES = '0';
     env.GHARMONIZE_WEB_BINARIES_IN_DOCKER = '0';
-    const loaderArgs = mode.startsWith('desktop') ? ['--loader', path.join(repository, 'test/fixtures/electronEnvironmentLoader.mjs')] : [];
+    const loaderArgs = mode.startsWith('desktop') ? ['--loader', new URL('./fixtures/electronEnvironmentLoader.mjs', import.meta.url).href] : [];
     const { stdout } = await execFileAsync(process.execPath, [...loaderArgs, path.join(repository, 'test/fixtures/runtimePaths.mjs'), root, mode], {
       cwd: root, env, timeout: 30_000, maxBuffer: 1024 * 1024
     });
@@ -130,14 +135,18 @@ for (const launch of ['node', 'npm']) {
     const envFile = path.join(root, '.env');
     fs.writeFileSync(envFile, `DATA_DIR="${launch === 'npm' ? '/host/should-not-override-process-env' : expected}"\nADMIN_PASSWORD_HASH=fixture\nGHARMONIZE_ACCESS_REVISION=${'a'.repeat(32)}\n`);
     const env = {
-      PATH: process.env.PATH, ENV_USER_PATH: envFile, PORT: '0',
+      ...runtimeEnv(), ENV_USER_PATH: envFile, PORT: '0',
       GHARMONIZE_HOST: '127.0.0.1', GHARMONIZE_WEB_BINARIES: '0', GHARMONIZE_WEB_BINARIES_IN_DOCKER: '0',
       GHARMONIZE_TEST_EXPECTED_DATA_DIR: expected,
-      NODE_OPTIONS: `--import=${path.join(repository, 'test/fixtures/startupObserver.mjs')}`
+      NODE_OPTIONS: `--import=${new URL('./fixtures/startupObserver.mjs', import.meta.url).href}`
     };
     if (launch === 'npm') env.DATA_DIR = expected;
-    const command = launch === 'node' ? process.execPath : process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const args = launch === 'node' ? [path.join(repository, 'app.js')] : ['start', '--prefix', repository];
+    const npmArgs = ['start', '--prefix', repository];
+    const npmCli = process.env.npm_execpath || (process.platform === 'win32'
+      ? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js') : '');
+    const command = launch === 'node' || npmCli ? process.execPath : 'npm';
+    const args = launch === 'node' ? [path.join(repository, 'app.js')]
+      : npmCli ? [npmCli, ...npmArgs] : npmArgs;
     const { stdout } = await execFileAsync(command, args, { cwd: root, env, timeout: 30_000, maxBuffer: 1024 * 1024 });
     assert.ok(stdout.includes('STARTUP_PATHS_OK'), stdout);
     for (const dir of ['outputs', 'uploads', 'temp', 'cache', 'cookies', 'local-inputs']) assert.ok(fs.existsSync(path.join(expected, dir)), dir);
@@ -150,7 +159,7 @@ try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 5000 }); 
 test('real FFmpeg retag stays in the selected library, with temp storage under custom DATA_DIR', { skip: !hasFfmpeg && 'ffmpeg is not installed' }, async (t) => {
   const root = fixture(t);
   const { stdout } = await execFileAsync(process.execPath, [path.join(repository, 'test/fixtures/retagPaths.mjs'), root], {
-    cwd: root, env: { PATH: process.env.PATH, GHARMONIZE_WEB_BINARIES: '0', GHARMONIZE_WEB_BINARIES_IN_DOCKER: '0' }, timeout: 30_000
+    cwd: root, env: { ...runtimeEnv(), GHARMONIZE_WEB_BINARIES: '0', GHARMONIZE_WEB_BINARIES_IN_DOCKER: '0' }, timeout: 30_000
   });
   assert.ok(stdout.includes('RETAG_PATHS_OK'), stdout);
 });

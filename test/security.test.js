@@ -288,6 +288,7 @@ test('safe process layer rejects dangerous arguments and unknown executables', (
   assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location', 'ffmpeg']));
   assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location', '/tmp/curl']));
   assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location=/tmp/ffmpeg/']));
+  assert.throws(() => assertSafeProcessArgs('yt-dlp', ['--ffmpeg-location', '/tmp/ffmpeg\\']));
   assert.throws(() => assertSafeProcessArgs('ffmpeg', ['ok\n--evil']));
   assert.doesNotThrow(() => assertSafeProcessArgs('ffmpeg', [
     '-metadata',

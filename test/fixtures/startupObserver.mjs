@@ -12,7 +12,7 @@ net.Server.prototype.listen = function (...args) {
       assert.equal(location.displayDir, location.outputDir);
       assert.equal(process.env.DATA_DIR, expected);
       this.closeAllConnections?.();
-      this.close(() => { console.log('STARTUP_PATHS_OK'); process.exit(0); });
+      this.close(() => { console.log('STARTUP_PATHS_OK'); });
     } catch (error) {
       console.error(error);
       process.exit(1);

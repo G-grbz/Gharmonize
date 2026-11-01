@@ -8,8 +8,13 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-import { shouldDetectBlackBars, cropSampleWindows, cropAnalysisGeometry, parseCropRect, selectBlackBarCrop, detectBlackBars } from '../modules/autoCrop.js';
+import { shouldDetectBlackBars, cropSampleWindows, cropAnalysisGeometry, parseCropRect, selectBlackBarCrop, detectBlackBars as detectBlackBarsReal } from '../modules/autoCrop.js';
 import { VideoSettingsManager } from '../public/ui/VideoSettingsManager.js';
+
+// Fake crop processes must never reach the host's process.kill/taskkill APIs.
+const detectBlackBars = options => detectBlackBarsReal({
+  ...options, terminate: child => child.kill?.('SIGTERM')
+});
 
 test('black-bar detection is opt-in and only applies to automatic-height video transcoding', () => {
   const settings = { autoCropBlackBars: true, heightMode: 'auto', transcodeEnabled: true };

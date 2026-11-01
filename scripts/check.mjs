@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const roots = ['app.js','bootstrap.mjs','config.js','electron','modules','routes','scripts','public/ui','public/i18n.js'];
+const roots = ['app.js','bootstrap.mjs','config.js','electron','modules','routes','scripts','public/ui','public/i18n.js','vendor'];
 const files = [];
 function walk(p) {
   if (!fs.existsSync(p)) return;
