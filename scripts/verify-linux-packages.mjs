@@ -35,10 +35,13 @@ for (const format of formats) {
     format.extract(file, root);
     const appDir = path.join(root, 'opt', 'Gharmonize');
     const binary = path.join(appDir, 'gharmonize');
-    fs.accessSync(binary, fs.constants.X_OK);
     const header = Buffer.alloc(4);
     const fd = fs.openSync(binary, 'r');
-    try { fs.readSync(fd, header); } finally { fs.closeSync(fd); }
+    try {
+      const stat = fs.fstatSync(fd);
+      assert.ok(stat.isFile() && (stat.mode & 0o111) !== 0, 'Native launcher must be an executable file');
+      fs.readSync(fd, header);
+    } finally { fs.closeSync(fd); }
     assert.equal(header.toString('hex'), '7f454c46', 'Native package must launch the Electron ELF executable');
     assert.ok(!fs.existsSync(path.join(appDir, 'AppRun')), 'Native installation must not wrap an AppImage');
     const desktop = fs.readFileSync(path.join(root, 'usr', 'share', 'applications', 'gharmonize.desktop'), 'utf8');
