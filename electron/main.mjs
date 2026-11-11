@@ -1,8 +1,9 @@
 import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, Notification, Tray, powerMonitor, nativeImage, nativeTheme } from 'electron'
 import './runtimeEnvironment.mjs';
 import { createTrayIconManager, normalizeTrayIconMode, TRAY_ICON_MODES } from './trayIcon.mjs';
+import { startDesktopServer } from './desktopServer.mjs';
 import path from 'node:path'
-import { pathToFileURL, fileURLToPath } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import net from 'node:net'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
@@ -956,20 +957,6 @@ function checkDesktopBinaries() {
   }
 }
 
-// Handles start server if packaged in the Electron runtime bridge.
-async function startServerIfPackaged() {
-  if (!app.isPackaged) return;
-
-  PORT = await resolveDesktopServerPort()
-
-  const serverPath = path.join(process.resourcesPath, 'app.asar', 'bootstrap.mjs')
-  process.env.PORT = PORT
-
-  const serverUrl = pathToFileURL(serverPath).href
-  await import(serverUrl)
-  await waitForServer(PORT)
-}
-
 // Handles attach downloads in the Electron runtime bridge.
 function attachDownloads(win) {
   const ses = win.webContents.session || session.defaultSession;
@@ -1517,7 +1504,14 @@ app.whenReady().then(async () => {
 
   try {
     if (app.isPackaged) checkDesktopBinaries();
-    await startServerIfPackaged();
+    PORT = await startDesktopServer({
+      isPackaged: app.isPackaged,
+      externalServer: process.argv.includes('--external-server'),
+      resourcesPath: process.resourcesPath,
+      port: PORT,
+      resolvePort: resolveDesktopServerPort,
+      waitForServer
+    });
     await applyTrackExtractorShellIntegration();
     const startHidden = await shouldStartHidden();
     const queuedShow = showOnWindowReady;

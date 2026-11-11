@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/4083729e-3db9-4936-ac01-28c0f318aebe
 
 ---
 
-### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/EXE)
+### Download • Convert • Rip • Tag — with a Web UI + Desktop builds (AppImage/DEB/RPM/Arch/EXE)
 
 Next-generation media processing, powered by **yt-dlp**, **FFmpeg** and **deno**.
 
@@ -56,7 +56,7 @@ The signing roles, trusted-build requirements, artifact coverage, and verificati
 
 ## Quick Start
 
-> **Prebuilt desktop builds:** Official Gharmonize **Windows EXE** and **Linux AppImage** releases already include the Node.js runtime required by the application through Electron. You **do not need to install Node.js separately** to use these packaged builds. Some third-party download sites may incorrectly list Node.js as an additional prerequisite; that notice can be ignored for official prebuilt Gharmonize binaries. Node.js is only required when running or building Gharmonize from source.
+> **Prebuilt desktop builds:** Official Gharmonize **Windows EXE** and **Linux AppImage, DEB, RPM, and Arch (`.pkg.tar.zst`)** releases include the Node.js runtime through Electron. You **do not need to install Node.js separately** to use these packaged builds. Node.js is only required when running or building Gharmonize from source.
 
 **Local / Desktop (from source)**
 
@@ -68,11 +68,11 @@ BUILD_ELECTRON=1 npm i
 npm start
 ```
 
-Then open **http://localhost:5174**
+`npm start` opens the Electron desktop window and system tray, and starts its local server automatically. For a browser-only/headless server, run `npm run server` and open **http://localhost:5174**. Docker continues to run the server without a desktop session.
 
 Gharmonize checks runtime binaries (ffmpeg, ffprobe, mkvmerge, yt-dlp, deno) at startup and downloads or refreshes them automatically when needed.
 
-For packaged AppImage/EXE builds and full installation details, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
+The DEB, RPM and Arch packages install Electron directly; they do not wrap or extract an AppImage. AppImage remains a separate portable download. For installation commands and Linux tray requirements, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ### Docker
 

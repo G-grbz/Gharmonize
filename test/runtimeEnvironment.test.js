@@ -118,7 +118,8 @@ for (const mode of ['node', 'desktop', 'desktop-dev', 'docker']) {
 
 test('all entry points initialize environment before routes and npm does not erase deployment overrides', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(repository, 'package.json'), 'utf8'));
-  assert.equal(pkg.scripts.start, 'node app.js');
+  assert.equal(pkg.scripts.start, 'electron .');
+  assert.equal(pkg.scripts.server, 'node app.js');
   assert.equal(pkg.scripts.dev, 'node --watch app.js');
   const app = fs.readFileSync(path.join(repository, 'app.js'), 'utf8');
   assert.ok(app.startsWith("import './modules/loadEnvironment.js';"));
@@ -129,7 +130,7 @@ test('all entry points initialize environment before routes and npm does not era
 });
 
 for (const launch of ['node', 'npm']) {
-  test(`${launch} start: full server initializes all roots before imports and respects configured storage`, async (t) => {
+  test(`${launch} server start: full server initializes all roots before imports and respects configured storage`, async (t) => {
     const root = fixture(t);
     const expected = path.join(root, 'configured-storage');
     const envFile = path.join(root, '.env');
@@ -141,7 +142,7 @@ for (const launch of ['node', 'npm']) {
       NODE_OPTIONS: `--import=${new URL('./fixtures/startupObserver.mjs', import.meta.url).href}`
     };
     if (launch === 'npm') env.DATA_DIR = expected;
-    const npmArgs = ['start', '--prefix', repository];
+    const npmArgs = ['run', 'server', '--prefix', repository];
     const npmCli = process.env.npm_execpath || (process.platform === 'win32'
       ? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js') : '');
     const command = launch === 'node' || npmCli ? process.execPath : 'npm';

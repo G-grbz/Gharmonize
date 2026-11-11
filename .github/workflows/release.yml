@@ -79,15 +79,23 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run desktop:build:appimage
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-      - name: Install AppImage delta-update tooling
+      - name: Install Linux packaging tools
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsync
+          sudo apt-get install -y --no-install-recommends rpm libarchive-tools zstd zsync
+      - run: npm run desktop:build:linux
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Verify native Linux packages
+        run: node scripts/verify-linux-packages.mjs dist
+      - name: Collect native Linux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp dist/Gharmonize-*.deb dist/Gharmonize-*.rpm dist/Gharmonize-*.pkg.tar.zst release/
       - name: Package updateable AppImage and zsync metadata
         shell: bash
         run: |

@@ -18,6 +18,6 @@ if (app.isPackaged) {
   process.env.GHARMONIZE_DESKTOP_DATA_DIR = profileDir;
   initializeRuntimeEnvironment({ desktopDataDir: profileDir });
 } else {
-  // desktop:dev must resolve the same .env/storage as its npm start server.
+  // npm start and desktop:dev share the source server's .env/storage roots.
   initializeRuntimeEnvironment();
 }

@@ -4,6 +4,7 @@
   "version": "1.4.5",
   "description": "Gharmonize is a desktop application that brings together third-party tools from various platforms to help you build and manage your local music library.",
   "author": "G-grbz <gkhn.gurbuz@hotmail.com>",
+  "homepage": "https://github.com/G-grbz/Gharmonize",
   "license": "GPL-3.0-only",
   "type": "module",
   "engines": {
@@ -11,12 +12,17 @@
   },
   "main": "electron/main.mjs",
   "scripts": {
-    "start": "node app.js",
+    "start": "electron .",
+    "server": "node app.js",
     "dev": "node --watch app.js",
-    "desktop:dev": "wait-on tcp:127.0.0.1:5174 && electron .",
+    "desktop:dev": "wait-on tcp:127.0.0.1:5174 && electron . --external-server",
     "desktop:build:nsis": "electron-builder --win nsis --x64 --publish never",
     "download:binaries": "node scripts/download-binaries.mjs",
     "desktop:build:appimage": "electron-builder --linux AppImage --x64 --publish never",
+    "desktop:build:deb": "electron-builder --linux deb --x64 --publish never",
+    "desktop:build:rpm": "electron-builder --linux rpm --x64 --publish never",
+    "desktop:build:arch": "electron-builder --linux pacman --x64 --publish never",
+    "desktop:build:linux": "electron-builder --linux AppImage deb rpm pacman --x64 --publish never",
     "desktop:build:portable": "electron-builder --win portable --x64 --publish never",
     "desktop:build:all": "npm run desktop:build:nsis && npm run desktop:build:portable",
     "postinstall": "node ./scripts/postinstall.cjs",
@@ -135,9 +141,14 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb",
+        "rpm",
+        "pacman"
       ],
       "icon": "build/icon.png",
+      "category": "AudioVideo",
+      "maintainer": "G-grbz <gkhn.gurbuz@hotmail.com>",
       "syncDesktopName": true,
       "desktop": {
         "entry": {
@@ -145,6 +156,69 @@
           "StartupWMClass": "gharmonize"
         }
       }
+    },
+    "deb": {
+      "packageName": "gharmonize",
+      "artifactName": "Gharmonize-${version}-${arch}.${ext}",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2 | libasound2t64",
+        "libgbm1",
+        "libcups2 | libcups2t64",
+        "libayatana-appindicator3-1 | libappindicator3-1"
+      ],
+      "recommends": []
+    },
+    "rpm": {
+      "packageName": "gharmonize",
+      "artifactName": "Gharmonize-${version}-${arch}.${ext}",
+      "depends": [
+        "gtk3",
+        "libnotify",
+        "nss",
+        "libXScrnSaver",
+        "(libXtst or libXtst6)",
+        "xdg-utils",
+        "at-spi2-core",
+        "(libuuid or libuuid1)",
+        "libsecret",
+        "alsa-lib",
+        "mesa-libgbm",
+        "cups-libs",
+        "(libayatana-appindicator-gtk3 or libappindicator-gtk3)"
+      ]
+    },
+    "pacman": {
+      "packageName": "gharmonize",
+      "artifactName": "Gharmonize-${version}-${arch}.pkg.tar.zst",
+      "compression": "zstd",
+      "fpm": [
+        "--description=Media downloading, conversion, ripping and tagging with Gharmonize"
+      ],
+      "depends": [
+        "alsa-lib",
+        "at-spi2-core",
+        "gtk3",
+        "libnotify",
+        "libappindicator",
+        "libcups",
+        "libdrm",
+        "libsecret",
+        "libxkbcommon",
+        "libxrandr",
+        "libxss",
+        "mesa",
+        "nss",
+        "xdg-utils"
+      ]
     },
     "mac": {
       "target": [

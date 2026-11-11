@@ -1468,6 +1468,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const analysisInputArgs = args.slice();
   let videoTimelineFilter = null;
   let audioTimelineFilter = null;
+  let sourceDuration = null;
 
     if (isCanceled()) return reject(new Error("CANCELED"));
 
@@ -1671,6 +1672,11 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       // User-controlled log fields are normalized by sanitizeLogValue before reaching the sink.
       console.warn("⚠️ probeVideoStreamInfo failed:", sanitizeLogValue(e?.message || e));
       srcInfo = null;
+    }
+
+    const probedDuration = Number(srcInfo?.duration);
+    if (Number.isFinite(probedDuration) && probedDuration > 0) {
+      sourceDuration = probedDuration;
     }
 
     const SRC_W = Number(srcInfo?.width) || Number(resolvedMeta.__srcWidth) || 0;
@@ -3116,7 +3122,8 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         opts.onProcess(ffmpeg);
       }
     } catch {}
-    let duration = null;
+    // Progress must not depend on receiving a complete stderr duration header.
+    let duration = clipDuration ?? sourceDuration;
     let lastElapsed = null;
     let lastFps = null;
     let elapsedBasedFps = null;
@@ -3255,7 +3262,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       tryCaptureSourceFps();
 
       if (!duration) {
-        const m = chunk.match(/Duration:\s+(\d+):(\d+):(\d+\.\d+)/);
+        const m = parseWindow.match(/^\s*Duration:\s+(\d+):(\d+):(\d+(?:\.\d+)?),/m);
         if (m) {
           const [, h, mn, s] = m;
           duration = +h * 3600 + +mn * 60 + +s;

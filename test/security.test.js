@@ -231,7 +231,7 @@ test('release workflow publishes AppImage zsync metadata with pinned tooling', (
   const workflow = fs.readFileSync(path.join('.github', 'workflows', 'release.yml'), 'utf8');
   const packager = fs.readFileSync(path.join('scripts', 'package-appimage-release.sh'), 'utf8');
 
-  assert.ok(workflow.includes('sudo apt-get install -y --no-install-recommends zsync'));
+  assert.match(workflow, /sudo apt-get install -y --no-install-recommends [^\n]*\bzsync\b/);
   assert.ok(workflow.includes('scripts/package-appimage-release.sh'));
   assert.ok(packager.includes('gh-releases-zsync|G-grbz|Gharmonize|latest|Gharmonize-x86_64.v*.AppImage.zsync'));
   assert.ok(packager.includes('APPIMAGETOOL_VERSION="1.9.1"'));
