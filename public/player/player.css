@@ -4910,7 +4910,6 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 
 .card__art .art {
     box-shadow: var(--shadow-art);
-    /* border-radius:10px; */
 }
 
 .is-playing .tl-eq i {
@@ -5712,13 +5711,12 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 }
 
 .np-full__title {
-    font-size: clamp(22px,3vw,32px);
     letter-spacing: -.02em;
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: clamp(22px,3vw,30px);
+    font-size: clamp(20px,2.5vw,25px);
     font-weight: 800
 }
 
@@ -6544,6 +6542,287 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 
 .home__shelves>* {
     min-width: 0
+}
+
+.seekbar {
+    --wave-played: var(--range-fill);
+    --wave-rest: var(--range-bg);
+    --wave-buf: var(--range-buf);
+    align-items: center;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    position: relative
+}
+
+.seekbar .range {
+    position: relative;
+    z-index: 1
+}
+
+.seekbar__wave {
+    display: none;
+    height: 26px;
+    left: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 100%
+}
+
+.seekbar--big .seekbar__wave {
+    height: 44px
+}
+
+.seekbar[data-style=wave] {
+    height: 26px
+}
+
+.seekbar--big[data-style=wave] {
+    height: 44px
+}
+
+.seekbar[data-style=wave] .seekbar__wave {
+    display: block
+}
+
+.seekbar[data-style=wave] .range {
+    height: 100%
+}
+
+.seekbar[data-style=wave] .range::-webkit-slider-runnable-track {
+    background: transparent;
+    height: 100%
+}
+
+.seekbar[data-style=wave] .range::-webkit-slider-thumb {
+    height: 100%;
+    margin-top: 0;
+    opacity: 0;
+    width: 4px
+}
+
+.seekbar[data-style=wave] .range::-moz-range-track {
+    background: transparent
+}
+
+.seekbar[data-style=wave] .range::-moz-range-thumb {
+    opacity: 0
+}
+
+.seekbar[data-style=bold] .range::-webkit-slider-runnable-track {
+    border-radius: 8px;
+    height: 8px
+}
+
+.seekbar[data-style=bold] .range::-webkit-slider-thumb {
+    height: 16px;
+    margin-top: -4px;
+    width: 16px
+}
+
+.seekbar[data-style=bold] .range::-moz-range-track {
+    border-radius: 8px;
+    height: 8px
+}
+
+.seekbar--big[data-style=bold] .range::-webkit-slider-runnable-track {
+    border-radius: 10px;
+    height: 10px
+}
+
+.seekbar--big[data-style=bold] .range::-webkit-slider-thumb {
+    height: 18px;
+    margin-top: -4px;
+    width: 18px
+}
+
+.seekbar--big[data-style=bold] .range::-moz-range-track {
+    height: 10px
+}
+
+.seekbar[data-style=minimal] .range::-webkit-slider-runnable-track {
+    height: 2px
+}
+
+.seekbar[data-style=minimal] .range::-webkit-slider-thumb {
+    height: 10px;
+    margin-top: -4px;
+    opacity: 0;
+    width: 10px
+}
+
+.seekbar[data-style=minimal] .range:hover::-webkit-slider-thumb,.seekbar[data-style=minimal] .range:focus-visible::-webkit-slider-thumb {
+    opacity: 1
+}
+
+.seekbar[data-style=minimal] .range::-moz-range-track {
+    height: 2px
+}
+
+.seekbar[data-style=minimal] .range::-moz-range-thumb {
+    height: 10px;
+    opacity: 0;
+    width: 10px
+}
+
+.np-full__progress .seekbar {
+    --wave-played: #e9ddff;
+    --wave-rest: hsla(0,0%,100%,.26);
+    --wave-buf: hsla(0,0%,100%,.4)
+}
+
+.np-ring {
+    display: grid;
+    place-items: center;
+    position: relative
+}
+
+.np-ring__canvas {
+    aspect-ratio: 1;
+    left: 50%;
+    position: absolute;
+    top: 50%;
+    touch-action: none;
+    transform: translate(-50%,-50%);
+    width: 150%;
+    z-index: 2
+}
+
+.np-ring__canvas[hidden] {
+    display: none
+}
+
+.np-full.is-ring .np-full__art {
+    background: rgba(225,241,255,.08);
+    border-color: transparent;
+    height: min(400px,90cqw,90cqh);
+    padding: 12px;
+    width: min(400px,90cqw,90cqh);
+}
+
+.np-full.is-ring .np-full__progress .seekbar {
+    display: none
+}
+
+.np-full.is-ring .np-full__progress {
+    display: flex;
+    gap: 4px;
+    justify-content: center
+}
+
+.np-full.is-ring .np-full__progress .pb-time {
+    min-width: 0
+}
+
+.np-full.is-ring .np-full__progress .pb-time:first-child:after {
+    content: " /";
+    opacity: .6
+}
+
+.album-missing {
+    margin-top: 28px
+}
+
+.album-missing__head {
+    align-items: flex-end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    justify-content: space-between;
+    margin-bottom: 8px
+}
+
+.album-missing__head .section-title {
+    margin-bottom: 2px
+}
+
+.album-missing__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px
+}
+
+:root {
+    --scroll-thumb: color-mix(in srgb,var(--text) 26%,transparent);
+    --scroll-thumb-hover: color-mix(in srgb,var(--text) 42%,transparent)
+}
+
+@supports selector(::-webkit-scrollbar) {
+    *,.side-playlists {
+        scrollbar-color: auto;
+        scrollbar-width: auto
+    }
+
+    ::-webkit-scrollbar-button {
+        display: none;
+        height: 0;
+        width: 0
+    }
+
+    ::-webkit-scrollbar-corner {
+        background: transparent
+    }
+
+    ::-webkit-scrollbar-track {
+        background: transparent;
+        margin-block: 14px
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--scroll-thumb);
+        background-clip: content-box
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--scroll-thumb-hover);
+        background-clip: content-box
+    }
+}
+
+.panel__tabs[data-fade=end] {
+    mask-image: linear-gradient(90deg,#000 calc(100% - 36px),transparent)
+}
+
+.panel__tabs[data-fade=start] {
+    mask-image: linear-gradient(90deg,transparent,#000 36px)
+}
+
+.panel__tabs[data-fade=both] {
+    mask-image: linear-gradient(90deg,transparent,#000 36px,#000 calc(100% - 36px),transparent)
+}
+
+.pl-suggest .shelf__head {
+    align-items: flex-end
+}
+
+.pl-suggest__add {
+    color: var(--accent)
+}
+
+.main .shelf {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 320px
+}
+
+.main.is-scrolling .view {
+    pointer-events: none
+}
+
+.account,.admin,.downloads-view {
+    max-width: 1480px
+}
+
+.account__cards {
+    column-gap: 16px;
+    columns: 2 460px
+}
+
+.account__cards>.panel-card {
+    break-inside: avoid;
+    display: grid;
+    width: 100%
 }
 
 /* end Ggrbz css editor */

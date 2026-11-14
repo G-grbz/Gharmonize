@@ -39,6 +39,7 @@ class App : Application() {
       signedOut.value = signedOut.value + 1
     }
     images = ImageLoader(this)
+    com.gharmonize.player.playback.AudioEq.load(prefs)
   }
 
   fun streamQuality(): String = if (servers.isMetered()) prefs.qualityMobile else prefs.qualityWifi

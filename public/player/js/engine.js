@@ -37,9 +37,22 @@ export function fromTrack(track, extra = {}) {
   }
 }
 
+// An online song whose download finished after its list was loaded still
+// carries the old "not in library" state: take the track from the download
+// record, so it plays in full instead of as a preview (or not at all).
+export function adoptDownload(item) {
+  if (!item || item.library?.trackId) return item?.library?.trackId || null
+  if (item.kind && item.kind !== 'track') return null
+  const row = app.downloads?.stateFor(item)
+  if (!row || (row.status !== 'completed' && row.status !== 'exists') || !row.trackIds?.length) return null
+  item.library = { ...(item.library || {}), trackId: row.trackIds[0] }
+  return item.library.trackId
+}
+
 // Online items play from the library when owned, otherwise as a preview clip.
 export function fromOnline(item, extra = {}) {
   if (!item) return null
+  adoptDownload(item)
   if (item.library?.trackId) {
     return fromTrack({ id: item.library.trackId, title: item.title, artist: item.artist, album: item.album, duration: item.duration, artwork: `track/${item.library.trackId}` }, extra)
   }
@@ -424,6 +437,7 @@ export class Engine {
     this.applyVolume()
     this.loading = true
     if (autoplay) this.resume()
+    this.prefetchAutoplay()
     this.updateMediaSession()
     this.emitState()
     bus.emit('player:track', item)
@@ -526,10 +540,33 @@ export class Engine {
     }, 150)
   }
 
+  // When the last song of the queue starts, the songs that will follow are
+  // added right away, so the queue shows what comes next (and the user can
+  // change it) instead of being empty until the end.
+  prefetchAutoplay() {
+    if (!app.prefs.autoplay || this.repeat !== 'off' || this.autoplayBusy) return
+    if (this.index < this.queue.length - 1 || this.current?.type !== 'library') return
+    this.autoplayBusy = true
+    this.autoplayMore().then((added) => { if (added) this.emitQueue() }).finally(() => { this.autoplayBusy = false })
+  }
+
   // Keeps the music going with similar songs from the library.
   async autoplayMore() {
     const seed = [...this.queue].reverse().find((item) => item.type === 'library')
     const known = new Set(this.queue.slice(-300).filter((i) => i.type === 'library').map((i) => i.id))
+    // Songs like the last ones played (artists, folders, genres) first.
+    const seeds = this.queue.slice(Math.max(0, this.index - 9), this.index + 1).filter((i) => i.type === 'library').map((i) => i.id)
+    if (seeds.length) {
+      try {
+        const res = await get('/autoplay', { seed: seeds.join(','), exclude: [...known].slice(-200).join(','), limit: 15 })
+        const fresh = (res.items || []).filter((track) => !known.has(track.id))
+        if (fresh.length) {
+          this.queue.push(...fresh.map((track) => fromTrack(track, { auto: true })))
+          this.ordered?.push(...this.queue.slice(-fresh.length))
+          return true
+        }
+      } catch {}
+    }
     const attempts = []
     if (seed?.genre) attempts.push({ sort: 'random', limit: 40, genre: seed.genre })
     if (seed?.artistId) attempts.push({ sort: 'random', limit: 40, artistId: seed.artistId })
