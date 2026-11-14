@@ -560,6 +560,23 @@ function shouldStripCookies(explicit = false) {
   return !!explicit;
 }
 
+// Cookies are optional: when a run that used them fails, the same run is
+// tried once more without them (expired/locked browser cookies, bad jar...).
+export function hasCookieArgs(args = []) {
+  return args.some((x) => x === "--cookies" || x === "--cookies-from-browser" || /^--cookies(-from-browser)?=/.test(String(x)));
+}
+
+export function stripCookieArgs(args = []) {
+  const out = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const x = args[i];
+    if (x === "--cookies" || x === "--cookies-from-browser") { i += 1; continue; }
+    if (/^--cookies(-from-browser)?=/.test(String(x))) continue;
+    out.push(x);
+  }
+  return out;
+}
+
 // Handles with yt403 workarounds in the yt-dlp YouTube download pipeline.
 export function withYT403Workarounds(baseArgs, { stripCookies = false } = {}) {
   let args = [...baseArgs];
@@ -601,39 +618,46 @@ export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOU
         .reverse()
         .find((x) => typeof x === "string" && /^https?:\/\//i.test(x)) || "";
     const finalArgs = buildBaseArgs(args, { sourceUrl });
-    let stdoutData = "", stderrData = "";
 
-    const child = spawnSafe(YTDLP_BIN, finalArgs, getYtDlpJobSpawnOptions({
-      stdio: ["ignore", "pipe", "pipe"]
-    }));
+    const run = (runArgs, retryWithoutCookies) => {
+      let stdoutData = "", stderrData = "";
+      const child = spawnSafe(YTDLP_BIN, runArgs, getYtDlpJobSpawnOptions({
+        stdio: ["ignore", "pipe", "pipe"]
+      }));
 
-    const timeoutId = setTimeout(() => {
-      terminateProcess(child);
-      reject(new Error(`[${label}] timeout (${timeout}ms)`));
-    }, timeout);
+      const timeoutId = setTimeout(() => {
+        terminateProcess(child);
+        reject(new Error(`[${label}] timeout (${timeout}ms)`));
+      }, timeout);
 
-    child.stdout.on("data", chunk => stdoutData += chunk.toString());
-    child.stderr.on("data", chunk => stderrData += chunk.toString());
+      child.stdout.on("data", chunk => stdoutData += chunk.toString());
+      child.stderr.on("data", chunk => stderrData += chunk.toString());
 
-    child.on("close", (code) => {
-      clearTimeout(timeoutId);
+      child.on("close", (code) => {
+        clearTimeout(timeoutId);
 
-      if (code === 0) {
-        try {
-          const result = JSON.parse(stdoutData);
-          resolve(result);
-        } catch (error) {
-          reject(new Error(`[${label}] JSON parse error: ${error.message}\n${stderrData}`));
+        if (code === 0) {
+          try {
+            const result = JSON.parse(stdoutData);
+            resolve(result);
+          } catch (error) {
+            reject(new Error(`[${label}] JSON parse error: ${error.message}\n${stderrData}`));
+          }
+        } else if (retryWithoutCookies) {
+          console.warn(`[${label}] failed with cookies, retrying without cookies`);
+          run(stripCookieArgs(runArgs), false);
+        } else {
+          reject(new Error(`[${label}] exit code ${code}\n${stderrData.slice(-500)}`));
         }
-      } else {
-        reject(new Error(`[${label}] exit code ${code}\n${stderrData.slice(-500)}`));
-      }
-    });
+      });
 
-    child.on("error", (error) => {
-      clearTimeout(timeoutId);
-      reject(new Error(`[${label}] failed to start: ${error.message}`));
-    });
+      child.on("error", (error) => {
+        clearTimeout(timeoutId);
+        reject(new Error(`[${label}] failed to start: ${error.message}`));
+      });
+    };
+
+    run(finalArgs, hasCookieArgs(finalArgs));
   });
 }
 
@@ -1107,13 +1131,17 @@ async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = 
       body: JSON.stringify(body)
     }), { timeoutMs, retries: 0 });
 
-    return extractYtmSearchItemsFromTree(data, {
+    const items = extractYtmSearchItemsFromTree(data, {
       targetType: searchType,
       limit
     });
+    if (items.length || !cookieHeader) return items;
   } catch {
-    return [];
+    if (!cookieHeader) return [];
   }
+  // Signed-in search failed or found nothing: the public search still works.
+  if (ytmApiGate.retryAfterMs()) return [];
+  return searchYouTubeMusicContent(q, { limit, type, lang, region, timeoutMs: timeoutOverride, useCookies: false });
 }
 
 async function searchYouTubeMusicArtistAlbums(query, { limit = 12, lang = "", region = "" } = {}) {

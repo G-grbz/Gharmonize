@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en" translate="no" class="notranslate" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="google" content="notranslate" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Gharmonize Player</title>
+  <link rel="icon" type="image/x-icon" href="/src/favicon.ico" />
+  <link rel="stylesheet" href="/player/player.css" />
+  <script src="/player/boot.js"></script>
+  <script src="/i18n.js"></script>
+  <script type="module" src="/player/js/main.js"></script>
+</head>
+<body>
+  <div id="boot" class="boot" role="status" aria-live="polite">
+    <img src="/src/logo.png" alt="" class="boot__logo" />
+    <div class="spinner"></div>
+  </div>
+  <div id="gate" class="gate" hidden></div>
+  <div id="app" class="app" hidden></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

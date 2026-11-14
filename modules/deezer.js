@@ -1,4 +1,5 @@
 import fetch from "node-fetch";
+import { isPlausibleContainsMatch } from "./titleMatching.js";
 import { normalizeDeezerArl } from "./security.js";
 import { metadataDeadline } from "./metadataDeadline.js";
 import { cleanCatalogTitleForSearch, catalogSearchTextVariants, catalogQueryKey } from "./catalogSearchText.js";
@@ -683,10 +684,12 @@ function scoreResult(
   );
   const resultAlbum = norm(result?.album?.title || "");
   const titleExact = !!titleNorm && resultTitle === titleNorm;
+  // Annotation-only overlaps ("(Psychedelic Anatolian Rock)") are a different song.
   const titleContains =
     !!titleNorm &&
     !titleExact &&
-    (resultTitle.includes(titleNorm) || titleNorm.includes(resultTitle));
+    (resultTitle.includes(titleNorm) || titleNorm.includes(resultTitle)) &&
+    isPlausibleContainsMatch(title, result?.title || result?.title_short || "", norm);
   const artistMatch = buildArtistMatchInfo(artistNorm, resultArtist);
 
   let score = 0;

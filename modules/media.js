@@ -1,4 +1,7 @@
+import { downloadThumbnail } from "./coverArt.js";
+export { downloadThumbnail } from "./coverArt.js";
 import { spawnSafe } from "./safeProcess.js";
+import { pickPipeTitlePart } from "./titleMatching.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -15,7 +18,7 @@ import { toDownloadPath, resolveDownloadPathToAbs } from "./outputPaths.js";
 import { ensureOwnership } from "./fsOwnership.js";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 import { getFfmpegCaps } from "./ffmpegCaps.js";
-import { assertPathWithinAny, fetchSafeRemote, sanitizeLogValue } from "./security.js";
+import { assertPathWithinAny, sanitizeLogValue } from "./security.js";
 import {
   describeRingtone,
   isRingtoneEnabled,
@@ -408,8 +411,9 @@ export function resolveTemplate(meta, template) {
 export function maybeCleanTitle(t) {
   if (!t) return t;
   if (process.env.TITLE_CLEAN_PIPE === "1") {
-    const parts = t.split("|").map((s) => s.trim());
-    if (parts.length > 1) return parts.at(-1);
+    // Keeps the song part of "Channel | Song", but skips trailing parts that
+    // only describe the recording ("Song | Psychedelic Anatolian Rock Cover").
+    if (t.includes("|")) return pickPipeTitlePart(t);
   }
   return t;
 }
@@ -455,36 +459,6 @@ function cleanTitleForTags(t) {
   s = s.replace(/[\s\-–—•]+$/, "");
   s = s.replace(/\s{2,}/g, " ").trim();
   return s;
-}
-
-// Downloads thumbnail for the FFmpeg media conversion pipeline.
-export async function downloadThumbnail(thumbnailUrl, destBasePathNoExt) {
-  if (!thumbnailUrl) return null;
-  try {
-    const baseDir = path.resolve(process.env.DATA_DIR || process.cwd());
-    const allowedRoots = [path.join(baseDir, 'outputs'), path.join(baseDir, 'temp'), path.join(baseDir, 'uploads')];
-    const safeBase = assertPathWithinAny(path.resolve(String(destBasePathNoExt || '')), allowedRoots);
-    const res = await fetchSafeRemote(thumbnailUrl, {
-      signal: AbortSignal.timeout(5000)
-    }, { maxRedirects: 3 });
-    if (!res.ok) return null;
-    const maxCoverBytes = 25 * 1024 * 1024;
-    const declaredLength = Number(res.headers.get("content-length") || 0);
-    if (Number.isFinite(declaredLength) && declaredLength > maxCoverBytes) return null;
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength > maxCoverBytes) return null;
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    let ext = ".jpg";
-    if (ct.includes("image/webp")) ext = ".webp";
-    else if (ct.includes("image/png")) ext = ".png";
-    else if (ct.includes("jpeg")) ext = ".jpg";
-    const destPath = assertPathWithinAny(`${safeBase}${ext}`, allowedRoots);
-    // Remote image data is size-limited and the destination is confined to approved Gharmonize roots.
-    fs.writeFileSync(destPath, Buffer.from(buf), { mode: 0o600 });
-    return destPath;
-  } catch {
-    return null;
-  }
 }
 
 // Resolves cover path from meta for the FFmpeg media conversion pipeline.
@@ -739,10 +713,10 @@ export async function retagMediaFile(
       const useSpotifyCover = preferSpotifyCover && looksLikeSpotifyCoverUrl(metaCoverUrl);
 
       let pickedCoverPath = coverPath;
-      if (useSpotifyCover) {
+      if (useSpotifyCover || !pickedCoverPath) {
         try {
           const dl = await resolveCoverPathFromMeta(
-            { coverUrl: metaCoverUrl },
+            resolvedMeta,
             jobId,
             path.dirname(absOutputPath),
             tempDir

@@ -1,3 +1,4 @@
+import { parseTitleArtistPair } from "./youtubeIdentity.js";
 import { searchSpotifyBestTrackStrict, trackToId3Meta } from "./spotify.js";
 import { withMarketFallback } from "./market.js";
 import { hasYtMusicAlbumPrefix, isGenericYtMusicAlbumLabel, stripYtMusicAlbumPrefix } from "./ytMusicMetadata.js";
@@ -52,6 +53,10 @@ function compactSpacedLetters(s = "") {
 
 // Handles split artist title in core application logic.
 function splitArtistTitle(title, uploader) {
+  const sharedPair = parseTitleArtistPair(title, uploader);
+  if (sharedPair && !hasYtMusicAlbumPrefix(title) && !isGenericYtMusicAlbumLabel(sharedPair.artist)) {
+    return { artist: sharedPair.artist, title: normalizeTitleNoise(stripTailAfterDelims(sharedPair.track)) };
+  }
   const t0 = stripTailAfterDelims(String(title || ""));
   const t  = normalizeTitleNoise(t0);
   let u = compactSpacedLetters(String(uploader || "").replace(/\s+/g, " ").trim());

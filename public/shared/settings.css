@@ -1,0 +1,426 @@
+/* Settings dialog shared by the classic UI and YTLive: side tabs, a search
+   box and one layout for every setting. Colours come from the page theme. */
+
+#settingsModal.gh-settings {
+  --sm-surface: var(--surface, var(--bg-elev, #151a23));
+  --sm-side: var(--bg-soft, var(--bg-muted, #10141b));
+  --sm-field: var(--surface-sunken, var(--bg-input, var(--bg, #0e1116)));
+  --sm-hover: var(--surface-hover, var(--bg-hover, rgba(127, 127, 127, .14)));
+  --sm-border: var(--border, rgba(127, 127, 127, .25));
+  --sm-text: var(--text, #e8eaf0);
+  --sm-muted: var(--text-muted, #98a2b3);
+  --sm-accent: var(--primary, var(--accent, #3b82f6));
+  --sm-accent-soft: color-mix(in srgb, var(--sm-accent) 15%, transparent);
+  padding: 24px;
+  /* Above fixed page bars (the inline style says 20). */
+  z-index: 1000 !important;
+}
+
+#settingsModal.gh-settings .settings-dialog {
+  background: var(--sm-surface);
+  border: 1px solid var(--sm-border);
+  border-radius: 18px;
+  box-sizing: border-box;
+  color: var(--sm-text);
+  display: flex;
+  flex-direction: column;
+  height: min(86vh, 780px);
+  max-height: none;
+  max-width: none;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  width: min(1040px, 100%);
+}
+
+/* Sign-in only: a small dialog. */
+#settingsModal.gh-settings .settings-dialog:has(#formView[style*="none"]) {
+  height: auto;
+  width: min(460px, 100%);
+}
+
+#settingsModal.gh-settings .settings-dialog__header {
+  align-items: center;
+  background: var(--sm-surface);
+  border-bottom: 1px solid var(--sm-border);
+  display: flex;
+  flex: none;
+  justify-content: space-between;
+  padding: 14px 20px;
+  position: static;
+}
+
+#settingsModal.gh-settings .settings-dialog__header h3 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+#settingsModal.gh-settings .settings-dialog__body {
+  background: var(--sm-surface);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  margin: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+#settingsModal.gh-settings #loginView {
+  margin: auto;
+  padding: 24px;
+}
+
+#settingsModal.gh-settings #formView {
+  height: 100%;
+}
+
+#settingsModal.gh-settings .settings-tabs {
+  display: grid;
+  gap: 0;
+  grid-template-columns: 236px minmax(0, 1fr);
+  height: calc(100% - 64px);
+  min-height: 0;
+}
+
+/* ---- side navigation ---- */
+
+#settingsModal.gh-settings .settings-tabs__bar {
+  background: var(--sm-side);
+  border: 0;
+  border-right: 1px solid var(--sm-border);
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 2px;
+  margin: 0;
+  overflow-y: auto;
+  padding: 14px 10px;
+  position: static;
+  scrollbar-width: thin;
+}
+
+#settingsModal.gh-settings .settings-search {
+  padding: 0 2px 10px;
+}
+
+#settingsModal.gh-settings .settings-search__input {
+  font-size: .86rem;
+  min-height: 36px;
+}
+
+#settingsModal.gh-settings .settings-tab {
+  align-items: center;
+  justify-content: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  box-shadow: none;
+  color: var(--sm-muted);
+  cursor: pointer;
+  display: flex;
+  flex: none;
+  font: inherit;
+  font-size: .88rem;
+  font-weight: 600;
+  gap: 10px;
+  letter-spacing: 0;
+  min-height: 38px;
+  padding: 8px 12px;
+  text-align: left;
+  text-transform: none;
+  width: 100%;
+}
+
+#settingsModal.gh-settings .settings-tab svg {
+  flex: none;
+}
+
+#settingsModal.gh-settings .settings-tab:hover {
+  background: var(--sm-hover);
+  color: var(--sm-text);
+}
+
+#settingsModal.gh-settings .settings-tab.is-active {
+  background: var(--sm-accent-soft);
+  color: var(--sm-accent);
+}
+
+#settingsModal.gh-settings .settings-tab:focus-visible {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: -2px;
+}
+
+/* ---- content ---- */
+
+#settingsModal.gh-settings .settings-tabs__panels {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 28px 28px;
+  scrollbar-width: thin;
+}
+
+#settingsModal.gh-settings .settings-panel {
+  animation: none;
+  max-width: 720px;
+}
+
+#settingsModal.gh-settings.is-searching .settings-panel {
+  margin-bottom: 28px;
+}
+
+#settingsModal.gh-settings .settings-panel__head {
+  margin-bottom: 4px;
+}
+
+#settingsModal.gh-settings .settings-panel__head h3 {
+  color: var(--sm-text);
+  font-size: 1.2rem;
+  margin: 0 0 6px;
+}
+
+#settingsModal.gh-settings .settings-note {
+  background: var(--sm-accent-soft);
+  border-left: 3px solid var(--sm-accent);
+  border-radius: 8px;
+  color: var(--sm-text);
+  font-size: .84rem;
+  line-height: 1.5;
+  margin: 8px 0 6px;
+  padding: 10px 12px;
+}
+
+#settingsModal.gh-settings .settings-panel h4.settings-section-title {
+  border: 0;
+  display: block;
+  font-size: 1rem;
+  margin: 0 0 4px;
+  padding: 0;
+  text-align: left;
+  text-transform: none;
+}
+
+#settingsModal.gh-settings .form-group {
+  background: none;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--sm-border) 65%, transparent);
+  border-radius: 0;
+  box-shadow: none;
+  display: grid;
+  gap: 6px;
+  justify-items: stretch;
+  margin: 0;
+  padding: 14px 0;
+  text-align: left;
+}
+
+#settingsModal.gh-settings .form-group:last-child {
+  border-bottom: 0;
+}
+
+#settingsModal.gh-settings label.settings-field-label,
+#settingsModal.gh-settings span.settings-field-label {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--sm-text);
+  display: block;
+  font-size: .92rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  text-transform: none;
+  width: auto;
+}
+
+#settingsModal.gh-settings .settings-checkbox-row {
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+}
+
+#settingsModal.gh-settings .settings-field-hint {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--sm-muted);
+  font-size: .82rem;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+}
+
+/* "ENV_NAME + description": the description is the title, the name a tag. */
+#settingsModal.gh-settings .form-group--env {
+  column-gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#settingsModal.gh-settings .form-group--env > * {
+  grid-column: 1 / -1;
+}
+
+#settingsModal.gh-settings .form-group--env > label.settings-env-key {
+  align-self: start;
+  background: var(--sm-hover);
+  border-radius: 6px;
+  color: var(--sm-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .68rem;
+  font-weight: 600;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  padding: 3px 7px;
+}
+
+#settingsModal.gh-settings .form-group--env > label.settings-env-key + .settings-field-hint {
+  color: var(--sm-text);
+  font-size: .9rem;
+  font-weight: 600;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* With a short title: title + tag on the first line, the description below. */
+#settingsModal.gh-settings .form-group--titled > .settings-field-title {
+  color: var(--sm-text);
+  cursor: pointer;
+  display: block;
+  text-align: left;
+  width: auto;
+  font-size: .95rem;
+  font-weight: 650;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+#settingsModal.gh-settings .form-group--titled > label.settings-env-key + .settings-field-hint {
+  color: var(--sm-muted);
+  font-size: .82rem;
+  font-weight: 400;
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* ---- controls ---- */
+
+#settingsModal.gh-settings #formView input:not([type=checkbox]):not([type=radio]):not([type=range]),
+#settingsModal.gh-settings #formView select,
+#settingsModal.gh-settings #formView textarea {
+  background-color: var(--sm-field);
+  border: 1px solid var(--sm-border);
+  border-radius: 10px;
+  box-shadow: none;
+  box-sizing: border-box;
+  color: var(--sm-text);
+  font: inherit;
+  font-size: .9rem;
+  max-width: none;
+  min-height: 40px;
+  padding: 8px 12px;
+  width: 100%;
+}
+
+#settingsModal.gh-settings #formView input:focus,
+#settingsModal.gh-settings #formView select:focus,
+#settingsModal.gh-settings #formView textarea:focus {
+  border-color: var(--sm-accent);
+  box-shadow: 0 0 0 3px var(--sm-accent-soft);
+  outline: none;
+}
+
+#settingsModal.gh-settings #formView input[type=checkbox] {
+  accent-color: var(--sm-accent);
+  flex: none;
+  height: 18px;
+  margin: 0;
+  width: 18px;
+}
+
+#settingsModal.gh-settings.is-searching .form-group.is-filtered-out {
+  display: none;
+}
+
+#settingsModal.gh-settings .settings-search__empty {
+  color: var(--sm-muted);
+  padding: 24px 0;
+}
+
+/* ---- footer ---- */
+
+#settingsModal.gh-settings #formView > .settings-actions {
+  align-items: center;
+  background: var(--sm-surface);
+  border-top: 1px solid var(--sm-border);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  height: 64px;
+  justify-content: space-between;
+  margin: 0;
+  padding: 12px 20px;
+  width: auto;
+}
+
+#settingsModal.gh-settings .settings-actions__right {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---- phones: full screen, tabs as a scrolling strip ---- */
+
+@media (max-width: 760px) {
+  #settingsModal.gh-settings {
+    padding: 0;
+  }
+
+  #settingsModal.gh-settings .settings-dialog {
+    border: 0;
+    border-radius: 0;
+    height: 100%;
+    width: 100%;
+  }
+
+  #settingsModal.gh-settings .settings-tabs {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  #settingsModal.gh-settings .settings-tabs__bar {
+    border-bottom: 1px solid var(--sm-border);
+    border-right: 0;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px;
+  }
+
+  #settingsModal.gh-settings .settings-search {
+    flex: 0 0 180px;
+    padding: 0 4px 0 0;
+  }
+
+  #settingsModal.gh-settings .settings-tab {
+    white-space: nowrap;
+    width: auto;
+  }
+
+  #settingsModal.gh-settings .settings-tabs__panels {
+    padding: 16px;
+  }
+
+  #settingsModal.gh-settings #formView > .settings-actions {
+    padding: 10px 12px;
+  }
+}

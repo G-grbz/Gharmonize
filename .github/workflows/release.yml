@@ -111,8 +111,72 @@ jobs:
           name: release-linux
           path: release/*
           if-no-files-found: error
+  android:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      # Also validates the checked-in Gradle wrapper.
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Restore release signing key
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Every release must be signed with the same key, or phones refuse
+          # to install it over the previous version.
+          if [[ -z "${ANDROID_KEYSTORE_BASE64:-}" || -z "${ANDROID_KEYSTORE_PASSWORD:-}" || -z "${ANDROID_KEY_ALIAS:-}" || -z "${ANDROID_KEY_PASSWORD:-}" ]]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD repository secrets are required to sign the Android app."
+            exit 1
+          fi
+          KEYSTORE="$RUNNER_TEMP/gharmonize-player-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          {
+            echo "GHP_KEYSTORE_FILE=$KEYSTORE"
+            echo "GHP_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "GHP_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "GHP_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+      - name: Build Gharmonize Player APK
+        shell: bash
+        working-directory: android
+        run: |
+          set -euo pipefail
+          # 1.4.6 -> 1004006: grows with every release, above the 0.x test builds.
+          IFS=. read -r MAJOR MINOR PATCH <<< "${VERSION%%-*}"
+          VERSION_CODE=$(( MAJOR * 1000000 + MINOR * 1000 + PATCH ))
+          ./gradlew --no-daemon assembleRelease -PghVersionName="$VERSION" -PghVersionCode="$VERSION_CODE"
+      - name: Verify APK signature and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | grep -E "certificate (DN|SHA-256)"
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | grep -q "versionName='$VERSION'"
+          mkdir -p release
+          cp "$APK" "release/Gharmonize-Player-Android.v${VERSION}.apk"
+      - name: Remove signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/gharmonize-player-release.jks"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-android
+          path: release/*
+          if-no-files-found: error
   publish:
-    needs: [verify, windows, linux]
+    needs: [verify, windows, linux, android]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.verify.outputs.version }}

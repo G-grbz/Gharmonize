@@ -1444,6 +1444,8 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), requireLo
                   title: item.title,
                   uploader: item.uploader,
                   webpage_url: item.webpage_url,
+                  album: item.album || null,
+                  sourceCoverUrl: item.sourceCoverUrl || null,
                   thumbnails: []
                 };
               }

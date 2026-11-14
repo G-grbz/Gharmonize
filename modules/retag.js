@@ -1,3 +1,4 @@
+import { taggedUrl, youtubeThumbnailFromUrl } from "./coverArt.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -110,7 +111,7 @@ function metadataFromParsed(filePath, parsed = {}, libraryRoot = null) {
   const releaseDate = firstText(common.originaldate || common.date || "");
   const releaseYear = numberOrNull(common.year) || numberOrNull(releaseDate.slice(0, 4));
   const isrc = firstText(common.isrc);
-  const sourceUrl = firstText(common.website);
+  const sourceUrl = taggedUrl(parsed, "SOURCE_URL") || firstText(common.website);
 
   return {
     title: hints.title,
@@ -133,6 +134,7 @@ function metadataFromParsed(filePath, parsed = {}, libraryRoot = null) {
     publisher: firstText(common.label),
     isrc,
     webpage_url: sourceUrl,
+    coverUrl: taggedUrl(parsed, "COVER_URL") || youtubeThumbnailFromUrl(sourceUrl),
     comment: firstText(common.comment),
     lyrics: firstText(common.lyrics),
     duration_ms: Number.isFinite(parsed.format?.duration)

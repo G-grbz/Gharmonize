@@ -1,4 +1,5 @@
 import fetch from "node-fetch";
+import { isPlausibleContainsMatch } from "./titleMatching.js";
 import { resolveMarket, withMarketFallback } from "./market.js";
 import { metadataDeadline } from "./metadataDeadline.js";
 import { cleanCatalogTitleForSearch, catalogSearchTextVariants, catalogQueryKey } from "./catalogSearchText.js";
@@ -731,10 +732,12 @@ function scoreResult(result, { artist = "", title = "", album = "", targetDurati
   const rArtist = norm(result?.artistName || "");
   const rAlbum = norm(result?.collectionName || "");
   const titleExact = !!tN && rTitle === tN;
+  // Annotation-only overlaps ("(Psychedelic Anatolian Rock)") are a different song.
   const titleContains =
     !!tN &&
     !titleExact &&
-    (rTitle.includes(tN) || tN.includes(rTitle));
+    (rTitle.includes(tN) || tN.includes(rTitle)) &&
+    isPlausibleContainsMatch(title, result?.trackName || "", norm);
   const artistMatch = buildArtistMatchInfo(aN, rArtist);
   let score = 0;
 

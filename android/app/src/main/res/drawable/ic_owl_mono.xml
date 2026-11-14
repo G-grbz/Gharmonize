@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Owl head silhouette (themed launcher icon). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+      android:pathData="M34,34 L44,40 Q54,36 64,40 L74,34 L72,48 Q80,58 74,70 Q66,80 54,80 Q42,80 34,70 Q28,58 36,48 Z
+        M45,50 a7,7 0 1,0 0.1,0 Z M63,50 a7,7 0 1,0 0.1,0 Z M54,60 L50,57 L58,57 Z"/>
+</vector>
