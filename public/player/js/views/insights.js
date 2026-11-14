@@ -5,6 +5,7 @@ import { get, artworkUrl } from '../api.js'
 import { h, t, icon, iconButton, clear, artwork, fmtLong, fmtNumber, plural, emptyState, toast } from '../dom.js'
 import { hero, actionBar, trackList, onlineTrackList, playTracks, mixArt, mixTitle, mixDescription, shelf, albumCard, setTint, selectButton } from '../components.js'
 import { saveButton } from '../playlistSave.js'
+import { randomIndex } from '../random.js'
 
 // ---- mix detail -----------------------------------------------------------------
 
@@ -27,7 +28,7 @@ async function mixView(id) {
   root.append(
     actionBar({
       onPlay: () => playTracks(mix.tracks, 0, context, { shuffle: false }),
-      onShuffle: () => playTracks(mix.tracks, Math.floor(Math.random() * Math.max(1, mix.tracks.length)), context, { shuffle: true }),
+      onShuffle: () => playTracks(mix.tracks, randomIndex(Math.max(1, mix.tracks.length)), context, { shuffle: true }),
       extra: [
         saveButton(() => ({ name: mixTitle(mix), trackIds: mix.tracks.map((tr) => tr.id), count: mix.tracks.length }), { cls: 'icon-btn--lg', size: 24 }),
         selectButton(() => root.querySelector('.tracklist'))

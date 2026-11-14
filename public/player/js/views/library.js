@@ -6,6 +6,7 @@ import { get } from '../api.js'
 import { h, t, icon, clear, emptyState, fmtLong, plural } from '../dom.js'
 import { albumCard, artistCard, playlistCard, trackList, infinite, actionBar, hero, playCollection, playTracks, createPlaylistFlow, shelf, trackCard, selectButton } from '../components.js'
 import { saveButton } from '../playlistSave.js'
+import { randomIndex } from '../random.js'
 
 const TABS = ['playlists', 'albums', 'artists', 'tracks']
 const SORTS = {
@@ -98,7 +99,7 @@ async function likedView() {
   const context = { label: t('player.nav.liked'), route: '/liked' }
   root.append(actionBar({
     onPlay: () => playTracks(tracks, 0, context, { shuffle: false }),
-    onShuffle: () => playTracks(tracks, Math.floor(Math.random() * tracks.length), context, { shuffle: true }),
+    onShuffle: () => playTracks(tracks, randomIndex(Math.max(1, tracks.length)), context, { shuffle: true }),
     extra: [saveButton(() => ({ name: t('player.nav.liked'), trackIds: tracks.map((tr) => tr.id), count: tracks.length }), { cls: 'icon-btn--lg', size: 24 }), selectButton(() => root.querySelector('.tracklist'))]
   }),
     trackList(tracks, { context }))

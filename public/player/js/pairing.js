@@ -19,7 +19,8 @@ export function pairCodeFromHash(hash = window.location.hash) {
   const match = String(hash || '').match(/^#\/pair\?(.*)$/)
   if (!match) return null
   const code = new URLSearchParams(match[1]).get('code')
-  return code ? code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) : null
+  const normalized = String(code || '').toUpperCase().replace(/-/g, '')
+  return /^[A-HJ-NP-Z2-9]{8}$/.test(normalized) ? normalized : null
 }
 
 // Short human name for this browser, shown in the device list.

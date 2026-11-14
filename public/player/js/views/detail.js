@@ -8,6 +8,7 @@ import {
   playlistSubmenu, refreshPlaylists, primaryArtist, selectButton
 } from '../components.js'
 import { saveButton } from '../playlistSave.js'
+import { randomIndex } from '../random.js'
 
 // ---- album ------------------------------------------------------------------
 
@@ -39,7 +40,7 @@ async function albumView(id) {
   ], e.currentTarget), { cls: 'icon-btn--lg', size: 26 })
   root.append(actionBar({
     onPlay: () => playTracks(album.tracks, 0, context, { shuffle: false }),
-    onShuffle: () => playTracks(album.tracks, Math.floor(Math.random() * album.tracks.length), context, { shuffle: true }),
+    onShuffle: () => playTracks(album.tracks, randomIndex(Math.max(1, album.tracks.length)), context, { shuffle: true }),
     extra: [heartButton('album', album.id, album.favorite, { size: 26, cls: 'icon-btn--lg' }),
       saveButton(() => ({ name: album.title, trackIds: album.tracks.map((tr) => tr.id), count: album.tracks.length }), { cls: 'icon-btn--lg', size: 24 }),
       selectButton(() => root.querySelector('.tracklist')), more]
@@ -251,7 +252,7 @@ async function playlistView(id) {
   }
   root.append(actionBar({
     onPlay: () => playTracks(pl.tracks, 0, context, { shuffle: false }),
-    onShuffle: () => playTracks(pl.tracks, Math.floor(Math.random() * Math.max(1, pl.tracks.length)), context, { shuffle: true }),
+    onShuffle: () => playTracks(pl.tracks, randomIndex(Math.max(1, pl.tracks.length)), context, { shuffle: true }),
     extra
   }), listHolder)
   paintList()

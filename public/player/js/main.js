@@ -255,19 +255,21 @@ async function start() {
   if (status.setupRequired) return setupGate(status)
   // Opened from a pairing QR code: sign this browser in with the code.
   const pairCode = pairCodeFromHash()
+  let pairingError = null
   if (pairCode) {
     history.replaceState(null, '', '#/home')
     if (!status.user) {
       try {
         await post('/pair', { code: pairCode, client: 'web', deviceName: deviceLabel() })
-        return start()
+        // Only the server's refreshed session status can admit this browser.
+        status = await api('/status')
       } catch (error) {
-        loginGate(status, errorText(error))
-        return
+        pairingError = errorText(error)
       }
     }
   }
-  if (!status.user) return loginGate(status)
+  app.status = status
+  if (!status.user) return loginGate(status, pairingError)
   try {
     await loadSession()
   } catch (error) {

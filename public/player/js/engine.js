@@ -4,6 +4,7 @@
 import { app, bus, store } from './app.js'
 import { post, get, streamUrl, artworkUrl, absoluteUrl, previewStreamUrl } from './api.js'
 import { t, toast } from './dom.js'
+import { shuffleInPlace } from './random.js'
 
 let seq = 0
 const newUid = () => `q${Date.now().toString(36)}${(seq++).toString(36)}`
@@ -667,12 +668,4 @@ function bufferedEnd(audio) {
     const b = audio.buffered
     return b.length ? b.end(b.length - 1) : 0
   } catch { return 0 }
-}
-
-function shuffleInPlace(list) {
-  for (let i = list.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [list[i], list[j]] = [list[j], list[i]]
-  }
-  return list
 }

@@ -242,6 +242,13 @@ test('a pairing QR link signs a browser in with a session; apps get a device tok
   const base = `http://127.0.0.1:${server.address().port}/api/player`
   const post = (url, body, headers = {}) => fetch(base + url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })
 
+  // A URL code is only a credential to verify, never proof of a session.
+  const invalid = await post('/pair', { code: 'ABCD2349', client: 'web' })
+  assert.equal(invalid.status, 401)
+  assert.equal(invalid.headers.get('set-cookie'), null)
+  assert.equal((await fetch(`${base}/me`)).status, 401)
+  assert.equal(auth.listTokens(user.id).length, 0)
+
   const webCode = auth.createPairingCode(user.id).code
   const web = await post('/pair', { code: webCode, client: 'web', deviceName: 'Chrome · Android' })
   assert.equal(web.status, 200)

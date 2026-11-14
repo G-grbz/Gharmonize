@@ -153,6 +153,18 @@ export function debounce(fn, ms) {
 
 // ---- artwork ---------------------------------------------------------------
 
+// Resize only genuine Deezer CDN paths, leaving other hosts and queries intact.
+export function cardArtworkUrl(src) {
+  try {
+    const url = new URL(src)
+    if (url.protocol === 'https:' && (url.hostname === 'dzcdn.net' || url.hostname.endsWith('.dzcdn.net'))) {
+      url.pathname = url.pathname.replace(/\/(\d{3,4})x\1-/, '/500x500-')
+      return url.toString()
+    }
+  } catch {}
+  return src
+}
+
 // `src` may be null; a tinted placeholder with an icon is shown instead.
 export function artwork(src, { alt = '', round = false, cls = '', placeholder = 'music', seed = alt, lazy = true } = {}) {
   const box = h('div', { class: ['art', round && 'art--round', cls] })
@@ -160,7 +172,7 @@ export function artwork(src, { alt = '', round = false, cls = '', placeholder = 
   const ph = h('div', { class: 'art__ph' }, icon(placeholder, { size: 28 }))
   box.append(ph)
   // Deezer serves 1000 px covers by default; cards only need 500 px.
-  if (src && lazy && /\.dzcdn\.net\//.test(src)) src = src.replace(/\/(\d{3,4})x\1-/, '/500x500-')
+  if (src && lazy) src = cardArtworkUrl(src)
   if (src) {
     // Covers are square; explicit dimensions let the browser reserve the box
     // before a lazy image loads (CSS still sizes it to fill .art).
