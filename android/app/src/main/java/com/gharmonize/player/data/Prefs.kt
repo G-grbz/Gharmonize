@@ -47,6 +47,45 @@ class Prefs(context: Context) {
     get() = sp.getString("theme", "system") ?: "system"
     set(value) = sp.edit().putString("theme", value).apply()
 
+  /** Now playing progress look: "ring" | "classic" | "bold" | "minimal" | "wave". */
+  var progressStyle: String
+    get() = sp.getString("progress_style", "ring") ?: "ring"
+    set(value) = sp.edit().putString("progress_style", value).apply()
+
+  /** Keep playing similar library songs when the queue ends. */
+  var autoplay: Boolean
+    get() = sp.getBoolean("autoplay", true)
+    set(value) = sp.edit().putBoolean("autoplay", value).apply()
+
+  /** Volume arc on the right of the round cover (drag along it). */
+  var coverVolume: Boolean
+    get() = sp.getBoolean("cover_volume", true)
+    set(value) = sp.edit().putBoolean("cover_volume", value).apply()
+
+  // ---- equalizer ----
+  var eqEnabled: Boolean
+    get() = sp.getBoolean("eq_enabled", false)
+    set(value) = sp.edit().putBoolean("eq_enabled", value).apply()
+
+  var eqPreset: String
+    get() = sp.getString("eq_preset", "flat") ?: "flat"
+    set(value) = sp.edit().putString("eq_preset", value).apply()
+
+  var eqGains: FloatArray
+    get() = runCatching {
+      val arr = JSONArray(sp.getString("eq_gains", "[]"))
+      FloatArray(arr.length()) { arr.getDouble(it).toFloat() }
+    }.getOrDefault(FloatArray(0))
+    set(value) = sp.edit().putString("eq_gains", JSONArray(value.map { it.toDouble() }).toString()).apply()
+
+  var eqAutoPreamp: Boolean
+    get() = sp.getBoolean("eq_auto_preamp", true)
+    set(value) = sp.edit().putBoolean("eq_auto_preamp", value).apply()
+
+  var eqPreamp: Float
+    get() = sp.getFloat("eq_preamp", 0f)
+    set(value) = sp.edit().putFloat("eq_preamp", value).apply()
+
   val signedIn: Boolean get() = !token.isNullOrBlank() && servers.isNotEmpty()
 
   fun signOut() {

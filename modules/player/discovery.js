@@ -1,6 +1,6 @@
 import { visibleSql } from './access.js'
 import { normalizeKey } from './scanner.js'
-import { primaryArtistKey } from './matching.js'
+import { primaryArtistKey, albumBaseKey, artistsMatch, cleanTitleForMatch } from './matching.js'
 import { songKey } from './songKey.js'
 import { seededRandom, seededShuffle, localDayKey } from './mixes.js'
 
@@ -85,6 +85,7 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     artistAlbums: (id) => cache.wrap(`dz:artist-albums:${id}`, TTL.artistAlbums, () => deezer.artistAlbums(id, 50)),
     artistRadio: (id) => cache.wrap(`dz:artist-radio:${id}`, TTL.artistRadio, () => deezer.artistRadio(id, 30)),
     album: (id) => cache.wrap(`dz:album:${id}`, TTL.detail, () => deezer.album(id)),
+    searchAlbums: (q) => cache.wrap(`dz:search-albums:${normalizeKey(q)}`, TTL.detail, () => deezer.searchAlbums(q, 10)),
     playlist: (id) => cache.wrap(`dz:playlist:${id}`, TTL.detail, () => deezer.playlist(id))
   }
   const yt = {
@@ -305,6 +306,44 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     throw new DiscoveryError('UNKNOWN_PROVIDER', 'Unknown provider.')
   }
 
+  // Songs of a library album that are not in the user's library: the same
+  // release is looked up on Deezer (artist discography first, then a search)
+  // and its tracks are compared with what the user owns.
+  const NO_ALBUM = new Set(['', 'unknown album', 'unknown', 'single', 'singles', 'bilinmeyen albüm'])
+  async function albumMissing(user, local) {
+    if (!enabled('deezer')) return { available: false, found: false, missing: [] }
+    const title = String(local?.title || '').trim()
+    const artist = String(local?.artist || '').trim()
+    const want = albumBaseKey(title)
+    if (!want || !artist || NO_ALBUM.has(normalizeKey(title)) || !local.tracks?.length) return { available: true, found: false, missing: [] }
+    const exact = normalizeKey(title)
+    let candidates = []
+    for (const name of [...new Set([artist, artist.split(/\s*(?:,|;|&|\/| feat\.? | ft\.? | x )\s*/i)[0]])]) {
+      const artistId = await dz.artistId(name).catch(() => null)
+      if (!artistId) continue
+      candidates = (await dz.artistAlbums(artistId).catch(() => [])).filter((a) => albumBaseKey(a.title) === want)
+      if (candidates.length) break
+    }
+    if (!candidates.length) {
+      candidates = (await dz.searchAlbums(`${artist} ${title}`).catch(() => []))
+        .filter((a) => albumBaseKey(a.title) === want && artistsMatch(a.artist, artist))
+    }
+    if (!candidates.length) return { available: true, found: false, missing: [] }
+    // Prefer the same edition name, then the release closest in size to (but
+    // not smaller than) what is owned: a deluxe edition is not "missing" songs.
+    const have = new Set(local.tracks.map((t) => cleanTitleForMatch(t.title)).filter(Boolean))
+    const owned = have.size
+    const score = (a) => (normalizeKey(a.title) === exact ? 0 : 1000) + ((a.trackCount || 0) >= owned ? (a.trackCount || 0) - owned : 500 + owned - (a.trackCount || 0))
+    const best = [...candidates].sort((a, b) => score(a) - score(b))[0]
+    const data = await dz.album(best.id)
+    if (!data) return { available: true, found: false, missing: [] }
+    const tracks = annotator.items(data.tracks, user.id)
+    // Titles already in this album also count as owned (store and file titles
+    // can differ in details the matcher is strict about).
+    const missing = tracks.filter((t) => !t.library && !have.has(cleanTitleForMatch(t.title)))
+    return { available: true, found: true, album: annotator.items([data.album], user.id)[0], total: tracks.length, missing }
+  }
+
   async function onlinePlaylist(user, { provider, id, url } = {}) {
     if (provider === 'deezer') {
       const data = await dz.playlist(requireId(id))
@@ -347,8 +386,11 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
 
   // Online songs that fit a personal mix: artist radios of the mix's artists
   // (Deezer), only songs the user does not own yet. Same picks all day.
-  async function mixSuggestions(user, { mixId, artists = [], limit = 15 } = {}) {
-    if (!enabled('deezer')) return { enabled: false, items: [] }
+  // Songs that go with a set of artists (mixes, playlists): Deezer artist
+  // radios. Songs not in the library are suggestions to preview / download;
+  // the ones the user already owns are returned as library track ids.
+  async function radioSuggestions(user, { artists = [], seedKey = '', limit = 15 } = {}) {
+    if (!enabled('deezer')) return { enabled: false, items: [], ownedIds: [] }
     const names = (artists.length ? artists : seedArtists(user.id, 4)).slice(0, 3)
     const lists = await Promise.all(names.map(async (name) => {
       try {
@@ -359,16 +401,21 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     }))
     const seen = new Set()
     const pool = []
+    const ownedIds = []
     for (const item of annotator.items(lists.flat(), user.id)) {
-      if (item.library) continue
       const key = songKey(item.title, item.artist) || item.url
       if (seen.has(key)) continue
       seen.add(key)
-      pool.push(item)
+      if (item.library?.trackId) ownedIds.push(item.library.trackId)
+      else if (!item.library) pool.push(item)
     }
-    const rnd = seededRandom(`${user.id}:${mixId}:${localDayKey(now())}:online`)
-    return { enabled: true, items: seededShuffle(pool, rnd).slice(0, limit) }
+    const rnd = seededRandom(`${user.id}:${seedKey}:${localDayKey(now())}:online`)
+    return { enabled: true, items: seededShuffle(pool, rnd).slice(0, limit), ownedIds }
   }
 
-  return { discover, mood, onlineAlbum, onlinePlaylist, onlineArtist, seedArtists, mixSuggestions, moods: () => MOOD_PRESETS }
+  async function mixSuggestions(user, { mixId, artists = [], limit = 15 } = {}) {
+    return radioSuggestions(user, { artists, seedKey: mixId, limit })
+  }
+
+  return { discover, mood, onlineAlbum, albumMissing, onlinePlaylist, onlineArtist, seedArtists, mixSuggestions, radioSuggestions, moods: () => MOOD_PRESETS }
 }

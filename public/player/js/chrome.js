@@ -5,9 +5,10 @@ import { app, bus, store } from './app.js'
 import { get, post, artworkUrl } from './api.js'
 import { h, append, t, icon, iconButton, setIcon, artwork, fmtTime, clear, contextMenu, toast, toastError, plural } from './dom.js'
 import { itemArtwork } from './engine.js'
-import { heartButton, createPlaylistFlow, trackMenu, trackInfo, markCurrent, providerName, primaryArtist, mixArt, mixTitle, mixDescription, averageColor, playCollection } from './components.js'
+import { heartButton, createPlaylistFlow, trackMenu, onlineMenu, trackInfo, markCurrent, providerName, primaryArtist, mixArt, mixTitle, mixDescription, averageColor, playCollection } from './components.js'
 import { applyTheme, currentTheme } from './theme.js'
 import { saveButton } from './playlistSave.js'
+import { seekBar, coverRing, progressStyle } from './seekbar.js'
 
 const QUALITY_OPTIONS = ['original', 'high', 'normal', 'low', 'saver']
 
@@ -134,6 +135,16 @@ export function buildShell(root) {
   clear(root)
   const sidebar = buildSidebar()
   const main = h('main', { class: 'main', id: 'main' }, buildTopbar(), h('div', { class: 'view', id: 'view', tabindex: '-1' }))
+  // While the page scrolls, cards passing under a still mouse pointer must
+  // not switch their hover look: each switch repainted the whole long page
+  // and made scrolling stutter. One class on <main>, set on the first scroll
+  // event and removed shortly after the last one.
+  let scrollIdle = null
+  main.addEventListener('scroll', () => {
+    if (!scrollIdle) main.classList.add('is-scrolling')
+    clearTimeout(scrollIdle)
+    scrollIdle = setTimeout(() => { scrollIdle = null; main.classList.remove('is-scrolling') }, 140)
+  }, { passive: true })
   const panel = buildPanel()
   const bar = buildPlayerBar()
   const mobileNav = buildMobileNav()
@@ -279,7 +290,7 @@ function buildPlayerBar() {
   const repeat = iconButton('repeat', t('player.controls.repeat'), () => p.cycleRepeat(), { cls: 'ctl ctl--toggle', size: 18 })
   const posLabel = h('span', { class: 'pb-time', text: '0:00' })
   const durLabel = h('span', { class: 'pb-time', text: '0:00' })
-  const seek = slider({ cls: 'range--seek', label: t('player.controls.seek'), onInput: (f) => { posLabel.textContent = fmtTime(f * p.duration) }, onCommit: (f) => p.seek(f * p.duration) })
+  const seek = seekBar({ label: t('player.controls.seek'), onInput: (f) => { posLabel.textContent = fmtTime(f * p.duration) }, onCommit: (f) => p.seek(f * p.duration) })
   const quality = h('button', { type: 'button', class: 'quality-chip', title: t('player.quality.title') })
   quality.addEventListener('click', (e) => { e.stopPropagation(); qualityMenu(quality) })
   const lyricsBtn = iconButton('lyrics', t('player.panel.lyrics'), () => togglePanel('lyrics'), { cls: 'ctl ctl--toggle', size: 18 })
@@ -326,6 +337,7 @@ function buildPlayerBar() {
 
   bus.on('player:track', (item) => {
     bar.classList.toggle('is-empty', !item)
+    seek.setItem(item)
     clear(art)
     clear(heartSlot)
     if (!item) { title.textContent = ''; artist.textContent = ''; return }
@@ -514,10 +526,27 @@ window.matchMedia('(max-width: 1100px)').addEventListener?.('change', () => {
   bus.emit('panel', tab)
 })
 
+// Tab rows that do not fit scroll sideways; a mouse wheel moves them too.
+// The edges fade where more tabs are hidden.
+function wheelScrollsSideways(el) {
+  const fade = () => {
+    const max = el.scrollWidth - el.clientWidth
+    el.dataset.fade = max <= 1 ? '' : el.scrollLeft <= 1 ? 'end' : el.scrollLeft >= max - 1 ? 'start' : 'both'
+  }
+  el.addEventListener('wheel', (e) => {
+    if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return
+    e.preventDefault()
+    el.scrollLeft += e.deltaY
+  }, { passive: false })
+  el.addEventListener('scroll', fade, { passive: true })
+  new ResizeObserver(fade).observe(el)
+  return el
+}
+
 function buildPanel() {
   const body = h('div', { class: 'panel__body' })
   const tabs = {}
-  const tabBar = h('div', { class: 'panel__tabs', role: 'tablist' })
+  const tabBar = wheelScrollsSideways(h('div', { class: 'panel__tabs', role: 'tablist' }))
   for (const key of ['queue', 'playlists', 'lyrics', 'info']) {
     const btn = h('button', { type: 'button', class: 'panel__tab', role: 'tab', text: t(`player.panel.${key}`) })
     btn.addEventListener('click', () => { setPanelTab(key); show(key) })
@@ -586,10 +615,20 @@ function buildFullPlayer() {
   const artist = h('a', { class: 'np-full__artist', href: '#' })
   const heartSlot = h('span')
   const lyrics = new LyricsView({ big: true })
-  const stage = h('div', { class: 'np-full__stage' }, artBox)
+  const stage = h('div', { class: 'np-full__stage' })
   const pos = h('span', { class: 'pb-time' })
   const dur = h('span', { class: 'pb-time' })
-  const seek = slider({ cls: 'range--seek range--big', label: t('player.controls.seek'), onInput: (f) => { pos.textContent = fmtTime(f * p.duration) }, onCommit: (f) => p.seek(f * p.duration) })
+  const seek = seekBar({ big: true, label: t('player.controls.seek'), onInput: (f) => { pos.textContent = fmtTime(f * p.duration) }, onCommit: (f) => p.seek(f * p.duration) })
+  // Round cover controls ("ring" progress style): seek ring + volume arc.
+  const ring = coverRing({
+    getPosition: () => p.position,
+    getDuration: () => p.duration,
+    onSeekPreview: (f) => { pos.textContent = fmtTime(f * p.duration) },
+    onSeek: (f) => p.seek(f * p.duration),
+    getVolume: () => (p.muted ? 0 : p.volume),
+    onVolume: (v) => p.setVolume(v)
+  })
+  const artWrap = h('div', { class: 'np-ring' }, artBox, ring.el)
   const shuffle = iconButton('shuffle', t('player.controls.shuffle'), () => p.toggleShuffle(), { cls: 'ctl ctl--toggle', size: 22 })
   const repeat = iconButton('repeat', t('player.controls.repeat'), () => p.cycleRepeat(), { cls: 'ctl ctl--toggle', size: 22 })
   const playBtn = iconButton('play', t('player.common.play'), () => p.toggle(), { cls: 'ctl-play ctl-play--xl', size: 30 })
@@ -601,7 +640,7 @@ function buildFullPlayer() {
   // Queue / playlists sheet: slides up over the player (swipe or scroll up).
   const sheetBody = h('div', { class: 'np-sheet__body' })
   const sheetTabs = {}
-  const sheetTabBar = h('div', { class: 'panel__tabs', role: 'tablist' })
+  const sheetTabBar = wheelScrollsSideways(h('div', { class: 'panel__tabs', role: 'tablist' }))
   for (const key of ['queue', 'playlists']) {
     const btn = h('button', { type: 'button', class: 'panel__tab', role: 'tab', text: t(`player.panel.${key}`) })
     btn.addEventListener('click', () => openSheet(key))
@@ -619,8 +658,11 @@ function buildFullPlayer() {
         iconButton('chevD', t('player.common.close'), () => close(), { cls: 'ctl ctl--round', size: 24 }),
         h('div', { class: 'np-full__heading' }, h('b', { text: t('player.np.title') }), h('span', { class: 'np-full__context' })),
         iconButton('more', t('player.common.more'), (e) => {
+          // The button itself: the event's currentTarget is gone after the request.
+          const at = e.currentTarget || e
           const item = p.current
-          if (item?.type === 'library') get(`/tracks/${item.id}`).then((tr) => trackMenu(tr, e.currentTarget || e)).catch(toastError)
+          if (item?.type === 'library') get(`/tracks/${item.id}`).then((tr) => trackMenu(tr, at)).catch(toastError)
+          else if (item?.online) onlineMenu(item.online, at)
         }, { cls: 'ctl ctl--round', size: 22 })),
       lyricsTop,
       stage,
@@ -634,6 +676,7 @@ function buildFullPlayer() {
       h('div', { class: 'np-full__extra' }, shuffle, lyricsToggle, repeat),
       sheet))
   document.body.append(root)
+  stage.append(artWrap)
 
   let sheetTab = null
   function paintSheet() {
@@ -664,11 +707,20 @@ function buildFullPlayer() {
     root.classList.toggle('is-lyrics', mode === 'lyrics')
     lyricsToggle.setAttribute('aria-pressed', String(mode === 'lyrics'))
     clear(stage)
-    if (mode === 'lyrics') { stage.append(lyrics.el); lyrics.item = null; lyrics.load() } else stage.append(artBox)
+    if (mode === 'lyrics') { stage.append(lyrics.el); lyrics.item = null; lyrics.load() } else stage.append(artWrap)
+    applyRing()
   }
+  function applyRing() {
+    const on = progressStyle() === 'ring'
+    root.classList.toggle('is-ring', on)
+    ring.setActive(on && mode !== 'lyrics' && !root.hidden)
+  }
+  bus.on('prefs', ({ key }) => { if (key === 'progressStyle') applyRing() })
+  bus.on('player:volume', () => ring.update())
 
   function paint(item) {
     if (!item) { close(); return }
+    seek.setItem(item)
     clear(artBox)
     artBox.append(artwork(itemArtwork(item, 1024), { alt: item.title, seed: item.album || item.title, lazy: false }))
     title.textContent = item.title
@@ -692,11 +744,13 @@ function buildFullPlayer() {
     pos.textContent = fmtTime(p.position)
     dur.textContent = fmtTime(p.duration)
     seek.set(p.duration ? p.position / p.duration : 0)
+    applyRing()
     root.querySelector('button')?.focus()
     requestAnimationFrame(() => root.classList.add('is-open'))
   }
   function close() {
     closeSheet()
+    ring.setActive(false)
     root.classList.remove('is-open')
     document.body.classList.remove('np-open')
     returnFocus?.focus()
@@ -721,7 +775,7 @@ function buildFullPlayer() {
   let start = null
   root.addEventListener('touchstart', (e) => {
     const inSheet = Boolean(e.target.closest('.np-sheet'))
-    start = !inSheet && e.target.closest('.lyrics, input') ? null : { x: e.touches[0].clientX, y: e.touches[0].clientY, inSheet, atTop: sheetBody.scrollTop <= 0 }
+    start = (!inSheet && e.target.closest('.lyrics, input')) || ring.owns(e.target, e.touches[0].clientX, e.touches[0].clientY) ? null : { x: e.touches[0].clientX, y: e.touches[0].clientY, inSheet, atTop: sheetBody.scrollTop <= 0 }
   }, { passive: true })
   root.addEventListener('touchend', (e) => {
     if (!start) return
@@ -738,7 +792,7 @@ function buildFullPlayer() {
   // at the top of the sheet closes it again.
   let drag = null
   root.addEventListener('pointerdown', (e) => {
-    drag = e.pointerType === 'mouse' && e.button === 0 && !e.target.closest('button, a, input, .np-sheet, .lyrics') ? e.clientY : null
+    drag = e.pointerType === 'mouse' && e.button === 0 && !ring.dragging && !e.target.closest('button, a, input, .np-sheet, .lyrics') ? e.clientY : null
   })
   root.addEventListener('pointerup', (e) => {
     if (drag !== null && e.clientY - drag < -80) openSheet('queue')
@@ -771,9 +825,10 @@ function buildFullPlayer() {
   })
   bus.on('player:time', ({ position, duration, buffered }) => {
     if (root.hidden) return
-    if (!seek.dragging) pos.textContent = fmtTime(position)
+    if (!seek.dragging && !ring.dragging) pos.textContent = fmtTime(position)
     dur.textContent = fmtTime(duration)
     seek.set(duration ? position / duration : 0, duration ? buffered / duration : 0)
+    ring.update()
   })
   bus.on('player:mode', ({ shuffle: s, repeat: r }) => {
     shuffle.classList.toggle('is-on', s)

@@ -183,6 +183,7 @@ private fun MainUi(theme: String, resumeTick: Int, onTheme: (String) -> Unit, on
         is Route.OnlineArtist -> OnlineArtistScreen(state, r.id, r.name)
         is Route.Mix -> MixScreen(state, r.id)
         Route.Stats -> StatsScreen(state)
+        Route.Equalizer -> EqualizerScreen(state)
         is Route.Wrapped -> Unit
         Route.NowPlaying -> Unit
       }

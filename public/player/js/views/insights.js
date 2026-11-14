@@ -35,8 +35,8 @@ async function mixView(id) {
       ]
     }),
     trackList(mix.tracks, { context, showPlays: true }))
-  // New songs (not in the library yet) that fit this mix, from online radios.
-  if (app.providers.includes('deezer')) {
+  // Songs that fit this mix: from the library and new ones (online radios).
+  {
     const holder = h('section', { class: 'section mix-online' })
     root.append(holder)
     get(`/mixes/${encodeURIComponent(id)}/online`).then((res) => {
