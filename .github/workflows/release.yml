@@ -167,7 +167,7 @@ jobs:
           [[ "$APK_CODE" =~ ^[1-9][0-9]*$ ]]
           echo "Android version: $APK_VERSION ($APK_CODE)"
           mkdir -p release
-          cp "$APK" "release/Gharmonize-Player-Android.v${APK_VERSION}.apk"
+          cp "$APK" "release/Gharmonize-Player-Client.v${APK_VERSION}.apk"
       - name: Remove signing key
         if: always()
         shell: bash
