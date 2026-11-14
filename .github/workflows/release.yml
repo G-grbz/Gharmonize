@@ -69,7 +69,8 @@ jobs:
           if-no-files-found: error
   linux:
     needs: verify
-    runs-on: ubuntu-latest
+    # Keep native package tooling stable across ubuntu-latest image migrations.
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.verify.outputs.version }}
     steps:
