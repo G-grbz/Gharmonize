@@ -9,6 +9,17 @@ import androidx.compose.ui.unit.dp
 
 /** Fluent UI System Icons, Regular 24. Copyright Microsoft, MIT licensed. */
 object FluentIcons {
+  val Add: ImageVector by lazy {
+    ImageVector.Builder(name = "Fluent.add", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+      addPath(pathData = PathParser().parsePathString("M12 3.25C12.4142 3.25 12.75 3.58579 12.75 4V11.25H20C20.4142 11.25 20.75 11.5858 20.75 12C20.75 12.4142 20.4142 12.75 20 12.75H12.75V20C12.75 20.4142 12.4142 20.75 12 20.75C11.5858 20.75 11.25 20.4142 11.25 20V12.75H4C3.58579 12.75 3.25 12.4142 3.25 12C3.25 11.5858 3.58579 11.25 4 11.25H11.25V4C11.25 3.58579 11.5858 3.25 12 3.25Z").toNodes(), fill = SolidColor(Color.Black), pathFillType = PathFillType.NonZero)
+    }.build()
+  }
+  /** Equalizer sliders (drawn for this app). */
+  val Equalizer: ImageVector by lazy {
+    ImageVector.Builder(name = "Ghp.equalizer", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
+      addPath(pathData = PathParser().parsePathString("M5.25 3h1.5v18h-1.5zM11.25 3h1.5v18h-1.5zM17.25 3h1.5v18h-1.5zM3.5 15a2.5 2.5 0 1 1 5 0a2.5 2.5 0 1 1 -5 0zM9.5 8a2.5 2.5 0 1 1 5 0a2.5 2.5 0 1 1 -5 0zM15.5 13a2.5 2.5 0 1 1 5 0a2.5 2.5 0 1 1 -5 0z").toNodes(), fill = SolidColor(Color.Black), pathFillType = PathFillType.NonZero)
+    }.build()
+  }
   val PlayArrow: ImageVector by lazy {
     ImageVector.Builder(name = "Fluent.play", defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f).apply {
       addPath(pathData = PathParser().parsePathString("M7.60846 4.61489C7.1087 4.34296 6.5 4.70472 6.5 5.27368V18.726C6.5 19.2949 7.1087 19.6567 7.60846 19.3848L19.97 12.6586C20.4921 12.3746 20.4921 11.6251 19.97 11.341L7.60846 4.61489ZM5 5.27368C5 3.56682 6.82609 2.48151 8.32538 3.2973L20.687 10.0235C22.2531 10.8756 22.2531 13.124 20.687 13.9762L8.32538 20.7024C6.82609 21.5181 5 20.4328 5 18.726V5.27368Z").toNodes(), fill = SolidColor(Color.Black), pathFillType = PathFillType.NonZero)

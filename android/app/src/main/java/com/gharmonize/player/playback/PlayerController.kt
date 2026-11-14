@@ -130,7 +130,7 @@ class PlayerController(private val context: Context) {
   }
 
   companion object {
-    fun trackItem(t: Track): MediaItem = MediaItem.Builder()
+    fun trackItem(t: Track, auto: Boolean = false): MediaItem = MediaItem.Builder()
       .setMediaId("t:${t.id}")
       .setUri(App.streamUri(t.id))
       .setMediaMetadata(
@@ -147,6 +147,7 @@ class PlayerController(private val context: Context) {
             putLong("artistId", t.artistId ?: 0)
             putBoolean("favorite", t.favorite)
             putDouble("duration", t.duration)
+            if (auto) putBoolean("auto", true)
           })
           .build(),
       )

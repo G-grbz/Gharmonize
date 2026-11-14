@@ -1,6 +1,7 @@
 package com.gharmonize.player.playback
 
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -17,7 +18,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -31,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.Executors
 
@@ -46,6 +51,7 @@ class PlaybackService : MediaSessionService() {
   private var currentId: String? = null
   private var retries = 0
   private var lastRetryAt = 0L
+  private var autoplayBusy = false
 
   override fun onCreate() {
     super.onCreate()
@@ -56,7 +62,15 @@ class PlaybackService : MediaSessionService() {
       .setReadTimeoutMs(30_000)
       .setAllowCrossProtocolRedirects(true)
     val dataSource = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, http)) { spec -> app.resolveDataSpec(spec) }
-    val player = ExoPlayer.Builder(this)
+    // The equalizer runs inside the player's own audio pipeline.
+    val renderers = object : DefaultRenderersFactory(this) {
+      override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+        DefaultAudioSink.Builder(context)
+          .setEnableFloatOutput(enableFloatOutput)
+          .setAudioProcessors(arrayOf(EqualizerProcessor()))
+          .build()
+    }
+    val player = ExoPlayer.Builder(this, renderers)
       .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
       .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
       .setHandleAudioBecomingNoisy(true)
@@ -116,10 +130,14 @@ class PlaybackService : MediaSessionService() {
       flushPlay(player, completed = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
       currentId = mediaItem?.mediaId
       retries = 0
+      keepPlaying(player)
     }
 
     override fun onPlaybackStateChanged(state: Int) {
-      if (state == Player.STATE_ENDED) flushPlay(player, completed = true)
+      if (state == Player.STATE_ENDED) {
+        flushPlay(player, completed = true)
+        keepPlaying(player, resume = true)
+      }
     }
 
     // The home ↔ Tailscale switch breaks the open connection: re-resolve the
@@ -135,6 +153,36 @@ class PlaybackService : MediaSessionService() {
       player.prepare()
       player.seekTo(pos)
       player.play()
+    }
+  }
+
+  /**
+   * When the last song of the queue starts, similar library songs are added
+   * after it, so the queue is never empty and the music keeps going if the
+   * user does nothing. `resume` also starts them when the queue already ended.
+   */
+  private fun keepPlaying(player: ExoPlayer, resume: Boolean = false) {
+    val app = application as App
+    if (!app.prefs.autoplay || autoplayBusy || player.repeatMode != Player.REPEAT_MODE_OFF) return
+    if (player.mediaItemCount == 0 || player.nextMediaItemIndex != C.INDEX_UNSET) return
+    if (player.currentMediaItem?.mediaId?.startsWith("t:") != true) return
+    val ids = (0 until player.mediaItemCount).mapNotNull { player.getMediaItemAt(it).mediaId.takeIf { id -> id.startsWith("t:") }?.removePrefix("t:")?.toLongOrNull() }
+    val at = player.currentMediaItemIndex
+    val seeds = (maxOf(0, at - 9)..at).mapNotNull { player.getMediaItemAt(it).mediaId.takeIf { id -> id.startsWith("t:") }?.removePrefix("t:")?.toLongOrNull() }
+    if (seeds.isEmpty()) return
+    autoplayBusy = true
+    scope.launch {
+      val known = ids.toSet()
+      val tracks = runCatching { app.api.autoplay(seeds, ids) }.getOrDefault(emptyList()).filter { it.id !in known }
+      withContext(Dispatchers.Main) {
+        autoplayBusy = false
+        if (tracks.isEmpty() || session?.player !== player) return@withContext
+        player.addMediaItems(tracks.map { PlayerController.trackItem(it, auto = true) })
+        if (resume && player.playbackState == Player.STATE_ENDED) {
+          player.seekToNextMediaItem()
+          player.play()
+        }
+      }
     }
   }
 

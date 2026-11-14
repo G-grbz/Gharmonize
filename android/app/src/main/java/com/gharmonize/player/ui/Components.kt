@@ -247,7 +247,7 @@ fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Uni
 /** Online track row: owned → play, preview → 30 s clip, otherwise download. */
 @Composable
 fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int) {
-  val item = items[index]
+  val item = state.withDownload(items[index])
   val owned = item.libraryTrackId != null
   Row(
     Modifier.fillMaxWidth().clickable { state.playOnline(items, index) }.padding(horizontal = 16.dp, vertical = 6.dp),
@@ -269,6 +269,32 @@ fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int) {
     when {
       owned -> OwnedBadge()
       state.canDownload -> DownloadButton(state, item)
+    }
+  }
+}
+
+/** Suggestion row: tap plays (library or preview), + adds it to the playlist. */
+@Composable
+fun SuggestionRow(state: AppState, items: List<OnlineItem>, index: Int, onAdd: () -> Unit) {
+  val item = state.withDownload(items[index])
+  val owned = item.libraryTrackId != null
+  val row = state.downloadsByUrl[item.url]
+  val pending = row != null && !owned
+  Row(
+    Modifier.fillMaxWidth().clickable { state.playOnline(items, index) }.padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Artwork(item.artworkUrl, Modifier.size(48.dp), size = 128)
+    Spacer(Modifier.width(12.dp))
+    Column(Modifier.weight(1f)) {
+      Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+      Text(listOfNotNull(item.artist.ifBlank { null }, stringResource(if (owned) R.string.in_library else R.string.suggest_new)).joinToString(" · "),
+        maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+        color = if (owned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    when {
+      pending -> DownloadButton(state, item)
+      owned || state.canDownload -> IconButton(onClick = onAdd) { Icon(FluentIcons.Add, stringResource(R.string.suggest_add), tint = MaterialTheme.colorScheme.primary) }
     }
   }
 }

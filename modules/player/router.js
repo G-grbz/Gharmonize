@@ -49,7 +49,7 @@ function bool(value) {
 }
 
 export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getMode = () => getRemoteAccessMode() } = {}) {
-  const { auth, access, libraries, catalog, scanner, artwork, stream, lyrics, online, bridge, annotator, discovery, onlineCache, getConfig, updateConfig, connectInfo } = ctx
+  const { auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, online, bridge, annotator, discovery, onlineCache, getConfig, updateConfig, connectInfo } = ctx
   const router = express.Router()
   let bridgePromise = null
   const getAdminBridge = () => (bridgePromise ||= Promise.resolve(adminBridge()).catch((error) => { bridgePromise = null; throw error }))
@@ -162,6 +162,22 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     await stream.serveTrack(req, res, track, req.query)
   })
 
+  // Real waveform for the "wave" seek bar: { bins: [0..100 × 240] }.
+  router.get('/waveform/:id', requireUser, async (req, res) => {
+    const track = catalog.getTrackRow(intParam(req.params.id), uid(req))
+    if (!track) return sendError(res, 404, 'NOT_FOUND', 'Track not found.')
+    if (!waveform) return sendError(res, 404, 'NO_WAVEFORM', 'Waveform unavailable.')
+    try {
+      const data = await waveform.getWaveform(track)
+      if (!data) return sendError(res, 404, 'FILE_MISSING', 'The audio file is no longer available.')
+      res.set('Cache-Control', 'private, max-age=2592000')
+      res.json({ bins: data.bins })
+    } catch {
+      res.set('Cache-Control', 'no-store')
+      sendError(res, 422, 'NO_WAVEFORM', 'Waveform unavailable.')
+    }
+  })
+
   router.get('/artwork/:kind/:id', requireUser, async (req, res) => {
     const id = intParam(req.params.id)
     if (!id) return sendError(res, 404, 'NOT_FOUND', 'Artwork not found.')
@@ -229,6 +245,16 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     if (!album) return sendError(res, 404, 'NOT_FOUND', 'Album not found.')
     res.json(album)
   })
+  // Songs of this album that the user does not have yet (from Deezer).
+  router.get('/albums/:id/missing', requireUser, rateLimit(60, 60_000), async (req, res) => {
+    const album = catalog.getAlbum(intParam(req.params.id), uid(req))
+    if (!album) return sendError(res, 404, 'NOT_FOUND', 'Album not found.')
+    try {
+      res.json(await discovery.albumMissing(req.playerUser, album))
+    } catch {
+      res.json({ available: true, found: false, error: true, missing: [] })
+    }
+  })
 
   router.get('/artists', requireUser, (req, res) => {
     res.json({ items: catalog.listArtists({ sort: req.query.sort, limit: req.query.limit, offset: req.query.offset, favorites: bool(req.query.favorites), userId: uid(req) }) })
@@ -248,10 +274,12 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     const { trackIds, ...rest } = mix
     res.json({ ...rest, tracks: catalog.getTracksByIds(trackIds, uid(req)) })
   })
-  router.get('/mixes/:id/online', requireUser, async (req, res) => {
+  // "Goes well with this mix": library songs and new songs (to preview or
+  // download) in one list.
+  router.get('/mixes/:id/online', requireUser, rateLimit(60, 60_000), async (req, res) => {
     const mix = ctx.mixes.get(uid(req), String(req.params.id))
     if (!mix) return sendError(res, 404, 'NOT_FOUND', 'Mix not found.')
-    res.json(await discovery.mixSuggestions(req.playerUser, { mixId: mix.id, artists: mix.artists || [] }))
+    res.json(await suggestionsFor(req, { seedIds: mix.trackIds, artists: mix.artists || [], seedKey: `mix:${mix.id}` }))
   })
   router.get('/stats/listening', requireUser, (req, res) => res.json(ctx.stats.listening(uid(req), { range: String(req.query.range || 'month') })))
   router.get('/stats/years', requireUser, (req, res) => res.json({ items: ctx.stats.years(uid(req)) }))
@@ -281,11 +309,52 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   router.get('/playlists', requireUser, (req, res) => res.json({ items: catalog.listPlaylists(uid(req)) }))
   router.post('/playlists', requireUser, (req, res) => res.status(201).json(catalog.createPlaylist(uid(req), req.body || {})))
   router.get('/playlists/:id', requireUser, (req, res) => res.json(catalog.getPlaylist(intParam(req.params.id), uid(req))))
+  // Songs that would fit this playlist (library first, then new ones).
+  router.get('/playlists/:id/suggestions', requireUser, rateLimit(60, 60_000), async (req, res) => {
+    const pl = catalog.getPlaylist(intParam(req.params.id), uid(req))
+    const counts = new Map()
+    for (const tr of pl.tracks) if (tr.artist) counts.set(tr.artist, (counts.get(tr.artist) || 0) + 1)
+    const artists = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name]) => name)
+    const round = Math.max(0, Math.min(1000, Number.parseInt(req.query.round, 10) || 0))
+    res.json(await suggestionsFor(req, { seedIds: pl.tracks.map((tr) => tr.id), artists, seedKey: `playlist:${pl.id}:${round}` }))
+  })
+  // More songs like the ones just played, for "keep playing" at the end of the queue.
+  router.get('/autoplay', requireUser, (req, res) => {
+    const ids = (value) => String(value || '').split(',').map((v) => Number.parseInt(v, 10)).filter((n) => n > 0).slice(0, 300)
+    res.json({ items: catalog.similarTracks(uid(req), { seedIds: ids(req.query.seed).slice(-20), excludeIds: ids(req.query.exclude), limit: Math.min(30, Number(req.query.limit) || 15) }) })
+  })
   router.patch('/playlists/:id', requireUser, (req, res) => res.json(catalog.updatePlaylist(intParam(req.params.id), uid(req), req.body || {})))
   router.delete('/playlists/:id', requireUser, (req, res) => { catalog.deletePlaylist(intParam(req.params.id), uid(req)); res.json({ ok: true }) })
   router.post('/playlists/:id/tracks', requireUser, (req, res) => res.json(catalog.addPlaylistTracks(intParam(req.params.id), uid(req), req.body?.trackIds || [])))
   router.delete('/playlists/:id/tracks/:entryId', requireUser, (req, res) => res.json(catalog.removePlaylistEntry(intParam(req.params.id), uid(req), intParam(req.params.entryId))))
   router.post('/playlists/:id/move', requireUser, (req, res) => res.json(catalog.movePlaylistEntry(intParam(req.params.id), uid(req), intParam(req.body?.entryId), req.body?.toIndex)))
+
+  // ---- suggestions (mixes, playlists) ---------------------------------------
+
+  // A library song in the same shape as an online result, so one list can
+  // hold both (it plays from the library and needs no download).
+  const libraryAsOnline = (tr) => ({
+    provider: 'library', kind: 'track', id: String(tr.id), url: `library:track:${tr.id}`,
+    title: tr.title, artist: tr.artist || '', album: tr.album || '', duration: tr.duration || 0,
+    artwork: tr.artwork, artworkUrl: null, library: { trackId: tr.id, ...(tr.albumId ? { albumId: tr.albumId } : {}) }, download: null
+  })
+
+  async function suggestionsFor(req, { seedIds = [], artists = [], seedKey = '', limit = 24 }) {
+    const userId = uid(req)
+    let radio = { enabled: false, items: [], ownedIds: [] }
+    try { radio = await discovery.radioSuggestions(req.playerUser, { artists, seedKey, limit: Math.ceil(limit / 2) }) } catch {}
+    const seeds = new Set(seedIds.map(Number))
+    const fromRadio = catalog.getTracksByIds([...new Set(radio.ownedIds || [])].filter((id) => !seeds.has(Number(id))).slice(0, 8), userId)
+    const similar = catalog.similarTracks(userId, { seedIds: seedIds.slice(0, 200), excludeIds: fromRadio.map((tr) => tr.id), limit: Math.ceil(limit / 2) })
+    const library = [...fromRadio, ...similar].slice(0, Math.ceil(limit / 2)).map(libraryAsOnline)
+    const online = radio.items || []
+    const items = []
+    for (let i = 0; i < Math.max(library.length, online.length); i++) {
+      if (library[i]) items.push(library[i])
+      if (online[i]) items.push(online[i])
+    }
+    return { enabled: Boolean(radio.enabled) || library.length > 0, items: items.slice(0, limit), libraryCount: library.length, onlineCount: online.length }
+  }
 
   // ---- online search & download bridge -------------------------------------
 

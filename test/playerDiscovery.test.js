@@ -305,3 +305,47 @@ test('Deezer artist lookup picks the most-followed exact name match', async () =
   assert.equal(await dz.findArtistId('tarkan'), '3254')
   assert.equal(await dz.findArtistId('Tarkan Bagci'), null, 'no partial-name matches')
 })
+
+test('library album lists the songs it is missing (same release on Deezer)', async (t) => {
+  const { call, admin, fake } = await setup(t)
+  const albums = (await call('GET', '/albums?limit=50', { token: admin })).body.items
+  const local = albums.find((a) => a.title === 'Gülümse')
+  assert.ok(local, 'library album exists')
+  const r = await call('GET', `/albums/${local.id}/missing`, { token: admin })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.found, true)
+  assert.equal(r.body.total, 2)
+  assert.deepEqual(r.body.missing.map((m) => m.title), ['Yeni Parça'], 'owned songs are not listed')
+  assert.equal(r.body.album.id, '22')
+  assert.ok(fake.calls['artistAlbums:100'] >= 1, 'found through the artist discography')
+  // An album that is not on Deezer simply has nothing to add.
+  fake.sources.deezer.searchAlbums = async () => []
+  const other = albums.find((a) => a.title !== 'Gülümse')
+  if (other) {
+    const none = await call('GET', `/albums/${other.id}/missing`, { token: admin })
+    assert.equal(none.status, 200)
+    assert.deepEqual(none.body.missing, [])
+  }
+  assert.equal((await call('GET', '/albums/999999/missing', { token: admin })).status, 404)
+})
+
+test('suggestions: library songs + new songs for playlists and mixes, autoplay', async (t) => {
+  const { call, admin } = await setup(t)
+  const tracks = (await call('GET', '/tracks?limit=50', { token: admin })).body.items
+  const hadi = tracks.find((tr) => tr.title === 'Hadi Bakalım')
+  const gulumse = tracks.find((tr) => tr.title === 'Gülümse')
+  const pl = (await call('POST', '/playlists', { token: admin, body: { name: 'Liste', trackIds: [hadi.id] } })).body
+  const r = await call('GET', `/playlists/${pl.id}/suggestions`, { token: admin })
+  assert.equal(r.status, 200)
+  const lib = r.body.items.filter((i) => i.provider === 'library')
+  assert.ok(lib.some((i) => i.library.trackId === gulumse.id), 'same artist / folder from the library')
+  assert.ok(!lib.some((i) => i.library.trackId === hadi.id), 'songs already in the playlist are not suggested')
+  assert.ok(r.body.items.some((i) => i.provider === 'deezer' && !i.library), 'new songs from the artist radio')
+  // Autoplay: more songs like the seed, never the seed itself.
+  const auto = await call('GET', `/autoplay?seed=${hadi.id}&exclude=${hadi.id}`, { token: admin })
+  assert.ok(auto.body.items.some((tr) => tr.id === gulumse.id))
+  assert.ok(!auto.body.items.some((tr) => tr.id === hadi.id))
+  const mixes = (await call('GET', '/mixes', { token: admin })).body
+  const mix = (mixes.items || mixes.mixes || [])[0]
+  if (mix) assert.equal((await call('GET', `/mixes/${encodeURIComponent(mix.id)}/online`, { token: admin })).status, 200)
+})

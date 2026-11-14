@@ -121,6 +121,12 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
   suspend fun wrapped(year: Int) = parseStats(get("/stats/wrapped?year=$year"))
   suspend fun lyrics(trackId: Long): Lyrics? = try { parseLyrics(get("/tracks/$trackId/lyrics")) } catch (e: ApiException) { if (e.status == 404) null else throw e }
 
+  /** Real waveform of a library track: 0..1 values (null when unavailable). */
+  suspend fun waveform(trackId: Long): FloatArray? = try {
+    val bins = get("/waveform/$trackId").optJSONArray("bins")
+    bins?.takeIf { it.length() > 0 }?.let { arr -> FloatArray(arr.length()) { (arr.optDouble(it, 0.0) / 100.0).toFloat().coerceIn(0f, 1f) } }
+  } catch (e: ApiException) { if (e.status in 400..499) null else throw e }
+
   suspend fun setFavorite(trackId: Long, value: Boolean) {
     request(if (value) "PUT" else "DELETE", "/favorites/track/$trackId")
   }
@@ -140,6 +146,14 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
     else -> get("/online/album?provider=${item.provider}&id=${enc(item.id)}")
   }
 
+  /** Songs of a library album that are not in the library yet (Deezer). */
+  suspend fun albumMissing(id: Long): AlbumMissing {
+    val o = get("/albums/$id/missing")
+    val arr = o.optJSONArray("missing")
+    val missing = if (arr == null) emptyList() else (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let(::parseOnline) }
+    return AlbumMissing(o.optBoolean("found"), o.optInt("total"), missing, o.optJSONObject("album")?.let(::parseOnline))
+  }
+
   suspend fun onlinePlaylist(item: OnlineItem): JSONObject = when (item.provider) {
     "youtube" -> get("/online/playlist?provider=youtube&url=${enc(item.url)}")
     else -> get("/online/playlist?provider=${item.provider}&id=${enc(item.id)}")
@@ -148,7 +162,14 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
   suspend fun onlineArtist(id: String?, name: String?): JSONObject =
     if (!id.isNullOrBlank()) get("/online/artist?id=${enc(id)}") else get("/online/artist?name=${enc(name ?: "")}")
 
-  suspend fun requestDownload(item: OnlineItem): DownloadRow {
+  /** Songs that fit a playlist: library songs and new ones in one list. */
+  suspend fun playlistSuggestions(id: Long, round: Int = 0) = get("/playlists/$id/suggestions?round=$round").optJSONArray("items").mapObjects(::parseOnline)
+
+  /** Library songs like the given ones, to keep playing at the end of the queue. */
+  suspend fun autoplay(seed: List<Long>, exclude: List<Long>): List<Track> =
+    get("/autoplay?seed=${seed.joinToString(",")}&exclude=${exclude.takeLast(200).joinToString(",")}&limit=15").optJSONArray("items").mapObjects(::parseTrack)
+
+  suspend fun requestDownload(item: OnlineItem, playlistId: Long? = null): DownloadRow {
     val payload = JSONObject()
       .put("kind", if (item.kind == "album" || item.kind == "playlist") item.kind else "track")
       .put("url", item.url).put("title", item.title).put("artist", item.artist).put("album", item.album)
@@ -156,7 +177,9 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
       .put("isrc", item.raw.optString("isrc", ""))
       .put("duration", item.duration)
       .put("trackCount", item.trackCount ?: JSONObject.NULL)
-    return parseDownload(post("/downloads", JSONObject().put("item", payload)))
+    val body = JSONObject().put("item", payload)
+    if (playlistId != null) body.put("playlistId", playlistId)
+    return parseDownload(post("/downloads", body))
   }
 
   suspend fun downloads() = get("/downloads?limit=100").optJSONArray("items").mapObjects(::parseDownload)
