@@ -1,7 +1,7 @@
 import { normalizeKey } from './scanner.js'
 import { transaction } from './db.js'
 import { visibleSql, uidLiteral } from './access.js'
-import { uniqueSongs } from './songKey.js'
+import { uniqueSongs, songKey } from './songKey.js'
 
 export class CatalogError extends Error {
   constructor(code, message, status = 400) {
@@ -404,6 +404,41 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
     return out
   }
 
+  // Library songs that fit a set of seed songs: same artists (strongest),
+  // the same folders (downloaded albums / playlists group similar music) and
+  // the same genres. Songs already among the seeds (also as other files of
+  // the same song) or excluded are skipped; at most `perArtist` per artist
+  // keeps the list varied; less played songs come first within a score.
+  function similarTracks(userId, { seedIds = [], excludeIds = [], limit = 20, perArtist = 3 } = {}) {
+    const seeds = [...new Set((seedIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 200)
+    if (!seeds.length) return []
+    const exclude = [...new Set([...seeds, ...(excludeIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0)])]
+    const params = { $uid: Number(userId) || 0, $seeds: JSON.stringify(seeds), $exclude: JSON.stringify(exclude), $limit: clampLimit(limit, 20) * 6 }
+    const dir = (alias) => `(${alias}.library_id || ':' || rtrim(${alias}.rel_path, replace(${alias}.rel_path, '/', '')))`
+    const rows = q(`WITH seeds AS (SELECT s.* FROM tracks s WHERE s.id IN (SELECT value FROM json_each($seeds)))
+      SELECT ${TRACK_COLUMNS}, ${favoriteExpr('track', 't.id')} AS favorite, COALESCE(ps.play_count, 0) AS plays,
+        (CASE WHEN t.artist_id IN (SELECT artist_id FROM seeds WHERE artist_id IS NOT NULL) THEN 3 ELSE 0 END
+        + CASE WHEN instr(t.rel_path, '/') > 0 AND ${dir('t')} IN (SELECT ${dir('seeds')} FROM seeds WHERE instr(seeds.rel_path, '/') > 0) THEN 2 ELSE 0 END
+        + CASE WHEN t.genre IS NOT NULL AND TRIM(t.genre) != '' AND LOWER(t.genre) NOT IN ('music', 'other', 'unknown')
+            AND t.genre IN (SELECT genre FROM seeds) THEN 1 ELSE 0 END) AS score
+      FROM tracks t LEFT JOIN play_stats ps ON ps.track_id = t.id AND ps.user_id = $uid
+      WHERE ${VISIBLE} AND t.id NOT IN (SELECT value FROM json_each($exclude)) AND score > 0
+      ORDER BY score DESC, plays ASC, RANDOM() LIMIT $limit`).all(params)
+    const seedSongs = new Set(q(`SELECT t.title, t.artist_name FROM tracks t WHERE t.id IN (SELECT value FROM json_each($exclude))`)
+      .all({ $exclude: params.$exclude }).map((r) => songKey(r.title, r.artist_name)).filter(Boolean))
+    const perArtistCount = new Map()
+    const out = []
+    for (const row of uniqueSongs(rows)) {
+      if (seedSongs.has(songKey(row.title, row.artist_name))) continue
+      const artist = row.artist_id || row.artist_name
+      if ((perArtistCount.get(artist) || 0) >= perArtist) continue
+      perArtistCount.set(artist, (perArtistCount.get(artist) || 0) + 1)
+      out.push(row)
+      if (out.length >= clampLimit(limit, 20)) break
+    }
+    return out.map(serializeTrack)
+  }
+
   function topArtistsForUser(userId, { limit, sinceMs = null } = {}) {
     const params = { $uid: Number(userId), $limit: clampLimit(limit, 12), $since: Number(sinceMs) || 0 }
     return q(`SELECT ar.id, ar.name, COUNT(*) AS plays FROM play_history h JOIN tracks t ON t.id = h.track_id
@@ -555,6 +590,7 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
   }
 
   return {
+    similarTracks,
     getTrackRow,
     getTrack,
     getTracksByIds,

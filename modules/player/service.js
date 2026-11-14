@@ -6,6 +6,7 @@ import { createScanner } from './scanner.js'
 import { createCatalog } from './catalog.js'
 import { createArtworkService } from './artwork.js'
 import { createStreamService } from './stream.js'
+import { createWaveformService } from './waveform.js'
 import { createLyricsService } from './lyrics.js'
 import { createPlayerRouter } from './router.js'
 import { createLibraryMatcher } from './matching.js'
@@ -115,6 +116,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const mixes = createMixes(db)
   const scanner = createScanner(db, { logger, onTrackChanges: () => { artwork.invalidate(); mixes.invalidate() } })
   const stream = createStreamService({ cacheDir: resolvedCacheDir, libraries, getCacheLimitBytes: () => config.transcodeCacheMb * 1024 * 1024, logger })
+  const waveform = createWaveformService({ cacheDir: resolvedCacheDir, libraries, logger })
   const stats = createStats(db, { catalog })
   const lyrics = createLyricsService({ libraries, getOnlineAllowed: () => config.onlineLyrics, logger })
   const matcher = createLibraryMatcher(db)
@@ -207,7 +209,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
     return buildConnectInfo({ req, main, listener: status, tailscale: ts, tunnel: tunnel.status(), remoteAccess: getRemoteAccessMode(env), publicUrls: config.publicUrls, docker: Boolean(ts.docker), serverName: config.serverName, ...networkOptions })
   }
 
-  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats }
+  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats }
   router = createPlayerRouter(context, routerOptions)
   // Do not block start-up on a cloudflared download.
   await listener.apply()
@@ -227,6 +229,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
     onlineCache.close()
     await scanner.stop()
     await stream.stop()
+    await waveform.stop()
     try { db.close() } catch {}
   }
 

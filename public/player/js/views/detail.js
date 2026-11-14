@@ -8,6 +8,7 @@ import {
   playlistSubmenu, refreshPlaylists, primaryArtist, selectButton
 } from '../components.js'
 import { saveButton } from '../playlistSave.js'
+import { downloadButton } from '../downloads.js'
 import { randomIndex } from '../random.js'
 
 // ---- album ------------------------------------------------------------------
@@ -53,6 +54,11 @@ async function albumView(id) {
   } else {
     root.append(trackList(album.tracks, { context, showAlbum: false, showArt: false, numbered: true }))
   }
+  if (app.providers.includes('deezer')) {
+    const slot = h('div', { class: 'album-missing-slot' })
+    root.append(slot)
+    loadAlbumMissing(id, album, slot)
+  }
   const added = album.addedAt ? h('p', { class: 'muted small detail__foot', text: t('player.album.added', { when: fmtRelative(album.addedAt) }) }) : null
   if (added) root.append(added)
   if (album.artistId) {
@@ -62,6 +68,38 @@ async function albumView(id) {
     }).catch(() => {})
   }
   return { node: root, hero: true }
+}
+
+// Songs of this album that are not in the library yet, ready to download.
+async function loadAlbumMissing(id, album, slot) {
+  let data
+  try { data = await get(`/albums/${id}/missing`) } catch { return }
+  if (!slot.isConnected || !data?.found || !data.missing?.length) return
+  const missing = data.missing
+  const context = { label: album.title }
+  const actions = h('div', { class: 'album-missing__actions' })
+  if (app.canDownload) {
+    const all = h('button', { type: 'button', class: 'btn btn--primary btn--sm' }, icon('download', { size: 16 }), t('player.album.downloadMissing', { n: missing.length }))
+    all.addEventListener('click', async () => {
+      all.disabled = true
+      let queued = 0
+      for (const item of missing) {
+        const state = app.downloads.stateFor(item)
+        if (item.library?.trackId || (state && state.status !== 'failed' && state.status !== 'canceled')) continue
+        if (await app.downloads.request(item, { quiet: true })) queued += 1
+      }
+      if (queued) toast(t('player.album.missingQueued', { n: queued }), { type: 'success' })
+    })
+    actions.append(all)
+  }
+  if (data.album?.provider === 'deezer' && data.album.id) actions.append(h('a', { class: 'btn btn--ghost btn--sm', href: `#/online/album?provider=deezer&id=${encodeURIComponent(data.album.id)}`, text: t('player.album.openOnline') }))
+  slot.append(h('section', { class: 'section album-missing' },
+    h('div', { class: 'album-missing__head' },
+      h('div', {},
+        h('h2', { class: 'section-title', text: t('player.album.missingTitle') }),
+        h('p', { class: 'muted small', text: t('player.album.missingText', { n: missing.length, total: data.total }) })),
+      actions),
+    onlineTrackList(missing, { context, showAlbum: false, numbered: false })))
 }
 
 // ---- artist -------------------------------------------------------------------
@@ -178,6 +216,58 @@ function editPlaylist(pl) {
   })
 }
 
+// "Goes well with this playlist": library songs are added right away, new
+// ones are downloaded and join the playlist when the download finishes.
+function playlistSuggestions(pl, onAdded) {
+  const list = h('div', { class: 'pl-suggest__list' })
+  let round = 0
+  const refresh = iconButton('refresh', t('player.playlist.suggestRefresh'), () => { round += 1; load() }, { cls: 'ctl', size: 18 })
+  const section = h('section', { class: 'section pl-suggest', hidden: true },
+    h('div', { class: 'shelf__head' },
+      h('div', { class: 'shelf__titles' },
+        h('h2', { class: 'section-title', text: t('player.playlist.suggestTitle') }),
+        h('p', { class: 'shelf__subtitle', text: t(app.canDownload ? 'player.playlist.suggestHintDownload' : 'player.playlist.suggestHint') })),
+      refresh),
+    list)
+
+  function addButton(item, row) {
+    const owned = item.library?.trackId
+    if (!owned && !app.canDownload) return null
+    const btn = iconButton('plus', t('player.playlist.suggestAdd'), async (e) => {
+      e.stopPropagation()
+      btn.disabled = true
+      try {
+        if (owned) {
+          await post(`/playlists/${pl.id}/tracks`, { trackIds: [owned] })
+          toast(t('player.playlist.suggestAdded', { title: item.title }), { type: 'success' })
+          row.remove()
+          await onAdded?.()
+          refreshPlaylists().catch(() => {})
+        } else {
+          const res = await app.downloads.request(item, { playlistId: pl.id, quiet: true })
+          if (!res) { btn.disabled = false; return }
+          toast(t('player.playlist.suggestDownloading', { title: item.title }))
+          btn.replaceWith(downloadButton(item))
+        }
+      } catch (error) { btn.disabled = false; toastError(error) }
+    }, { cls: 'pl-suggest__add', size: 18 })
+    return btn
+  }
+
+  async function load() {
+    refresh.disabled = true
+    try {
+      const res = await get(`/playlists/${pl.id}/suggestions`, { round })
+      clear(list)
+      section.hidden = !res.items?.length
+      if (res.items?.length) list.append(onlineTrackList(res.items, { context: { label: pl.name }, showAlbum: false, numbered: false, action: addButton }))
+    } catch { section.hidden = true }
+    refresh.disabled = false
+  }
+  load()
+  return section
+}
+
 function playlistFinder(pl, onAdded) {
   const input = h('input', { class: 'input input--search', type: 'search', placeholder: t('player.playlist.findPlaceholder') })
   const results = h('div', { class: 'finder__results' })
@@ -256,7 +346,7 @@ async function playlistView(id) {
     extra
   }), listHolder)
   paintList()
-  if (pl.editable) root.append(playlistFinder(pl, reload))
+  if (pl.editable) root.append(playlistSuggestions(pl, reload), playlistFinder(pl, reload))
   return { node: root, hero: true }
 }
 

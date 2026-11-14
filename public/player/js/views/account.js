@@ -7,6 +7,7 @@ import { h, t, icon, clear, toggle, toast, toastError, fmtRelative, confirmDialo
 import { applyTheme, currentTheme, applyAccent, currentAccent, ACCENTS } from '../theme.js'
 import { showShortcuts } from '../chrome.js'
 import { pairingPanel } from '../pairing.js'
+import { PROGRESS_STYLES, progressStyle } from '../seekbar.js'
 
 const QUALITIES = ['original', 'high', 'normal', 'low', 'saver']
 const LANGS = [['tr', 'Türkçe'], ['en', 'English'], ['de', 'Deutsch'], ['fr', 'Français'], ['es', 'Español']]
@@ -109,25 +110,32 @@ export async function render() {
 
   const quality = h('select', { class: 'select' }, QUALITIES.map((q) => h('option', { value: q, selected: app.prefs.quality === q, text: t(`player.quality.${q}`) })))
   quality.addEventListener('change', () => { app.setPref('quality', quality.value); app.player.reloadCurrent() })
-  root.append(card(t('player.account.playback'),
+  const cards = h('div', { class: 'account__cards' })
+  root.append(cards)
+  cards.append(card(t('player.account.playback'),
     settingRow(t('player.quality.title'), t('player.quality.hint'), quality),
     settingRow(t('player.quality.normalize'), t('player.quality.normalizeHint'), toggle(app.prefs.normalize, (v) => { app.setPref('normalize', v); app.player.applyVolume() })),
     settingRow(t('player.account.autoplay'), t('player.account.autoplayHint'), toggle(app.prefs.autoplay, (v) => app.setPref('autoplay', v))),
     settingRow(t('player.account.preload'), t('player.account.preloadHint'), toggle(app.prefs.preload, (v) => app.setPref('preload', v)))))
 
+  const progress = h('select', { class: 'select' }, PROGRESS_STYLES.map((key) => h('option', { value: key, selected: progressStyle() === key, text: t(`player.progress.${key}`) })))
+  progress.addEventListener('change', () => app.setPref('progressStyle', progress.value))
+
   const langSelect = h('select', { class: 'select' }, LANGS.map(([code, label]) => h('option', { value: code, selected: (window.i18n?.lang || 'en') === code, text: label })))
   langSelect.addEventListener('change', () => window.i18n?.setLang(langSelect.value))
-  root.append(card(t('player.account.appearance'),
+  cards.append(card(t('player.account.appearance'),
     settingRow(t('player.theme.title'), null, segmented([['dark', t('player.theme.dark')], ['light', t('player.theme.light')]], currentTheme(), (v) => applyTheme(v))),
     settingRow(t('player.theme.accent'), t('player.theme.accentHint'), accentPicker()),
+    settingRow(t('player.progress.title'), t('player.progress.hint'), progress),
     settingRow(t('player.account.language'), null, langSelect),
     settingRow(t('player.shortcuts.title'), null, h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.shortcuts.show'), onclick: () => showShortcuts() }))))
 
-  root.append(card(t('player.account.permissions'),
+  cards.append(card(t('player.account.permissions'),
     settingRow(t('player.account.canDownload'), null, h('span', { class: ['pill', perms.canDownload && 'pill--accent'], text: perms.canDownload ? t('player.common.yes') : t('player.common.no') })),
     settingRow(t('player.account.libraries'), null, h('div', { class: 'chips chips--wrap' }, (perms.libraries || []).map((l) => h('span', { class: 'chip chip--static', text: l.name }))))))
 
-  root.append(devicesCard(me), passwordCard(),
+  cards.append(devicesCard(me), passwordCard())
+  root.append(
     h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn btn--danger', onclick: () => import('../app.js').then(({ bus }) => bus.emit('logout')) }, icon('logout', { size: 18 }), t('player.auth.logout'))))
   return { node: root }
 }

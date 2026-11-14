@@ -38,6 +38,7 @@ sealed interface Route {
   data object Stats : Route
   data class Mix(val id: String) : Route
   data class Wrapped(val year: Int) : Route
+  data object Equalizer : Route
 }
 
 /** UI state shared by all screens: navigation, player, downloads, messages. */
@@ -108,6 +109,16 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
 
   // ---- favorites ------------------------------------------------------------------------
 
+  private val waveforms = object : LinkedHashMap<Long, FloatArray>(16, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, FloatArray>?) = size > 30
+  }
+
+  /** Cached waveform for the "wave" progress style. */
+  suspend fun waveform(trackId: Long): FloatArray? {
+    waveforms[trackId]?.let { return it }
+    return runCatching { api.waveform(trackId) }.getOrNull()?.also { waveforms[trackId] = it }
+  }
+
   fun setFavorite(trackId: Long, value: Boolean, onDone: (Boolean) -> Unit = {}) {
     scope.launch {
       try {
@@ -124,8 +135,19 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
 
   // ---- playing online items -------------------------------------------------------------
 
+  /**
+   * A song whose download finished after its list was loaded still says "not
+   * in library": take the track from the finished download instead.
+   */
+  fun withDownload(item: OnlineItem): OnlineItem {
+    if (item.libraryTrackId != null || item.kind != "track") return item
+    val row = downloadsByUrl[item.url] ?: return item
+    if ((row.status != "completed" && row.status != "exists") || row.trackIds.isEmpty()) return item
+    return item.copy(libraryTrackId = row.trackIds.first())
+  }
+
   fun playOnline(items: List<OnlineItem>, index: Int) {
-    if (!player.playOnline(items, index)) {
+    if (!player.playOnline(items.map(::withDownload), index)) {
       val item = items.getOrNull(index) ?: return
       if (canDownload) messageRes(R.string.online_not_owned_download, item.title)
       else messageRes(R.string.online_no_preview)
@@ -145,6 +167,43 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
       } catch (e: Exception) {
         message(errorText(e))
       }
+    }
+  }
+
+  /**
+   * Adds a suggestion to a playlist: a library song right away, a new song
+   * is downloaded and joins the playlist when the download finishes.
+   */
+  fun addSuggestion(playlistId: Long, item: OnlineItem, onDone: (Boolean) -> Unit) {
+    scope.launch {
+      try {
+        val owned = withDownload(item).libraryTrackId
+        if (owned != null) {
+          api.addToPlaylist(playlistId, listOf(owned))
+          messageRes(R.string.suggest_added, item.title)
+        } else {
+          downloadsByUrl[item.url] = api.requestDownload(item, playlistId)
+          messageRes(R.string.suggest_downloading, item.title)
+          startPolling()
+        }
+        onDone(true)
+      } catch (e: Exception) {
+        message(errorText(e))
+        onDone(false)
+      }
+    }
+  }
+
+  /** Queues several songs at once with a single message. */
+  fun downloadAll(items: List<OnlineItem>) {
+    scope.launch {
+      var queued = 0
+      for (item in items) {
+        val known = downloadsByUrl[item.url]
+        if (item.libraryTrackId != null || (known != null && known.status != "failed" && known.status != "canceled")) continue
+        runCatching { api.requestDownload(item) }.onSuccess { downloadsByUrl[item.url] = it; queued++ }
+      }
+      if (queued > 0) { messageRes(R.string.missing_queued, queued); startPolling() }
     }
   }
 

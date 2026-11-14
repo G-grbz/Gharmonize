@@ -36,6 +36,7 @@ export const bus = new Bus()
 const PREF_DEFAULTS = {
   quality: 'original',
   normalize: false,
+  progressStyle: 'classic',
   autoplay: true,
   preload: true,
   homeFilter: 'all'
