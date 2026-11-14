@@ -58,3 +58,13 @@ Official project repository: https://github.com/yt-dlp/yt-dlp
 The source code of Gharmonize itself is licensed under the **GNU General Public License v3.0 (GPL-3.0-only)**.
 
 See the [LICENSE.md](./LICENSE.md) file in the repository root for details.
+
+
+## Fluent UI System Icons
+
+The web Player and Android client include Fluent UI System Icons, Regular 24.
+Copyright (c) 2020 Microsoft Corporation. Licensed under the MIT License.
+
+- Source: https://github.com/microsoft/fluentui-system-icons
+- Full license: `public/player/icons/LICENSE` (web/desktop), `assets/licenses/FluentUI.txt` (Android APK)
+- Icon mapping and attribution: `public/player/icons/NOTICE.md`

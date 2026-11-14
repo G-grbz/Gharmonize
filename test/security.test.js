@@ -452,8 +452,13 @@ test('media output and remote thumbnail writes remain confined and bounded', () 
   const text = fs.readFileSync('modules/media.js', 'utf8');
   assert.ok(text.includes('outputDir = assertPathWithinAny('));
   assert.ok(text.includes('path.relative(outputDir, candidate)'));
-  assert.ok(text.includes('const maxCoverBytes = 25 * 1024 * 1024'));
-  assert.ok(text.includes('if (buf.byteLength > maxCoverBytes) return null'));
+  const artwork = fs.readFileSync('modules/coverArt.js', 'utf8');
+  assert.ok(artwork.includes('const MAX_COVER_BYTES = 25 * 1024 * 1024'));
+  assert.ok(artwork.includes('if (size > MAX_COVER_BYTES)'));
+  assert.ok(artwork.includes('await normalizeCoverImage(bytes)'));
+  assert.ok(artwork.includes('assertPathWithinAny'));
+  assert.ok(artwork.includes('fetchSafeRemote'));
+  assert.ok(text.includes('export { downloadThumbnail }'));
 });
 
 test('probe cleanup and platform direct moves rebuild paths from safe basenames', () => {

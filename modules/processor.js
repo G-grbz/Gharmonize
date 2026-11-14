@@ -1,3 +1,5 @@
+import { resolvePreferredCoverPath } from "./coverArt.js";
+import { pickTrackArtist, pickTrackTitle } from "./youtubeIdentity.js";
 import path from "path";
 import fs from "fs";
 import { ZipArchive } from "archiver";
@@ -415,45 +417,6 @@ async function enrichMetaFromApple(base, {
   } catch {
     return base;
   }
-}
-
-// Resolves the preferred cover art path from provider and fallback sources in core application logic.
-async function resolvePreferredCoverPath(meta, {
-  baseNoExt = "",
-  fallbackSidecarPath = null,
-  fallbackCoverPath = null
-} = {}) {
-  const appleCoverUrl = String(meta?.__applePreferredCoverUrl || "").trim();
-  if (appleCoverUrl && baseNoExt) {
-    try {
-      const dl = await downloadThumbnail(
-        appleCoverUrl,
-        `${baseNoExt}.apple_cover`
-      );
-      if (dl && fs.existsSync(dl)) return dl;
-    } catch {}
-  }
-
-  if (fallbackSidecarPath && fs.existsSync(fallbackSidecarPath)) {
-    return fallbackSidecarPath;
-  }
-
-  if (fallbackCoverPath && fs.existsSync(fallbackCoverPath)) {
-    return fallbackCoverPath;
-  }
-
-  const metaCoverUrl = String(meta?.coverUrl || "").trim();
-  if (metaCoverUrl && metaCoverUrl !== appleCoverUrl && baseNoExt) {
-    try {
-      const dl = await downloadThumbnail(
-        metaCoverUrl,
-        `${baseNoExt}.cover`
-      );
-      if (dl && fs.existsSync(dl)) return dl;
-    } catch {}
-  }
-
-  return null;
 }
 
 // Checks whether video format is valid for core application logic.
@@ -907,24 +870,31 @@ export async function processJob(jobId, inputPath, format, bitrate) {
           };
 
           fileMeta = applyGlobalMetaCleaning(fileMeta);
+          // The source (Spotify / Deezer / Apple / TIDAL…) cover is the exact
+          // artwork of the item the user picked; the matched YouTube video's
+          // thumbnail is only the last resort.
+          const sourceCoverUrl = String(entry.sourceCoverUrl || entry.coverUrl || "").trim();
           fileMeta = await enrichMetaFromApple(fileMeta, {
             artist: fileMeta.artist || fileMeta.uploader,
             title: fileMeta.track || fileMeta.title,
-            market: job?.metadata?.market
+            market: job?.metadata?.market,
+            preferCover: !sourceCoverUrl
           });
 
           let itemCover = null;
           const baseNoExt = filePath.replace(/\.[^.]+$/, "");
           const sidecarJpg = `${baseNoExt}.jpg`;
-          if (fs.existsSync(sidecarJpg)) itemCover = sidecarJpg;
-          else if (fileMeta?.coverUrl) {
+          if (sourceCoverUrl && /^https?:\/\//i.test(sourceCoverUrl)) {
             try {
-              const dl = await downloadThumbnail(
-                fileMeta.coverUrl,
-                `${baseNoExt}.cover`
-              );
-              if (dl) itemCover = dl;
+              const dl = await downloadThumbnail(sourceCoverUrl, `${baseNoExt}.source_cover`);
+              if (dl && fs.existsSync(dl)) itemCover = dl;
             } catch {}
+          }
+          if (!itemCover) {
+            itemCover = await resolvePreferredCoverPath(fileMeta, {
+              baseNoExt,
+              fallbackSidecarPath: sidecarJpg
+            });
           }
 
           if (job.currentPhase !== "converting") {
@@ -1462,6 +1432,10 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             entry = byIndex.get(playlistIndex) || {};
           }
 
+          const rawIdentity = entry?.title ? {
+            artist: pickTrackArtist(entry),
+            title: entry.track || pickTrackTitle(entry)
+          } : null;
           if (frozen) {
             entry = {
               ...entry,
@@ -1473,6 +1447,13 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             };
           }
 
+          if (rawIdentity) {
+            entry.artist = rawIdentity.artist;
+            entry.title = rawIdentity.title;
+          } else if (entry.title) {
+            entry.artist = pickTrackArtist(entry);
+            entry.title = entry.track || pickTrackTitle(entry);
+          }
           entry = normalizeYtMusicAlbumEntry(entry, {
             parentMeta: ytMeta || flat || {},
             playlistTitle: job.metadata?.frozenTitle || flat.album || flat.title || "",
@@ -1507,6 +1488,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
 
           let fileMeta = {
             ...flat,
+            thumbnail: entry?.thumbnail || entry?.thumbnails?.at(-1)?.url || (entry?.id ? `https://i.ytimg.com/vi/${entry.id}/maxresdefault.jpg` : null),
             title,
             track: title,
             uploader: toNFC(entry?.uploader || flat.uploader),
@@ -1685,7 +1667,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
                 publisher: fileMeta.publisher || strictMeta.publisher,
                 copyright: fileMeta.copyright || strictMeta.copyright,
                 album_artist: fileMeta.album_artist || strictMeta.album_artist,
-                webpage_url: strictMeta.spotifyUrl || fileMeta.webpage_url
+                webpage_url: entry?.webpage_url || (entry?.id ? `https://www.youtube.com/watch?v=${entry.id}` : fileMeta.webpage_url)
               };
               fileMeta.album_artist = toNFC(
                 fileMeta.album_artist || fileMeta.artist || ""
@@ -2282,9 +2264,7 @@ export async function processJob(jobId, inputPath, format, bitrate) {
             copyright: singleMeta.copyright || strictSingle.copyright,
             album_artist: singleMeta.album_artist || strictSingle.album_artist
           };
-          if (strictSingle.spotifyUrl) {
-            singleMeta.webpage_url = strictSingle.spotifyUrl;
-          }
+          singleMeta.webpage_url = job.metadata.url || singleMeta.webpage_url;
         }
       } catch (error) {
         console.warn(`Single ID3 strict resolution error: ${error.message}`);

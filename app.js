@@ -21,6 +21,7 @@ import { sendError, sanitizeFilename } from './modules/utils.js'
 import { assertSafeRemoteUrl, createTrustedProxyPredicate, decryptSecret } from './modules/security.js'
 import { rateLimit } from './modules/rateLimit.js'
 import discRouter from './routes/disc.js'
+import { createPlayerGate, isPlayerEnabled } from './modules/player/gate.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
 import { resolveRuntimeCacheDir } from './modules/runtimeEnvironment.js'
 import {
@@ -39,7 +40,8 @@ const defaultEnv = process.env.ENV_DEFAULT_PATH
 const encryptedEnvKeys = [
   'SPOTIFY_CLIENT_SECRET',
   'DEEZER_ARL',
-  'HOMEPAGE_WIDGET_KEY'
+  'HOMEPAGE_WIDGET_KEY',
+  'GHARMONIZE_PLAYER_TUNNEL_TOKEN'
 ]
 
 for (const key of encryptedEnvKeys) {
@@ -396,6 +398,18 @@ app.use((req, res, next) => {
   }
   next()
 })
+
+// Gharmonize Player (off by default). Mounted before the global API limiter and
+// the app access policy because it has its own accounts, device tokens, network
+// gate and media-aware rate limits. While disabled it only answers 404s.
+const playerGate = createPlayerGate()
+app.use('/api/player', playerGate.middleware)
+process.on('gharmonize:settings-updated', ({ updates } = {}) => {
+  if (!updates) return
+  if (Object.prototype.hasOwnProperty.call(updates, 'GHARMONIZE_PLAYER_ENABLED')) playerGate.sync()
+  else if (['GHARMONIZE_PLAYER_LISTEN', 'GHARMONIZE_PLAYER_PORT', 'GHARMONIZE_PLAYER_REMOTE_ACCESS', 'GHARMONIZE_PLAYER_TUNNEL_MODE', 'GHARMONIZE_PLAYER_TUNNEL_TOKEN', 'GHARMONIZE_PLAYER_TUNNEL_URL'].some((key) => Object.prototype.hasOwnProperty.call(updates, key))) playerGate.refreshNetwork()
+})
+if (isPlayerEnabled()) playerGate.sync()
 
 // Global API limiter protects filesystem, authorization, and expensive media endpoints.
 app.use('/api', rateLimit(600, 60_000))

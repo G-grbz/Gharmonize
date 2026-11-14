@@ -7,6 +7,7 @@ import { rateLimit } from './rateLimit.js'
 import { normalizeTrustedExecutableSetting } from './safeProcess.js'
 import { getBinariesInfo, clearBinariesInfoCache } from './binariesInfo.js'
 import { writeEnvFileSync } from './envFile.js'
+import { normalizePlayerEnabled, normalizeRemoteAccessMode, normalizePlayerListen, normalizePlayerPort, normalizeTunnelMode, normalizeTunnelUrl } from './player/gate.js'
 import {
   decryptSecret,
   deriveSessionSecret,
@@ -36,7 +37,7 @@ const ACCESS_REQUEST_CLIENT_TTL_MS = 180 * 24 * 60 * 60 * 1000
 const MAX_ACCESS_REQUESTS = 200
 const ACTIVE_ACCESS_GRANTS_PATH = path.join(process.env.DATA_DIR || process.cwd(), 'temporary-access-grants.json')
 const MAX_TEMP_ACCESS_MS = 5 * 365 * 24 * 60 * 60 * 1000
-const SENSITIVE_KEYS = new Set(['SPOTIFY_CLIENT_SECRET', 'DEEZER_ARL', 'HOMEPAGE_WIDGET_KEY'])
+const SENSITIVE_KEYS = new Set(['SPOTIFY_CLIENT_SECRET', 'DEEZER_ARL', 'HOMEPAGE_WIDGET_KEY', 'GHARMONIZE_PLAYER_TUNNEL_TOKEN'])
 const EXECUTABLE_SETTING_KEYS = new Set(['YTDLP_BIN', 'FFMPEG_BIN'])
 let sessionGeneration = 1
 const loginAttempts = new Map()
@@ -58,7 +59,8 @@ const ALLOWED_KEYS = [
   'PLAYLIST_META_FALLBACK_TIMEOUT_MS','YT_UI_FORCE_COOKIES','YT_SEARCH_RESULTS','YT_SEARCH_TIMEOUT_MS',
   'YT_SEARCH_STAGGER_MS','HOMEPAGE_WIDGET_KEY',
   'GHARMONIZE_ACCESS_MODE','GHARMONIZE_TEMP_ACCESS_ENABLED','GHARMONIZE_TEMP_ACCESS_HOURS',
-  'GHARMONIZE_TEMP_ACCESS_DAYS','GHARMONIZE_TEMP_ACCESS_MONTHS','GHARMONIZE_TEMP_ACCESS_YEARS'
+  'GHARMONIZE_TEMP_ACCESS_DAYS','GHARMONIZE_TEMP_ACCESS_MONTHS','GHARMONIZE_TEMP_ACCESS_YEARS',
+  'GHARMONIZE_PLAYER_ENABLED','GHARMONIZE_PLAYER_REMOTE_ACCESS','GHARMONIZE_PLAYER_LISTEN','GHARMONIZE_PLAYER_PORT','GHARMONIZE_PLAYER_TUNNEL_MODE','GHARMONIZE_PLAYER_TUNNEL_TOKEN','GHARMONIZE_PLAYER_TUNNEL_URL'
 ]
 
 function applyAllowedEnvValue(key, value) {
@@ -128,6 +130,13 @@ function applyAllowedEnvValue(key, value) {
     case 'GHARMONIZE_TEMP_ACCESS_DAYS': process.env.GHARMONIZE_TEMP_ACCESS_DAYS = value; return;
     case 'GHARMONIZE_TEMP_ACCESS_MONTHS': process.env.GHARMONIZE_TEMP_ACCESS_MONTHS = value; return;
     case 'GHARMONIZE_TEMP_ACCESS_YEARS': process.env.GHARMONIZE_TEMP_ACCESS_YEARS = value; return;
+    case 'GHARMONIZE_PLAYER_ENABLED': process.env.GHARMONIZE_PLAYER_ENABLED = normalizePlayerEnabled(value); return;
+    case 'GHARMONIZE_PLAYER_REMOTE_ACCESS': process.env.GHARMONIZE_PLAYER_REMOTE_ACCESS = normalizeRemoteAccessMode(value); return;
+    case 'GHARMONIZE_PLAYER_LISTEN': process.env.GHARMONIZE_PLAYER_LISTEN = normalizePlayerListen(value); return;
+    case 'GHARMONIZE_PLAYER_PORT': process.env.GHARMONIZE_PLAYER_PORT = normalizePlayerPort(value); return;
+    case 'GHARMONIZE_PLAYER_TUNNEL_MODE': process.env.GHARMONIZE_PLAYER_TUNNEL_MODE = normalizeTunnelMode(value); return;
+    case 'GHARMONIZE_PLAYER_TUNNEL_URL': process.env.GHARMONIZE_PLAYER_TUNNEL_URL = normalizeTunnelUrl(value); return;
+    case 'GHARMONIZE_PLAYER_TUNNEL_TOKEN': process.env.GHARMONIZE_PLAYER_TUNNEL_TOKEN = value; return;
     default: return;
   }
 }
@@ -650,6 +659,14 @@ function authMiddleware(req, res, next) {
 
 export function requireAuth(req, res, next) { return authMiddleware(req, res, next) }
 
+// Used by Gharmonize Player to let the Gharmonize administrator manage the
+// player and create its first account. Read-only helpers; no state changes.
+export function getAdminSessionFromRequest(req) { return verify(getTokenFromReq(req)) }
+export function verifyAdminPassword(password) {
+  const currentHash = getAdminPasswordHash()
+  return Boolean(currentHash && password && verifyPassword(String(password), currentHash))
+}
+
 // Verify the administrator session for every job request, independently of its
 // source. Only a verified session may authorize server-local media; ordinary
 // uploads and remote URLs keep their existing application-access policy. Run
@@ -920,6 +937,12 @@ router.get('/settings', authMiddleware, rateLimit(60, 60_000), (_req, res) => {
     if (SENSITIVE_KEYS.has(k) && val) val = '••••••••'
     if (k === 'GHARMONIZE_FFMPEG_CHANNEL') val = getEnv(k) === 'master' ? 'master' : 'stable'
     if (k === 'TRUST_PROXY') val = ['1','true','yes','on'].includes(String(getEnv(k)).toLowerCase()) ? '1' : '0'
+    if (k === 'GHARMONIZE_PLAYER_ENABLED') val = normalizePlayerEnabled(getEnv(k))
+    if (k === 'GHARMONIZE_PLAYER_REMOTE_ACCESS') val = normalizeRemoteAccessMode(getEnv(k))
+    if (k === 'GHARMONIZE_PLAYER_LISTEN') val = normalizePlayerListen(getEnv(k))
+    if (k === 'GHARMONIZE_PLAYER_PORT') val = normalizePlayerPort(getEnv(k))
+    if (k === 'GHARMONIZE_PLAYER_TUNNEL_MODE') val = normalizeTunnelMode(getEnv(k))
+    if (k === 'GHARMONIZE_PLAYER_TUNNEL_URL') val = normalizeTunnelUrl(getEnv(k))
     data[k] = val
   }
   res.json({ settings: data })
@@ -934,6 +957,12 @@ router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), 
     if (SENSITIVE_KEYS.has(k)) { updates[k] = (!v || v === '••••••••') ? (env.get(k) || '') : String(v); continue }
     if (k === 'GHARMONIZE_FFMPEG_CHANNEL') { updates[k] = String(v || '').trim().toLowerCase() === 'master' ? 'master' : 'stable'; continue }
     if (k === 'TRUST_PROXY') { updates[k] = ['1','true','yes','on'].includes(String(v ?? '').trim().toLowerCase()) ? '1' : '0'; continue }
+    if (k === 'GHARMONIZE_PLAYER_ENABLED') { updates[k] = normalizePlayerEnabled(v); continue }
+    if (k === 'GHARMONIZE_PLAYER_REMOTE_ACCESS') { updates[k] = normalizeRemoteAccessMode(v); continue }
+    if (k === 'GHARMONIZE_PLAYER_LISTEN') { updates[k] = normalizePlayerListen(v); continue }
+    if (k === 'GHARMONIZE_PLAYER_PORT') { updates[k] = normalizePlayerPort(v); continue }
+    if (k === 'GHARMONIZE_PLAYER_TUNNEL_MODE') { updates[k] = normalizeTunnelMode(v); continue }
+    if (k === 'GHARMONIZE_PLAYER_TUNNEL_URL') { updates[k] = normalizeTunnelUrl(v); continue }
     if (typeof v !== 'undefined' && v !== null) updates[k] = String(v)
   }
   try {

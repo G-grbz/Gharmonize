@@ -3,7 +3,7 @@ import path from "path";
 import { execFileSafe } from "./safeProcess.js";
 import { terminateProcess } from "./processTermination.js";
 import { getBinaryRuntimeEnv } from "./binaries.js";
-import { resolveYtDlp, withYT403Workarounds, isMusicEnabled } from "./yt.js";
+import { resolveYtDlp, withYT403Workarounds, isMusicEnabled, hasCookieArgs, stripCookieArgs } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
 import { getUserAgent, getYouTubeHeaders, addGeoArgs, getExtraArgs, FLAGS } from "./config.js";
@@ -1069,7 +1069,7 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
       _stdout,
       stderr,
       watchdogReason,
-      { allowMusicFallback = true } = {}
+      { allowMusicFallback = true, allowCookieFallback = true } = {}
     ) => {
       if (!err) {
         const p = findDownloaded();
@@ -1088,6 +1088,24 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
       const stderrStr = String(stderr || "");
       const is403 = /403|Forbidden/i.test(stderrStr);
       const isMusic = isYouTubeMusicUrl(url);
+
+      // Cookies are optional: a run that used them and failed is repeated once
+      // without them (expired or unreadable browser cookies must not break downloads).
+      if (allowCookieFallback && hasCookieArgs(finalArgs)) {
+        console.warn("[yt-download] failed with cookies, retrying without cookies");
+        const retryArgs = stripCookieArgs(finalArgs);
+        startYtDlpDownloadProcess(
+          YTDLP_BIN,
+          retryArgs,
+          downloadDir,
+          fileId,
+          (err2, so2, se2, fallbackWatchdogReason) => {
+            finalArgs = retryArgs;
+            finishAttempt(err2, so2, se2, fallbackWatchdogReason, { allowMusicFallback, allowCookieFallback: false });
+          }
+        );
+        return;
+      }
 
       if (allowMusicFallback && is403 && isMusic) {
         const fallbackUrl = toStandardYouTubeUrl(url);
@@ -1113,7 +1131,7 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
               so2,
               se2,
               fallbackWatchdogReason,
-              { allowMusicFallback: false }
+              { allowMusicFallback: false, allowCookieFallback: false }
             );
           }
         );

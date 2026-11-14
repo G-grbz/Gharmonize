@@ -1,3 +1,4 @@
+import { cleanUploader, pickTrackTitle, pickTrackArtist, parseTitleArtistPair } from '../shared/youtubeIdentity.js';
 export class PreviewManager {
     // Initializes class state and defaults for the browser UI layer.
     constructor(app) {
@@ -16,18 +17,7 @@ export class PreviewManager {
     }
 
     // Cleans up uploader for the browser UI layer.
-    cleanUploader(uploader = '') {
-        let s = String(uploader).trim().replace(/\s+/g, ' ');
-
-        s = s.replace(/\s*-\s*(topic)\s*$/i, '');
-        s = s.replace(/\s*-\s*(official)(?:\s+(channel))?\s*$/i, '');
-        s = s.replace(/\s+(official|topic)\s*$/i, '');
-        s = s.replace(/\s*\((official)\)\s*$/i, '');
-        s = s.replace(/\s+(?:and|&)\s+/gi, ', ');
-        s = s.replace(/\s*,\s*/g, ', ');
-
-        return s.trim();
-    }
+    cleanUploader(value = '') { return cleanUploader(value); }
 
     // Detects playlist platform from URL for the browser UI layer.
     detectPlaylistPlatform(url = '') {
@@ -63,97 +53,9 @@ export class PreviewManager {
     }
 
     // Parses title artist pair for the browser UI layer.
-    parseTitleArtistPair(title = '', uploader = '') {
-        const raw = String(title || '').trim();
-        if (!raw) return null;
-        const extractPrimary = (value = '') =>
-            String(value || '')
-                .split(/\s*(?:[-–—|｜·•])\s*|\s+\bl\b\s+/gi)
-                .map(p => p.trim())
-                .filter(Boolean)[0] || '';
-
-        const lParts = raw
-            .split(/\s+\bl\b\s+/i)
-            .map(p => p.trim())
-            .filter(Boolean);
-
-        if (lParts.length >= 2) {
-            const left = (lParts[0] || '').trim();
-            const right = this.cleanUploader((lParts[1] || '').trim());
-            if (!left || !right) return null;
-            return { artist: left, track: right };
-        }
-
-        const m = raw.match(/^(.+?)\s*[-–—]\s+(.+)$/);
-        if (!m) return null;
-
-        const left = (m[1] || '').trim();
-        const right = (m[2] || '').trim();
-        if (!left || !right) return null;
-        const rightHasExtraParts = /(?:\s+[-–—|｜·•]\s+|\s+\bl\b\s+)/i.test(right);
-        if (rightHasExtraParts) {
-            const rightPrimary = extractPrimary(right);
-            return { artist: left, track: rightPrimary || right };
-        }
-
-        const cleanedUploader = this.cleanUploader(uploader || '');
-        if (cleanedUploader) {
-            const leftLooksArtist = this.looksLikeArtist(left, cleanedUploader);
-            const rightLooksArtist = this.looksLikeArtist(right, cleanedUploader);
-            if (leftLooksArtist && !rightLooksArtist) {
-                return { artist: left, track: right };
-            }
-            if (rightLooksArtist && !leftLooksArtist) {
-                return { artist: right, track: left };
-            }
-        }
-
-        return { artist: left, track: right };
-    }
-
-    // Returns artist display used for the browser UI layer.
-    getArtistDisplay(item) {
-        const title = (item?.title || '').toString().trim();
-        const pair = this.parseTitleArtistPair(title, item?.uploader || '');
-        if (pair?.artist && !pair.artist.startsWith('-')) {
-            return this.cleanUploader(pair.artist);
-        }
-
-        return this.cleanUploader(item?.uploader || '');
-    }
-
-    // Selects track title for the browser UI layer.
-    pickTrackTitle(item) {
-        const rawTitle = (item?.title || '').toString().trim();
-        if (!rawTitle) return '';
-
-        const uploader = this.cleanUploader(item?.uploader || '');
-        const pair = this.parseTitleArtistPair(rawTitle, uploader);
-        if (pair?.track) return pair.track;
-
-        const parts = rawTitle
-            .split(/\s*(?:[-–—|｜·•])\s*|\s+\bl\b\s+/gi)
-            .map(p => p.trim())
-            .filter(Boolean);
-
-        if (parts.length >= 3) {
-            return parts.slice(0, -1).join(' - ');
-        }
-
-        if (parts.length < 2) return rawTitle;
-
-        const uploaderIdx = parts.findIndex(p => this.looksLikeArtist(p, uploader));
-        if (uploaderIdx >= 0) {
-            const candidates = parts.filter((_, i) => i !== uploaderIdx);
-            if (!candidates.length) return rawTitle;
-            return candidates.sort((a, b) => b.length - a.length)[0];
-        }
-
-        if (this.looksLikeArtist(parts[0], uploader)) return parts[parts.length - 1];
-        if (this.looksLikeArtist(parts[parts.length - 1], uploader)) return parts[0];
-
-        return parts[0];
-    }
+    parseTitleArtistPair(title, uploader) { return parseTitleArtistPair(title, uploader); }
+    getArtistDisplay(item) { return pickTrackArtist(item); }
+    pickTrackTitle(item) { return pickTrackTitle(item); }
 
     // Handles clean title for UI state in the browser UI layer.
     cleanTitleForUI(title = '') {
@@ -717,7 +619,8 @@ export class PreviewManager {
                 index: item.index,
                 id: item.id || null,
                 title: this.pickTrackTitle(item),
-                uploader: this.cleanUploader(item.uploader || ''),
+                uploader: this.getArtistDisplay(item),
+                artist: this.getArtistDisplay(item),
                 duration: item.duration || null,
                 webpage_url: item.webpage_url || ''
             }));

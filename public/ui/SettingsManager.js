@@ -24,12 +24,112 @@ export class SettingsManager {
 
         const modal = document.createElement('div');
         modal.id = 'settingsModal';
+        modal.className = 'gh-settings';
         modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:20;';
         modal.innerHTML = this.getModalHTML();
+        this.organizeLayout(modal);
         this.protectEnvironmentInputsFromAutofill(modal);
         document.body.appendChild(modal);
         if (window.i18n?.apply) window.i18n.apply(modal);
         this.modal = modal;
+    }
+
+    // Groups the settings into side tabs. The fields stay in the markup below
+    // (their ids drive load/save); this only moves each one into its section
+    // and builds the side navigation.
+    organizeLayout(root) {
+        const bar = root.querySelector('.settings-tabs__bar');
+        const panels = root.querySelector('.settings-tabs__panels');
+        if (!bar || !panels) return;
+        const icon = (d) => `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+        const ICONS = {
+            general: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+            access: '<path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/><path d="M9.5 12l2 2 3.5-4"/>',
+            player: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="5" height="7" rx="1.5"/><rect x="16" y="14" width="5" height="7" rx="1.5"/>',
+            spotify: '<circle cx="12" cy="12" r="9"/><path d="M7.5 9.5c3-1 6.5-.7 9 .8M8 12.6c2.5-.7 5.3-.4 7.4.8M8.6 15.4c2-.5 4-.3 5.6.6"/>',
+            youtube: '<rect x="3" y="6" width="18" height="12" rx="3.5"/><path d="M10.5 9.5l4 2.5-4 2.5z"/>',
+            cookies: '<path d="M20.5 12.5A8.5 8.5 0 1 1 11.5 3.5a3 3 0 0 0 3.5 3.5 3 3 0 0 0 3.5 3.5 2.5 2.5 0 0 0 2 2z"/><circle cx="9" cy="10" r=".8"/><circle cx="14.5" cy="14.5" r=".8"/><circle cx="9.5" cy="15.5" r=".8"/>',
+            titles: '<path d="M5 6h14M12 6v12M8.5 18h7"/>',
+            advanced: '<path d="M14.5 6.5a4 4 0 0 0-5.3 5.3L3.5 17.5l3 3 5.7-5.7a4 4 0 0 0 5.3-5.3l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+            widget: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2M14 9l2 2"/>',
+            updates: '<path d="M20 11a8 8 0 0 0-14.6-4.5M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5M20 20v-4h-4"/>',
+            password: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'
+        };
+        const SECTIONS = [
+            { id: 'tab-general', icon: 'general', label: 'settings.nav.general', fields: ['f_FRONTEND_UI', 'f_UPLOAD_MAX_BYTES', 'f_YOUTUBE_QUICK_ADD_LIMIT', 'f_YTLIVE_MUSIC_TITLE', 'f_YTLIVE_MUSIC_SUBTITLE', 'f_MEDIA_COMMENT', 'f_TRACK_EXTRACTOR_SHELL_INTEGRATION', 'f_PREVIEW_MAX_ENTRIES'] },
+            { id: 'tab-access', icon: 'access', label: 'settings.access.title', fields: ['f_GHARMONIZE_ACCESS_MODE', 'f_GHARMONIZE_TEMP_ACCESS_ENABLED', 'f_TRUST_PROXY'] },
+            { id: 'tab-player', icon: 'player', label: 'settings.player.title', fields: ['f_GHARMONIZE_PLAYER_ENABLED', 'f_PLAYER_REMOTE_ALLOW', 'f_GHARMONIZE_PLAYER_LISTEN'] },
+            { id: 'tab-spotify', icon: 'spotify', label: 'settings.tabs.spotify' },
+            { id: 'tab-youtube', icon: 'youtube', label: 'settings.tabs.youtube', fields: ['f_YT_USE_MUSIC', 'f_YT_SEARCH_RESULTS', 'f_YT_DEFAULT_REGION', 'f_YT_LANG'] },
+            { id: 'tab-cookies', icon: 'cookies', label: 'settings.nav.cookies', note: 'settings.cookies.note', fields: ['f_YTDLP_COOKIES_FROM_BROWSER', 'f_YTDLP_COOKIES', 'f_YT_UI_FORCE_COOKIES', 'f_YT_STRIP_COOKIES', 'f_YTM_AUTH_USER'] },
+            { id: 'tab-titles', icon: 'titles', label: 'settings.nav.titles', fields: ['f_TITLE_CLEAN_PIPE', 'f_CLEAN_SUFFIXES', 'f_CLEAN_PHRASES', 'f_CLEAN_PARENS'] },
+            { id: 'tab-advanced', icon: 'advanced', label: 'settings.nav.advanced', fields: ['f_YTDLP_BIN', 'f_FFMPEG_BIN', 'f_GHARMONIZE_FFMPEG_CHANNEL', 'f_YTDLP_UA', 'f_YTDLP_EXTRA', 'f_YT_ACCEPT_LANGUAGE', 'f_YT_FORCE_IPV4', 'f_YT_403_WORKAROUNDS', 'f_YT_SEARCH_TIMEOUT_MS', 'f_YT_SEARCH_STAGGER_MS', 'f_AUTOMIX_ALL_TIMEOUT_MS', 'f_AUTOMIX_PAGE_TIMEOUT_MS', 'f_PLAYLIST_ALL_TIMEOUT_MS', 'f_PLAYLIST_PAGE_TIMEOUT_MS', 'f_PLAYLIST_META_TIMEOUT_MS', 'f_PLAYLIST_META_FALLBACK_TIMEOUT_MS'] },
+            { id: 'tab-widget', icon: 'widget', label: 'settings.tabs.widgetKey' },
+            { id: 'tab-updates', icon: 'updates', label: 'settings.tabs.updates' },
+            { id: 'tab-password', icon: 'password', label: 'settings.tabs.password' }
+        ];
+
+        const groupOf = (fieldId) => root.querySelector(`#${fieldId}`)?.closest('.form-group') || null;
+        for (const section of SECTIONS) {
+            let panel = root.querySelector(`#${section.id}`);
+            if (!panel) {
+                panel = document.createElement('section');
+                panel.className = 'settings-panel';
+                panel.id = section.id;
+                panel.setAttribute('role', 'tabpanel');
+            }
+            for (const fieldId of section.fields || []) {
+                const group = groupOf(fieldId);
+                if (group) panel.append(group);
+            }
+            const head = document.createElement('header');
+            head.className = 'settings-panel__head';
+            head.innerHTML = `<h3 data-i18n="${section.label}">${this.t(section.label)}</h3>`
+                + (section.note ? `<p class="settings-note" data-i18n="${section.note}">${this.t(section.note)}</p>` : '');
+            panel.prepend(head);
+            panels.append(panel);
+        }
+        // Save / reload / sign-out form the dialog footer, below the tabs.
+        const actions = root.querySelector('.settings-tabs > .settings-actions');
+        if (actions) root.querySelector('#formView')?.append(actions);
+        // Whatever is left of the old catch-all tab (section titles) goes.
+        root.querySelector('#tab-system')?.remove();
+        panels.querySelectorAll(':scope > .settings-panel h4.settings-section-title').forEach((h) => {
+            if (!h.closest('#tab-password')) h.remove();
+        });
+
+        bar.setAttribute('aria-orientation', 'vertical');
+        bar.innerHTML = `
+            <div class="settings-search">
+                <input type="search" id="settingsSearch" class="settings-search__input" autocomplete="off" data-i18n-ph="settings.search.placeholder" placeholder="${this.t('settings.search.placeholder')}" aria-label="${this.t('settings.search.placeholder')}">
+            </div>
+            ${SECTIONS.map((s) => `<button class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="${s.id}" data-tab="${s.id}">${icon(ICONS[s.icon])}<span data-i18n="${s.label}">${this.t(s.label)}</span></button>`).join('')}`;
+        const empty = document.createElement('p');
+        empty.className = 'settings-search__empty';
+        empty.hidden = true;
+        empty.setAttribute('data-i18n', 'settings.search.empty');
+        empty.textContent = this.t('settings.search.empty');
+        panels.append(empty);
+
+        // A raw ENV name reads better as a small tag next to a short title
+        // (settings.field.<ENV>); without a title the description leads.
+        root.querySelectorAll('#formView .form-group > label.settings-field-label').forEach((label) => {
+            const next = label.nextElementSibling;
+            const env = label.textContent.trim();
+            if (!/^[A-Z0-9_]+$/.test(env) || !next?.classList.contains('settings-field-hint')) return;
+            const group = label.closest('.form-group');
+            label.classList.add('settings-env-key');
+            group.classList.add('form-group--env');
+            const key = `settings.field.${env}`;
+            if (this.t(key) === key) return;
+            const title = document.createElement('label');
+            title.className = 'settings-field-title';
+            if (label.htmlFor) title.htmlFor = label.htmlFor;
+            title.setAttribute('data-i18n', key);
+            title.textContent = this.t(key);
+            label.before(title);
+            group.classList.add('form-group--titled');
+        });
     }
 
     // Prevents browsers and common password managers from treating ENV settings
@@ -229,6 +329,59 @@ export class SettingsManager {
                             <span data-i18n="settings.access.years">Yıl</span>
                             <input id="f_GHARMONIZE_TEMP_ACCESS_YEARS" type="number" min="0" max="5" step="1" value="0" />
                         </label>
+                    </div>
+                </div>
+
+                <h4 class="settings-section-title" data-i18n="settings.player.title">Gharmonize Player</h4>
+
+                <div class="form-group">
+                    <label class="settings-field-label settings-checkbox-row" for="f_GHARMONIZE_PLAYER_ENABLED">
+                        <input id="f_GHARMONIZE_PLAYER_ENABLED" type="checkbox" value="1" />
+                        <span data-i18n="settings.player.enabled">Gharmonize Player'ı etkinleştir</span>
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.player.enabledHint">Kendi müzik arşivinden çalışan kişisel müzik çalar. Kapalıyken hiçbir player bileşeni çalışmaz ve sisteme yük bindirmez.</div>
+                </div>
+
+                <div id="playerRemoteSettings" class="form-group" hidden>
+                    <label class="settings-field-label settings-checkbox-row" for="f_PLAYER_REMOTE_ALLOW">
+                        <input id="f_PLAYER_REMOTE_ALLOW" type="checkbox" value="1" />
+                        <span data-i18n="settings.player.remoteAllow">Dış bağlantılara izin ver</span>
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.player.remoteHint">Yerel ağ (ev Wi-Fi) her zaman çalışır. Ev dışından erişim için bu izni ver; port açmadan güvenli erişim için Tailscale önerilir.</div>
+                    <div id="playerRemoteModeWrap" hidden>
+                        <label for="f_GHARMONIZE_PLAYER_REMOTE_ACCESS" class="settings-field-label" data-i18n="settings.player.remoteModeLabel">İzin verilen dış bağlantılar</label>
+                        <select id="f_GHARMONIZE_PLAYER_REMOTE_ACCESS">
+                            <option value="tunnel" data-i18n="settings.player.remoteTunnel">Cloudflare Tunnel (önerilen)</option>
+                            <option value="tailscale" data-i18n="settings.player.remoteTailscale">Sadece Tailscale</option>
+                            <option value="any" data-i18n="settings.player.remoteAny">Tüm internet (ters vekil / tünel ile)</option>
+                        </select>
+                        <div id="playerTunnelWrap" hidden>
+                            <div class="settings-field-hint muted" data-i18n="settings.player.tunnelHint">Port açmadan, telefona ek uygulama kurmadan dışarıdan erişim. Gharmonize gerekli cloudflared aracını kendisi indirir; internete yalnızca çalar açılır.</div>
+                            <label for="f_GHARMONIZE_PLAYER_TUNNEL_MODE" class="settings-field-label" data-i18n="settings.player.tunnelMode">Tünel türü</label>
+                            <select id="f_GHARMONIZE_PLAYER_TUNNEL_MODE">
+                                <option value="quick" data-i18n="settings.player.tunnelQuick">Hızlı — hesap gerekmez (adres her yeniden başlatmada değişir)</option>
+                                <option value="token" data-i18n="settings.player.tunnelToken">Kalıcı — Cloudflare hesabımdaki tünel (sabit adres)</option>
+                            </select>
+                            <div id="playerTunnelTokenWrap" hidden>
+                                <label for="f_GHARMONIZE_PLAYER_TUNNEL_TOKEN" class="settings-field-label" data-i18n="settings.player.tunnelTokenLabel">Tünel token'ı</label>
+                                <input id="f_GHARMONIZE_PLAYER_TUNNEL_TOKEN" type="password" autocomplete="off" spellcheck="false" style="width:100%;" />
+                                <label for="f_GHARMONIZE_PLAYER_TUNNEL_URL" class="settings-field-label" data-i18n="settings.player.tunnelUrlLabel">Genel adres</label>
+                                <input id="f_GHARMONIZE_PLAYER_TUNNEL_URL" type="text" placeholder="https://muzik.alanadin.com" spellcheck="false" style="width:100%;" />
+                                <div class="settings-field-hint muted" data-i18n="settings.player.tunnelTokenHint">Cloudflare Zero Trust → Networks → Tunnels'da bir tünel oluştur, token'ı buraya yapıştır. Public hostname hizmetini http://localhost:5185 olarak ayarla ve o adresi Genel adres alanına yaz.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="playerLanSettings" class="form-group" hidden>
+                    <label class="settings-field-label settings-checkbox-row" for="f_GHARMONIZE_PLAYER_LISTEN">
+                        <input id="f_GHARMONIZE_PLAYER_LISTEN" type="checkbox" value="1" />
+                        <span data-i18n="settings.player.listen">Ev ağındaki cihazlar bağlanabilsin (yalnızca çalar, ayrı port)</span>
+                    </label>
+                    <div class="settings-field-hint muted" data-i18n="settings.player.listenHint">Telefon ve diğer cihazlar çalara bu porttan ulaşır; Gharmonize'ın geri kalanı ağa açılmaz. Masaüstü uygulamasında telefondan dinlemek ve Tailscale için gereklidir. Docker'da Gharmonize zaten ağa açık olduğundan gerekmez.</div>
+                    <div id="playerPortWrap" hidden>
+                        <label for="f_GHARMONIZE_PLAYER_PORT" class="settings-field-label" data-i18n="settings.player.port">Çalar portu</label>
+                        <input id="f_GHARMONIZE_PLAYER_PORT" type="number" min="1024" max="65535" step="1" value="5175" style="width:100%;" />
                     </div>
                 </div>
 
@@ -708,6 +861,17 @@ export class SettingsManager {
     document.getElementById('changePassBtn').onclick = () => this.changePassword();
     document.getElementById('f_GHARMONIZE_ACCESS_MODE')?.addEventListener('change', () => this.syncAccessControls());
     document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED')?.addEventListener('change', () => this.syncAccessControls());
+    document.getElementById('f_GHARMONIZE_PLAYER_ENABLED')?.addEventListener('change', () => this.syncPlayerControls());
+    document.getElementById('f_GHARMONIZE_PLAYER_LISTEN')?.addEventListener('change', () => this.syncPlayerControls());
+    document.getElementById('f_GHARMONIZE_PLAYER_REMOTE_ACCESS')?.addEventListener('change', () => this.syncPlayerControls());
+    document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_MODE')?.addEventListener('change', () => this.syncPlayerControls());
+    document.getElementById('f_PLAYER_REMOTE_ALLOW')?.addEventListener('change', (event) => {
+        // External access is an explicit, confirmed consent.
+        if (event.target.checked && !window.confirm(this.t('settings.player.remoteConfirm'))) {
+            event.target.checked = false;
+        }
+        this.syncPlayerControls();
+    });
     document.getElementById('genWidgetKeyBtn').onclick = () => this.generateHomepageWidgetKey();
     document.getElementById('toggleWidgetKeyBtn').onclick = () => this.toggleHomepageWidgetKeyVisibility();
     document.getElementById('copyWidgetKeyBtn').onclick = () => this.copyHomepageWidgetKey();
@@ -783,6 +947,24 @@ export class SettingsManager {
     }
 
     // Keeps temporary-authorization controls aligned with the selected access mode.
+    syncPlayerControls() {
+        const enabled = !!document.getElementById('f_GHARMONIZE_PLAYER_ENABLED')?.checked;
+        const remote = !!document.getElementById('f_PLAYER_REMOTE_ALLOW')?.checked;
+        const wrapper = document.getElementById('playerRemoteSettings');
+        const modeWrap = document.getElementById('playerRemoteModeWrap');
+        if (wrapper) wrapper.hidden = !enabled;
+        if (modeWrap) modeWrap.hidden = !enabled || !remote;
+        const lanWrap = document.getElementById('playerLanSettings');
+        const portWrap = document.getElementById('playerPortWrap');
+        if (lanWrap) lanWrap.hidden = !enabled;
+        if (portWrap) portWrap.hidden = !enabled || !document.getElementById('f_GHARMONIZE_PLAYER_LISTEN')?.checked;
+        const method = document.getElementById('f_GHARMONIZE_PLAYER_REMOTE_ACCESS')?.value;
+        const tunnelWrap = document.getElementById('playerTunnelWrap');
+        const tokenWrap = document.getElementById('playerTunnelTokenWrap');
+        if (tunnelWrap) tunnelWrap.hidden = !enabled || !remote || method !== 'tunnel';
+        if (tokenWrap) tokenWrap.hidden = document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_MODE')?.value !== 'token';
+    }
+
     syncAccessControls() {
         const mode = document.getElementById('f_GHARMONIZE_ACCESS_MODE')?.value || 'none';
         const enabled = !!document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED')?.checked;
@@ -1000,6 +1182,18 @@ export class SettingsManager {
             document.getElementById('f_GHARMONIZE_TEMP_ACCESS_MONTHS').value = s.GHARMONIZE_TEMP_ACCESS_MONTHS || '0';
             document.getElementById('f_GHARMONIZE_TEMP_ACCESS_YEARS').value = s.GHARMONIZE_TEMP_ACCESS_YEARS || '0';
             this.syncAccessControls();
+            {
+                const remoteMode = ['tunnel', 'tailscale', 'any'].includes(s.GHARMONIZE_PLAYER_REMOTE_ACCESS) ? s.GHARMONIZE_PLAYER_REMOTE_ACCESS : 'off';
+                document.getElementById('f_GHARMONIZE_PLAYER_ENABLED').checked = String(s.GHARMONIZE_PLAYER_ENABLED || '0') === '1';
+                document.getElementById('f_PLAYER_REMOTE_ALLOW').checked = remoteMode !== 'off';
+                document.getElementById('f_GHARMONIZE_PLAYER_REMOTE_ACCESS').value = remoteMode === 'off' ? 'tunnel' : remoteMode;
+                document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_MODE').value = s.GHARMONIZE_PLAYER_TUNNEL_MODE === 'token' ? 'token' : 'quick';
+                document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_TOKEN').value = s.GHARMONIZE_PLAYER_TUNNEL_TOKEN || '';
+                document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_URL').value = s.GHARMONIZE_PLAYER_TUNNEL_URL || '';
+                document.getElementById('f_GHARMONIZE_PLAYER_LISTEN').checked = String(s.GHARMONIZE_PLAYER_LISTEN || '0') === '1';
+                document.getElementById('f_GHARMONIZE_PLAYER_PORT').value = s.GHARMONIZE_PLAYER_PORT || '5175';
+                this.syncPlayerControls();
+            }
             document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value = s.YOUTUBE_QUICK_ADD_LIMIT || '25';
             document.getElementById('f_YTLIVE_MUSIC_TITLE').value = s.YTLIVE_MUSIC_TITLE || '';
             document.getElementById('f_YTLIVE_MUSIC_SUBTITLE').value = s.YTLIVE_MUSIC_SUBTITLE || '';
@@ -1070,6 +1264,15 @@ export class SettingsManager {
                 GHARMONIZE_TEMP_ACCESS_DAYS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_DAYS').value.trim() || '0',
                 GHARMONIZE_TEMP_ACCESS_MONTHS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_MONTHS').value.trim() || '0',
                 GHARMONIZE_TEMP_ACCESS_YEARS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_YEARS').value.trim() || '0',
+                GHARMONIZE_PLAYER_ENABLED: document.getElementById('f_GHARMONIZE_PLAYER_ENABLED').checked ? '1' : '0',
+                GHARMONIZE_PLAYER_REMOTE_ACCESS: document.getElementById('f_PLAYER_REMOTE_ALLOW').checked
+                    ? document.getElementById('f_GHARMONIZE_PLAYER_REMOTE_ACCESS').value
+                    : 'off',
+                GHARMONIZE_PLAYER_LISTEN: document.getElementById('f_GHARMONIZE_PLAYER_LISTEN').checked ? '1' : '0',
+                GHARMONIZE_PLAYER_TUNNEL_MODE: document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_MODE').value,
+                GHARMONIZE_PLAYER_TUNNEL_TOKEN: document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_TOKEN').value.trim(),
+                GHARMONIZE_PLAYER_TUNNEL_URL: document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_URL').value.trim(),
+                GHARMONIZE_PLAYER_PORT: document.getElementById('f_GHARMONIZE_PLAYER_PORT').value.trim() || '5175',
                 YOUTUBE_QUICK_ADD_LIMIT: document.getElementById('f_YOUTUBE_QUICK_ADD_LIMIT').value.trim(),
                 YTLIVE_MUSIC_TITLE: document.getElementById('f_YTLIVE_MUSIC_TITLE').value.trim(),
                 YTLIVE_MUSIC_SUBTITLE: document.getElementById('f_YTLIVE_MUSIC_SUBTITLE').value.trim(),
@@ -1111,6 +1314,7 @@ export class SettingsManager {
 
             await window.app?.reloadUiConfig?.();
             window.dispatchEvent(new CustomEvent('gharmonize:access-config-changed'));
+            window.dispatchEvent(new CustomEvent('gharmonize:player-toggle'));
 
             modalManager.showAlert({
                 title: this.t('settings.title') || 'Ayarlar',
@@ -1411,13 +1615,54 @@ export class SettingsManager {
     };
 
     panels.forEach(p => (p.style.display = 'none'));
-    activate('tab-system');
+    let current = 'tab-general';
+    const show = (tabId) => { current = tabId; activate(tabId); };
+    show(current);
 
+    const search = root.querySelector('#settingsSearch');
+    const empty = root.querySelector('.settings-search__empty');
+    const clearSearch = () => {
+        if (!search) return;
+        search.value = '';
+        root.classList.remove('is-searching');
+        root.querySelectorAll('.form-group.is-filtered-out').forEach((g) => g.classList.remove('is-filtered-out'));
+        if (empty) empty.hidden = true;
+    };
     tabs.forEach(t => {
-        t.addEventListener('click', () => activate(t.dataset.tab));
+        t.addEventListener('click', () => { clearSearch(); show(t.dataset.tab); });
     });
 
-    this.activateSettingsTab = activate;
+    // Search filters all sections at once (labels, descriptions and ENV names).
+    // Locale-independent folding: a Turkish locale would turn "COOKIES" into
+    // "cookıes"; accents are ignored too ("cerez" finds "Çerez").
+    const fold = (text) => String(text || '').toLowerCase().replace(/ı/g, 'i').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    search?.addEventListener('input', () => {
+        const q = fold(search.value.trim());
+        if (!q) { clearSearch(); show(current); return; }
+        root.classList.add('is-searching');
+        let hits = 0;
+        for (const p of panels) {
+            let any = false;
+            p.querySelectorAll('.form-group').forEach((g) => {
+                const match = fold(g.textContent).includes(q)
+                    || [...g.querySelectorAll('[id^="f_"]')].some((el) => fold(el.id.slice(2)).includes(q));
+                g.classList.toggle('is-filtered-out', !match);
+                if (match) any = true;
+            });
+            p.style.display = any ? 'block' : 'none';
+            if (any) hits += 1;
+        }
+        for (const t of tabs) {
+            t.classList.remove('is-active');
+            t.setAttribute('aria-selected', 'false');
+        }
+        if (empty) empty.hidden = hits > 0;
+    });
+    search?.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && search.value) { e.stopPropagation(); clearSearch(); show(current); }
+    });
+
+    this.activateSettingsTab = show;
     }
 
     // Handles t in the browser UI layer.
