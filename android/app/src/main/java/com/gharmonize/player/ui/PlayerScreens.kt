@@ -197,6 +197,14 @@ fun NowPlayingScreen(state: AppState) {
   var dragValue by remember { mutableFloatStateOf(0f) }
   val white = Color.White
   val dim = white.copy(alpha = 0.72f)
+  val prefs = state.app.prefs
+  val style = prefs.progressStyle.takeIf { it in PROGRESS_STYLES } ?: "ring"
+  val fraction = if (dragging) dragValue else if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
+  val bins by androidx.compose.runtime.produceState<FloatArray?>(null, trackId, style) {
+    value = if (style == "wave" && trackId != null && !isPreview) state.waveform(trackId) else null
+  }
+  val seekDrag: (Float) -> Unit = { dragging = true; dragValue = it }
+  val seekCommit: (Float) -> Unit = { player.seekTo((it * dur).toLong()); dragging = false }
 
   Box(
     Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF125A70), Color(0xFF0C1933), Color(0xFF373161))))
@@ -210,7 +218,8 @@ fun NowPlayingScreen(state: AppState) {
     ) {
       Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         RoundButton(FluentIcons.KeyboardArrowDown, stringResource(R.string.close), 44) { state.back() }
-        Spacer(Modifier.width(52.dp))
+        Spacer(Modifier.width(8.dp))
+        RoundButton(FluentIcons.Equalizer, stringResource(R.string.equalizer), 44, tint = if (com.gharmonize.player.playback.AudioEq.params.enabled) Color(0xFF93C5FD) else white) { state.navigate(Route.Equalizer) }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
           Text(stringResource(if (mode == 1) R.string.lyrics else R.string.now_playing), color = white, fontWeight = FontWeight.Bold)
         }
@@ -221,15 +230,7 @@ fun NowPlayingScreen(state: AppState) {
       Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 14.dp).then(if (mode == 0) Modifier.queueSwipe { openSheet(0) }.swipeTracks(state) else Modifier), contentAlignment = Alignment.Center) {
         when (mode) {
           1 -> LyricsView(state, trackId, isPreview, pos)
-          else -> BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            val diameter = minOf(maxWidth, maxHeight, 330.dp)
-            Box(
-              Modifier.size(diameter).clip(CircleShape).background(white.copy(alpha = 0.12f))
-                .border(2.dp, white.copy(alpha = 0.32f), CircleShape).padding(10.dp),
-            ) {
-              Artwork(artRef, Modifier.fillMaxSize(), shape = CircleShape, size = 900)
-            }
-          }
+          else -> CoverDial(artRef, fraction, ring = style == "ring", volumeArc = prefs.coverVolume, onSeekDrag = seekDrag, onSeekCommit = seekCommit)
         }
       }
       if (mode == 0) Row(Modifier.fillMaxWidth().clickable { openSheet(0) }.padding(bottom = 6.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -250,12 +251,20 @@ fun NowPlayingScreen(state: AppState) {
           }
         } else Box(Modifier.size(40.dp))
       }
-      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
-        Text(fmtTime((if (dragging) dragValue * dur else pos.toFloat()) / 1000.0), color = dim, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(40.dp), textAlign = TextAlign.Center)
-        Slider(
-          value = if (dragging) dragValue else if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f,
-          onValueChange = { dragging = true; dragValue = it },
-          onValueChangeFinished = { player.seekTo((dragValue * dur).toLong()); dragging = false },
+      val shownTime = fmtTime((if (dragging) dragValue * dur else pos.toFloat()) / 1000.0)
+      // The ring shows progress around the cover; only the times stay here
+      // (the linear bar returns while lyrics replace the cover).
+      if (style == "ring" && mode == 0) Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp), horizontalArrangement = Arrangement.Center) {
+        Text(shownTime, color = white, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Text("  /  " + fmtTime(dur / 1000.0), color = dim, style = MaterialTheme.typography.labelLarge)
+      } else Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
+        Text(shownTime, color = dim, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(40.dp), textAlign = TextAlign.Center)
+        if (style == "bold" || style == "minimal" || style == "wave") {
+          StyledSeekBar(style, fraction, bins, onDrag = seekDrag, onCommit = seekCommit, modifier = Modifier.weight(1f).padding(horizontal = 6.dp))
+        } else Slider(
+          value = fraction,
+          onValueChange = seekDrag,
+          onValueChangeFinished = { seekCommit(dragValue) },
           colors = SliderDefaults.colors(thumbColor = white, activeTrackColor = Color(0xFF8B9CF8), inactiveTrackColor = white.copy(alpha = 0.25f)),
           modifier = Modifier.weight(1f),
         )
@@ -381,10 +390,21 @@ private fun QueueView(state: AppState) {
         }
         Box {
           IconButton(onClick = { menu = true }) { Icon(FluentIcons.MoreVert, stringResource(R.string.more)) }
+          // Song actions are always there, also when it is the only song.
+          val extras = m.mediaMetadata.extras
+          val tid = extras?.getLong("trackId")?.takeIf { it > 0 }
+          val albumId = extras?.getLong("albumId")?.takeIf { it > 0 }
+          val artistId = extras?.getLong("artistId")?.takeIf { it > 0 }
+          var save by remember { mutableStateOf(false) }
+          if (save && tid != null) SavePlaylistDialog(state, listOf(tid), onDismiss = { save = false })
           DropdownMenu(menu, onDismissRequest = { menu = false }) {
             if (i > 0) DropdownMenuItem(text = { Text(stringResource(R.string.queue_move_up)) }, onClick = { state.player.move(i, i - 1); menu = false })
             if (i < queue.lastIndex) DropdownMenuItem(text = { Text(stringResource(R.string.queue_move_down)) }, onClick = { state.player.move(i, i + 1); menu = false })
             if (i != current) DropdownMenuItem(text = { Text(stringResource(R.string.remove)) }, onClick = { state.player.removeAt(i); menu = false })
+            if (tid != null) DropdownMenuItem(text = { Text(stringResource(R.string.save_to_playlist)) }, onClick = { save = true; menu = false })
+            albumId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_album)) }, onClick = { menu = false; state.navigate(Route.Album(id)) }) }
+            artistId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_artist)) }, onClick = { menu = false; state.navigate(Route.Artist(id)) }) }
+            if (i != current) DropdownMenuItem(text = { Text(stringResource(R.string.play)) }, onClick = { state.player.jumpTo(i); menu = false })
           }
         }
       }

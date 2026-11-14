@@ -64,7 +64,9 @@ test('cloudflared from CLOUDFLARED_BIN or PATH is used before downloading', asyn
     assert.deepEqual(env, { file: '/opt/cf', version: '2026.1.0', source: 'env' })
     const sys = await ensureCloudflared({ binDir: dir, env: {}, platform: 'linux', versionImpl: async (f) => (f === 'cloudflared' ? '2025.9.1' : null), fetchImpl })
     assert.equal(sys.source, 'system')
-    await assert.rejects(ensureCloudflared({ binDir: dir, env: {}, platform: 'linux', arch: 'x64', versionImpl: async () => null, fetchImpl }), /no network/)
+    // Node 22's test transport can misread non-ASCII console output. This
+    // expected offline path needs no production download-status logging.
+    await assert.rejects(ensureCloudflared({ binDir: dir, env: {}, platform: 'linux', arch: 'x64', versionImpl: async () => null, fetchImpl, logger: silentLogger }), /no network/)
     assert.equal(fetched, 1)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })

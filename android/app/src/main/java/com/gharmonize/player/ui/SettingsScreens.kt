@@ -94,6 +94,9 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
   val active by app.servers.active.collectAsState()
   var wifi by remember { mutableStateOf(app.prefs.qualityWifi) }
   var mobile by remember { mutableStateOf(app.prefs.qualityMobile) }
+  var progress by remember { mutableStateOf(app.prefs.progressStyle) }
+  var coverVolume by remember { mutableStateOf(app.prefs.coverVolume) }
+  var autoplay by remember { mutableStateOf(app.prefs.autoplay) }
   var picker by remember { mutableStateOf<String?>(null) }
   var checking by remember { mutableStateOf(false) }
   var confirmSignOut by remember { mutableStateOf(false) }
@@ -130,6 +133,22 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
       HorizontalDivider(Modifier.padding(top = 8.dp))
       SettingItem(stringResource(R.string.settings_quality_wifi), qualityLabel(wifi)) { picker = "wifi" }
       SettingItem(stringResource(R.string.settings_quality_mobile), qualityLabel(mobile)) { picker = "mobile" }
+      SettingItem(stringResource(R.string.equalizer), stringResource(if (com.gharmonize.player.playback.AudioEq.params.enabled) R.string.eq_on else R.string.eq_off)) { state.navigate(Route.Equalizer) }
+      SettingItem(stringResource(R.string.settings_progress), progressLabel(progress)) { picker = "progress" }
+      Row(Modifier.fillMaxWidth().clickable { coverVolume = !coverVolume; app.prefs.coverVolume = coverVolume }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+          Text(stringResource(R.string.settings_cover_volume), style = MaterialTheme.typography.bodyLarge)
+          Text(stringResource(R.string.settings_cover_volume_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.material3.Switch(checked = coverVolume, onCheckedChange = { coverVolume = it; app.prefs.coverVolume = it })
+      }
+      Row(Modifier.fillMaxWidth().clickable { autoplay = !autoplay; app.prefs.autoplay = autoplay }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+          Text(stringResource(R.string.settings_autoplay), style = MaterialTheme.typography.bodyLarge)
+          Text(stringResource(R.string.settings_autoplay_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.material3.Switch(checked = autoplay, onCheckedChange = { autoplay = it; app.prefs.autoplay = it })
+      }
       SettingItem(stringResource(R.string.settings_theme), themeLabel(theme)) { picker = "theme" }
       SettingItem(stringResource(R.string.settings_language), languageLabel(language), stringResource(R.string.settings_language_hint)) { picker = "language" }
       HorizontalDivider()
@@ -139,12 +158,12 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
   }
 
   picker?.let { which ->
-    val options = when (which) { "theme" -> listOf("system", "dark", "light"); "language" -> com.gharmonize.player.AppLocale.CHOICES; else -> QUALITIES }
-    val selected = when (which) { "wifi" -> wifi; "mobile" -> mobile; "language" -> language; else -> theme }
+    val options = when (which) { "theme" -> listOf("system", "dark", "light"); "language" -> com.gharmonize.player.AppLocale.CHOICES; "progress" -> PROGRESS_STYLES; else -> QUALITIES }
+    val selected = when (which) { "wifi" -> wifi; "mobile" -> mobile; "language" -> language; "progress" -> progress; else -> theme }
     AlertDialog(
       onDismissRequest = { picker = null },
       confirmButton = { TextButton(onClick = { picker = null }) { Text(stringResource(R.string.close)) } },
-      title = { Text(stringResource(when (which) { "theme" -> R.string.settings_theme; "language" -> R.string.settings_language; "wifi" -> R.string.settings_quality_wifi; else -> R.string.settings_quality_mobile })) },
+      title = { Text(stringResource(when (which) { "theme" -> R.string.settings_theme; "progress" -> R.string.settings_progress; "language" -> R.string.settings_language; "wifi" -> R.string.settings_quality_wifi; else -> R.string.settings_quality_mobile })) },
       text = {
         Column {
           options.forEach { opt ->
@@ -152,6 +171,7 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
               when (which) {
                 "wifi" -> { wifi = opt; app.prefs.qualityWifi = opt }
                 "mobile" -> { mobile = opt; app.prefs.qualityMobile = opt }
+                "progress" -> { progress = opt; app.prefs.progressStyle = opt }
                 // New language: texts and content (home, recommendations) follow.
                 "language" -> if (opt != language) { com.gharmonize.player.AppLocale.apply(app, opt); activity?.recreate() }
                 else -> onTheme(opt)
@@ -160,7 +180,7 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
             }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
               RadioButton(selected = opt == selected, onClick = null)
               Spacer(Modifier.width(8.dp))
-              Text(when (which) { "theme" -> themeLabel(opt); "language" -> languageLabel(opt); else -> qualityLabel(opt) })
+              Text(when (which) { "theme" -> themeLabel(opt); "language" -> languageLabel(opt); "progress" -> progressLabel(opt); else -> qualityLabel(opt) })
             }
           }
         }
@@ -199,6 +219,17 @@ private fun qualityLabel(q: String): String = stringResource(
     "low" -> R.string.quality_low
     "saver" -> R.string.quality_saver
     else -> R.string.quality_original
+  },
+)
+
+@Composable
+private fun progressLabel(style: String): String = stringResource(
+  when (style) {
+    "classic" -> R.string.progress_classic
+    "bold" -> R.string.progress_bold
+    "minimal" -> R.string.progress_minimal
+    "wave" -> R.string.progress_wave
+    else -> R.string.progress_ring
   },
 )
 

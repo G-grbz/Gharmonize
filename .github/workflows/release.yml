@@ -114,8 +114,6 @@ jobs:
   android:
     needs: verify
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.verify.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -152,10 +150,8 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          # 1.4.6 -> 1004006: grows with every release, above the 0.x test builds.
-          IFS=. read -r MAJOR MINOR PATCH <<< "${VERSION%%-*}"
-          VERSION_CODE=$(( MAJOR * 1000000 + MINOR * 1000 + PATCH ))
-          ./gradlew --no-daemon assembleRelease -PghVersionName="$VERSION" -PghVersionCode="$VERSION_CODE"
+          # Android keeps its own version in app/build.gradle.kts.
+          ./gradlew --no-daemon assembleRelease
       - name: Verify APK signature and version
         shell: bash
         run: |
@@ -163,9 +159,14 @@ jobs:
           APK=android/app/build/outputs/apk/release/app-release.apk
           BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | grep -E "certificate (DN|SHA-256)"
-          "$BUILD_TOOLS/aapt2" dump badging "$APK" | grep -q "versionName='$VERSION'"
+          BADGING="$("$BUILD_TOOLS/aapt2" dump badging "$APK")"
+          APK_VERSION="$(sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p" <<< "$BADGING")"
+          APK_CODE="$(sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" <<< "$BADGING")"
+          [[ "$APK_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$APK_CODE" =~ ^[1-9][0-9]*$ ]]
+          echo "Android version: $APK_VERSION ($APK_CODE)"
           mkdir -p release
-          cp "$APK" "release/Gharmonize-Player-Android.v${VERSION}.apk"
+          cp "$APK" "release/Gharmonize-Player-Android.v${APK_VERSION}.apk"
       - name: Remove signing key
         if: always()
         shell: bash

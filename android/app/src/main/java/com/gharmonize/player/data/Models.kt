@@ -113,6 +113,8 @@ data class DownloadRow(
   val active: Boolean get() = status in setOf("queued", "resolving", "downloading", "indexing")
 }
 
+data class AlbumMissing(val found: Boolean, val total: Int, val missing: List<OnlineItem>, val onlineAlbum: OnlineItem?)
+
 data class SearchResult(val tracks: List<Track>, val albums: List<Album>, val artists: List<Artist>)
 data class OnlineSearchResult(val tracks: List<OnlineItem>, val albums: List<OnlineItem>, val artists: List<OnlineItem>)
 
@@ -198,7 +200,8 @@ fun parseOnline(o: JSONObject): OnlineItem {
     artist = o.str("artist"),
     album = o.str("album"),
     duration = o.optDouble("duration", 0.0).let { if (it.isNaN()) 0.0 else it },
-    artworkUrl = o.strOrNull("artworkUrl"),
+    // Library songs among suggestions carry an artwork ref ("album/5") instead of a URL.
+    artworkUrl = o.strOrNull("artworkUrl") ?: o.strOrNull("artwork"),
     url = o.str("url"),
     previewUrl = o.strOrNull("previewUrl"),
     trackCount = o.intOrNull("trackCount"),

@@ -12,10 +12,9 @@ android {
     applicationId = "com.gharmonize.player"
     minSdk = 26
     targetSdk = 35
-    // Release builds (CI) pass the Gharmonize version: -PghVersionName=1.4.6
-    // -PghVersionCode=1004006. Local builds keep these defaults.
-    versionCode = (findProperty("ghVersionCode") as String?)?.toInt() ?: 11
-    versionName = (findProperty("ghVersionName") as String?) ?: "0.4.6"
+    // CI may override these with ghVersionName and ghVersionCode.
+    versionCode = (findProperty("ghVersionCode") as String?)?.toInt() ?: 1000000
+    versionName = (findProperty("ghVersionName") as String?) ?: "1.0.0"
   }
 
   // A stable release key lets every new APK install over the previous one.
@@ -50,10 +49,12 @@ android {
   }
   kotlinOptions { jvmTarget = "17" }
   buildFeatures { compose = true; buildConfig = true }
+  testOptions { unitTests.isReturnDefaultValues = true }
   packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 
 dependencies {
+  testImplementation("junit:junit:4.13.2")
   val media3 = "1.10.1"
   implementation(platform("androidx.compose:compose-bom:2025.04.01"))
   implementation("androidx.activity:activity-compose:1.10.1")

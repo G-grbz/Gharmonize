@@ -87,7 +87,7 @@ export class DownloadTracker {
   }
 
   // Starts (or joins) a download for an online item.
-  async request(item, { playlistId = null, force = false } = {}) {
+  async request(item, { playlistId = null, force = false, quiet = false } = {}) {
     if (!app.canDownload) { toast(t('player.downloads.notAllowed'), { type: 'error' }); return null }
     const payload = {
       kind: ['album', 'playlist'].includes(item.kind) ? item.kind : 'track',
@@ -105,9 +105,9 @@ export class DownloadTracker {
       if (item.url) this.urlToId.set(item.url, row.id)
       this.ingest(row, { silent: true })
       if (row.status === 'exists') {
-        toast(t('player.downloads.alreadyOwned', { title: item.title }), { type: 'success' })
+        if (!quiet) toast(t('player.downloads.alreadyOwned', { title: item.title }), { type: 'success' })
         bus.emit('library:changed', row)
-      } else {
+      } else if (!quiet) {
         toast(t('player.downloads.queuedToast', { title: item.title }))
       }
       return row

@@ -3,7 +3,7 @@
 import { app, bus } from './app.js'
 import { get, put, del, post, artworkUrl } from './api.js'
 import { h, append, t, icon, iconButton, artwork, fmtTime, fmtNumber, contextMenu, toast, toastError, modal, promptDialog, hueOf, clear, plural } from './dom.js'
-import { fromTrack, fromOnline } from './engine.js'
+import { fromTrack, fromOnline, adoptDownload } from './engine.js'
 import { downloadButton } from './downloads.js'
 import { saveButton, saveToPlaylistDialog } from './playlistSave.js'
 
@@ -168,7 +168,7 @@ export function trackMenu(track, at, { playlist = null, entryId = null, onRemove
 }
 
 export function onlineMenu(item, at) {
-  const owned = item.library?.trackId
+  const owned = adoptDownload(item)
   contextMenu([
     owned && { label: t('player.menu.playFromLibrary'), icon: 'play', run: () => playOnline([item], 0) },
     !owned && item.previewUrl && { label: t('player.menu.preview'), icon: 'play', run: () => playOnline([item], 0) },
@@ -180,7 +180,7 @@ export function onlineMenu(item, at) {
     item.providerIds?.deezerAlbum && { label: t('player.menu.goToAlbum'), icon: 'album', run: () => app.nav(`/online/album?provider=deezer&id=${item.providerIds.deezerAlbum}`) },
     item.library?.albumId && { label: t('player.menu.openInLibrary'), icon: 'library', run: () => app.nav(`/album/${item.library.albumId}`) },
     (item.providerIds?.deezerArtist || item.artist) && item.kind !== 'artist' && app.providers.includes('deezer') && { label: t('player.menu.goToArtist'), icon: 'user', run: () => app.nav(item.providerIds?.deezerArtist ? `/online/artist?id=${item.providerIds.deezerArtist}` : `/online/artist?name=${encodeURIComponent(primaryArtist(item.artist))}`) },
-    item.url && { label: t('player.menu.openSource', { provider: providerName(item.provider) }), icon: 'external', run: () => window.open(item.url, '_blank', 'noopener,noreferrer') }
+    item.url && item.provider !== 'library' && { label: t('player.menu.openSource', { provider: providerName(item.provider) }), icon: 'external', run: () => window.open(item.url, '_blank', 'noopener,noreferrer') }
   ], at)
 }
 
@@ -450,6 +450,9 @@ export function shelf({ title, subtitle = null, items, render, seeAll = null, id
   row.__updateNav = updateNav
   navResize?.observe(row)
   updateNav()
+  // Off-screen shelves are not rendered (content-visibility); measure the
+  // arrows again once the shelf comes into view.
+  section.addEventListener('contentvisibilityautostatechange', (e) => { if (!e.skipped) updateNav() })
   const expandBtn = h('button', { type: 'button', class: 'link-btn', text: t('player.common.showAll') })
   expandBtn.addEventListener('click', () => {
     if (typeof seeAll === 'function') return seeAll()
@@ -672,29 +675,32 @@ function selectionController(list, tracks, { context, playlist, onChanged }) {
 }
 
 // Online track table with library / preview / download state per row.
-export function onlineTrackList(items, { context = null, showAlbum = true, numbered = true } = {}) {
+// `action(item)` adds an own control per row (e.g. "add to playlist").
+export function onlineTrackList(items, { context = null, showAlbum = true, numbered = true, action = null } = {}) {
   const list = h('div', { class: ['tracklist', 'tracklist--online', !showAlbum && 'tracklist--noalbum'], role: 'list' })
   items.forEach((item, index) => {
-    const owned = item.library?.trackId
+    const owned = adoptDownload(item)
     const row = h('div', { class: ['tl-row', !owned && 'is-missing'], role: 'listitem', tabindex: '0', dataset: owned ? { trackId: String(owned) } : null })
     const play = () => playOnline(items, index, context)
-    const canPlay = owned || item.previewUrl
+    // A download can finish while the list is open: decide on each tap.
+    const canPlay = owned || item.previewUrl || (app.canDownload && item.kind === 'track')
     const status = owned
       ? h('span', { class: 'badge badge--owned', title: t('player.downloads.inLibrary') }, icon('check', { size: 14 }))
-      : app.canDownload ? downloadButton(item) : item.previewUrl ? h('span', { class: 'badge badge--preview', text: t('player.badge.preview') }) : null
+      : action ? null
+        : app.canDownload ? downloadButton(item, { onDone: () => play() }) : item.previewUrl ? h('span', { class: 'badge badge--preview', text: t('player.badge.preview') }) : null
     row.append(
       h('span', { class: 'tl-num' },
         h('span', { class: 'tl-num__n', text: String(numbered ? index + 1 : '') }),
         h('span', { class: 'tl-eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
         canPlay ? iconButton('play', owned ? t('player.common.play') : t('player.menu.preview'), play, { cls: 'tl-num__play', size: 16 }) : null),
       h('span', { class: 'tl-title' },
-        artwork(item.artworkUrl, { alt: '', cls: 'tl-art', seed: item.album || item.title }),
+        artwork(item.artworkUrl || (item.artwork ? artworkUrl(item.artwork, 128) : null), { alt: '', cls: 'tl-art', seed: item.album || item.title }),
         h('span', { class: 'tl-text' },
           h('span', { class: 'tl-name', text: item.title, title: item.title }),
           h('span', { class: 'tl-artist' }, item.explicit ? h('span', { class: 'chip-mini', text: 'E' }) : null, h('span', { text: item.artist || '' })))),
       h('span', { class: 'tl-album' }, showAlbum ? h('span', { text: item.album || '' }) : null),
       h('span', { class: 'tl-dur', text: item.duration ? fmtTime(item.duration) : '' }),
-      h('span', { class: 'tl-actions' }, status, iconButton('more', t('player.common.more'), (e) => onlineMenu(item, e.currentTarget), { cls: 'tl-more', size: 18 }))
+      h('span', { class: 'tl-actions' }, action ? action(item, row) : null, status, iconButton('more', t('player.common.more'), (e) => onlineMenu(item, e.currentTarget), { cls: 'tl-more', size: 18 }))
     )
     if (canPlay) {
       row.addEventListener('dblclick', play)

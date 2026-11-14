@@ -1,5 +1,16 @@
 package com.gharmonize.player.ui
 
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +35,7 @@ import com.gharmonize.player.data.parseOnline
 @Composable
 fun AlbumScreen(state: AppState, id: Long) {
   val data = rememberLoad("album", id) { state.api.album(id) }
+  val missing = rememberLoad("album-missing", id) { runCatching { state.api.albumMissing(id) }.getOrNull() }
   val album = data.value
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
     data.error?.let { e -> item { ErrorBox(state.errorText(e)) { data.reload() } } }
@@ -37,6 +49,20 @@ fun AlbumScreen(state: AppState, id: Long) {
       }
     }
     itemsIndexed(album.tracks, key = { _, t -> "at-${t.id}" }) { i, t -> TrackRow(state, album.tracks, i, showArt = false, number = t.trackNo ?: (i + 1)) }
+    // Songs of this album that are not in the library yet.
+    val gaps = missing.value
+    if (gaps != null && gaps.found && gaps.missing.isNotEmpty()) {
+      item {
+        SectionTitle(stringResource(R.string.album_missing_title), subtitle = stringResource(R.string.album_missing_text, gaps.missing.size, gaps.total))
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          if (state.canDownload) Button(onClick = { state.downloadAll(gaps.missing) }) {
+            Icon(FluentIcons.Download, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.download_missing, gaps.missing.size))
+          }
+          gaps.onlineAlbum?.let { online -> OutlinedButton(onClick = { state.navigate(Route.OnlineAlbum(online)) }) { Text(stringResource(R.string.full_album)) } }
+        }
+      }
+      itemsIndexed(gaps.missing, key = { i, t -> "miss-$i-${t.id}" }) { i, _ -> OnlineTrackRow(state, gaps.missing, i) }
+    }
   }
 }
 
@@ -70,6 +96,9 @@ fun ArtistScreen(state: AppState, id: Long) {
 @Composable
 fun PlaylistScreen(state: AppState, id: Long) {
   val data = rememberLoad("playlist", id) { state.api.playlist(id) }
+  var round by remember { mutableIntStateOf(0) }
+  val suggestions = rememberLoad("playlist-suggest", id, round) { runCatching { state.api.playlistSuggestions(id, round) }.getOrNull() }
+  val added = remember(round) { mutableStateListOf<String>() }
   val pl = data.value
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
     data.error?.let { e -> item { ErrorBox(state.errorText(e)) { data.reload() } } }
@@ -83,6 +112,23 @@ fun PlaylistScreen(state: AppState, id: Long) {
     }
     if (pl.tracks.isEmpty()) item { EmptyText(stringResource(R.string.empty_list)) }
     itemsIndexed(pl.tracks, key = { i, t -> "pt-$i-${t.id}" }) { i, _ -> TrackRow(state, pl.tracks, i) }
+    // "Goes well with this playlist" (only on your own playlists).
+    val list = suggestions.value
+    if (pl.editable && !list.isNullOrEmpty()) {
+      item {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Box(Modifier.weight(1f)) {
+            SectionTitle(stringResource(R.string.suggest_title), subtitle = stringResource(if (state.canDownload) R.string.suggest_hint_download else R.string.suggest_hint))
+          }
+          IconButton(onClick = { round++ }) { Icon(FluentIcons.Refresh, stringResource(R.string.suggest_refresh)) }
+        }
+      }
+      itemsIndexed(list, key = { i, o -> "ps-$round-$i-${o.url}" }) { i, o ->
+        if (o.url !in added) SuggestionRow(state, list, i) {
+          state.addSuggestion(pl.id, o) { ok -> if (ok) { added.add(o.url); if (state.withDownload(o).libraryTrackId != null) data.reload() } }
+        }
+      }
+    }
   }
 }
 

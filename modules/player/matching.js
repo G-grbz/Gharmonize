@@ -32,7 +32,7 @@ export function albumBaseKey(title) {
   return normalizeKey(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
 }
 
-function artistsMatch(a, b) {
+export function artistsMatch(a, b) {
   const x = primaryArtistKey(a)
   const y = primaryArtistKey(b)
   if (!x || !y) return false

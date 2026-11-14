@@ -41,6 +41,7 @@ export function createDeezerSource({ fetchImpl } = {}) {
     artistTop: async (id, limit = 20) => list(await get(`/artist/${Number(id)}/top?limit=${limit}`), mapDeezerTrack),
     artistRelated: async (id, limit = 20) => list(await get(`/artist/${Number(id)}/related?limit=${limit}`), mapDeezerArtist),
     artistAlbums: async (id, limit = 30) => list(await get(`/artist/${Number(id)}/albums?limit=${limit}`), mapDeezerAlbum),
+    searchAlbums: async (q, limit = 10) => list(await get(`/search/album?q=${encodeURIComponent(q)}&limit=${limit}`), mapDeezerAlbum),
     artistRadio: async (id, limit = 30) => list(await get(`/artist/${Number(id)}/radio?limit=${limit}`), mapDeezerTrack),
     async album(id) {
       const body = await get(`/album/${Number(id)}`)
