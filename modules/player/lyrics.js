@@ -46,14 +46,25 @@ export function createLyricsService({ libraries, getOnlineAllowed = () => true, 
   async function fromSidecar(abs) {
     const base = abs.slice(0, abs.length - path.extname(abs).length)
     for (const candidate of [`${base}.lrc`, `${base}.LRC`, `${base}.txt`]) {
+      let file
       try {
-        const st = await fs.promises.stat(candidate)
+        file = await fs.promises.open(candidate, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0))
+        const st = await file.stat()
         if (!st.isFile() || st.size > MAX_LRC_BYTES) continue
-        const text = await fs.promises.readFile(candidate, 'utf8')
+        // Read the inspected descriptor, with a hard cap if the file grows.
+        const bytes = Buffer.alloc(MAX_LRC_BYTES + 1)
+        let size = 0
+        while (size < bytes.length) {
+          const { bytesRead } = await file.read(bytes, size, bytes.length - size, null)
+          if (!bytesRead) break
+          size += bytesRead
+        }
+        if (size > MAX_LRC_BYTES) continue
+        const text = bytes.toString('utf8', 0, size)
         const isLrc = /\.lrc$/i.test(candidate)
         const found = result('file', isLrc ? { synced: text } : { plain: text.trim() })
         if (found) return found
-      } catch {}
+      } catch {} finally { await file?.close().catch(() => {}) }
     }
     return null
   }

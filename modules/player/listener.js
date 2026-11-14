@@ -10,6 +10,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
+import { rateLimit } from '../rateLimit.js'
 import { getPlayerListenConfig } from './gate.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -53,7 +54,7 @@ function originCheck(req, res, next) {
   return res.status(403).json({ error: { code: 'CROSS_SITE_REQUEST_BLOCKED', message: 'Invalid request origin' } })
 }
 
-export function createPlayerApp({ handle, publicDir = DEFAULT_PUBLIC_DIR, via = null }) {
+export function createPlayerApp({ handle, publicDir = DEFAULT_PUBLIC_DIR, via = null, assetLimit = 1200 }) {
   const app = express()
   app.disable('x-powered-by')
   // Marks every request from this listener (e.g. 'tunnel') for the network gate.
@@ -62,6 +63,8 @@ export function createPlayerApp({ handle, publicDir = DEFAULT_PUBLIC_DIR, via = 
   app.set('trust proxy', 'loopback')
   app.use(securityHeaders)
   app.use('/api/player', express.json({ limit: '1mb' }), originCheck, (req, res, next) => handle(req, res, next))
+  // Bound disk-backed asset requests separately from streaming/API traffic.
+  app.use(rateLimit(assetLimit, 60_000))
   app.get('/', (_req, res) => res.redirect(302, '/player/'))
   const staticOpts = { index: false, dotfiles: 'ignore', fallthrough: true, maxAge: '1h' }
   app.use('/player', express.static(path.join(publicDir, 'player'), { ...staticOpts, index: 'index.html', redirect: true, maxAge: 0 }))

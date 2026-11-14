@@ -79,7 +79,7 @@ function fakeSpawn(log) {
     proc.exitCode = null
     proc.stdin = new PassThrough()
     proc.kill = (sig) => { proc.exitCode = 0; log.push(`kill ${sig}`); setImmediate(() => proc.emit('exit', 0)) }
-    const real = file === '/bin/sh' ? args.slice(3) : args
+    const real = file === process.execPath ? args.slice(1) : [file, ...args]
     log.push({ file, args: real.slice(1), binary: real[0], token: opts.env.TUNNEL_TOKEN || null, proc })
     return proc
   }
@@ -183,25 +183,27 @@ test('the tunnel origin listener marks its requests and only serves the player',
   assert.equal((await blocked.json()).error.code, 'PLAYER_REMOTE_ACCESS_DISABLED')
 })
 
-test('the watchdog stops cloudflared when Gharmonize goes away', { skip: process.platform === 'win32' && 'POSIX only' }, async () => {
+test('the watchdog stops cloudflared when Gharmonize goes away', { skip: process.platform === 'win32' && 'POSIX only', timeout: 10000 }, async (t) => {
   assert.equal(spawnArgs('/x/cloudflared', ['tunnel'], 'win32').command, '/x/cloudflared')
-  const { command, args } = spawnArgs('sleep', ['30'], 'linux')
-  assert.equal(command, '/bin/sh')
-  // Stand-in for cloudflared: a long sleep under the watchdog.
-  const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
-  await new Promise((r) => setTimeout(r, 300))
-  const { execFileSync } = await import('node:child_process')
-  const children = () => { try { return execFileSync('pgrep', ['-P', String(proc.pid)], { encoding: 'utf8' }).trim().split('\n').filter(Boolean) } catch { return [] } }
-  const sleeper = children()
-  assert.ok(sleeper.length >= 1, 'child started')
+  const root = tmpDir('watchdog')
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const script = path.join(root, 'stand-in.cjs')
+  fs.writeFileSync(script, "console.log(JSON.stringify({ pid: process.pid, arg: process.argv[2] })); setInterval(() => {}, 1000)")
+  const literal = 'spaces; $(touch injected) `echo nope` "quotes"'
+  const { command, args } = spawnArgs(process.execPath, [script, literal], 'linux')
+  assert.equal(command, process.execPath)
+  const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } })
+  t.after(() => proc.kill('SIGTERM'))
+  const exited = new Promise((resolve, reject) => { proc.once('exit', resolve); proc.once('error', reject) })
+  const ready = await new Promise((resolve, reject) => {
+    let output = ''
+    proc.stdout.on('data', (chunk) => { output += chunk; if (output.includes('\n')) resolve(JSON.parse(output.split('\n')[0])) })
+    proc.once('exit', () => reject(new Error('watchdog exited before child started')))
+    proc.once('error', reject)
+  })
+  assert.equal(ready.arg, literal, 'shell metacharacters stay literal')
   // Parent "dies": the pipe closes, the watchdog must stop the child.
-  const exited = new Promise((r) => proc.once('exit', r))
   proc.stdin.end()
   await exited
-  await new Promise((r) => setTimeout(r, 200))
-  for (const pid of sleeper) {
-    let alive = true
-    try { process.kill(Number(pid), 0) } catch { alive = false }
-    assert.equal(alive, false, `process ${pid} was left running`)
-  }
+  assert.throws(() => process.kill(ready.pid, 0), { code: 'ESRCH' }, 'child was reaped before the watchdog exited')
 })

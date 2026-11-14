@@ -124,8 +124,8 @@ function pumpDeezer() {
   const wait = Math.max(deezerLimiter.blockedUntil - Date.now(), deezerLimiter.lastStart + DEEZER_MIN_SPACING_MS - Date.now(), 0)
   if (wait > 0) {
     if (!deezerLimiter.timer) {
+      // Queued callers are awaiting this timer; keep the event loop alive.
       deezerLimiter.timer = setTimeout(() => { deezerLimiter.timer = null; pumpDeezer() }, wait)
-      deezerLimiter.timer.unref?.()
     }
     return
   }

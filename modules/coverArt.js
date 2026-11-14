@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertPathWithinAny, fetchSafeRemote, sanitizeLogValue } from './security.js';
+import { spawnSafe } from './safeProcess.js';
+
+const MAX_COVER_BYTES = 25 * 1024 * 1024;
 
 // YouTube advertises maxresdefault even for older uploads that only have HQ.
 // Keep provider artwork intact; resolution fallbacks apply only to YouTube CDN.
@@ -37,6 +40,60 @@ function imageExtension(bytes) {
   return null;
 }
 
+// Decode only supported still images and encode fresh pixels as PNG. This
+// rejects truncated/signature-only files and discards appended payloads and
+// metadata instead of persisting the remote response verbatim.
+export async function normalizeCoverImage(bytes) {
+  const ext = imageExtension(bytes);
+  if (!ext || bytes.length > MAX_COVER_BYTES) throw new Error('Invalid cover image');
+  const decoder = ext === '.jpg' ? 'mjpeg' : ext === '.png' ? 'png' : 'webp';
+  const { FFMPEG_BIN } = await import('./binaries.js');
+  return new Promise((resolve, reject) => {
+    const proc = spawnSafe(FFMPEG_BIN || 'ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-xerror',
+      '-protocol_whitelist', 'pipe', '-f', 'image2pipe', '-c:v', decoder,
+      '-threads', '1', '-max_pixels', '16777216', '-i', 'pipe:0',
+      '-map', '0:v:0', '-frames:v', '1', '-map_metadata', '-1',
+      '-vf', 'scale=w=min(2048\\,iw):h=min(2048\\,ih):force_original_aspect_ratio=decrease',
+      '-threads', '1', '-c:v', 'png', '-f', 'image2pipe', 'pipe:1'
+    ], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    const chunks = [];
+    let size = 0;
+    let failure;
+    const fail = (error) => { failure ||= error; proc.kill('SIGKILL'); };
+    const timer = setTimeout(() => fail(new Error('Cover image decoding timed out')), 10_000);
+    proc.once('error', (error) => { failure ||= error; });
+    proc.stdin.on('error', () => {});
+    proc.stderr.resume();
+    proc.stdout.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_COVER_BYTES) fail(new Error('Decoded cover image is too large'));
+      else if (!failure) chunks.push(chunk);
+    });
+    proc.once('close', (code) => {
+      clearTimeout(timer);
+      if (failure || code !== 0 || !size) return reject(failure || new Error('Cover image decoding failed'));
+      resolve(Buffer.concat(chunks));
+    });
+    proc.stdin.end(bytes);
+  });
+}
+
+async function readCoverResponse(res) {
+  if (Number(res.headers.get('content-length')) > MAX_COVER_BYTES) {
+    await res.body?.cancel?.();
+    throw new Error('Cover image is too large');
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    size += chunk.length;
+    if (size > MAX_COVER_BYTES) throw new Error('Cover image is too large');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 export function createThumbnailDownloader({ fetchRemote = fetchSafeRemote, logger = console } = {}) {
   return async function downloadThumbnail(url, destBasePathNoExt) {
     if (!url) return null;
@@ -47,14 +104,10 @@ export function createThumbnailDownloader({ fetchRemote = fetchSafeRemote, logge
       try {
         const res = await fetchRemote(candidate, { signal: AbortSignal.timeout(5000) }, { maxRedirects: 3 });
         if (!res.ok) { await res.body?.cancel?.(); continue; }
-        const maxBytes = 25 * 1024 * 1024;
-        if (Number(res.headers.get('content-length')) > maxBytes) { await res.body?.cancel?.(); continue; }
-        const bytes = Buffer.from(await res.arrayBuffer());
-        if (bytes.length > maxBytes) continue;
-        const ext = imageExtension(bytes);
-        if (!ext) continue; // A 200 HTML error page is not artwork.
-        const dest = assertPathWithinAny(`${safeBase}${ext}`, roots);
-        fs.writeFileSync(dest, bytes, { mode: 0o600 });
+        const bytes = await readCoverResponse(res);
+        const image = await normalizeCoverImage(bytes);
+        const dest = assertPathWithinAny(`${safeBase}.png`, roots);
+        fs.writeFileSync(dest, image, { mode: 0o600 });
         return dest;
       } catch {}
     }

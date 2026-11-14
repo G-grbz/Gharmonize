@@ -453,8 +453,9 @@ test('media output and remote thumbnail writes remain confined and bounded', () 
   assert.ok(text.includes('outputDir = assertPathWithinAny('));
   assert.ok(text.includes('path.relative(outputDir, candidate)'));
   const artwork = fs.readFileSync('modules/coverArt.js', 'utf8');
-  assert.ok(artwork.includes('const maxBytes = 25 * 1024 * 1024'));
-  assert.ok(artwork.includes('if (bytes.length > maxBytes) continue'));
+  assert.ok(artwork.includes('const MAX_COVER_BYTES = 25 * 1024 * 1024'));
+  assert.ok(artwork.includes('if (size > MAX_COVER_BYTES)'));
+  assert.ok(artwork.includes('await normalizeCoverImage(bytes)'));
   assert.ok(artwork.includes('assertPathWithinAny'));
   assert.ok(artwork.includes('fetchSafeRemote'));
   assert.ok(text.includes('export { downloadThumbnail }'));

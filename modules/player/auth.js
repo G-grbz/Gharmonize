@@ -244,9 +244,8 @@ export function createAuthStore(db, { now = () => Date.now() } = {}) {
   }
 
   function createPairingCode(userId) {
-    const bytes = crypto.randomBytes(8)
     let code = ''
-    for (const b of bytes) code += PAIRING_ALPHABET[b % PAIRING_ALPHABET.length]
+    for (let i = 0; i < 8; i++) code += PAIRING_ALPHABET[crypto.randomInt(PAIRING_ALPHABET.length)]
     const ts = now()
     stmt.insertPairing.run(sha256(code), Number(userId), ts, ts + PAIRING_TTL_MS)
     return { code, expiresAt: ts + PAIRING_TTL_MS }

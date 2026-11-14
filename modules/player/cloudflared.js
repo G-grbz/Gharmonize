@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, execFile } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 const RELEASE_BASE = 'https://github.com/cloudflare/cloudflared/releases/latest/download'
 const QUICK_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i
@@ -80,17 +81,15 @@ export async function ensureCloudflared({ binDir, env = process.env, platform = 
   return { file, version, source: 'downloaded' }
 }
 
-// POSIX: run cloudflared under a tiny shell watchdog that reads our stdin;
+// POSIX: run cloudflared under a Node watchdog that reads our stdin;
 // when Gharmonize exits in any way (even SIGKILL or a crash) the pipe closes
 // and the watchdog stops cloudflared, so no orphan tunnel is left behind.
-// (Background jobs get /dev/null as stdin, so our pipe is kept on fd 3.)
-const WATCHDOG = 'exec 3<&0; cf="$1"; shift; "$cf" "$@" </dev/null & c=$!; ' +
-  '{ while read -r _ <&3; do :; done; kill "$c" 2>/dev/null; } & w=$!; ' +
-  'wait "$c"; s=$?; kill "$w" 2>/dev/null; exit $s'
+// Executable paths and arguments are never interpreted by a shell.
+const WATCHDOG_FILE = fileURLToPath(new URL('./tunnelWatchdog.cjs', import.meta.url))
 
 export function spawnArgs(file, args, platform = process.platform) {
   if (platform === 'win32') return { command: file, args, watchdog: false }
-  return { command: '/bin/sh', args: ['-c', WATCHDOG, 'cloudflared-watchdog', file, ...args], watchdog: true }
+  return { command: process.execPath, args: [WATCHDOG_FILE, file, ...args], watchdog: true }
 }
 
 const liveChildren = new Set()
@@ -161,7 +160,7 @@ export function createTunnel({ getConfig, binDir, logger = console, spawnImpl = 
     lastLines.length = 0
     stopping = false
     const launch = spawnArgs(binary.file, args, platform)
-    const proc = spawnImpl(launch.command, launch.args, { env: childEnv, stdio: [launch.watchdog ? 'pipe' : 'ignore', 'pipe', 'pipe'], windowsHide: true })
+    const proc = spawnImpl(launch.command, launch.args, { env: { ...childEnv, ...(launch.watchdog ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: [launch.watchdog ? 'pipe' : 'ignore', 'pipe', 'pipe'], windowsHide: true })
     child = proc
     liveChildren.add(proc)
     installExitHook()
