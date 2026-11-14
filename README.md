@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/ci.yml) [![CodeQL](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml/badge.svg)](https://github.com/G-grbz/Gharmonize/actions/workflows/codeql.yml) [![AppImageHub](https://img.shields.io/badge/AppImageHub-Listed-2ea44f?logo=appimage&logoColor=white)](https://appimage.github.io/Gharmonize/)
 
-<img width="1672" height="941"
-     alt="Gharmonize & YTLive"
-     src="https://github.com/user-attachments/assets/fed7956a-c610-4d46-9221-ea103cbfb012" />
+<img width="2172" height="724"
+     alt="gharmonizekolaj"
+     src="https://github.com/user-attachments/assets/8331b603-3f1e-41e2-ac31-2477176d8164" />
 
 
 ---
