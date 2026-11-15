@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import NodeID3 from 'node-id3'
+import { updateBuffer } from 'music-metadata'
 
 export const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', 'base64')
 export const silentLogger = { log() {}, warn() {}, error() {}, debug() {} }
@@ -18,11 +18,46 @@ export function age(file, ms = 60_000) {
   fs.utimesSync(file, old, old)
 }
 
-export function writeTrack(file, tags, { cover = false, fresh = false } = {}) {
+function countPair(value) {
+  const match = String(value ?? '').trim().match(/^(\d+)(?:\s*\/\s*(\d+))?$/)
+  if (!match) return null
+  const no = Number(match[1])
+  if (!Number.isFinite(no) || no <= 0) return null
+  const of = Number(match[2])
+  return Number.isFinite(of) && of > 0 ? { no, of } : { no }
+}
+
+// Translate the compact fixture tags into a music-metadata patch.
+function fixturePatch(tags) {
+  const patch = {}
+  if (tags.title) patch.title = tags.title
+  if (tags.artist) patch.artist = tags.artist
+  if (tags.album) patch.album = tags.album
+  if (tags.albumartist) patch.albumartist = tags.albumartist
+  if (tags.genre) patch.genre = tags.genre
+  if (tags.year) patch.date = String(tags.year)
+  const track = countPair(tags.trackNumber)
+  if (track) patch.track = track
+  if (tags.comment) patch.comment = { text: String(tags.comment) }
+  const native = {}
+  for (const item of tags.userDefinedText || []) native[`TXXX:${item.description}`] = item.value
+  for (const item of tags.userDefinedUrl || []) native[`WXXX:${item.description}`] = item.url
+  if (Object.keys(native).length) patch.native = native
+  return patch
+}
+
+export async function writeTrack(file, tags, { cover = false, fresh = false } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const id3 = { ...tags }
-  if (cover) id3.image = { mime: 'image/png', type: { id: 3, name: 'front cover' }, description: 'cover', imageBuffer: PNG_1PX }
-  fs.writeFileSync(file, NodeID3.write(id3, silentMp3()))
+  const patch = fixturePatch(tags)
+  if (cover) {
+    patch.picture = [{
+      format: 'image/png',
+      type: 'Cover (front)',
+      description: 'cover',
+      data: cover === true ? PNG_1PX : cover
+    }]
+  }
+  fs.writeFileSync(file, await updateBuffer(silentMp3(), patch))
   if (!fresh) age(file)
   return file
 }

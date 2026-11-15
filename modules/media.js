@@ -778,7 +778,7 @@ export async function retagMediaFile(
       }
       args.push("-c:a", "copy");
       if (f === "mp3") {
-        args.push("-id3v2_version", "3");
+        args.push("-id3v2_version", "4");
         if (shouldWriteId3v1()) args.push("-write_id3v1", "1");
         // The input may be VBR; rebuild duration/seek information during remux.
         args.push(...mp3DurationHeaderArgs());
@@ -807,7 +807,7 @@ export async function retagMediaFile(
     }
 
     if (f === "mp3") {
-      writeRichId3v2Tag(absOutputPath, {
+      await writeRichId3v2Tag(absOutputPath, {
         ...resolvedMeta,
         comment: getCommentText()
       });
@@ -1547,12 +1547,12 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
         "-metadata:s:v",
         "title=Album cover"
       );
-      if (format === "mp3") args.push("-c:v", "mjpeg", "-id3v2_version", "3");
+      if (format === "mp3") args.push("-c:v", "mjpeg", "-id3v2_version", "4");
       else if (format === "flac") args.push("-c:v", "mjpeg");
     }
 
     if (!isVideo && format === "mp3") {
-      args.push("-id3v2_version", "3");
+      args.push("-id3v2_version", "4");
       if (shouldWriteId3v1()) args.push("-write_id3v1", "1");
     }
 
@@ -3590,7 +3590,7 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     if (!isVideo && String(format || "").toLowerCase() === "mp3" && result?.outputPath) {
       const actualOutputPath = resolveResultDownloadPath(result.outputPath);
       if (actualOutputPath) {
-        writeRichId3v2Tag(actualOutputPath, {
+        await writeRichId3v2Tag(actualOutputPath, {
           ...resolvedMeta,
           comment: getCommentText()
         });

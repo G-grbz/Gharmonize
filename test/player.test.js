@@ -180,10 +180,10 @@ test('config normalization clamps values', () => {
 async function setupPlayer(t, { mode = 'off' } = {}) {
   const root = tmpDir('int')
   const downloads = path.join(root, 'outputs')
-  writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '01 - Hadi Bakalım.mp3'), { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '1', year: '1991', genre: 'Pop' }, { cover: true })
-  writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '02 - Gülümse.mp3'), { title: 'Gülümse', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '2', year: '1991', genre: 'Pop' })
-  writeTrack(path.join(downloads, 'Single', 'Barış Manço - Dağlar Dağlar.mp3'), {})
-  writeTrack(path.join(downloads, 'Single', 'kirmizi.mp3'), { title: 'Kırmızı Işık', artist: 'İlhan Şeşen' })
+  await writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '01 - Hadi Bakalım.mp3'), { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '1', year: '1991', genre: 'Pop' }, { cover: true })
+  await writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '02 - Gülümse.mp3'), { title: 'Gülümse', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '2', year: '1991', genre: 'Pop' })
+  await writeTrack(path.join(downloads, 'Single', 'Barış Manço - Dağlar Dağlar.mp3'), {})
+  await writeTrack(path.join(downloads, 'Single', 'kirmizi.mp3'), { title: 'Kırmızı Işık', artist: 'İlhan Şeşen' })
   fs.writeFileSync(path.join(downloads, 'Single', 'Barış Manço - Dağlar Dağlar.lrc'), '[00:01.00]Dağlar dağlar\n[00:02.00]kurban olam')
   fs.writeFileSync(path.join(downloads, 'notes.txt'), 'not audio')
 
@@ -443,7 +443,7 @@ test('multiple libraries, disable/remove rules, rescans and offline drives', asy
   assert.equal(defaultLib.path, fs.realpathSync(downloads))
 
   const archive = path.join(root, 'archive')
-  writeTrack(path.join(archive, 'Jazz', 'Take Five.mp3'), { title: 'Take Five', artist: 'Dave Brubeck', album: 'Time Out', genre: 'Jazz' })
+  await writeTrack(path.join(archive, 'Jazz', 'Take Five.mp3'), { title: 'Take Five', artist: 'Dave Brubeck', album: 'Time Out', genre: 'Jazz' })
 
   r = await call('DELETE', `/admin/libraries/${defaultLib.id}`)
   assert.equal(r.status, 409, 'default library cannot be removed')
@@ -473,7 +473,7 @@ test('multiple libraries, disable/remove rules, rescans and offline drives', asy
 
   // A deleted file disappears; a modified one is re-read.
   fs.rmSync(path.join(downloads, 'Sezen Aksu', 'Gülümse', '02 - Gülümse.mp3'))
-  writeTrack(path.join(downloads, 'Single', 'Barış Manço - Dağlar Dağlar.mp3'), { title: 'Dağlar Dağlar', artist: 'Barış Manço', album: '2023', genre: 'Anadolu Rock' })
+  await writeTrack(path.join(downloads, 'Single', 'Barış Manço - Dağlar Dağlar.mp3'), { title: 'Dağlar Dağlar', artist: 'Barış Manço', album: '2023', genre: 'Anadolu Rock' })
   const touched = new Date(Date.now() - 30_000)
   fs.utimesSync(path.join(downloads, 'Single', 'Barış Manço - Dağlar Dağlar.mp3'), touched, touched)
   await service.context.scanner.requestScan('all')
@@ -485,7 +485,7 @@ test('multiple libraries, disable/remove rules, rescans and offline drives', asy
   assert.equal(status.updated, 1)
 
   // Files that are still being written (fresh mtime) are skipped for now.
-  writeTrack(path.join(downloads, 'fresh.mp3'), { title: 'Fresh', artist: 'Someone' })
+  await writeTrack(path.join(downloads, 'fresh.mp3'), { title: 'Fresh', artist: 'Someone' })
   const now = new Date()
   fs.utimesSync(path.join(downloads, 'fresh.mp3'), now, now)
   await service.context.scanner.requestScan('all')
@@ -567,7 +567,7 @@ test('per-user library access and download rights', async (t) => {
   const { call, root, service, base } = await setupPlayer(t)
   await call('POST', '/setup', { body: { username: 'admin', password: 'supersecret', adminPassword: 'GharmonizeAdmin1' } })
   const archive = path.join(root, 'archive')
-  writeTrack(path.join(archive, 'Private', 'Secret Song.mp3'), { title: 'Secret Song', artist: 'Hidden Artist', album: 'Vault', genre: 'Jazz' }, { cover: true })
+  await writeTrack(path.join(archive, 'Private', 'Secret Song.mp3'), { title: 'Secret Song', artist: 'Hidden Artist', album: 'Vault', genre: 'Jazz' }, { cover: true })
   fs.writeFileSync(path.join(archive, 'Private', 'Secret Song.lrc'), '[00:01.00]sshh')
   const lib = (await call('POST', '/admin/libraries', { body: { name: 'Arşiv', path: archive } })).body
   await service.context.scanner.requestScan('all')
@@ -640,7 +640,7 @@ test('per-user library access and download rights', async (t) => {
   assert.equal(r.body.allLibraries, true)
   assert.equal(r.body.libraryIds, null)
   const later = path.join(root, 'later')
-  writeTrack(path.join(later, 'Late.mp3'), { title: 'Late Arrival', artist: 'Someone' })
+  await writeTrack(path.join(later, 'Late.mp3'), { title: 'Late Arrival', artist: 'Someone' })
   await call('POST', '/admin/libraries', { body: { name: 'Sonra', path: later } })
   await service.context.scanner.requestScan('all')
   assert.equal((await json('/search?q=late arrival')).tracks.length, 1)

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import NodeID3 from "node-id3";
+import { updateFile } from "music-metadata";
 
 const TURKISH_SPECIFIC_RE = /[ĞğİıŞş]/;
 
@@ -84,11 +84,11 @@ function toPositiveIntOrNull(value) {
   return Math.floor(n);
 }
 
-function formatCountPair(numberValue, totalValue) {
-  const numberPart = toPositiveIntOrNull(numberValue);
-  if (!numberPart) return "";
-  const totalPart = toPositiveIntOrNull(totalValue);
-  return totalPart ? `${numberPart}/${totalPart}` : String(numberPart);
+function toCountPair(numberValue, totalValue) {
+  const no = toPositiveIntOrNull(numberValue);
+  if (!no) return null;
+  const of = toPositiveIntOrNull(totalValue);
+  return of ? { no, of } : { no };
 }
 
 function normalizeId3Language(value = "") {
@@ -194,30 +194,34 @@ export function buildRichId3v2Tags(meta = {}) {
   const sourceUrl = pickSourceUrl(meta);
   const releaseDate = pickReleaseDate(meta);
   const year = trimMetaValue(meta.release_year || meta.upload_year || releaseDate.slice(0, 4));
-  const trackNumber = formatCountPair(meta.track_number, meta.track_total);
-  const partOfSet = formatCountPair(meta.disc_number, meta.disc_total);
+  const trackNumber = toCountPair(meta.track_number, meta.track_total);
+  const partOfSet = toCountPair(meta.disc_number, meta.disc_total);
   const language = normalizeId3Language(meta.language || meta.lyrics_language || meta.comment_language);
   const commentText = trimMetaValue(meta.comment);
   const lyricsText = trimMetaValue(meta.lyrics || meta.unsynchronisedLyrics?.text);
+  const artistUrl = trimMetaValue(meta.apple_artist_url);
 
+  // Common fields map to ID3v2.4 frames. Music-metadata picks the conventional
+  // header type and preserves frames this patch does not touch.
   const tags = {};
   if (title) tags.title = title;
   if (artist) tags.artist = artist;
   if (album) tags.album = album;
-  if (albumArtist) tags.performerInfo = albumArtist;
+  if (albumArtist) tags.albumartist = albumArtist;
   if (composer) tags.composer = composer;
   if (genre) tags.genre = genre;
-  if (publisher) tags.publisher = publisher;
+  if (publisher) tags.label = publisher;
   if (copyright) tags.copyright = copyright;
-  if (isrc) tags.ISRC = isrc;
-  if (trackNumber) tags.trackNumber = trackNumber;
-  if (partOfSet) tags.partOfSet = partOfSet;
-  if (year) tags.year = year;
+  if (isrc) tags.isrc = isrc;
+  if (trackNumber) tags.track = trackNumber;
+  if (partOfSet) tags.disk = partOfSet;
   if (releaseDate) {
+    // ID3v2.4 records dates in TDRC/TDOR/TDRL; TYER and TDAT do not exist.
     tags.date = releaseDate;
-    tags.originalReleaseTime = releaseDate;
-    tags.recordingTime = releaseDate;
-    tags.releaseTime = releaseDate;
+    tags.originaldate = releaseDate;
+    tags.releasedate = releaseDate;
+  } else if (year) {
+    tags.date = year;
   }
   if (commentText) {
     tags.comment = {
@@ -226,13 +230,11 @@ export function buildRichId3v2Tags(meta = {}) {
     };
   }
   if (lyricsText) {
-    tags.unsynchronisedLyrics = {
+    tags.lyrics = {
       language,
       text: lyricsText
     };
   }
-  if (sourceUrl) tags.audioSourceUrl = sourceUrl;
-  if (trimMetaValue(meta.apple_artist_url)) tags.artistUrl = trimMetaValue(meta.apple_artist_url);
 
   const userDefinedText = [];
   pushUserDefinedText(userDefinedText, "SOURCE_PROVIDER", meta.source_provider || meta.source);
@@ -258,8 +260,6 @@ export function buildRichId3v2Tags(meta = {}) {
   pushUserDefinedText(userDefinedText, "ALBUM_ID", meta.album_id);
   pushUserDefinedText(userDefinedText, "PLAYLIST_INDEX", meta.playlist_index);
   pushUserDefinedText(userDefinedText, "PLAYLIST_TOTAL", meta.playlist_total);
-  if (userDefinedText.length) tags.userDefinedText = userDefinedText;
-
   const userDefinedUrl = [];
   pushUserDefinedUrl(userDefinedUrl, "SOURCE_URL", sourceUrl);
   pushUserDefinedUrl(userDefinedUrl, "APPLE_TRACK_URL", meta.apple_track_url);
@@ -274,21 +274,27 @@ export function buildRichId3v2Tags(meta = {}) {
   pushUserDefinedUrl(userDefinedUrl, "DEEZER_ARTIST_URL", meta.deezer_artist_url);
   pushUserDefinedUrl(userDefinedUrl, "TIDAL_URL", meta.tidalUrl);
   pushUserDefinedUrl(userDefinedUrl, "SOUNDCLOUD_URL", meta.soundcloudUrl || meta.scUrl);
-  if (userDefinedUrl.length) tags.userDefinedUrl = userDefinedUrl;
+
+  // App-specific provider data has no common mapping and stays in native frames.
+  const native = {};
+  for (const item of userDefinedText) native[`TXXX:${item.description}`] = item.value;
+  for (const item of userDefinedUrl) native[`WXXX:${item.description}`] = item.url;
+  if (sourceUrl) native.WOAS = sourceUrl;
+  if (artistUrl) native.WOAR = artistUrl;
+  if (Object.keys(native).length) tags.native = native;
 
   return tags;
 }
 
-export function writeRichId3v2Tag(filePath, meta = {}) {
+export async function writeRichId3v2Tag(filePath, meta = {}) {
   try {
     if (String(path.extname(filePath) || "").toLowerCase() !== ".mp3") return false;
 
     const tags = buildRichId3v2Tags(meta);
     if (!Object.keys(tags).length) return false;
 
-    const result = NodeID3.update(tags, filePath);
-    if (result instanceof Error) return false;
-    return Boolean(result);
+    await updateFile(filePath, tags);
+    return true;
   } catch {
     return false;
   }

@@ -30,7 +30,13 @@ fs.mkdirSync(output);
 fs.mkdirSync(temp);
 const source = path.join(root, 'variable.wav');
 const cover = path.join(root, 'cover.jpg');
-const metadata = { artist: 'Arvo Pärt', title: 'Spiegel im Spiegel', album: 'Fixture Album', duration: 9 };
+const metadata = {
+  artist: 'Arvo Pärt', title: 'Spiegel im Spiegel', album: 'Fixture Album', duration: 9,
+  album_artist: 'Arvo Pärt', genre: 'Classical', label: 'ECM', isrc: 'DEA123456789',
+  track_number: 1, track_total: 4, disc_number: 1, disc_total: 2, release_date: '2024-03-01',
+  comment: 'Fixture comment', source_provider: 'youtube', explicit: false, duration_ms: 9000,
+  webpage_url: 'https://www.youtube.com/watch?v=tSzx9yln6ak'
+};
 const run = (bin, args) => execFileSync(bin, args, { encoding: 'utf8', timeout: 15_000, maxBuffer: 1024 * 1024 });
 const encode = (args) => run(ffmpeg, ['-hide_banner', '-nostdin', '-v', 'error', ...args]);
 // Silence followed by a complex tone produces different frame bitrates and
@@ -69,12 +75,16 @@ for (const bitrate of ['auto', '0', 'lossless', '192k']) {
 // Reproduce the old defect, then verify that retag repairs it by stream copy.
 process.env.MP3_WRITE_XING = '0';
 const legacy = path.join(output, 'legacy.mp3');
-encode(['-i', source, '-i', cover, '-map', '0:a', '-map', '1:v', '-c:a', 'libmp3lame', '-q:a', '0', '-c:v', 'copy', '-disposition:v', 'attached_pic', '-write_xing', '0', legacy]);
+encode(['-i', source, '-i', cover, '-map', '0:a', '-map', '1:v', '-c:a', 'libmp3lame', '-q:a', '0', '-c:v', 'copy', '-disposition:v', 'attached_pic', '-write_xing', '0', '-id3v2_version', '3', '-metadata', 'title=Legacy title', legacy]);
+const legacyHeader = fs.readFileSync(legacy).subarray(0, 4);
+assert.equal(legacyHeader.subarray(0, 3).toString(), 'ID3');
+assert.equal(legacyHeader[3], 3, 'legacy fixture must start with an ID3v2.3 tag');
 assert.ok(Math.abs(Number(probe(legacy).format.duration) - 9) > 1, 'legacy fixture must reproduce inaccurate VBR duration');
 const originalAudio = audioHash(legacy);
 const originalCover = coverHash(legacy);
 await retagMediaFile(legacy, 'mp3', metadata, null, { ffmpegBin: ffmpeg, tempDir: temp });
 verify(legacy);
+assert.equal(fs.readFileSync(legacy)[3], 4, 'retag must upgrade the ID3 tag to v2.4');
 assert.equal(audioHash(legacy), originalAudio, 'retag must not re-encode audio');
 assert.equal(coverHash(legacy), originalCover);
 
@@ -82,7 +92,7 @@ assert.equal(coverHash(legacy), originalCover);
 lyricsFetcher.searchLyrics = async () => ({ plainLyrics: 'Fixture lyric line' });
 const lyrics = await attachLyricsToMedia(legacy, metadata, { includeLyrics: false, embedLyrics: true, returnDetails: true });
 assert.equal(lyrics?.embedded, true);
-writeRichId3v2Tag(legacy, metadata);
+await writeRichId3v2Tag(legacy, metadata);
 rewriteId3v11Tag(legacy, metadata);
 verify(legacy);
 assert.equal(audioHash(legacy), originalAudio, 'lyrics must not re-encode audio');
@@ -90,6 +100,19 @@ assert.equal(coverHash(legacy), originalCover);
 const parsed = await parseFile(legacy);
 assert.equal(parsed.common.artist, metadata.artist);
 assert.equal(parsed.common.title, metadata.title);
+assert.equal(parsed.common.albumartist, metadata.album_artist);
+assert.equal(parsed.common.year, 2024);
+assert.deepEqual(parsed.common.track, { no: 1, of: 4 });
+assert.deepEqual(parsed.common.disk, { no: 1, of: 2 });
+assert.equal(parsed.common.isrc?.[0], metadata.isrc);
+assert.ok(parsed.common.comment?.some((entry) => entry.text === metadata.comment));
 assert.equal(probe(legacy).format.tags.lyrics, 'Fixture lyric line', 'embedded lyrics must survive final ID3 updates');
+const native = parsed.native['ID3v2.4'] || [];
+const userText = Object.fromEntries(native.filter((tag) => tag.id.startsWith('TXXX:')).map((tag) => [tag.id, tag.value]));
+assert.equal(userText['TXXX:SOURCE_PROVIDER'], 'youtube');
+assert.equal(userText['TXXX:EXPLICIT'], 'false');
+const sourceUrl = native.find((tag) => tag.id === 'WXXX' && tag.value?.description === 'SOURCE_URL');
+assert.equal(sourceUrl?.value?.url, metadata.webpage_url);
+assert.equal(native.find((tag) => tag.id === 'WOAS')?.value, metadata.webpage_url);
 console.log('MP3_DURATION_OK');
 process.exit(0);

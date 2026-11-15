@@ -38,7 +38,6 @@
     "multer": "^2.4.0",
     "music-metadata": "^12.4.0",
     "node-fetch": "^3.3.2",
-    "node-id3": "^0.2.9",
     "spotify-web-api-node": "^5.0.2"
   },
   "devDependencies": {
