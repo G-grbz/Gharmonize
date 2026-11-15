@@ -64,7 +64,8 @@ export function serializeTrack(row) {
     addedAt: row.added_at,
     size: row.size,
     favorite: Boolean(row.favorite),
-    artwork: row.album_id ? `album/${row.album_id}` : `track/${row.id}`,
+    // The song's own cover; the server falls back to its album's cover.
+    artwork: `track/${row.id}`,
     ...(row.play_count != null ? { playCount: row.play_count } : {}),
     ...(row.last_played_at != null ? { lastPlayedAt: row.last_played_at } : {})
   }

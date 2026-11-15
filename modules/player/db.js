@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { ensurePrivateDir } from './paths.js'
 
@@ -301,6 +302,23 @@ export function getSetting(db, key, fallback = null) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key)
   if (!row) return fallback
   try { return JSON.parse(row.value) } catch { return fallback }
+}
+
+// Each player database gets its own random id. It is part of artwork URLs and
+// waveform ETags, so two installs on the same address (Docker and the desktop
+// package, say) never share browser-cached media even though both number
+// their rows from 1.
+const installIds = new WeakMap()
+export function getInstallId(db) {
+  const known = installIds.get(db)
+  if (known) return known
+  let id = getSetting(db, 'artwork_install_id')
+  if (typeof id !== 'string' || !/^[0-9a-f]{16,64}$/.test(id)) {
+    id = crypto.randomBytes(16).toString('hex')
+    setSetting(db, 'artwork_install_id', id)
+  }
+  installIds.set(db, id)
+  return id
 }
 
 export function setSetting(db, key, value) {

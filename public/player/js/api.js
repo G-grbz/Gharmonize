@@ -51,10 +51,14 @@ export const put = (path, body) => api(path, { method: 'PUT', body: body ?? {} }
 export const patch = (path, body) => api(path, { method: 'PATCH', body: body ?? {} })
 export const del = (path) => api(path, { method: 'DELETE' })
 
-// `ref` is the "kind/id" string the server returns as `artwork`.
+// `ref` is the "kind/id/version" string the server returns as `artwork`.
+// Bare "kind/id" refs (persisted queues, fallbacks) get a "/0" version so they
+// skip covers older builds let the browser cache for a week under that URL;
+// the server answers them with revalidation instead.
 export function artworkUrl(ref, size = 256) {
   if (!ref) return null
   if (/^https:\/\//.test(ref)) return ref
+  if (/^[a-z]+\/\d+$/.test(ref)) ref += '/0'
   return `${BASE}/artwork/${ref}?size=${size}`
 }
 

@@ -11,6 +11,7 @@ import { CatalogError, clampLimit, clampOffset } from './catalog.js'
 import { BridgeError } from './bridge.js'
 import { OnlineError, freshDeezerPreview } from './online.js'
 import { DiscoveryError } from './discovery.js'
+import { getInstallId } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let cachedVersion = null
@@ -85,6 +86,17 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     return sendError(res, req.playerUser ? 403 : 401, 'PLAYER_ADMIN_REQUIRED', 'Player administrator rights are required.')
   }
   const uid = (req) => req.playerUser?.id || 0
+
+  // Artwork refs leave the server versioned ("album/5/<token>"): the token
+  // changes with the install and with the files behind the cover, so the
+  // long-lived browser/app image caches never show a stale or foreign cover.
+  router.use((req, res, next) => {
+    if (typeof artwork?.versionRefs === 'function') {
+      const json = res.json.bind(res)
+      res.json = (body) => json(artwork.versionRefs(body, uid(req)))
+    }
+    next()
+  })
 
   function setSessionCookie(req, res, token) {
     res.cookie(PLAYER_SESSION_COOKIE, token, { httpOnly: true, sameSite: 'strict', secure: Boolean(req.secure), path: '/', maxAge: SESSION_TTL_MS })
@@ -167,26 +179,46 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     const track = catalog.getTrackRow(intParam(req.params.id), uid(req))
     if (!track) return sendError(res, 404, 'NOT_FOUND', 'Track not found.')
     if (!waveform) return sendError(res, 404, 'NO_WAVEFORM', 'Waveform unavailable.')
+    // The URL only carries the track id, which another install on the same
+    // address (or a later song reusing the id) shares: revalidate every time
+    // against an ETag of the actual file instead of caching by URL.
+    if (typeof waveform.tagFor === 'function') {
+      let installId = ''
+      try { installId = ctx.db ? getInstallId(ctx.db) : '' } catch {}
+      res.set('ETag', `"wf-${waveform.tagFor(track, installId)}"`)
+      res.set('Cache-Control', 'private, no-cache')
+      if (req.fresh) return res.status(304).end()
+    }
     try {
       const data = await waveform.getWaveform(track)
-      if (!data) return sendError(res, 404, 'FILE_MISSING', 'The audio file is no longer available.')
-      res.set('Cache-Control', 'private, max-age=2592000')
+      if (!data) {
+        res.removeHeader('ETag')
+        return sendError(res, 404, 'FILE_MISSING', 'The audio file is no longer available.')
+      }
       res.json({ bins: data.bins })
     } catch {
+      res.removeHeader('ETag')
       res.set('Cache-Control', 'no-store')
       sendError(res, 422, 'NO_WAVEFORM', 'Waveform unavailable.')
     }
   })
 
-  router.get('/artwork/:kind/:id', requireUser, async (req, res) => {
+  // /artwork/album/5/<token>: a URL whose token matches the current files may
+  // be cached for good. Bare or outdated URLs (old clients, persisted queues)
+  // are revalidated on every use instead, as are folder images, which can
+  // change without the song files changing.
+  router.get('/artwork/:kind/:id{/:ver}', requireUser, async (req, res) => {
     const id = intParam(req.params.id)
     if (!id) return sendError(res, 404, 'NOT_FOUND', 'Artwork not found.')
-    const art = await artwork.getArtwork(String(req.params.kind), id, req.query.size, uid(req))
+    const kind = String(req.params.kind)
+    const art = await artwork.getArtwork(kind, id, req.query.size, uid(req))
+    const current = req.params.ver ? artwork.versionFor?.(kind, id, uid(req)) : null
+    const pinned = Boolean(current) && req.params.ver === current
     if (!art) {
-      res.set('Cache-Control', 'private, max-age=600')
+      res.set('Cache-Control', pinned ? 'private, max-age=600' : 'private, no-cache')
       return sendError(res, 404, 'NO_ARTWORK', 'No artwork available.')
     }
-    res.set('Cache-Control', 'private, max-age=604800')
+    res.set('Cache-Control', pinned && art.stable !== false ? 'private, max-age=31536000, immutable' : 'private, no-cache')
     res.type(art.contentType)
     res.sendFile(art.file, { dotfiles: 'allow', lastModified: true, cacheControl: false }, (err) => {
       if (err && !res.headersSent) sendError(res, 404, 'NO_ARTWORK', 'No artwork available.')

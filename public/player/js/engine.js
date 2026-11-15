@@ -23,7 +23,7 @@ export function fromTrack(track, extra = {}) {
     album: track.album || '',
     albumId: track.albumId || null,
     duration: Number(track.duration) || 0,
-    artwork: track.artwork || (track.albumId ? `album/${track.albumId}` : `track/${track.id}`),
+    artwork: track.artwork || `track/${track.id}`,
     favorite: Boolean(track.favorite),
     replayGain: track.replayGain || null,
     lossless: Boolean(track.lossless),

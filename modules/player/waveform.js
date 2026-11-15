@@ -138,5 +138,14 @@ export function createWaveformService({ cacheDir, libraries, maxConcurrent = 2, 
     children.clear()
   }
 
-  return { getWaveform, stop, dir }
+  // Identity of a track's waveform (install + file + algorithm), for ETags:
+  // a reused track id or a re-encoded file never matches an old answer.
+  function tagFor(trackRow, installId = '') {
+    const r = trackRow || {}
+    return crypto.createHash('sha1')
+      .update(`${installId}\0${r.id}\0${r.library_id}\0${r.rel_path}\0${r.size}\0${r.mtime_ms}\0${VERSION}\0${WAVEFORM_BINS}`)
+      .digest('hex').slice(0, 24)
+  }
+
+  return { getWaveform, tagFor, stop, dir }
 }
