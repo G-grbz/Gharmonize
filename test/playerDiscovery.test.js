@@ -72,10 +72,10 @@ function createFakeSources() {
 async function setup(t, { shelfTimeoutMs = 2000 } = {}) {
   const root = tmpDir('discover')
   const downloads = path.join(root, 'outputs')
-  writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '01.mp3'), { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '1', genre: 'Pop' })
-  writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '02.mp3'), { title: 'Gülümse', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '2', genre: 'Pop' })
+  await writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '01.mp3'), { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '1', genre: 'Pop' })
+  await writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '02.mp3'), { title: 'Gülümse', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '2', genre: 'Pop' })
   const archive = path.join(root, 'archive')
-  writeTrack(path.join(archive, 'Tarkan.mp3'), { title: 'Şımarık', artist: 'Tarkan', genre: 'Pop' })
+  await writeTrack(path.join(archive, 'Tarkan.mp3'), { title: 'Şımarık', artist: 'Tarkan', genre: 'Pop' })
   const fake = createFakeSources()
   const service = await startPlayerService({
     env: {}, logger: silentLogger, dataDir: path.join(root, 'data'), cacheDir: path.join(root, 'cache'),

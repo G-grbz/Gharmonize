@@ -305,7 +305,7 @@ async function embedLyricsInMedia(filePath, lyricsContent, options = {}) {
     `lyrics=${finalLyrics}`,
   ];
   if (isMp3) {
-    args.push("-id3v2_version", "3");
+    args.push("-id3v2_version", "4");
     if (process.env.WRITE_ID3V1 !== "0") args.push("-write_id3v1", "1");
     args.push(...mp3DurationHeaderArgs());
   }

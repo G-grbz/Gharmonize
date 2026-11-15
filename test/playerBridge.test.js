@@ -51,7 +51,7 @@ function createFakeCore({ outputDir }) {
     complete(id, files) { Object.assign(jobs.get(id), { status: 'completed', progress: 100, outputs: files }) },
     fail(id, error = 'yt-dlp error') { Object.assign(jobs.get(id), { status: 'error', error }) },
     vanish(id) { jobs.delete(id) },
-    produce(name, tags) { return writeTrack(path.join(outputDir, name), tags) },
+    async produce(name, tags) { return writeTrack(path.join(outputDir, name), tags) },
     failResolve: null
   }
   return core
@@ -197,7 +197,7 @@ test('download → core job → instant indexing → playlist', async (t) => {
   await waitFor(async () => (await call('GET', `/downloads/${id}`, { token: admin })).body.progress === 42.5, { label: 'progress' })
 
   // Files written by the job are fresh (just modified) — indexFiles must still take them.
-  const file = writeTrack(path.join(downloads, 'Sezen Aksu - Firuze.mp3'), { title: 'Firuze', artist: 'Sezen Aksu', album: 'Firuze' }, { fresh: true })
+  const file = await writeTrack(path.join(downloads, 'Sezen Aksu - Firuze.mp3'), { title: 'Firuze', artist: 'Sezen Aksu', album: 'Firuze' }, { fresh: true })
   core.complete(jobId, [file])
   const done = await waitStatus(call, admin, id, 'completed')
   assert.equal(done.trackIds.length, 1)
@@ -284,7 +284,7 @@ test('vanished core jobs (server restart) are re-run; finished ones are picked u
   await waitStatus(call, admin, b.body.id, 'downloading')
   const jobB = core.calls.created.find((c) => c.url.includes('r2')).id
   await first.stop()
-  const file = core.produce('Artist - Survivor.mp3', { title: 'Survivor', artist: 'Artist' })
+  const file = await core.produce('Artist - Survivor.mp3', { title: 'Survivor', artist: 'Artist' })
   core.complete(jobB, [file])
 
   const service = await startPlayerService({
@@ -347,7 +347,7 @@ test('download permissions and library guards', async (t) => {
   // Files outside every library cannot be shown in the player.
   const job = (await waitStatus(call, ayse, r.body.id, 'downloading'))
   void job
-  const outside = writeTrack(path.join(path.dirname(downloads), 'elsewhere', 'x.mp3'), { title: 'X' })
+  const outside = await writeTrack(path.join(path.dirname(downloads), 'elsewhere', 'x.mp3'), { title: 'X' })
   core.complete(core.calls.created.at(-1).id, [outside])
   const failed = await waitStatus(call, ayse, r.body.id, 'failed')
   assert.equal(failed.error.code, 'NOT_IN_LIBRARY')
@@ -367,8 +367,8 @@ test('download permissions and library guards', async (t) => {
 
 test('album requests use the library when the album is already complete', async (t) => {
   const root = tmpDir('album')
-  writeTrack(path.join(root, 'outputs', 'A', '01.mp3'), { title: 'One', artist: 'Band', album: 'Record', trackNumber: '1' })
-  writeTrack(path.join(root, 'outputs', 'A', '02.mp3'), { title: 'Two', artist: 'Band', album: 'Record', trackNumber: '2' })
+  await writeTrack(path.join(root, 'outputs', 'A', '01.mp3'), { title: 'One', artist: 'Band', album: 'Record', trackNumber: '1' })
+  await writeTrack(path.join(root, 'outputs', 'A', '02.mp3'), { title: 'Two', artist: 'Band', album: 'Record', trackNumber: '2' })
   const { call, admin, core } = await setup(t, { root })
   let r = await call('POST', '/downloads', { token: admin, body: { item: { kind: 'album', url: 'https://www.deezer.com/album/1', title: 'Record', artist: 'Band', trackCount: 2 } } })
   assert.equal(r.body.status, 'exists')
@@ -382,7 +382,7 @@ test('album requests use the library when the album is already complete', async 
 
 test('online search merges providers and badges library / download state', async (t) => {
   const root = tmpDir('online')
-  writeTrack(path.join(root, 'outputs', 'Firuze.mp3'), { title: 'Firuze', artist: 'Sezen Aksu', album: 'Firuze' })
+  await writeTrack(path.join(root, 'outputs', 'Firuze.mp3'), { title: 'Firuze', artist: 'Sezen Aksu', album: 'Firuze' })
   const providers = [
     fakeProvider('deezer', {
       track: [
@@ -442,7 +442,7 @@ test('an album whose store title differs from the tags is not downloaded twice',
   assert.equal(r.status, 202)
   await waitStatus(call, admin, r.body.id, 'downloading')
   // The files are tagged "Wake Up - Single" (Apple naming).
-  const file = writeTrack(path.join(downloads, 'Tarkan - Wake Up - mp3', 'Tarkan - Wake Up.mp3'), { title: 'Wake Up', artist: 'Tarkan', album: 'Wake Up - Single' }, { fresh: true })
+  const file = await writeTrack(path.join(downloads, 'Tarkan - Wake Up - mp3', 'Tarkan - Wake Up.mp3'), { title: 'Wake Up', artist: 'Tarkan', album: 'Wake Up - Single' }, { fresh: true })
   core.complete(core.calls.created[0].id, [file])
   const done = await waitStatus(call, admin, r.body.id, 'completed')
 

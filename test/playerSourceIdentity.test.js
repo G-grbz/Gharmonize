@@ -37,7 +37,7 @@ test('downloaded track matches by source despite bad old tags, with library visi
   const dir=tmpDir('source');const db=await openPlayerDatabase(dir,{fileName:':memory:'})
   try {
     const audio=path.join(dir,'music');fs.mkdirSync(audio)
-    const file=writeTrack(path.join(audio,'rd müzik - wrong.mp3'),{title:'wrong title',artist:'rd müzik',userDefinedUrl:[{description:'SOURCE_URL',url:'https://music.youtube.com/watch?v=X4zgBkz1tcw'}]})
+    const file=await writeTrack(path.join(audio,'rd müzik - wrong.mp3'),{title:'wrong title',artist:'rd müzik',userDefinedUrl:[{description:'SOURCE_URL',url:'https://music.youtube.com/watch?v=X4zgBkz1tcw'}]})
     db.prepare('INSERT INTO libraries (name,path,enabled,is_default,created_at) VALUES (?, ?, 1, 1, 0)').run('Test',audio)
     db.prepare("INSERT INTO users (username,display_name,password_hash,role,created_at,updated_at) VALUES ('admin','Admin','test','admin',0,0),('guest','Guest','test','user',0,0)").run()
     const indexed=await createScanner(db).indexFiles([file]); const id=indexed.get(file)

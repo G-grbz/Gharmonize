@@ -7,8 +7,7 @@ import crypto from 'node:crypto'
 import express from 'express'
 import { spawnSync } from 'node:child_process'
 import http from 'node:http'
-import NodeID3 from 'node-id3'
-import { silentMp3, age, tmpDir, silentLogger } from './fixtures/playerAudio.mjs'
+import { writeTrack, age, tmpDir, silentLogger } from './fixtures/playerAudio.mjs'
 import { startPlayerService } from '../modules/player/service.js'
 import { createPlayerRouter } from '../modules/player/router.js'
 
@@ -35,11 +34,8 @@ const GREEN = solidPng([20, 200, 20])
 const HAS_FFMPEG = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0
 const sha1 = (buf) => crypto.createHash('sha1').update(buf).digest('hex')
 
-function writeSong(file, tags, cover = null, { ageMs = 60_000 } = {}) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const id3 = { ...tags }
-  if (cover) id3.image = { mime: 'image/png', type: { id: 3, name: 'front cover' }, description: 'cover', imageBuffer: cover }
-  fs.writeFileSync(file, NodeID3.write(id3, silentMp3()))
+async function writeSong(file, tags, cover = null, { ageMs = 60_000 } = {}) {
+  await writeTrack(file, tags, { cover: cover || false, fresh: true })
   age(file, ageMs)
   return file
 }
@@ -48,7 +44,7 @@ async function startInstance(t, populate) {
   const root = tmpDir('art')
   const library = path.join(root, 'outputs')
   fs.mkdirSync(library, { recursive: true })
-  populate(library)
+  await populate(library)
   const service = await startPlayerService({
     env: {},
     logger: silentLogger,
@@ -109,14 +105,14 @@ async function pickedCover(service, kind, id) {
 }
 
 test('songs sharing album metadata but carrying different covers each show their own cover', async (t) => {
-  const { service, call, art } = await startInstance(t, (lib) => {
+  const { service, call, art } = await startInstance(t, async (lib) => {
     // Same album title + album artist → one album row, different embedded covers.
-    writeSong(path.join(lib, 'Mix', '01 - Kırmızı.mp3'), { title: 'Kırmızı', artist: 'Ortak Sanatçı', album: 'Ortak Albüm', trackNumber: '1' }, RED)
-    writeSong(path.join(lib, 'Mix', '02 - Mavi.mp3'), { title: 'Mavi', artist: 'Ortak Sanatçı', album: 'Ortak Albüm', trackNumber: '2' }, BLUE)
+    await writeSong(path.join(lib, 'Mix', '01 - Kırmızı.mp3'), { title: 'Kırmızı', artist: 'Ortak Sanatçı', album: 'Ortak Albüm', trackNumber: '1' }, RED)
+    await writeSong(path.join(lib, 'Mix', '02 - Mavi.mp3'), { title: 'Mavi', artist: 'Ortak Sanatçı', album: 'Ortak Albüm', trackNumber: '2' }, BLUE)
     // No embedded cover: falls back to the album's cover.
-    writeSong(path.join(lib, 'Mix', '03 - Kapaksız.mp3'), { title: 'Kapaksız', artist: 'Ortak Sanatçı', album: 'Ortak Albüm', trackNumber: '3' })
+    await writeSong(path.join(lib, 'Mix', '03 - Kapaksız.mp3'), { title: 'Kapaksız', artist: 'Ortak Sanatçı', album: 'Ortak Albüm', trackNumber: '3' })
     // Another artist/album without any cover must not borrow one.
-    writeSong(path.join(lib, 'Başka', 'Yalnız.mp3'), { title: 'Yalnız', artist: 'Başka Sanatçı', album: 'Başka Albüm' })
+    await writeSong(path.join(lib, 'Başka', 'Yalnız.mp3'), { title: 'Yalnız', artist: 'Başka Sanatçı', album: 'Başka Albüm' })
   })
 
   const albums = (await call('GET', '/albums')).body.items
@@ -144,8 +140,8 @@ test('songs sharing album metadata but carrying different covers each show their
 })
 
 test('folder image is used when a song has no embedded cover and is revalidated, not pinned', async (t) => {
-  const { service, call, art } = await startInstance(t, (lib) => {
-    writeSong(path.join(lib, 'Klasör', 'Şarkı.mp3'), { title: 'Şarkı', artist: 'Klasörcü', album: 'Klasör Albümü' })
+  const { service, call, art } = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, 'Klasör', 'Şarkı.mp3'), { title: 'Şarkı', artist: 'Klasörcü', album: 'Klasör Albümü' })
     fs.writeFileSync(path.join(lib, 'Klasör', 'cover.png'), GREEN)
   })
   const tracks = await tracksByTitle(call)
@@ -161,11 +157,11 @@ test('folder image is used when a song has no embedded cover and is revalidated,
 test('artwork URLs differ between installs and change when the cover changes', async (t) => {
   // Two separate installs (e.g. Docker and the desktop package) on the same
   // address: both number their first album 1, but the albums differ.
-  const docker = await startInstance(t, (lib) => {
-    writeSong(path.join(lib, 'Gülşen - Bangır Bangır.mp3'), { title: 'Bangır Bangır', artist: 'Gülşen', album: 'Bangır Bangır' }, RED)
+  const docker = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, 'Gülşen - Bangır Bangır.mp3'), { title: 'Bangır Bangır', artist: 'Gülşen', album: 'Bangır Bangır' }, RED)
   })
-  const desktop = await startInstance(t, (lib) => {
-    writeSong(path.join(lib, '3 Hürel - Sana Değmez.mp3'), { title: 'Sana Değmez', artist: '3 Hürel', album: 'Efsane Yeniden' }, BLUE)
+  const desktop = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, '3 Hürel - Sana Değmez.mp3'), { title: 'Sana Değmez', artist: '3 Hürel', album: 'Efsane Yeniden' }, BLUE)
   })
   const dockerAlbum = (await docker.call('GET', '/albums')).body.items[0]
   const desktopAlbum = (await desktop.call('GET', '/albums')).body.items[0]
@@ -188,7 +184,7 @@ test('artwork URLs differ between installs and change when the cover changes', a
 
   // Re-tagging the file with a new cover changes the URL after a rescan.
   const file = path.join(docker.library, 'Gülşen - Bangır Bangır.mp3')
-  writeSong(file, { title: 'Bangır Bangır', artist: 'Gülşen', album: 'Bangır Bangır' }, GREEN, { ageMs: 30_000 })
+  await writeSong(file, { title: 'Bangır Bangır', artist: 'Gülşen', album: 'Bangır Bangır' }, GREEN, { ageMs: 30_000 })
   await docker.service.context.scanner.requestScan('all')
   const retagged = Object.values(await tracksByTitle(docker.call))[0]
   assert.equal(retagged.id, dockerTrack.id)
@@ -199,13 +195,13 @@ test('artwork URLs differ between installs and change when the cover changes', a
 })
 
 test('a reused track id does not inherit the deleted song\'s artwork URL', async (t) => {
-  const inst = await startInstance(t, (lib) => {
-    writeSong(path.join(lib, 'A - Eski.mp3'), { title: 'Eski', artist: 'A', album: 'Eski Albüm' }, RED)
+  const inst = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, 'A - Eski.mp3'), { title: 'Eski', artist: 'A', album: 'Eski Albüm' }, RED)
   })
   const before = Object.values(await tracksByTitle(inst.call))[0]
   fs.rmSync(path.join(inst.library, 'A - Eski.mp3'))
   await inst.service.context.scanner.requestScan('all')
-  writeSong(path.join(inst.library, 'B - Yeni.mp3'), { title: 'Yeni', artist: 'B', album: 'Yeni Albüm' }, BLUE)
+  await writeSong(path.join(inst.library, 'B - Yeni.mp3'), { title: 'Yeni', artist: 'B', album: 'Yeni Albüm' }, BLUE)
   await inst.service.context.scanner.requestScan('all')
   const after = Object.values(await tracksByTitle(inst.call))[0]
   assert.equal(after.title, 'Yeni')
@@ -215,9 +211,9 @@ test('a reused track id does not inherit the deleted song\'s artwork URL', async
 })
 
 test('every artwork ref in API answers is versioned (mixes, stats, playlists, artists)', async (t) => {
-  const { call } = await startInstance(t, (lib) => {
-    writeSong(path.join(lib, 'X', '01.mp3'), { title: 'Bir', artist: 'X', album: 'XA', trackNumber: '1' }, RED)
-    writeSong(path.join(lib, 'X', '02.mp3'), { title: 'İki', artist: 'X', album: 'XA', trackNumber: '2' }, BLUE)
+  const { call } = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, 'X', '01.mp3'), { title: 'Bir', artist: 'X', album: 'XA', trackNumber: '1' }, RED)
+    await writeSong(path.join(lib, 'X', '02.mp3'), { title: 'İki', artist: 'X', album: 'XA', trackNumber: '2' }, BLUE)
   })
   const tracks = await tracksByTitle(call)
   const pl = await call('POST', '/playlists', { name: 'Liste' })
@@ -235,11 +231,11 @@ test('every artwork ref in API answers is versioned (mixes, stats, playlists, ar
 })
 
 test('waveforms are revalidated by file identity, never cached by track id', { skip: !HAS_FFMPEG && 'ffmpeg not available' }, async (t) => {
-  const docker = await startInstance(t, (lib) => {
-    writeSong(path.join(lib, 'Gülşen - Bangır Bangır.mp3'), { title: 'Bangır Bangır', artist: 'Gülşen', album: 'Bangır Bangır' })
+  const docker = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, 'Gülşen - Bangır Bangır.mp3'), { title: 'Bangır Bangır', artist: 'Gülşen', album: 'Bangır Bangır' })
   })
-  const desktop = await startInstance(t, (lib) => {
-    writeSong(path.join(lib, '3 Hürel - Sana Değmez.mp3'), { title: 'Sana Değmez', artist: '3 Hürel', album: 'Efsane Yeniden' })
+  const desktop = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, '3 Hürel - Sana Değmez.mp3'), { title: 'Sana Değmez', artist: '3 Hürel', album: 'Efsane Yeniden' })
   })
   const dockerTrack = Object.values(await tracksByTitle(docker.call))[0]
   const desktopTrack = Object.values(await tracksByTitle(desktop.call))[0]
@@ -262,7 +258,7 @@ test('waveforms are revalidated by file identity, never cached by track id', { s
   // A song that takes over a freed id gets a new ETag.
   fs.rmSync(path.join(docker.library, 'Gülşen - Bangır Bangır.mp3'))
   await docker.service.context.scanner.requestScan('all')
-  writeSong(path.join(docker.library, 'Candan Erçetin - Gamsız Hayat.mp3'), { title: 'Gamsız Hayat', artist: 'Candan Erçetin', album: 'Neden' })
+  await writeSong(path.join(docker.library, 'Candan Erçetin - Gamsız Hayat.mp3'), { title: 'Gamsız Hayat', artist: 'Candan Erçetin', album: 'Neden' })
   await docker.service.context.scanner.requestScan('all')
   const reused = Object.values(await tracksByTitle(docker.call))[0]
   assert.equal(reused.id, dockerTrack.id, 'precondition: SQLite reuses the freed id')
