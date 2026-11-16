@@ -4,17 +4,19 @@ This policy applies to Windows binaries distributed through the official [G-grbz
 
 ## Current Release Status
 
-Windows binaries distributed with **Gharmonize v2.0.1 are not Authenticode-signed**.
+Windows binaries distributed with **Gharmonize v2.0.1 do not carry a trusted Authenticode signature**.
 
 This includes:
 
-- NSIS installer
-- Standalone portable executable
-- Application executable inside the portable-folder ZIP
+- The NSIS installer
+- The standalone portable executable
+- The application executable inside the portable-folder ZIP
+
+Self-signed test certificates are never used for public releases.
 
 Windows may display an unknown-publisher or Microsoft Defender SmartScreen warning. Managed security policies may also restrict execution.
 
-Gharmonize provides separate release-integrity verification through GPG-signed checksums and GitHub artifact attestations. These mechanisms help verify the authenticity and integrity of published release artifacts but do not replace Windows Authenticode signatures.
+Gharmonize provides separate release-integrity verification through GPG-signed checksums and GitHub artifact attestations. These mechanisms help verify the authenticity and integrity of published release artifacts, but they do not provide Windows Authenticode trust.
 
 Users should not disable antivirus protection or other operating system security features to install Gharmonize.
 

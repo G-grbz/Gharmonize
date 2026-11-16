@@ -104,7 +104,8 @@ test('finished downloads move with their lyrics; repeats keep the existing copy'
   assert.equal(fs.readFileSync(dest, 'utf8'), 'audio')
   assert.ok(fs.existsSync(path.join(target, 'Artist', 'Album', '01 Song.lrc')))
   assert.ok(fs.existsSync(path.join(target, 'Artist', 'Album', 'cover.jpg')))
-  assert.ok(!fs.existsSync(song))
+  // Gone from the Gharmonize download folder (checked by listing, not by path).
+  assert.ok(!fs.readdirSync(path.dirname(song)).includes('01 Song.mp3'))
 
   // Same song again: no duplicate; a different file with the same name gets "(2)".
   fs.writeFileSync(song, 'audio')
