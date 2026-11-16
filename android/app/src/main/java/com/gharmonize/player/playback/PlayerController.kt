@@ -138,6 +138,8 @@ class PlayerController(private val context: Context) {
           .setTitle(t.title)
           .setArtist(t.artist)
           .setAlbumTitle(t.album)
+          .setGenre(t.genre)
+          .setRecordingYear(t.year)
           .setArtworkUri(App.artworkUri(t.artwork ?: t.albumId?.let { "album/$it" } ?: "track/${t.id}", 512))
           .setIsPlayable(true)
           .setIsBrowsable(false)

@@ -1,71 +1,70 @@
-# Code signing policy
+# Code Signing & Release Verification Policy
 
-This policy applies to Windows binaries distributed through the official
-[`G-grbz/Gharmonize`](https://github.com/G-grbz/Gharmonize) GitHub repository.
-Test-signed workflow artifacts are for validation only and are not official
-releases.
+This policy applies to Windows binaries distributed through the official [G-grbz/Gharmonize](https://github.com/G-grbz/Gharmonize) GitHub repository.
 
-## Current release status
+## Current Release Status
 
-The Windows artifacts in **v2.0.0 do not carry a trusted Authenticode signature**.
-This includes
-the NSIS installer, the standalone portable executable, and the application
-executable inside the portable-folder ZIP. Self-signed test certificates are
-not used in this public release.
+Windows binaries distributed with **Gharmonize v2.0.1 are not Authenticode-signed**.
 
-Windows may show an unknown-publisher or SmartScreen warning, and managed
-security policies may block execution. The GPG-signed checksum manifest and
-GitHub artifact attestations provide separate release-integrity verification;
-they do not provide Windows Authenticode trust. Users should not disable security
-protections or install a test certificate to run an official release.
+This includes:
 
-## Project roles
+- NSIS installer
+- Standalone portable executable
+- Application executable inside the portable-folder ZIP
+
+Windows may display an unknown-publisher or Microsoft Defender SmartScreen warning. Managed security policies may also restrict execution.
+
+Gharmonize provides separate release-integrity verification through GPG-signed checksums and GitHub artifact attestations. These mechanisms help verify the authenticity and integrity of published release artifacts but do not replace Windows Authenticode signatures.
+
+Users should not disable antivirus protection or other operating system security features to install Gharmonize.
+
+## Project Roles
 
 | Role | Members |
 | --- | --- |
 | Authors and committers | [@G-grbz](https://github.com/G-grbz) |
 | Reviewers | [@G-grbz](https://github.com/G-grbz) |
-| Release signing approvers | [@G-grbz](https://github.com/G-grbz) |
+| Release maintainers | [@G-grbz](https://github.com/G-grbz) |
 
-Changes from contributors who do not have commit access are reviewed by a
-project reviewer before they are merged. Accounts used for source control and
-code-signing administration must use multi-factor authentication.
+Contributions from developers without commit access are reviewed before merging.
 
-## Build and signing process
+Accounts used for repository administration and release management must use multi-factor authentication.
 
-Official releases are created from version tags in this repository by GitHub
-Actions. The release workflow verifies that the tag version matches the
-application version and that the tagged commit is reachable from `main`. Tests,
-security checks, checksums, provenance attestations, and the software bill of
-materials are produced by the repository's workflows.
+## Build and Release Process
 
-Current public Windows packages are distributed without a trusted Authenticode
-signature. Any future change in this status must be verified on the published
-artifacts before the documentation describes those artifacts as signed.
+Official Gharmonize releases are created from version tags in the repository using GitHub Actions.
 
-The Windows NSIS installer and the standalone portable executable must carry
-valid Authenticode signatures before publication as signed artifacts. A ZIP
-archive cannot itself carry an Authenticode signature; for the portable-folder
-distribution, the application executable inside the archive must be signed
-before the archive is created.
+The release workflow verifies that:
 
-A Windows artifact is described as signed only when its Authenticode signature
-was created with a trusted code-signing certificate and successfully verified.
-Self-signed test certificates are never used for public releases.
+- The Git tag matches the application version.
+- The tagged commit is reachable from the `main` branch.
+- Required automated tests and security checks are completed.
+- Release artifacts are generated through the project's official workflows.
 
-## Verification and official distribution
+Release integrity is supported through:
 
-Official binaries are published only on the
-[GitHub Releases](https://github.com/G-grbz/Gharmonize/releases) page. Release
-assets also include a signed `SHA256SUMS` manifest and GitHub artifact
-attestations. Verification instructions are provided in
-[SECURITY.md](SECURITY.md#release-verification).
+- SHA-256 checksums
+- GPG-signed checksum manifests
+- GitHub artifact attestations
+- Software Bill of Materials (SBOM)
+- Automated security analysis
 
-Report suspected signing-key misuse, modified release artifacts, or other
-security issues according to [SECURITY.md](SECURITY.md#reporting-a-vulnerability).
+These verification mechanisms provide transparency and help users confirm that downloaded files correspond to the official release.
+
+## Verification and Official Distribution
+
+Official Gharmonize binaries are distributed exclusively through the project's [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases) page.
+
+Users should avoid downloading Gharmonize from unofficial repositories, third-party mirrors, or websites claiming to provide modified or enhanced versions.
+
+Third-party application managers may reference official GitHub release assets, but they are not themselves official distribution channels.
+
+Release verification instructions are available in [SECURITY.md](SECURITY.md#release-verification).
+
+Suspected malicious distributions, modified release artifacts, impersonation, or other security issues should be reported according to [SECURITY.md](SECURITY.md#reporting-a-vulnerability).
 
 ## Privacy
 
-Release verification does not require uploading end-user media or credentials.
-Gharmonize's runtime data handling and network connections are
-described in the [Privacy Policy](PRIVACY.md).
+Release verification does not require uploading user media, personal files, or credentials.
+
+Gharmonize's runtime data handling and network connections are described in the [Privacy Policy](PRIVACY.md).

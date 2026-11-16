@@ -114,7 +114,7 @@ fun Modifier.queueSwipe(onOpen: () -> Unit): Modifier = pointerInput(Unit) {
 private fun GradientPlayButton(playing: Boolean, size: Int, onClick: () -> Unit) {
   Box(
     Modifier.size(size.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.18f)).padding((size / 13).dp)
-      .clip(CircleShape).background(Brush.linearGradient(AccentGradient)).clickable(onClick = onClick),
+      .clip(CircleShape).background(Brush.linearGradient(LocalAccent.current.gradient)).clickable(onClick = onClick),
     contentAlignment = Alignment.Center,
   ) {
     Icon(if (playing) FluentIcons.Pause else FluentIcons.PlayArrow, stringResource(R.string.play), tint = Color.White, modifier = Modifier.size((size * 0.45).dp))
@@ -152,7 +152,7 @@ fun MiniPlayer(state: AppState) {
         IconButton(onClick = { state.player.previous() }, modifier = Modifier.size(40.dp)) {
           Icon(FluentIcons.SkipPrevious, stringResource(R.string.previous), modifier = Modifier.size(22.dp))
         }
-        Box(Modifier.size(44.dp).clip(CircleShape).background(Brush.linearGradient(AccentGradient)).clickable { state.player.toggle() }, contentAlignment = Alignment.Center) {
+        Box(Modifier.size(44.dp).clip(CircleShape).background(Brush.linearGradient(LocalAccent.current.gradient)).clickable { state.player.toggle() }, contentAlignment = Alignment.Center) {
           Icon(if (state.player.isPlaying) FluentIcons.Pause else FluentIcons.PlayArrow, stringResource(R.string.play), tint = Color.White, modifier = Modifier.size(26.dp))
         }
         IconButton(onClick = { state.player.next() }, modifier = Modifier.size(40.dp)) {
@@ -184,6 +184,13 @@ fun NowPlayingScreen(state: AppState) {
   val extras = meta.extras
   val trackId = extras?.getLong("trackId")?.takeIf { it > 0 }
   val isPreview = extras?.getBoolean("preview") == true
+  val loadedDetails by androidx.compose.runtime.produceState<com.gharmonize.player.data.Track?>(null, item.mediaId) {
+    value = null
+    value = if (trackId != null && (meta.genre.isNullOrBlank() || meta.recordingYear == null || meta.albumTitle.isNullOrBlank())) {
+      runCatching { state.api.tracksByIds(listOf(trackId)).firstOrNull() }.getOrNull()
+    } else null
+  }
+  val trackDetails = loadedDetails?.takeIf { it.id == trackId }
   val artRef = meta.artworkUri?.toString()?.let(::refFromUri)
   var favorite by remember(item.mediaId, extras?.getBoolean("favorite")) { mutableStateOf(extras?.getBoolean("favorite") == true) }
   // 0 = cover, 1 = lyrics; queue and playlists live in a separate draggable sheet.
@@ -197,29 +204,36 @@ fun NowPlayingScreen(state: AppState) {
   var dragValue by remember { mutableFloatStateOf(0f) }
   val white = Color.White
   val dim = white.copy(alpha = 0.72f)
+  val (musicVolume, setMusicVolume) = rememberMusicVolume()
+  // Mute on the cover's speaker mark remembers the level to return to.
+  var volumeBeforeMute by remember { mutableFloatStateOf(0.5f) }
+  val toggleMute: () -> Unit = {
+    if (musicVolume > 0f) { volumeBeforeMute = musicVolume; setMusicVolume(0f) }
+    else setMusicVolume(volumeBeforeMute.takeIf { it > 0f } ?: 0.5f)
+  }
   val prefs = state.app.prefs
   val style = prefs.progressStyle.takeIf { it in PROGRESS_STYLES } ?: "ring"
   val fraction = if (dragging) dragValue else if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
   val bins by androidx.compose.runtime.produceState<FloatArray?>(null, trackId, style) {
-    value = if (style == "wave" && trackId != null && !isPreview) state.waveform(trackId) else null
+    value = if (style in listOf("wave", "ribbon") && trackId != null && !isPreview) state.waveform(trackId) else null
   }
   val seekDrag: (Float) -> Unit = { dragging = true; dragValue = it }
   val seekCommit: (Float) -> Unit = { player.seekTo((it * dur).toLong()); dragging = false }
 
   Box(
-    Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF125A70), Color(0xFF0C1933), Color(0xFF373161))))
+    Modifier.fillMaxSize().background(Brush.linearGradient(LocalAccent.current.backdrop))
       .statusBarsPadding().navigationBarsPadding().padding(12.dp),
     contentAlignment = Alignment.Center,
   ) {
     Column(
       Modifier.widthIn(max = 500.dp).fillMaxSize().clip(RoundedCornerShape(28.dp))
-        .background(Brush.linearGradient(listOf(Color(0xFFA2D5E3).copy(alpha = 0.32f), Color(0xFF9797C2).copy(alpha = 0.28f))))
+        .background(Brush.linearGradient(LocalAccent.current.glass))
         .border(1.dp, white.copy(alpha = 0.32f), RoundedCornerShape(28.dp)).padding(horizontal = 20.dp),
     ) {
       Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         RoundButton(FluentIcons.KeyboardArrowDown, stringResource(R.string.close), 44) { state.back() }
         Spacer(Modifier.width(8.dp))
-        RoundButton(FluentIcons.Equalizer, stringResource(R.string.equalizer), 44, tint = if (com.gharmonize.player.playback.AudioEq.params.enabled) Color(0xFF93C5FD) else white) { state.navigate(Route.Equalizer) }
+        RoundButton(FluentIcons.Equalizer, stringResource(R.string.equalizer), 44, tint = if (com.gharmonize.player.playback.AudioEq.params.enabled) LocalAccent.current.onDarkTint else white) { state.navigate(Route.Equalizer) }
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
           Text(stringResource(if (mode == 1) R.string.lyrics else R.string.now_playing), color = white, fontWeight = FontWeight.Bold)
         }
@@ -227,10 +241,10 @@ fun NowPlayingScreen(state: AppState) {
         Spacer(Modifier.width(8.dp))
         RoundButton(FluentIcons.Playlist, stringResource(R.string.playlists), 44) { openSheet(1) }
       }
-      Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 14.dp).then(if (mode == 0) Modifier.queueSwipe { openSheet(0) }.swipeTracks(state) else Modifier), contentAlignment = Alignment.Center) {
+      Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp).then(if (mode == 0) Modifier.queueSwipe { openSheet(0) }.swipeTracks(state) else Modifier), contentAlignment = Alignment.Center) {
         when (mode) {
           1 -> LyricsView(state, trackId, isPreview, pos)
-          else -> CoverDial(artRef, fraction, ring = style == "ring", volumeArc = prefs.coverVolume, onSeekDrag = seekDrag, onSeekCommit = seekCommit)
+          else -> CoverDial(artRef, fraction, ring = style == "ring", volumeArc = prefs.coverVolume && style == "ring", volume = musicVolume, onVolume = setMusicVolume, onSeekDrag = seekDrag, onSeekCommit = seekCommit, onToggleMute = toggleMute)
         }
       }
       if (mode == 0) Row(Modifier.fillMaxWidth().clickable { openSheet(0) }.padding(bottom = 6.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -251,6 +265,12 @@ fun NowPlayingScreen(state: AppState) {
           }
         } else Box(Modifier.size(40.dp))
       }
+      val album = (trackDetails?.album ?: meta.albumTitle?.toString())?.trim().orEmpty()
+      val recordingDetails = listOfNotNull((trackDetails?.genre ?: meta.genre?.toString())?.trim()?.takeIf { it.isNotEmpty() }, (trackDetails?.year ?: meta.recordingYear)?.takeIf { it > 0 }?.toString()).joinToString(" · ")
+      if (album.isNotEmpty() || recordingDetails.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(top = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (album.isNotEmpty()) Text(album, color = dim, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (recordingDetails.isNotEmpty()) Text(recordingDetails, color = dim.copy(alpha = 0.6f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      }
       val shownTime = fmtTime((if (dragging) dragValue * dur else pos.toFloat()) / 1000.0)
       // The ring shows progress around the cover; only the times stay here
       // (the linear bar returns while lyrics replace the cover).
@@ -259,7 +279,7 @@ fun NowPlayingScreen(state: AppState) {
         Text("  /  " + fmtTime(dur / 1000.0), color = dim, style = MaterialTheme.typography.labelLarge)
       } else Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
         Text(shownTime, color = dim, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(40.dp), textAlign = TextAlign.Center)
-        if (style == "bold" || style == "minimal" || style == "wave") {
+        if (style !in listOf("classic", "ring")) {
           StyledSeekBar(style, fraction, bins, onDrag = seekDrag, onCommit = seekCommit, modifier = Modifier.weight(1f).padding(horizontal = 6.dp))
         } else Slider(
           value = fraction,
@@ -275,9 +295,16 @@ fun NowPlayingScreen(state: AppState) {
         GradientPlayButton(player.isPlaying, 76) { player.toggle() }
         RoundButton(FluentIcons.SkipNext, stringResource(R.string.next), 50) { player.next() }
       }
+      // The ring style has its own volume arc beside the cover.
+      if (!(mode == 0 && style == "ring" && prefs.coverVolume)) Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.volume), color = dim, style = MaterialTheme.typography.labelSmall)
+        Slider(value = musicVolume, onValueChange = setMusicVolume, modifier = Modifier.weight(1f).height(40.dp),
+          colors = SliderDefaults.colors(thumbColor = white, activeTrackColor = white, inactiveTrackColor = white.copy(alpha = 0.22f)))
+        Text("${(musicVolume * 100).toInt()}%", color = dim, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(34.dp), textAlign = TextAlign.End)
+      }
       Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         IconButton(onClick = { player.toggleShuffle() }) {
-          Icon(FluentIcons.Shuffle, stringResource(R.string.shuffle), tint = if (player.shuffle) Color(0xFF93C5FD) else dim)
+          Icon(FluentIcons.Shuffle, stringResource(R.string.shuffle), tint = if (player.shuffle) LocalAccent.current.onDarkTint else dim)
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.BottomCenter) {
           Box(Modifier.clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)).background(white.copy(alpha = if (mode == 1) 0.32f else 0.22f)).clickable { mode = if (mode == 1) 0 else 1 }.padding(horizontal = 36.dp, vertical = 16.dp)) {
@@ -286,7 +313,7 @@ fun NowPlayingScreen(state: AppState) {
         }
         IconButton(onClick = { player.cycleRepeat() }) {
           Icon(if (player.repeatMode == Player.REPEAT_MODE_ONE) FluentIcons.RepeatOne else FluentIcons.Repeat, stringResource(R.string.repeat),
-            tint = if (player.repeatMode != Player.REPEAT_MODE_OFF) Color(0xFF93C5FD) else dim)
+            tint = if (player.repeatMode != Player.REPEAT_MODE_OFF) LocalAccent.current.onDarkTint else dim)
         }
       }
     }

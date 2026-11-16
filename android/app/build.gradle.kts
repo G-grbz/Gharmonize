@@ -4,6 +4,20 @@ plugins {
   id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Gharmonize version from the repository's package.json.
+val gharmonizeVersion: String = run {
+  val pkg = rootProject.file("../package.json")
+  val match = Regex("\"version\"\\s*:\\s*\"(\\d+\\.\\d+\\.\\d+)\"").find(pkg.readText())
+    ?: error("No x.y.z version in ${pkg.path}")
+  match.groupValues[1]
+}
+
+fun versionCodeOf(name: String): Int {
+  val (major, minor, patch) = name.split('.').map { it.toInt() }
+  require(minor < 1000 && patch < 1000) { "Version $name does not fit the version code scheme" }
+  return major * 1_000_000 + minor * 1_000 + patch
+}
+
 android {
   namespace = "com.gharmonize.player"
   compileSdk = 36
@@ -12,9 +26,12 @@ android {
     applicationId = "com.gharmonize.player"
     minSdk = 26
     targetSdk = 35
-    // CI may override these with ghVersionName and ghVersionCode.
-    versionCode = (findProperty("ghVersionCode") as String?)?.toInt() ?: 1000000
-    versionName = (findProperty("ghVersionName") as String?) ?: "1.0.0"
+    // The app shares Gharmonize's version (package.json): v2.0.1 -> versionName
+    // 2.0.1, versionCode 2000001 (major*1e6 + minor*1e3 + patch, so every
+    // release installs over the previous one). ghVersionName/ghVersionCode can
+    // still override them.
+    versionName = (findProperty("ghVersionName") as String?) ?: gharmonizeVersion
+    versionCode = (findProperty("ghVersionCode") as String?)?.toInt() ?: versionCodeOf(versionName!!)
   }
 
   // A stable release key lets every new APK install over the previous one.

@@ -22,6 +22,7 @@ import { assertSafeRemoteUrl, createTrustedProxyPredicate, decryptSecret } from 
 import { rateLimit } from './modules/rateLimit.js'
 import discRouter from './routes/disc.js'
 import { createPlayerGate, isPlayerEnabled } from './modules/player/gate.js'
+import { resolveServerHost, isLoopbackHost } from './modules/serverHost.js'
 import { getOwnershipTarget, queueOwnershipFix } from './modules/fsOwnership.js'
 import { resolveRuntimeCacheDir } from './modules/runtimeEnvironment.js'
 import {
@@ -543,9 +544,10 @@ app.use((err, req, res, next) => {
 })
 
 const PORT = Number(process.env.PORT || 5174)
-const HOST = String(process.env.GHARMONIZE_HOST || '127.0.0.1').trim() || '127.0.0.1'
+let HOST = resolveServerHost(process.env)
 
-const server = app.listen(PORT, HOST, () => {
+const logListenError = (err) => console.error('❌ [server] listen error:', err)
+let server = app.listen(PORT, HOST, () => {
   console.log(`🚀 Server running at http://${HOST}:${PORT}`)
   console.log(`📁 Base Directory: ${BASE_DIR}`)
   console.log(`📁 Uploads: ${UPLOAD_DIR}`)
@@ -553,9 +555,46 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`📁 Temp: ${TEMP_DIR}`)
   console.log(`📁 Local Inputs: ${LOCAL_INPUTS_DIR}`)
 })
+server.on('error', logListenError)
 
-server.on('error', (err) => {
-  console.error('❌ [server] listen error:', err)
+// Settings can switch the listen address (this computer <-> home network)
+// without a restart. The old socket is closed first (both use the same port);
+// if the new address cannot be bound, the previous one is restored.
+let rebindChain = Promise.resolve()
+function rebindMainServer(nextHost) {
+  rebindChain = rebindChain.then(() => new Promise((resolve) => {
+    if (!nextHost || nextHost === HOST) return resolve()
+    const previous = server
+    const previousHost = HOST
+    previous.off('error', logListenError)
+    previous.close()
+    previous.closeIdleConnections?.()
+    const attempt = (host, fallbackHost) => {
+      const candidate = app.listen(PORT, host)
+      candidate.once('listening', () => {
+        candidate.on('error', logListenError)
+        server = candidate
+        HOST = host
+        // Fell back: keep Settings showing the address that is really in use.
+        if (host !== nextHost) process.env.GHARMONIZE_HOST = host
+        console.log(`🔁 Server now listening at http://${host}:${PORT}`)
+        // Narrowing to this computer: drop connections still open from the network.
+        if (isLoopbackHost(host)) setTimeout(() => previous.closeAllConnections?.(), 1500).unref?.()
+        resolve()
+      })
+      candidate.once('error', (err) => {
+        console.error(`❌ [server] could not listen on ${host}:${PORT}:`, err?.message || err)
+        if (fallbackHost) attempt(fallbackHost, null)
+        else resolve()
+      })
+    }
+    // Give the settings response a moment to reach the browser first.
+    setTimeout(() => attempt(nextHost, previousHost), 300)
+  }))
+  return rebindChain
+}
+process.on('gharmonize:settings-updated', ({ updates } = {}) => {
+  if (updates && Object.prototype.hasOwnProperty.call(updates, 'GHARMONIZE_HOST')) rebindMainServer(resolveServerHost(process.env))
 })
 
 setImmediate(async () => {

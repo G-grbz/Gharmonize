@@ -18,6 +18,8 @@ data class Track(
   val codec: String?,
   val bitrate: Int?,
   val playCount: Int?,
+  val genre: String? = null,
+  val year: Int? = null,
 )
 
 data class Album(
@@ -149,6 +151,8 @@ fun parseTrack(o: JSONObject): Track = Track(
   codec = o.strOrNull("codec"),
   bitrate = o.intOrNull("bitrate"),
   playCount = o.intOrNull("playCount"),
+  genre = o.strOrNull("genre"),
+  year = o.intOrNull("year")?.takeIf { it > 0 },
 )
 
 fun parseAlbum(o: JSONObject): Album = Album(

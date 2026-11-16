@@ -489,3 +489,40 @@ test('an unavailable upload without a substitute fails at once instead of retryi
   assert.equal(failed.attempts, 1)
   assert.equal(core.calls.created.length, 1)
 })
+
+test('with the download library off, player downloads move to the chosen folder and play from there', async (t) => {
+  const { call, admin, core, downloads, root } = await setup(t)
+  const libs = (await call('GET', '/admin/libraries', { token: admin })).body.items
+  const def = libs.find((lib) => lib.isDefault)
+  await call('PATCH', `/admin/libraries/${def.id}`, { token: admin, body: { enabled: false } })
+
+  // No folder yet: downloading is refused with a clear reason.
+  let r = await call('POST', '/downloads', { token: admin, body: { item: ytTrack('m1', 'Kuzu Kuzu', 'Tarkan') } })
+  assert.equal(r.status, 409)
+  assert.equal(r.body.error.code, 'DEFAULT_LIBRARY_DISABLED')
+
+  const target = path.join(root, 'my-music')
+  fs.mkdirSync(target)
+  r = await call('PUT', '/admin/download-folder', { token: admin, body: { path: target } })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.active, true)
+  assert.equal(r.body.created, true)
+  r = await call('PUT', '/admin/download-folder', { token: admin, body: { path: path.join(root, 'missing') } })
+  assert.equal(r.body.error.code, 'LIBRARY_PATH_NOT_FOUND')
+
+  r = await call('POST', '/downloads', { token: admin, body: { item: ytTrack('m1', 'Kuzu Kuzu', 'Tarkan') } })
+  assert.equal(r.status, 202)
+  const id = r.body.id
+  await waitStatus(call, admin, id, 'downloading')
+  const jobId = core.calls.created.at(-1).id
+  fs.mkdirSync(path.join(downloads, 'Tarkan'), { recursive: true })
+  const file = await writeTrack(path.join(downloads, 'Tarkan', 'Tarkan - Kuzu Kuzu.mp3'), { title: 'Kuzu Kuzu', artist: 'Tarkan', album: 'Karma' }, { fresh: true })
+  core.complete(jobId, [file])
+  const done = await waitStatus(call, admin, id, ['completed', 'failed'])
+  assert.equal(done.status, 'completed', JSON.stringify(done))
+  assert.equal(done.trackIds.length, 1)
+  assert.ok(!fs.existsSync(file), 'moved out of the Gharmonize download folder')
+  assert.ok(fs.existsSync(path.join(target, 'Tarkan', 'Tarkan - Kuzu Kuzu.mp3')))
+  r = await call('GET', `/tracks/${done.trackIds[0]}`, { token: admin })
+  assert.equal(r.body.title, 'Kuzu Kuzu')
+})

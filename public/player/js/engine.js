@@ -32,6 +32,7 @@ export function fromTrack(track, extra = {}) {
     sampleRate: track.sampleRate || null,
     bitDepth: track.bitDepth || null,
     genre: track.genre || null,
+    year: Number(track.year) > 0 ? Number(track.year) : null,
     hasLyrics: Boolean(track.hasLyrics),
     ...extra
   }
@@ -54,7 +55,7 @@ export function fromOnline(item, extra = {}) {
   if (!item) return null
   adoptDownload(item)
   if (item.library?.trackId) {
-    return fromTrack({ id: item.library.trackId, title: item.title, artist: item.artist, album: item.album, duration: item.duration, artwork: `track/${item.library.trackId}` }, extra)
+    return fromTrack({ id: item.library.trackId, title: item.title, artist: item.artist, album: item.album, genre: item.genre, year: item.year, duration: item.duration, artwork: `track/${item.library.trackId}` }, extra)
   }
   if (!item.previewUrl) return null
   return {
@@ -64,6 +65,8 @@ export function fromOnline(item, extra = {}) {
     title: item.title,
     artist: item.artist || '',
     album: item.album || '',
+    genre: item.genre || null,
+    year: Number(item.year) > 0 ? Number(item.year) : null,
     duration: 30,
     artworkUrl: item.artworkUrl || null,
     previewUrl: previewStreamUrl(item),

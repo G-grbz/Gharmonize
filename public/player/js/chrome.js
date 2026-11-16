@@ -252,6 +252,15 @@ function buildTopbar() {
     setIcon(themeBtn, next === 'dark' ? 'sun' : 'moon')
   }, { cls: 'topbar__btn' })
   bus.on('theme', (theme) => setIcon(themeBtn, theme === 'dark' ? 'sun' : 'moon'))
+  // Back to the downloader. Hidden on the player-only port / tunnel, where
+  // the rest of Gharmonize is not served.
+  const homeLink = h('a', { class: 'topbar__home', href: '/', title: t('player.nav.gharmonize'), 'aria-label': t('player.nav.gharmonize'), hidden: true },
+    h('img', { src: '/src/logo.png', alt: '', width: 22, height: 22, decoding: 'async' }),
+    h('span', { text: t('player.nav.gharmonize') }))
+  let gharmonizeReachable = false
+  fetch('/api/ui-config', { credentials: 'same-origin', cache: 'no-store' })
+    .then((res) => { gharmonizeReachable = res.status !== 404; homeLink.hidden = !gharmonizeReachable })
+    .catch(() => {})
   const avatar = h('button', { type: 'button', class: 'avatar', title: app.user?.displayName || '', 'aria-label': t('player.nav.account') }, (app.user?.displayName || app.user?.username || '?').slice(0, 1).toUpperCase())
   avatar.addEventListener('click', (e) => {
     e.stopPropagation()
@@ -262,7 +271,7 @@ function buildTopbar() {
       { label: t('player.nav.downloads'), icon: 'download', run: () => app.nav('/downloads') },
       { label: t('player.nav.stats'), icon: 'chart', run: () => app.nav('/stats') },
       'sep',
-      { label: t('player.nav.gharmonize'), icon: 'external', run: () => { window.location.href = '/' } },
+      gharmonizeReachable && { label: t('player.nav.gharmonize'), icon: 'external', run: () => { window.location.href = '/' } },
       { label: t('player.auth.logout'), icon: 'logout', danger: true, run: () => bus.emit('logout') }
     ], avatar)
   })
@@ -271,7 +280,7 @@ function buildTopbar() {
       iconButton('chevL', t('player.common.back'), () => history.back(), { cls: 'topbar__round' }),
       iconButton('chevR', t('player.common.forward'), () => history.forward(), { cls: 'topbar__round' })),
     h('label', { class: 'topbar__search' }, icon('search', { size: 20 }), search),
-    h('div', { class: 'topbar__right' }, themeBtn, avatar))
+    h('div', { class: 'topbar__right' }, homeLink, themeBtn, avatar))
 }
 
 // ---- player bar ------------------------------------------------------------------------
@@ -611,6 +620,7 @@ export function openFull() {
 function buildFullPlayer() {
   const p = app.player
   const artBox = h('div', { class: 'np-full__art' })
+  const details = h('div', { class: 'np-full__details', hidden: true })
   const title = h('h2', { class: 'np-full__title' })
   const artist = h('a', { class: 'np-full__artist', href: '#' })
   const heartSlot = h('span')
@@ -626,8 +636,19 @@ function buildFullPlayer() {
     onSeekPreview: (f) => { pos.textContent = fmtTime(f * p.duration) },
     onSeek: (f) => p.seek(f * p.duration),
     getVolume: () => (p.muted ? 0 : p.volume),
-    onVolume: (v) => p.setVolume(v)
+    onVolume: (v) => p.setVolume(v),
+    onToggleMute: () => p.toggleMute()
   })
+  const fullVolume = slider({ cls: 'range--volume', label: t('player.controls.volume'), onInput: (v) => p.setVolume(v), onCommit: (v) => p.setVolume(v) })
+  const volumeValue = h('span', { class: 'np-full__volume-value' })
+  const fullMute = iconButton('volume', t('player.controls.mute'), () => p.toggleMute(), { cls: 'ctl', size: 18 })
+  const volumeRow = h('div', { class: 'np-full__volume' }, fullMute, fullVolume.el, volumeValue)
+  function paintVolume() {
+    const value = p.muted ? 0 : p.volume
+    fullVolume.set(value)
+    volumeValue.textContent = `${Math.round(value * 100)}%`
+    setIcon(fullMute, value === 0 ? 'mute' : value < .5 ? 'volumeLow' : 'volume', 18)
+  }
   const artWrap = h('div', { class: 'np-ring' }, artBox, ring.el)
   const shuffle = iconButton('shuffle', t('player.controls.shuffle'), () => p.toggleShuffle(), { cls: 'ctl ctl--toggle', size: 22 })
   const repeat = iconButton('repeat', t('player.controls.repeat'), () => p.cycleRepeat(), { cls: 'ctl ctl--toggle', size: 22 })
@@ -666,12 +687,13 @@ function buildFullPlayer() {
         }, { cls: 'ctl ctl--round', size: 22 })),
       lyricsTop,
       stage,
-      h('div', { class: 'np-full__meta' }, h('div', { class: 'np-full__side' }, queueBtn, playlistBtn), h('div', { class: 'np-full__titles' }, title, artist), heartSlot),
+      h('div', { class: 'np-full__meta' }, h('div', { class: 'np-full__side' }, queueBtn, playlistBtn), h('div', { class: 'np-full__titles' }, title, artist, details), heartSlot),
       h('div', { class: 'np-full__progress' }, pos, seek.el, dur),
       h('div', { class: 'np-full__controls' },
         iconButton('prev', t('player.controls.previous'), () => p.prev(), { cls: 'ctl ctl--round ctl--md', size: 24 }),
         playBtn,
         iconButton('next', t('player.controls.next'), () => p.next(), { cls: 'ctl ctl--round ctl--md', size: 24 })),
+      volumeRow,
       hint,
       h('div', { class: 'np-full__extra' }, shuffle, lyricsToggle, repeat),
       sheet))
@@ -711,19 +733,34 @@ function buildFullPlayer() {
     applyRing()
   }
   function applyRing() {
-    const on = progressStyle() === 'ring'
+    const on = progressStyle() === 'ring' && mode !== 'lyrics'
     root.classList.toggle('is-ring', on)
     ring.setActive(on && mode !== 'lyrics' && !root.hidden)
   }
   bus.on('prefs', ({ key }) => { if (key === 'progressStyle') applyRing() })
-  bus.on('player:volume', () => ring.update())
+  bus.on('player:volume', () => { ring.update(); paintVolume() })
 
+  function paintDetails(item) {
+    const album = String(item.album || '').trim()
+    const info = [item.genre, Number(item.year) > 0 ? item.year : null].filter(Boolean).join(' · ')
+    clear(details)
+    for (const text of [album, info].filter(Boolean)) details.append(h('span', { text, title: text }))
+    details.hidden = !details.childElementCount
+  }
+  let detailRequest = 0
   function paint(item) {
+    const request = ++detailRequest
     if (!item) { close(); return }
     seek.setItem(item)
     clear(artBox)
     artBox.append(artwork(itemArtwork(item, 1024), { alt: item.title, seed: item.album || item.title, lazy: false }))
     title.textContent = item.title
+    paintDetails(item)
+    if (item.type === 'library' && (!item.genre || !item.year || !item.album)) {
+      get(`/tracks/${item.id}`).then((track) => {
+        if (request === detailRequest && p.current?.uid === item.uid) paintDetails(track)
+      }).catch(() => {})
+    }
     artist.textContent = item.artist
     artist.href = item.artistId ? `#/artist/${item.artistId}` : `#/online/artist?name=${encodeURIComponent(primaryArtist(item.artist))}`
     root.querySelector('.np-full__context').textContent = p.context?.label || ''
@@ -738,6 +775,7 @@ function buildFullPlayer() {
     root.hidden = false
     document.body.classList.add('np-open')
     paint(p.current)
+    paintVolume()
     setIcon(playBtn, p.playing ? 'pause' : 'play', 30)
     shuffle.classList.toggle('is-on', p.shuffle)
     repeat.classList.toggle('is-on', p.repeat !== 'off')

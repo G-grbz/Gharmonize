@@ -7,6 +7,8 @@ import { rateLimit } from './rateLimit.js'
 import { normalizeTrustedExecutableSetting } from './safeProcess.js'
 import { getBinariesInfo, clearBinariesInfoCache } from './binariesInfo.js'
 import { writeEnvFileSync } from './envFile.js'
+import { getRuntimeEnvironmentInfo } from './runtimeEnvironment.js'
+import { normalizeServerHostChoice, describeServerHost, SERVER_HOST_ALL, SERVER_HOST_LOOPBACK } from './serverHost.js'
 import { normalizePlayerEnabled, normalizeRemoteAccessMode, normalizePlayerListen, normalizePlayerPort, normalizeTunnelMode, normalizeTunnelUrl } from './player/gate.js'
 import {
   decryptSecret,
@@ -60,8 +62,15 @@ const ALLOWED_KEYS = [
   'YT_SEARCH_STAGGER_MS','HOMEPAGE_WIDGET_KEY',
   'GHARMONIZE_ACCESS_MODE','GHARMONIZE_TEMP_ACCESS_ENABLED','GHARMONIZE_TEMP_ACCESS_HOURS',
   'GHARMONIZE_TEMP_ACCESS_DAYS','GHARMONIZE_TEMP_ACCESS_MONTHS','GHARMONIZE_TEMP_ACCESS_YEARS',
-  'GHARMONIZE_PLAYER_ENABLED','GHARMONIZE_PLAYER_REMOTE_ACCESS','GHARMONIZE_PLAYER_LISTEN','GHARMONIZE_PLAYER_PORT','GHARMONIZE_PLAYER_TUNNEL_MODE','GHARMONIZE_PLAYER_TUNNEL_TOKEN','GHARMONIZE_PLAYER_TUNNEL_URL'
+  'GHARMONIZE_PLAYER_ENABLED','GHARMONIZE_PLAYER_REMOTE_ACCESS','GHARMONIZE_PLAYER_LISTEN','GHARMONIZE_PLAYER_PORT','GHARMONIZE_PLAYER_TUNNEL_MODE','GHARMONIZE_PLAYER_TUNNEL_TOKEN','GHARMONIZE_PLAYER_TUNNEL_URL',
+  'GHARMONIZE_HOST'
 ]
+
+// Docker/service deployments pass GHARMONIZE_HOST themselves and it outranks
+// the env file, so the listen address is read-only in Settings there.
+function isServerHostLocked() {
+  return Boolean(getRuntimeEnvironmentInfo()?.hostFromDeployment)
+}
 
 function applyAllowedEnvValue(key, value) {
   const normalized = String(value ?? '')
@@ -137,6 +146,10 @@ function applyAllowedEnvValue(key, value) {
     case 'GHARMONIZE_PLAYER_TUNNEL_MODE': process.env.GHARMONIZE_PLAYER_TUNNEL_MODE = normalizeTunnelMode(value); return;
     case 'GHARMONIZE_PLAYER_TUNNEL_URL': process.env.GHARMONIZE_PLAYER_TUNNEL_URL = normalizeTunnelUrl(value); return;
     case 'GHARMONIZE_PLAYER_TUNNEL_TOKEN': process.env.GHARMONIZE_PLAYER_TUNNEL_TOKEN = value; return;
+    case 'GHARMONIZE_HOST':
+      // Only the fixed constants are ever assigned (see serverHost.js).
+      process.env.GHARMONIZE_HOST = normalizeServerHostChoice(value) === SERVER_HOST_ALL ? SERVER_HOST_ALL : SERVER_HOST_LOOPBACK
+      return;
     default: return;
   }
 }
@@ -943,9 +956,10 @@ router.get('/settings', authMiddleware, rateLimit(60, 60_000), (_req, res) => {
     if (k === 'GHARMONIZE_PLAYER_PORT') val = normalizePlayerPort(getEnv(k))
     if (k === 'GHARMONIZE_PLAYER_TUNNEL_MODE') val = normalizeTunnelMode(getEnv(k))
     if (k === 'GHARMONIZE_PLAYER_TUNNEL_URL') val = normalizeTunnelUrl(getEnv(k))
+    if (k === 'GHARMONIZE_HOST') val = describeServerHost(process.env).choice
     data[k] = val
   }
-  res.json({ settings: data })
+  res.json({ settings: data, serverHost: describeServerHost(process.env, { locked: isServerHostLocked() }) })
 })
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
@@ -963,6 +977,13 @@ router.post('/settings', authMiddleware, rateLimit(30, 60_000), express.json(), 
     if (k === 'GHARMONIZE_PLAYER_PORT') { updates[k] = normalizePlayerPort(v); continue }
     if (k === 'GHARMONIZE_PLAYER_TUNNEL_MODE') { updates[k] = normalizeTunnelMode(v); continue }
     if (k === 'GHARMONIZE_PLAYER_TUNNEL_URL') { updates[k] = normalizeTunnelUrl(v); continue }
+    if (k === 'GHARMONIZE_HOST') {
+      // Locked by the deployment, or a hand-written custom address left as is.
+      if (isServerHostLocked() || String(v ?? '').trim().toLowerCase() === 'custom') continue
+      const next = normalizeServerHostChoice(v) === SERVER_HOST_ALL ? SERVER_HOST_ALL : SERVER_HOST_LOOPBACK
+      if (next !== describeServerHost(process.env).current) updates[k] = next
+      continue
+    }
     if (typeof v !== 'undefined' && v !== null) updates[k] = String(v)
   }
   try {

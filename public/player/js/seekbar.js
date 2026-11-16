@@ -1,4 +1,4 @@
-// Seek bar styles (classic / bold / minimal / real waveform / cover ring) and
+// Ten seek bar styles and
 // the round cover controls of the full player: a progress ring around the
 // cover and a volume arc on its right side that follows the finger.
 
@@ -6,7 +6,7 @@ import { app, bus } from './app.js'
 import { get } from './api.js'
 import { h } from './dom.js'
 
-export const PROGRESS_STYLES = ['classic', 'bold', 'minimal', 'wave', 'ring']
+export const PROGRESS_STYLES = ['classic', 'bold', 'minimal', 'wave', 'ring', 'segments', 'dots', 'gradient', 'needle', 'ribbon']
 
 export function progressStyle() {
   const s = app.prefs.progressStyle
@@ -55,7 +55,7 @@ const cssVar = (el, name, fallback) => getComputedStyle(el).getPropertyValue(nam
 // ---- linear seek bar -----------------------------------------------------------------
 
 // A native range input (keyboard, accessibility, dragging) with the chosen
-// look; the "wave" style paints the real waveform on a canvas under it.
+// look; waveform styles paint library audio peaks on a canvas under it.
 // `ring` is not a linear style: bars outside the full player fall back to
 // classic, the full player hides its bar and uses the cover ring.
 export function seekBar({ big = false, label, onInput, onCommit }) {
@@ -74,7 +74,7 @@ export function seekBar({ big = false, label, onInput, onCommit }) {
   }
 
   function draw() {
-    if (el.dataset.style !== 'wave') return
+    if (!['wave', 'segments', 'dots', 'gradient', 'needle', 'ribbon'].includes(el.dataset.style)) return
     const w = canvas.clientWidth
     const hgt = canvas.clientHeight
     if (!w || !hgt) return
@@ -82,11 +82,52 @@ export function seekBar({ big = false, label, onInput, onCommit }) {
     const played = cssVar(el, '--wave-played', '#fff')
     const rest = cssVar(el, '--wave-rest', 'rgba(255,255,255,.25)')
     const buf = cssVar(el, '--wave-buf', 'rgba(255,255,255,.4)')
+    const style = el.dataset.style
+    const f = dragging ? Number(input.value) / 1000 : fraction
+    if (['segments', 'dots'].includes(style)) {
+      const count = style === 'dots' ? 32 : 24
+      const cell = w / count
+      const height = style === 'dots' ? Math.min(6, cell * .55) : big ? 12 : 8
+      for (let i = 0; i < count; i += 1) {
+        ctx.fillStyle = (i + .5) / count <= f ? played : rest
+        ctx.beginPath()
+        if (style === 'dots') ctx.arc((i + .5) * cell, hgt / 2, height / 2, 0, Math.PI * 2)
+        else ctx.roundRect(i * cell + 1.5, (hgt - height) / 2, Math.max(1, cell - 3), height, 2)
+        ctx.fill()
+      }
+      return
+    }
+    if (['gradient', 'needle'].includes(style)) {
+      const height = style === 'needle' ? 2 : big ? 12 : 8
+      ctx.fillStyle = rest
+      ctx.fillRect(0, (hgt - height) / 2, w, height)
+      const gradient = ctx.createLinearGradient(0, 0, w, 0)
+      gradient.addColorStop(0, '#67e8f9'); gradient.addColorStop(1, '#c084fc')
+      ctx.fillStyle = style === 'gradient' ? gradient : played
+      ctx.fillRect(0, (hgt - height) / 2, w * f, height)
+      if (style === 'needle') ctx.fillRect(Math.max(0, Math.min(w - 3, w * f)), hgt * .2, 3, hgt * .6)
+      return
+    }
+    if (style === 'ribbon') {
+      // A continuous silhouette of the actual waveform, with a flat fallback.
+      const n = Math.max(8, Math.floor(w / 3))
+      ctx.beginPath()
+      for (let i = 0; i <= n; i += 1) {
+        const v = bins ? sample(bins, Math.min(i, n - 1), n) : .18
+        ctx.lineTo(i * w / n, hgt / 2 - Math.max(2, v * hgt / 2))
+      }
+      for (let i = n; i >= 0; i -= 1) {
+        const v = bins ? sample(bins, Math.min(i, n - 1), n) : .18
+        ctx.lineTo(i * w / n, hgt / 2 + Math.max(2, v * hgt / 2))
+      }
+      ctx.closePath(); ctx.fillStyle = rest; ctx.fill()
+      ctx.save(); ctx.clip(); ctx.fillStyle = played; ctx.fillRect(0, 0, w * f, hgt); ctx.restore()
+      return
+    }
     const barW = big ? 3 : 2
     const gap = big ? 2 : 1.5
     const n = Math.max(8, Math.floor((w + gap) / (barW + gap)))
     const step = (w - barW) / Math.max(1, n - 1)
-    const f = dragging ? Number(input.value) / 1000 : fraction
     for (let i = 0; i < n; i += 1) {
       const v = bins ? sample(bins, i, n) : 0.18
       const bh = Math.max(2, v * hgt)
@@ -100,7 +141,7 @@ export function seekBar({ big = false, label, onInput, onCommit }) {
   function loadBins() {
     const target = item
     bins = null
-    if (el.dataset.style !== 'wave' || !target) return
+    if (!['wave', 'ribbon'].includes(el.dataset.style) || !target) return
     loadPeaks(target).then((data) => { if (item === target) { bins = data; draw() } })
   }
 
@@ -108,7 +149,7 @@ export function seekBar({ big = false, label, onInput, onCommit }) {
     const style = progressStyle()
     const previous = el.dataset.style
     el.dataset.style = style === 'ring' ? 'classic' : style
-    if (el.dataset.style === 'wave' && previous !== 'wave') loadBins()
+    if (['wave', 'ribbon'].includes(el.dataset.style) && previous !== el.dataset.style) loadBins()
     draw()
   }
 
@@ -151,7 +192,7 @@ const VOL_SPAN = Math.PI * (80 / 180)
 // Canvas overlay for the full player's round cover. `wrap` must contain the
 // cover; the canvas extends past it so the volume arc fits on the right.
 // Drag on the ring = seek, drag along the right arc = volume.
-export function coverRing({ getPosition, getDuration, onSeekPreview, onSeek, getVolume, onVolume, canVolume = () => true }) {
+export function coverRing({ getPosition, getDuration, onSeekPreview, onSeek, getVolume, onVolume, onToggleMute = null, canVolume = () => true }) {
   const canvas = h('canvas', { class: 'np-ring__canvas', 'aria-hidden': 'true' })
   let active = false
   let drag = null // { kind: 'seek' | 'volume', value }
@@ -161,7 +202,9 @@ export function coverRing({ getPosition, getDuration, onSeekPreview, onSeek, get
     const w = canvas.clientWidth
     const cx = w / 2
     const art = w / 1.5 / 2 // cover radius (canvas is 1.5× the cover)
-    return { w, cx, cy: cx, ring: art - 1, vol: art * 1.24 }
+    const vol = art * 1.15
+    // Speaker mark under the lower end of the volume arc (tap = mute/unmute).
+    return { w, cx, cy: cx, ring: art - 1, vol, sx: cx + vol * .8 + 18, sy: cx + vol * .7 }
   }
 
   function draw() {
@@ -195,21 +238,25 @@ export function coverRing({ getPosition, getDuration, onSeekPreview, onSeek, get
       if (v > 0) { ctx.beginPath(); ctx.arc(cx, cy, vol, bottom - v * VOL_SPAN, bottom); ctx.stroke() }
       const va = bottom - v * VOL_SPAN
       ctx.beginPath(); ctx.arc(cx + Math.cos(va) * vol, cy + Math.sin(va) * vol, drag?.kind === 'volume' ? 9 : 7, 0, TAU); ctx.fill()
-      // Small speaker mark next to the arc.
-      const sx = cx + vol + 18
-      const sy = cy + vol * 0.42
+      // Small speaker mark next to the arc; crossed out while silent.
+      const { sx, sy } = geometry()
       ctx.fillStyle = 'rgba(255,255,255,.75)'
       ctx.beginPath(); ctx.moveTo(sx - 6, sy - 3); ctx.lineTo(sx - 3, sy - 3); ctx.lineTo(sx + 1, sy - 7); ctx.lineTo(sx + 1, sy + 7); ctx.lineTo(sx - 3, sy + 3); ctx.lineTo(sx - 6, sy + 3); ctx.closePath(); ctx.fill()
       ctx.strokeStyle = 'rgba(255,255,255,.75)'
       ctx.lineWidth = 1.5
-      for (const r of [5, 9]) { ctx.beginPath(); ctx.arc(sx + 1, sy, r, -0.7, 0.7); ctx.stroke() }
+      if (v > 0) {
+        for (const r of [5, 9]) { ctx.beginPath(); ctx.arc(sx + 1, sy, r, -0.7, 0.7); ctx.stroke() }
+      } else {
+        ctx.beginPath(); ctx.moveTo(sx + 4, sy - 4); ctx.lineTo(sx + 11, sy + 4); ctx.moveTo(sx + 11, sy - 4); ctx.lineTo(sx + 4, sy + 4); ctx.stroke()
+      }
     }
   }
   const schedule = () => { if (!raf && active) raf = requestAnimationFrame(draw) }
 
   // Which control a point hits: the ring band or the volume arc band.
   function hit(x, y) {
-    const { cx, cy, ring, vol } = geometry()
+    const { cx, cy, ring, vol, sx, sy } = geometry()
+    if (canVolume() && onToggleMute && Math.hypot(x - (sx + 2), y - sy) <= 16) return 'mute'
     const dx = x - cx
     const dy = y - cy
     const d = Math.hypot(dx, dy)
@@ -239,6 +286,7 @@ export function coverRing({ getPosition, getDuration, onSeekPreview, onSeek, get
     if (!kind) return
     e.preventDefault()
     e.stopPropagation()
+    if (kind === 'mute') { onToggleMute(); schedule(); return }
     canvas.setPointerCapture(e.pointerId)
     drag = { kind, value: valueAt(kind, x, y), last: null }
     if (kind === 'volume') onVolume(drag.value)

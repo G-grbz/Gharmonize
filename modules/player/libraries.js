@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { transaction } from './db.js'
+import { transaction, getSetting, setSetting } from './db.js'
+import { canonicalExistingFolder, assertReadableFolder, assertWritableFolder, FolderPathError } from './folderPath.js'
 
 export class LibraryError extends Error {
   constructor(code, message, status = 400) {
@@ -13,22 +14,16 @@ export class LibraryError extends Error {
 // Directories that must never be indexed as a music library.
 const FORBIDDEN_TREES = ['/proc', '/sys', '/dev', '/etc', '/boot', '/bin', '/sbin', '/usr', '/lib', '/lib32', '/lib64', '/var/lib', '/root']
 
+// Typed folder -> canonical folder rebuilt from directory listings (see
+// folderPath.js), readable and outside system trees.
 export function validateLibraryPath(rawPath, { platform = process.platform } = {}) {
-  const input = String(rawPath || '').trim()
-  if (!input) throw new LibraryError('LIBRARY_PATH_REQUIRED', 'A folder path is required.')
-  if (input.includes('\0')) throw new LibraryError('LIBRARY_PATH_INVALID', 'Invalid folder path.')
-  if (!path.isAbsolute(input)) throw new LibraryError('LIBRARY_PATH_NOT_ABSOLUTE', 'The folder path must be absolute.')
   let real
-  try { real = fs.realpathSync(input) } catch {
-    throw new LibraryError('LIBRARY_PATH_NOT_FOUND', 'The folder does not exist or is not reachable.', 404)
-  }
-  let st
-  try { st = fs.statSync(real) } catch {
-    throw new LibraryError('LIBRARY_PATH_NOT_FOUND', 'The folder does not exist or is not reachable.', 404)
-  }
-  if (!st.isDirectory()) throw new LibraryError('LIBRARY_PATH_NOT_DIRECTORY', 'The path is not a folder.')
-  try { fs.accessSync(real, fs.constants.R_OK | fs.constants.X_OK) } catch {
-    throw new LibraryError('LIBRARY_PATH_NOT_READABLE', 'Gharmonize cannot read this folder.', 403)
+  try {
+    real = canonicalExistingFolder(rawPath, { platform })
+    assertReadableFolder(real)
+  } catch (error) {
+    if (error instanceof FolderPathError) throw new LibraryError(libraryCode(error.code), error.message, error.status)
+    throw error
   }
   if (platform !== 'win32') {
     const forbidden = real === '/'
@@ -40,6 +35,11 @@ export function validateLibraryPath(rawPath, { platform = process.platform } = {
     throw new LibraryError('LIBRARY_PATH_FORBIDDEN', 'A whole drive root cannot be used as a music library.', 403)
   }
   return real
+}
+
+// FOLDER_PATH_NOT_FOUND -> LIBRARY_PATH_NOT_FOUND, FOLDER_NOT_READABLE -> LIBRARY_PATH_NOT_READABLE …
+function libraryCode(code) {
+  return String(code).replace(/^FOLDER_(PATH_)?/, 'LIBRARY_PATH_')
 }
 
 function isSameOrInside(a, b) {
@@ -147,5 +147,59 @@ export function createLibraryStore(db, { defaultLibraryDir, now = () => Date.now
     return abs
   }
 
-  return { ensureDefaultLibrary, list, get, add, update, remove, resolveTrackFile }
+  // ---- player download folder ------------------------------------------------
+  // When the Gharmonize download library is switched off, player downloads can
+  // go to a folder of the admin's choice instead. That folder is always (part
+  // of) an enabled library, so finished downloads can be played.
+  const DOWNLOAD_DIR_KEY = 'download_dir'
+
+  function downloadFolder() {
+    const dir = String(getSetting(db, DOWNLOAD_DIR_KEY, '') || '')
+    const def = stmt.defaultLib.get()
+    const library = dir ? stmt.list.all().find((lib) => isSameOrInside(dir, lib.path) && !lib.is_default) : null
+    return {
+      path: dir || null,
+      defaultEnabled: def ? Boolean(def.enabled) : true,
+      // Active only while the default library is off.
+      active: Boolean(dir && def && !def.enabled),
+      library: library ? publicLibrary(library) : null
+    }
+  }
+
+  function setDownloadFolder(rawPath) {
+    const real = validateLibraryPath(rawPath)
+    try { assertWritableFolder(real) } catch (error) {
+      if (error instanceof FolderPathError) throw new LibraryError('LIBRARY_PATH_NOT_WRITABLE', error.message, error.status)
+      throw error
+    }
+    const def = stmt.defaultLib.get()
+    if (def && (isSameOrInside(real, def.path) || isSameOrInside(def.path, real))) {
+      throw new LibraryError('DOWNLOAD_DIR_IN_DEFAULT', 'Choose a folder outside the Gharmonize download folder.', 409)
+    }
+    let library = stmt.list.all().find((lib) => !lib.is_default && isSameOrInside(real, lib.path))
+    let created = false
+    if (library) {
+      if (!library.enabled) db.prepare('UPDATE libraries SET enabled = 1 WHERE id = ?').run(library.id)
+    } else {
+      library = { id: add({ name: path.basename(real) || 'Player downloads', path: real }).id }
+      created = true
+    }
+    setSetting(db, DOWNLOAD_DIR_KEY, real)
+    return { ...downloadFolder(), created, libraryId: library.id }
+  }
+
+  function clearDownloadFolder() {
+    setSetting(db, DOWNLOAD_DIR_KEY, '')
+    return downloadFolder()
+  }
+
+  /** { dir, sourceRoot } while downloads must be moved, otherwise null. */
+  function downloadTarget() {
+    const info = downloadFolder()
+    if (!info.active) return null
+    const def = stmt.defaultLib.get()
+    return { dir: info.path, sourceRoot: def.path }
+  }
+
+  return { ensureDefaultLibrary, list, get, add, update, remove, resolveTrackFile, downloadFolder, setDownloadFolder, clearDownloadFolder, downloadTarget }
 }

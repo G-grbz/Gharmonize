@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
 private fun Root(link: PairLink?, resumeTick: Int, onLinkUsed: () -> Unit) {
   val app = App.instance
   var theme by remember { mutableStateOf(app.prefs.theme) }
+  remember { Appearance.load(app.prefs); true }
   var signedIn by remember { mutableStateOf(app.prefs.signedIn) }
   val signedOutTick by app.signedOut.collectAsState()
   LaunchedEffect(signedOutTick) { if (signedOutTick > 0) signedIn = false }

@@ -47,7 +47,29 @@ class Prefs(context: Context) {
     get() = sp.getString("theme", "system") ?: "system"
     set(value) = sp.edit().putString("theme", value).apply()
 
-  /** Now playing progress look: "ring" | "classic" | "bold" | "minimal" | "wave". */
+  /** Accent colour key (see ui/Theme.kt ACCENTS). */
+  var accent: String
+    get() = sp.getString("accent", "blue") ?: "blue"
+    set(value) = sp.edit().putString("accent", value).apply()
+
+  /** Player colour remembered for the dark theme (see ui/Theme.kt PALETTES). */
+  var paletteDark: String
+    get() = sp.getString("palette_dark", null) ?: legacyPalette(dark = true) ?: "navy"
+    set(value) = sp.edit().putString("palette_dark", value).apply()
+
+  /** Player colour remembered for the light theme. */
+  var paletteLight: String
+    get() = sp.getString("palette_light", null) ?: legacyPalette(dark = false) ?: "light"
+    set(value) = sp.edit().putString("palette_light", value).apply()
+
+  // Before 2.0.1 a single "palette" was stored; it belongs to its own base.
+  private fun legacyPalette(dark: Boolean): String? {
+    val old = sp.getString("palette", null) ?: return null
+    val isDark = old in setOf("navy", "oled", "deepsea", "forest", "plum", "graphite", "wine")
+    return old.takeIf { isDark == dark }
+  }
+
+  /** Now playing progress style, validated against PROGRESS_STYLES by the UI. */
   var progressStyle: String
     get() = sp.getString("progress_style", "ring") ?: "ring"
     set(value) = sp.edit().putString("progress_style", value).apply()

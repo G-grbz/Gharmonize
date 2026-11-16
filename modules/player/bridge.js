@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { BridgeError } from './coreAdapter.js'
 import { visibleSql, uidLiteral } from './access.js'
+import { relocateDownloads } from './relocate.js'
 
 export { BridgeError }
 
@@ -59,6 +60,8 @@ export function createDownloadBridge({
   matcher,
   catalog,
   getConfig,
+  // { dir, sourceRoot } while player downloads go to their own folder.
+  getDownloadTarget = () => null,
   now = () => Date.now(),
   logger = console,
   pollMs = 2000
@@ -148,8 +151,8 @@ export function createDownloadBridge({
     const rawUrl = String(input.url || '').trim()
     if (!rawUrl) throw new BridgeError('SOURCE_URL_REQUIRED', 'A source link is required.')
     const defaultLib = db.prepare('SELECT enabled FROM libraries WHERE is_default = 1').get()
-    if (defaultLib && !defaultLib.enabled) {
-      throw new BridgeError('DEFAULT_LIBRARY_DISABLED', 'The Gharmonize download library is disabled, so downloads would not appear in the player.', { status: 409 })
+    if (defaultLib && !defaultLib.enabled && !getDownloadTarget()) {
+      throw new BridgeError('DEFAULT_LIBRARY_DISABLED', 'The Gharmonize download library is disabled and no player download folder is set, so downloads would not appear in the player.', { status: 409 })
     }
     const info = await core.inspect(rawUrl)
     const ts = now()
@@ -289,12 +292,23 @@ export function createDownloadBridge({
       fail(stmt.get.get(row.id), new BridgeError('NO_OUTPUT', job.error || 'The download finished without producing audio files.'))
       return
     }
+    let outputs = job.outputs
+    const target = getDownloadTarget()
+    if (target) {
+      try {
+        const moved = await relocateDownloads(outputs, { sourceRoot: target.sourceRoot, targetDir: target.dir, logger })
+        outputs = outputs.map((file) => moved.get(file)).filter(Boolean)
+      } catch (error) {
+        fail(stmt.get.get(row.id), new BridgeError('MOVE_FAILED', `The files could not be moved to the player download folder: ${error?.message || error}`, { permanent: true }))
+        return
+      }
+    }
     let indexed
-    try { indexed = await scanner.indexFiles(job.outputs) } catch (error) {
+    try { indexed = await scanner.indexFiles(outputs) } catch (error) {
       fail(stmt.get.get(row.id), new BridgeError('INDEX_FAILED', error?.message || 'Indexing failed.'))
       return
     }
-    const trackIds = job.outputs.map((file) => indexed.get(file)).filter(Boolean)
+    const trackIds = outputs.map((file) => indexed.get(file)).filter(Boolean)
     if (!trackIds.length) {
       fail(stmt.get.get(row.id), new BridgeError('NOT_IN_LIBRARY', 'The files were downloaded but are not inside an enabled library (is the Gharmonize download library disabled?).', { permanent: true }))
       return

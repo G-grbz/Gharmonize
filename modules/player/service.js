@@ -121,7 +121,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const lyrics = createLyricsService({ libraries, getOnlineAllowed: () => config.onlineLyrics, logger })
   const matcher = createLibraryMatcher(db)
   const online = createOnlineSearch({ getEnabledProviders: () => config.onlineProviders, logger, ...onlineOptions })
-  const bridge = createDownloadBridge({ db, core: core || createCoreAdapter({ logger }), scanner, matcher, catalog, getConfig, logger, pollMs: bridgePollMs })
+  const bridge = createDownloadBridge({ db, core: core || createCoreAdapter({ logger }), scanner, matcher, catalog, getConfig, getDownloadTarget: () => libraries.downloadTarget(), logger, pollMs: bridgePollMs })
   const onlineCache = createOnlineCache(db, { logger })
   const annotator = createAnnotator({ matcher, bridge })
   const discovery = createDiscovery({

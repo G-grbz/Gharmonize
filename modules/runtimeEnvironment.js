@@ -45,9 +45,17 @@ export function initializeRuntimeEnvironment({ env = process.env, cwd = process.
     env.LOCAL_INPUT_DIR = path.resolve(env.DATA_DIR, env.LOCAL_INPUT_DIR.trim());
   }
   fs.mkdirSync(env.DATA_DIR, { recursive: true });
-  const result = { dataDir: env.DATA_DIR, userEnv, defaultEnv };
+  // A listen address set by the deployment (Docker compose, service unit) wins
+  // over the env file, so Settings must not offer to change it.
+  const hostFromDeployment = String(inherited.GHARMONIZE_HOST ?? '').trim() !== '';
+  const result = { dataDir: env.DATA_DIR, userEnv, defaultEnv, hostFromDeployment };
   if (env === process.env) initialized = result;
   return result;
+}
+
+// Result of the process-wide initialization, or null before it ran (tests).
+export function getRuntimeEnvironmentInfo() {
+  return initialized || null;
 }
 
 // A display alias may name a Windows host path while the server runs on Linux.

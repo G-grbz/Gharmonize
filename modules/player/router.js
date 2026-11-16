@@ -516,6 +516,15 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     if (lib.enabled) scanner.requestScan(lib.id).catch(() => {})
     res.json(lib)
   })
+  // Player download folder (used while the Gharmonize download library is off).
+  router.get('/admin/download-folder', requireAdmin, (_req, res) => res.json(libraries.downloadFolder()))
+  router.put('/admin/download-folder', requireAdmin, (req, res) => {
+    const info = libraries.setDownloadFolder(req.body?.path)
+    artwork.invalidate()
+    scanner.requestScan(info.libraryId).catch(() => {})
+    res.json(info)
+  })
+  router.delete('/admin/download-folder', requireAdmin, (_req, res) => res.json(libraries.clearDownloadFolder()))
   router.delete('/admin/libraries/:id', requireAdmin, (req, res) => { libraries.remove(intParam(req.params.id)); artwork.invalidate(); res.json({ ok: true }) })
   router.post('/admin/scan', requireAdmin, (req, res) => {
     const id = intParam(req.body?.libraryId)

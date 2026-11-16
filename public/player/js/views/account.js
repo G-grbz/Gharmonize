@@ -1,10 +1,10 @@
 // Account: playback preferences, appearance & language, password, paired
 // devices and pairing codes for the mobile app.
 
-import { app } from '../app.js'
+import { app, bus } from '../app.js'
 import { get, post, del } from '../api.js'
 import { h, t, icon, clear, toggle, toast, toastError, fmtRelative, confirmDialog, errorText } from '../dom.js'
-import { applyTheme, currentTheme, applyAccent, currentAccent, ACCENTS } from '../theme.js'
+import { applyAccent, currentAccent, ACCENTS, applyPalette, currentPalette, PALETTES } from '../theme.js'
 import { showShortcuts } from '../chrome.js'
 import { pairingPanel } from '../pairing.js'
 import { PROGRESS_STYLES, progressStyle } from '../seekbar.js'
@@ -20,19 +20,6 @@ function settingRow(label, hint, control) {
   return h('div', { class: 'setting' }, h('div', { class: 'setting__text' }, h('b', { text: label }), hint ? h('span', { class: 'muted small', text: hint }) : null), control)
 }
 
-function segmented(options, value, onChange) {
-  const box = h('div', { class: 'segmented', role: 'radiogroup' })
-  for (const [key, label] of options) {
-    const btn = h('button', { type: 'button', class: ['segmented__btn', key === value && 'is-active'], role: 'radio', 'aria-checked': String(key === value), text: label })
-    btn.addEventListener('click', () => {
-      box.querySelectorAll('.segmented__btn').forEach((b) => { b.classList.toggle('is-active', b === btn); b.setAttribute('aria-checked', String(b === btn)) })
-      onChange(key)
-    })
-    box.append(btn)
-  }
-  return box
-}
-
 function accentPicker() {
   const box = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': t('player.theme.accent') })
   for (const key of ACCENTS) {
@@ -43,6 +30,21 @@ function accentPicker() {
     })
     box.append(btn)
   }
+  return box
+}
+
+function palettePicker() {
+  const box = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': t('player.theme.palette') })
+  const paint = () => box.querySelectorAll('.swatch').forEach((b) => { const on = b.dataset.key === currentPalette(); b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)) })
+  for (const [key] of PALETTES) {
+    const label = t(`player.theme.palette.${key}`)
+    const btn = h('button', { type: 'button', class: ['swatch', 'swatch--pal', `swatch--pal-${key}`], 'data-key': key, role: 'radio', title: label, 'aria-label': label }, icon('check', { size: 16 }))
+    btn.addEventListener('click', () => { applyPalette(key); paint() })
+    box.append(btn)
+  }
+  paint()
+  // The top bar toggle switches to the other base's remembered colour.
+  const off = bus.on('theme', () => { if (!box.isConnected) { off(); return } paint() })
   return box
 }
 
@@ -124,7 +126,7 @@ export async function render() {
   const langSelect = h('select', { class: 'select' }, LANGS.map(([code, label]) => h('option', { value: code, selected: (window.i18n?.lang || 'en') === code, text: label })))
   langSelect.addEventListener('change', () => window.i18n?.setLang(langSelect.value))
   cards.append(card(t('player.account.appearance'),
-    settingRow(t('player.theme.title'), null, segmented([['dark', t('player.theme.dark')], ['light', t('player.theme.light')]], currentTheme(), (v) => applyTheme(v))),
+    settingRow(t('player.theme.palette'), t('player.theme.paletteHint'), palettePicker()),
     settingRow(t('player.theme.accent'), t('player.theme.accentHint'), accentPicker()),
     settingRow(t('player.progress.title'), t('player.progress.hint'), progress),
     settingRow(t('player.account.language'), null, langSelect),

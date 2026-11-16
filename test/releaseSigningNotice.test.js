@@ -54,3 +54,13 @@ test('local security investigations and release drafts are excluded from Git and
     assert.ok(dockerIgnored.includes(folder), folder);
   }
 });
+
+test('the Android app shares the Gharmonize release version', () => {
+  const gradle = fs.readFileSync('android/app/build.gradle.kts', 'utf8');
+  assert.ok(gradle.includes('rootProject.file("../package.json")'), 'APK version is read from package.json');
+  assert.match(gradle, /versionName = \(findProperty\("ghVersionName"\) as String\?\) \?: gharmonizeVersion/);
+  const release = fs.readFileSync('.github/workflows/release.yml', 'utf8');
+  const android = release.slice(release.indexOf('\n  android:'), release.indexOf('\n  publish:'));
+  assert.ok(android.includes('VERSION: ${{ needs.verify.outputs.version }}'));
+  assert.ok(android.includes('if [[ "$APK_VERSION" != "$VERSION" ]]'), 'release refuses an APK with another version');
+});

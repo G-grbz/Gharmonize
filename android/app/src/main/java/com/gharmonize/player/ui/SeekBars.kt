@@ -30,14 +30,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -51,7 +57,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-val PROGRESS_STYLES = listOf("ring", "classic", "bold", "minimal", "wave")
+val PROGRESS_STYLES = listOf("ring", "classic", "bold", "minimal", "wave", "segments", "dots", "gradient", "needle", "ribbon")
 
 private val Played = Color.White
 private val Rest = Color.White.copy(alpha = 0.25f)
@@ -72,9 +78,12 @@ fun StyledSeekBar(
   var dragging by remember { mutableStateOf(false) }
   val drag = rememberUpdatedState(onDrag)
   val commit = rememberUpdatedState(onCommit)
-  val height = when (style) { "wave" -> 46.dp; else -> 32.dp }
+  val height = when (style) { "wave", "ribbon" -> 46.dp; else -> 32.dp }
   Canvas(
-    modifier.fillMaxWidth().height(height).pointerInput(Unit) {
+    modifier.fillMaxWidth().height(height).semantics {
+      progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
+      setProgress { value -> commit.value(value.coerceIn(0f, 1f)); true }
+    }.pointerInput(Unit) {
       awaitEachGesture {
         val down = awaitFirstDown()
         down.consume()
@@ -111,6 +120,43 @@ fun StyledSeekBar(
           )
         }
       }
+      "segments", "dots" -> {
+        val count = if (style == "dots") 32 else 24
+        val cell = size.width / count
+        val h = if (style == "dots") min(6.dp.toPx(), cell * 0.55f) else 12.dp.toPx()
+        for (i in 0 until count) {
+          val color = if ((i + 0.5f) / count <= fraction) Played else Rest
+          if (style == "dots") drawCircle(color, h / 2, Offset((i + 0.5f) * cell, cy))
+          else drawRoundRect(color, Offset(i * cell + 1.5.dp.toPx(), cy - h / 2), Size(max(1f, cell - 3.dp.toPx()), h), CornerRadius(2.dp.toPx()))
+        }
+      }
+      "gradient", "needle" -> {
+        val h = (if (style == "needle") 2 else 12).dp.toPx()
+        drawRect(Rest, Offset(0f, cy - h / 2), Size(size.width, h))
+        val fillSize = Size(size.width * fraction, h)
+        if (style == "gradient") drawRect(Brush.horizontalGradient(listOf(Color(0xFF67E8F9), Color(0xFFC084FC)), endX = size.width), Offset(0f, cy - h / 2), fillSize)
+        else {
+          drawRect(Played, Offset(0f, cy - h / 2), fillSize)
+          drawRect(Played, Offset((size.width * fraction).coerceIn(0f, max(0f, size.width - 3.dp.toPx())), size.height * 0.2f), Size(3.dp.toPx(), size.height * 0.6f))
+        }
+      }
+      "ribbon" -> {
+        val n = max(8, (size.width / 3.dp.toPx()).toInt())
+        val path = Path()
+        for (i in 0..n) {
+          val v = bins?.let { sampleBins(it, min(i, n - 1), n) } ?: 0.18f
+          val x = i * size.width / n
+          val y = cy - max(2.dp.toPx(), v * cy)
+          if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        for (i in n downTo 0) {
+          val v = bins?.let { sampleBins(it, min(i, n - 1), n) } ?: 0.18f
+          path.lineTo(i * size.width / n, cy + max(2.dp.toPx(), v * cy))
+        }
+        path.close()
+        drawPath(path, Rest)
+        clipRect(right = size.width * fraction) { drawPath(path, Played) }
+      }
       "minimal" -> {
         val h = 2.dp.toPx()
         drawLine(Rest, Offset(0f, cy), Offset(size.width, cy), h)
@@ -138,7 +184,7 @@ private fun sampleBins(bins: FloatArray, i: Int, n: Int): Float {
 
 /** Music stream volume (0..1), refreshed while visible, and a setter. */
 @Composable
-private fun rememberMusicVolume(): Pair<Float, (Float) -> Unit> {
+fun rememberMusicVolume(): Pair<Float, (Float) -> Unit> {
   val context = LocalContext.current
   val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
   val maxVol = remember { max(1, audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)) }
@@ -153,8 +199,8 @@ private fun rememberMusicVolume(): Pair<Float, (Float) -> Unit> {
   }
   return volume to { v: Float ->
     touchedAt = System.currentTimeMillis()
-    volume = v
     val step = (v * maxVol).roundToInt().coerceIn(0, maxVol)
+    volume = step / maxVol.toFloat()
     if (step != audio.getStreamVolume(AudioManager.STREAM_MUSIC)) runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, step, 0) }
   }
 }
@@ -175,16 +221,19 @@ fun CoverDial(
   fraction: Float,
   ring: Boolean,
   volumeArc: Boolean,
+  volume: Float,
+  onVolume: (Float) -> Unit,
   onSeekDrag: (Float) -> Unit,
   onSeekCommit: (Float) -> Unit,
-  maxDiameter: Dp = 330.dp,
+  onToggleMute: (() -> Unit)? = null,
+  maxDiameter: Dp = 390.dp,
 ) {
-  val (volume, setVolume) = rememberMusicVolume()
   var seekDrag by remember { mutableStateOf<Float?>(null) }
   var volDrag by remember { mutableStateOf<Float?>(null) }
   val seekDragCb = rememberUpdatedState(onSeekDrag)
   val seekCommitCb = rememberUpdatedState(onSeekCommit)
-  val setVolumeCb = rememberUpdatedState(setVolume)
+  val setVolumeCb = rememberUpdatedState(onVolume)
+  val muteCb = rememberUpdatedState(onToggleMute)
   val white = Color.White
 
   BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -196,7 +245,7 @@ fun CoverDial(
       return@BoxWithConstraints
     }
     // Leave room on the right for the volume arc and its speaker mark.
-    val art = minOf(if (volumeArc) (maxWidth - 60.dp) / VOL_RADIUS else maxWidth * 0.9f, maxHeight - 12.dp, maxDiameter - 30.dp)
+    val art = minOf(if (volumeArc) (maxWidth - 52.dp) / VOL_RADIUS else maxWidth * 0.9f, maxHeight - 12.dp, maxDiameter)
     val canvas = art * 1.5f
     Box(Modifier.requiredSize(canvas), contentAlignment = Alignment.Center) {
       Box(
@@ -220,6 +269,13 @@ fun CoverDial(
             val toRing = if (ring) abs(dist - ringR) else Float.MAX_VALUE
             val toVol = if (volumeArc && d.x > 0 && angle <= VOL_BOTTOM + 18f && angle >= VOL_BOTTOM - VOL_SPAN - 18f) abs(dist - volR) else Float.MAX_VALUE
             val reach = max(22.dp.toPx(), ringR * 0.14f)
+            // Tapping the speaker mark beside the arc mutes / unmutes.
+            val speaker = speakerCenter(c, volR, 1.dp.toPx())
+            if (volumeArc && muteCb.value != null && hypot(down.position.x - speaker.x, down.position.y - speaker.y) <= 20.dp.toPx()) {
+              down.consume()
+              muteCb.value?.invoke()
+              return@awaitEachGesture
+            }
             val kind = when {
               toVol < toRing && toVol <= reach -> 2
               toRing <= reach -> 1
@@ -274,17 +330,25 @@ private fun DrawScope.drawVolumeArc(c: Offset, r: Float, v: Float, active: Boole
   if (v > 0f) drawArc(Color.White, VOL_BOTTOM - v * VOL_SPAN, v * VOL_SPAN, false, topLeft, arcSize, style = stroke)
   val a = (VOL_BOTTOM - v * VOL_SPAN) * PI / 180.0
   drawCircle(Color.White, (if (active) 10 else 7).dp.toPx(), Offset(c.x + cos(a).toFloat() * r, c.y + sin(a).toFloat() * r))
-  // Speaker mark beside the arc.
+  // Speaker mark beside the arc (crossed out while silent).
   val u = 1.dp.toPx()
-  val sx = c.x + r + 20 * u
-  val sy = c.y + r * 0.42f
+  val speaker = speakerCenter(c, r, u)
+  val sx = speaker.x
+  val sy = speaker.y
   val tint = Color.White.copy(alpha = 0.75f)
   val body = Path().apply {
     moveTo(sx - 6 * u, sy - 3 * u); lineTo(sx - 3 * u, sy - 3 * u); lineTo(sx + 1 * u, sy - 7 * u)
     lineTo(sx + 1 * u, sy + 7 * u); lineTo(sx - 3 * u, sy + 3 * u); lineTo(sx - 6 * u, sy + 3 * u); close()
   }
   drawPath(body, tint)
-  for (rr in listOf(5f, 9f)) {
-    drawArc(tint, -40f, 80f, false, Offset(sx + u - rr * u, sy - rr * u), Size(2 * rr * u, 2 * rr * u), style = Stroke(1.5f * u))
+  if (v > 0f) {
+    for (rr in listOf(5f, 9f)) {
+      drawArc(tint, -40f, 80f, false, Offset(sx + u - rr * u, sy - rr * u), Size(2 * rr * u, 2 * rr * u), style = Stroke(1.5f * u))
+    }
+  } else {
+    drawLine(tint, Offset(sx + 4 * u, sy - 4 * u), Offset(sx + 11 * u, sy + 4 * u), 1.5f * u)
+    drawLine(tint, Offset(sx + 11 * u, sy - 4 * u), Offset(sx + 4 * u, sy + 4 * u), 1.5f * u)
   }
 }
+
+private fun speakerCenter(c: Offset, volR: Float, u: Float) = Offset(c.x + volR + 20 * u, c.y + volR * 0.42f)

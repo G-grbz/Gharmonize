@@ -2,7 +2,7 @@
 // library grants and download rights, devices and caches.
 
 import { app } from '../app.js'
-import { get, post, patch, del } from '../api.js'
+import { get, post, patch, put, del } from '../api.js'
 import { h, t, icon, iconButton, clear, toggle, toast, toastError, modal, confirmDialog, promptDialog, fmtBytes, fmtRelative, fmtNumber, emptyState, errorText } from '../dom.js'
 import { refreshPlaylists } from '../components.js'
 
@@ -234,9 +234,40 @@ async function librariesTab() {
   const scanBox = h('div', { class: 'scan-status' })
   let pollTimer = null
 
+  const folderBox = h('div')
   async function load() {
-    const res = await get('/admin/libraries')
+    const [res, folder] = await Promise.all([get('/admin/libraries'), get('/admin/download-folder').catch(() => null)])
     paint(res.items, res.scan)
+    paintFolder(folder)
+  }
+
+  // Shown while the Gharmonize download library is off: player downloads then
+  // go to (and are played from) a folder of the admin's choice.
+  function paintFolder(folder) {
+    clear(folderBox)
+    if (!folder || folder.defaultEnabled) return
+    const input = h('input', { class: 'input', type: 'text', value: folder.path || '', placeholder: '/music/player', required: true, spellcheck: 'false', autocapitalize: 'none' })
+    const error = h('p', { class: 'form-error', hidden: true })
+    const status = folder.path
+      ? h('p', { class: 'muted small', text: t('player.admin.downloadFolderCurrent', { path: folder.path, library: folder.library?.name || '—' }) })
+      : h('p', { class: 'form-error small', text: t('player.admin.downloadFolderMissing') })
+    const form = h('form', { class: 'lib-add' },
+      h('label', { class: 'field field--grow' }, h('span', { class: 'field__label', text: t('player.admin.downloadFolderPath') }), input),
+      h('button', { type: 'submit', class: 'btn btn--primary' }, icon('check', { size: 18 }), t('player.admin.downloadFolderSave')),
+      folder.path ? h('button', { type: 'button', class: 'btn btn--ghost', text: t('player.admin.downloadFolderClear'), onclick: async () => {
+        try { await del('/admin/download-folder'); load() } catch (err) { toastError(err) }
+      } }) : null,
+      error)
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      error.hidden = true
+      try {
+        const saved = await put('/admin/download-folder', { path: input.value.trim() })
+        toast(t(saved.created ? 'player.admin.downloadFolderSavedNew' : 'player.admin.downloadFolderSaved'), { type: 'success' })
+        load()
+      } catch (err) { error.textContent = errorText(err); error.hidden = false }
+    })
+    folderBox.append(card(t('player.admin.downloadFolder'), t('player.admin.downloadFolderHint'), status, form))
   }
 
   function paintScan(scan) {
@@ -273,7 +304,12 @@ async function librariesTab() {
           offline && lib.lastScanError ? h('span', { class: 'form-error small', text: lib.lastScanError }) : null),
         h('div', { class: 'lib__actions' },
           toggle(lib.enabled, async (v, input) => {
-            try { await patch(`/admin/libraries/${lib.id}`, { enabled: v }); toast(t('player.admin.saved'), { type: 'success', timeout: 1500 }) } catch (error) { input.checked = !v; toastError(error) }
+            try {
+              await patch(`/admin/libraries/${lib.id}`, { enabled: v })
+              toast(t('player.admin.saved'), { type: 'success', timeout: 1500 })
+              // The download folder card depends on the default library.
+              if (lib.isDefault) load()
+            } catch (error) { input.checked = !v; toastError(error) }
           }, { label: t('player.admin.enabled') }),
           iconButton('refresh', t('player.admin.scanNow'), async () => { try { paintScan(await post('/admin/scan', { libraryId: lib.id })) } catch (error) { toastError(error) } }),
           iconButton('edit', t('player.admin.rename'), async () => {
@@ -312,6 +348,7 @@ async function librariesTab() {
     card(t('player.admin.libraries'), t('player.admin.librariesHint'),
       h('div', { class: 'row-actions' }, scanBox, h('button', { type: 'button', class: 'btn btn--outline btn--sm', onclick: async () => { try { paintScan(await post('/admin/scan', {})) } catch (error) { toastError(error) } } }, icon('refresh', { size: 16 }), t('player.admin.scanAll'))),
       list),
+    folderBox,
     card(t('player.admin.addLibrary'), t('player.admin.addLibraryHint'), form, h('p', { class: 'muted small', text: t('player.admin.dockerHint') })))
   await load()
   return box

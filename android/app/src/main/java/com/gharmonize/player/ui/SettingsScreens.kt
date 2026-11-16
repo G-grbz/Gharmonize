@@ -1,7 +1,21 @@
 package com.gharmonize.player.ui
 
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -102,6 +116,7 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
   var confirmSignOut by remember { mutableStateOf(false) }
   val language = remember { com.gharmonize.player.AppLocale.saved(app) }
   val activity = LocalContext.current as? android.app.Activity
+  val isDark = when (theme) { "dark" -> true; "light" -> false; else -> androidx.compose.foundation.isSystemInDarkTheme() }
 
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
     item { Text(stringResource(R.string.nav_settings), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp)) }
@@ -150,6 +165,16 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
         androidx.compose.material3.Switch(checked = autoplay, onCheckedChange = { autoplay = it; app.prefs.autoplay = it })
       }
       SettingItem(stringResource(R.string.settings_theme), themeLabel(theme)) { picker = "theme" }
+      SwatchRow(stringResource(R.string.settings_palette), stringResource(R.string.settings_palette_hint),
+        PALETTES.map { Swatch(it.key, paletteLabel(it.key), listOf(it.bg, it.s4), square = true) }, Appearance.paletteFor(isDark)) { key ->
+        Appearance.pick(app.prefs, key)
+        // Picking a colour also picks its dark / light base.
+        onTheme(if (paletteDef(key).dark) "dark" else "light")
+      }
+      SwatchRow(stringResource(R.string.settings_accent), stringResource(R.string.settings_accent_hint),
+        ACCENTS.map { Swatch(it.key, accentLabel(it.key), listOf(it.dark, it.dark2)) }, Appearance.accent) { key ->
+        Appearance.accent = key; app.prefs.accent = key
+      }
       SettingItem(stringResource(R.string.settings_language), languageLabel(language), stringResource(R.string.settings_language_hint)) { picker = "language" }
       HorizontalDivider()
       SettingItem(stringResource(R.string.sign_out), stringResource(R.string.sign_out_hint)) { confirmSignOut = true }
@@ -165,7 +190,7 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
       confirmButton = { TextButton(onClick = { picker = null }) { Text(stringResource(R.string.close)) } },
       title = { Text(stringResource(when (which) { "theme" -> R.string.settings_theme; "progress" -> R.string.settings_progress; "language" -> R.string.settings_language; "wifi" -> R.string.settings_quality_wifi; else -> R.string.settings_quality_mobile })) },
       text = {
-        Column {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
           options.forEach { opt ->
             Row(Modifier.fillMaxWidth().clickable {
               when (which) {
@@ -198,6 +223,54 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
   }
 }
 
+private class Swatch(val key: String, val label: String, val colors: List<Color>, val square: Boolean = false)
+
+/** A row of colour choices (player colour / accent), name of the current one below the title. */
+@Composable
+private fun SwatchRow(title: String, hint: String, swatches: List<Swatch>, selected: String, onPick: (String) -> Unit) {
+  val current = swatches.firstOrNull { it.key == selected } ?: swatches.first()
+  Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Text(title, style = MaterialTheme.typography.bodyLarge)
+    Text(current.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(hint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+      swatches.forEach { sw ->
+        val on = sw.key == current.key
+        val shape = if (sw.square) RoundedCornerShape(12.dp) else CircleShape
+        Box(
+          Modifier.size(44.dp)
+            .border(2.dp, if (on) MaterialTheme.colorScheme.onSurface else Color.Transparent, shape)
+            .padding(4.dp).clip(shape)
+            .background(Brush.linearGradient(sw.colors))
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .clickable(onClickLabel = sw.label) { onPick(sw.key) }
+            .semantics { contentDescription = sw.label; this.selected = on },
+          contentAlignment = Alignment.Center,
+        ) {
+          if (on) Icon(FluentIcons.CheckCircle, null, tint = if (sw.square) MaterialTheme.colorScheme.primary else Color.White, modifier = Modifier.size(18.dp))
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun accentLabel(key: String): String = stringResource(when (key) {
+  "violet" -> R.string.accent_violet; "ocean" -> R.string.accent_ocean; "moss" -> R.string.accent_moss
+  "amber" -> R.string.accent_amber; "rose" -> R.string.accent_rose; "indigo" -> R.string.accent_indigo
+  "coral" -> R.string.accent_coral; "fuchsia" -> R.string.accent_fuchsia; "silver" -> R.string.accent_silver
+  else -> R.string.accent_blue
+})
+
+@Composable
+private fun paletteLabel(key: String): String = stringResource(when (key) {
+  "oled" -> R.string.palette_oled; "deepsea" -> R.string.palette_deepsea
+  "forest" -> R.string.palette_forest; "plum" -> R.string.palette_plum
+  "light" -> R.string.palette_light; "mist" -> R.string.palette_mist; "sky" -> R.string.palette_sky
+  "mint" -> R.string.palette_mint; "lilac" -> R.string.palette_lilac
+  else -> R.string.palette_navy
+})
+
 @Composable
 private fun SettingItem(title: String, value: String, hint: String? = null, onClick: (() -> Unit)? = null) {
   Column(Modifier.fillMaxWidth().let { if (onClick != null) it.clickable(onClick = onClick) else it }.padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -229,6 +302,11 @@ private fun progressLabel(style: String): String = stringResource(
     "bold" -> R.string.progress_bold
     "minimal" -> R.string.progress_minimal
     "wave" -> R.string.progress_wave
+    "segments" -> R.string.progress_segments
+    "dots" -> R.string.progress_dots
+    "gradient" -> R.string.progress_gradient
+    "needle" -> R.string.progress_needle
+    "ribbon" -> R.string.progress_ribbon
     else -> R.string.progress_ring
   },
 )

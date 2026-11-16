@@ -57,7 +57,7 @@ export class SettingsManager {
         };
         const SECTIONS = [
             { id: 'tab-general', icon: 'general', label: 'settings.nav.general', fields: ['f_FRONTEND_UI', 'f_UPLOAD_MAX_BYTES', 'f_YOUTUBE_QUICK_ADD_LIMIT', 'f_YTLIVE_MUSIC_TITLE', 'f_YTLIVE_MUSIC_SUBTITLE', 'f_MEDIA_COMMENT', 'f_TRACK_EXTRACTOR_SHELL_INTEGRATION', 'f_PREVIEW_MAX_ENTRIES'] },
-            { id: 'tab-access', icon: 'access', label: 'settings.access.title', fields: ['f_GHARMONIZE_ACCESS_MODE', 'f_GHARMONIZE_TEMP_ACCESS_ENABLED', 'f_TRUST_PROXY'] },
+            { id: 'tab-access', icon: 'access', label: 'settings.access.title', fields: ['f_GHARMONIZE_HOST', 'f_GHARMONIZE_ACCESS_MODE', 'f_GHARMONIZE_TEMP_ACCESS_ENABLED', 'f_TRUST_PROXY'] },
             { id: 'tab-player', icon: 'player', label: 'settings.player.title', fields: ['f_GHARMONIZE_PLAYER_ENABLED', 'f_PLAYER_REMOTE_ALLOW', 'f_GHARMONIZE_PLAYER_LISTEN'] },
             { id: 'tab-spotify', icon: 'spotify', label: 'settings.tabs.spotify' },
             { id: 'tab-youtube', icon: 'youtube', label: 'settings.tabs.youtube', fields: ['f_YT_USE_MUSIC', 'f_YT_SEARCH_RESULTS', 'f_YT_DEFAULT_REGION', 'f_YT_LANG'] },
@@ -295,6 +295,17 @@ export class SettingsManager {
                 </div>
 
                 <h4 class="settings-section-title" data-i18n="settings.access.title">Erişim ve Giriş</h4>
+
+                <div class="form-group">
+                    <label for="f_GHARMONIZE_HOST" class="settings-field-label" data-i18n="settings.host.label">Sunucu adresi</label>
+                    <div class="settings-field-hint muted" data-i18n="settings.host.hint">Ağdaki diğer cihazların (telefon, TV, başka bilgisayar) Gharmonize'a ve çalara bağlanabilmesi için "Ev ağı" seçin. Değişiklik yeniden başlatmadan uygulanır. Ağa açarken "Yönetici girişi" önerilir; Windows ilk seferde güvenlik duvarı izni isteyebilir.</div>
+                    <select id="f_GHARMONIZE_HOST">
+                        <option value="127.0.0.1" data-i18n="settings.host.loopback">Yalnızca bu bilgisayar (127.0.0.1)</option>
+                        <option value="0.0.0.0" data-i18n="settings.host.all">Ev ağı / tüm ağlar (0.0.0.0)</option>
+                        <option value="custom" data-i18n="settings.host.custom" hidden>Özel adres (.env)</option>
+                    </select>
+                    <div id="serverHostNote" class="settings-field-hint muted" hidden></div>
+                </div>
 
                 <div class="form-group">
                     <label for="f_GHARMONIZE_ACCESS_MODE" class="settings-field-label" data-i18n="settings.access.modeLabel">Giriş seçeneği</label>
@@ -965,6 +976,24 @@ export class SettingsManager {
         if (tokenWrap) tokenWrap.hidden = document.getElementById('f_GHARMONIZE_PLAYER_TUNNEL_MODE')?.value !== 'token';
     }
 
+    applyServerHost(choice, info = {}) {
+        const select = document.getElementById('f_GHARMONIZE_HOST');
+        const note = document.getElementById('serverHostNote');
+        if (!select) return;
+        const value = ['127.0.0.1', '0.0.0.0'].includes(choice) ? choice : 'custom';
+        const custom = select.querySelector('option[value="custom"]');
+        if (custom) {
+            custom.hidden = value !== 'custom';
+            custom.textContent = `${this.t('settings.host.custom')}${info?.current && value === 'custom' ? `: ${info.current}` : ''}`;
+        }
+        select.value = value;
+        select.disabled = !!info?.locked;
+        if (note) {
+            note.hidden = !info?.locked;
+            note.textContent = info?.locked ? this.t('settings.host.locked', { host: info.current || '' }) : '';
+        }
+    }
+
     syncAccessControls() {
         const mode = document.getElementById('f_GHARMONIZE_ACCESS_MODE')?.value || 'none';
         const enabled = !!document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED')?.checked;
@@ -1175,6 +1204,7 @@ export class SettingsManager {
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
             document.getElementById('f_FRONTEND_UI').value = s.FRONTEND_UI === 'ytlive' ? 'ytlive' : 'classic';
+            this.applyServerHost(s.GHARMONIZE_HOST, data.serverHost);
             document.getElementById('f_GHARMONIZE_ACCESS_MODE').value = s.GHARMONIZE_ACCESS_MODE === 'admin' ? 'admin' : 'none';
             document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED').checked = String(s.GHARMONIZE_TEMP_ACCESS_ENABLED || '0') === '1';
             document.getElementById('f_GHARMONIZE_TEMP_ACCESS_HOURS').value = s.GHARMONIZE_TEMP_ACCESS_HOURS || '1';
@@ -1258,6 +1288,7 @@ export class SettingsManager {
                 TRUST_PROXY: document.getElementById('f_TRUST_PROXY').value,
                 UPLOAD_MAX_BYTES: document.getElementById('f_UPLOAD_MAX_BYTES').value.trim(),
                 FRONTEND_UI: document.getElementById('f_FRONTEND_UI').value,
+                GHARMONIZE_HOST: document.getElementById('f_GHARMONIZE_HOST').value,
                 GHARMONIZE_ACCESS_MODE: document.getElementById('f_GHARMONIZE_ACCESS_MODE').value,
                 GHARMONIZE_TEMP_ACCESS_ENABLED: document.getElementById('f_GHARMONIZE_ACCESS_MODE').value === 'admin' && document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED').checked ? '1' : '0',
                 GHARMONIZE_TEMP_ACCESS_HOURS: document.getElementById('f_GHARMONIZE_TEMP_ACCESS_HOURS').value.trim() || '0',

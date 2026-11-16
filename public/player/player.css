@@ -6826,3 +6826,123 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 }
 
 /* end Ggrbz css editor */
+
+/* Full player: shared volume control and optional recording details. */
+.np-full__inner { grid-template-rows: auto minmax(0,1fr) repeat(6,auto); gap: 12px; height: min(100%,940px); width: min(100%,540px); }
+.np-full__stage { padding: 8px 0; }
+.np-full__art { width: min(390px,100cqw,100cqh); height: min(390px,100cqw,100cqh); }
+.np-full__details { display: grid; gap: 3px; color: rgba(255,255,255,.6); font-size: 12px; line-height: 1.4; }
+.np-full__details span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-full__volume { display: flex; align-items: center; gap: 12px; width: min(100%,280px); margin: 0 auto; --range-fill: #fff; --range-bg: rgba(255,255,255,.22); }
+.np-full__volume .range { flex: 1; min-width: 0; }
+.np-full__volume-value { min-width: 34px; font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; opacity: .7; }
+.seekbar:is([data-style=segments],[data-style=dots],[data-style=gradient],[data-style=needle],[data-style=ribbon]) { min-height: 26px; }
+.seekbar:is([data-style=segments],[data-style=dots],[data-style=gradient],[data-style=needle],[data-style=ribbon]) .seekbar__wave { display: block; }
+.seekbar:is([data-style=segments],[data-style=dots],[data-style=gradient],[data-style=needle],[data-style=ribbon]) .range { opacity: 0; cursor: pointer; }
+.seekbar:focus-within { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+@media (max-width: 700px) { .np-full__inner { width: 100%; gap: 10px; } }
+@media (max-height: 650px) { .np-full__inner { gap: 5px; overflow-y: auto; grid-template-rows: auto minmax(90px,1fr) repeat(6,auto); } .np-full__volume .ctl { height: 30px; } }
+
+.np-full.is-ring .np-full__art { width: min(420px,92cqw,90cqh); height: min(420px,92cqw,90cqh); }
+
+.np-full.is-ring .np-full__stage { overflow: visible; }
+
+/* Ring style: the volume arc beside the cover is the only volume control. */
+.np-full.is-ring .np-full__volume { display: none; }
+
+/* Queue / playlists sheet sits on theme surfaces, not on the dark cover
+   backdrop: its buttons follow the theme text colours (the full player's
+   white-on-hover would vanish on light and colour themes). */
+.np-sheet .ctl,.np-sheet .icon-btn { color: var(--text-2); }
+.np-sheet .ctl:hover,.np-sheet .icon-btn:hover,.np-sheet .ctl:focus-visible,.np-sheet .icon-btn:focus-visible { background: var(--hover-strong); color: var(--text); }
+.np-sheet :focus-visible { outline-color: var(--accent); }
+.np-sheet__head .ctl { border-radius: 50%; }
+
+/* ---- More accents (10 in total) ---- */
+:root:not([data-theme])[data-accent=indigo],:root[data-theme=dark][data-accent=indigo] { --accent: #818cf8; --accent-strong: #a5b4fc; --accent-2: #22d3ee; --on-accent: #0c0f2e; }
+:root:not([data-theme])[data-accent=coral],:root[data-theme=dark][data-accent=coral] { --accent: #fb923c; --accent-strong: #fdba74; --accent-2: #f472b6; --on-accent: #1f0d02; }
+:root:not([data-theme])[data-accent=fuchsia],:root[data-theme=dark][data-accent=fuchsia] { --accent: #e879f9; --accent-strong: #f0abfc; --accent-2: #818cf8; --on-accent: #240829; }
+:root:not([data-theme])[data-accent=silver],:root[data-theme=dark][data-accent=silver] { --accent: #cbd5e1; --accent-strong: #e2e8f0; --accent-2: #94a3b8; --on-accent: #0b1220; }
+:root[data-theme=light][data-accent=indigo] { --accent: #4338ca; --accent-strong: #3730a3; --accent-2: #0e7490; }
+:root[data-theme=light][data-accent=coral] { --accent: #c2410c; --accent-strong: #9a3412; --accent-2: #be185d; }
+:root[data-theme=light][data-accent=fuchsia] { --accent: #a21caf; --accent-strong: #86198f; --accent-2: #4338ca; }
+:root[data-theme=light][data-accent=silver] { --accent: #334155; --accent-strong: #1e293b; --accent-2: #64748b; }
+.swatch--indigo { background: linear-gradient(135deg,#818cf8,#22d3ee); }
+.swatch--coral { background: linear-gradient(135deg,#fb923c,#f472b6); }
+.swatch--fuchsia { background: linear-gradient(135deg,#e879f9,#818cf8); }
+.swatch--silver { background: linear-gradient(135deg,#e2e8f0,#64748b); }
+
+/* ---- Player colours: ready-made dark and light palettes ----
+   Only surfaces/borders/text change; every component reads these tokens, so
+   contrast stays the same as in the classic themes. A palette only applies
+   to its own base theme (the dark/light toggle falls back to the classic one). */
+:root[data-theme=dark][data-palette=oled] { --bg: #000; --surface-1: #0a0a0a; --surface-2: #121212; --surface-3: #1c1c1c; --surface-4: #2a2a2a; --elev: #141414; --border: #1f1f1f; --border-strong: #333; }
+:root[data-theme=dark][data-palette=deepsea] { --bg: #061d25; --surface-1: #0d2128; --surface-2: #122b33; --surface-3: #18363f; --surface-4: #21444f; --elev: #10262e; --border: #1a333b; --border-strong: #285059; --text-2: #a3b8bf; --text-3: #738b93; }
+:root[data-theme=dark][data-palette=forest] { --bg: #0a1a11; --surface-1: #111c16; --surface-2: #17251d; --surface-3: #1e2f25; --surface-4: #283d31; --elev: #14211a; --border: #1d2c23; --border-strong: #2e4537; --text-2: #a7b7ad; --text-3: #788b7f; }
+:root[data-theme=dark][data-palette=plum] { --bg: #1a1028; --surface-1: #1c1428; --surface-2: #241a33; --surface-3: #2e2240; --surface-4: #3a2c50; --elev: #20172d; --border: #2a2038; --border-strong: #3f3155; --text-2: #b2a8c2; --text-3: #847a96; }
+:root[data-theme=light][data-palette=mist] { --bg: #eef2f7; --surface-1: #f8fafc; --surface-2: #e8edf4; --surface-3: #dde4ee; --surface-4: #ccd6e3; --elev: #fff; --border: #d9e0ea; --border-strong: #c2ccda; --text: #0f172a; --text-2: #475569; --text-3: #64748b; }
+:root[data-theme=light][data-palette=sky] { --bg: #edf6f9; --surface-1: #f8fcfd; --surface-2: #e4f1f5; --surface-3: #d5e8ef; --surface-4: #bfdbe6; --elev: #fff; --border: #d3e5ec; --border-strong: #b8d3de; --text: #0b1a20; --text-2: #46606a; --text-3: #6b858f; }
+:root[data-theme=light][data-palette=mint] { --bg: #eef6f1; --surface-1: #f9fcfa; --surface-2: #e6f1ea; --surface-3: #d8e9de; --surface-4: #c4dccc; --elev: #fff; --border: #d6e6db; --border-strong: #bcd4c4; --text: #0f1a14; --text-2: #4a5f53; --text-3: #6f8578; }
+:root[data-theme=light][data-palette=lilac] { --bg: #f4f2fb; --surface-1: #fdfcff; --surface-2: #efecf9; --surface-3: #e4dff5; --surface-4: #d4cdec; --elev: #fff; --border: #e2ddf2; --border-strong: #cbc3e6; --text: #17131f; --text-2: #5a5370; --text-3: #847c9a; }
+.swatch--pal { border-radius: 12px; box-shadow: inset 0 0 0 1px var(--border-strong); }
+.swatch--pal.is-on { color: var(--accent); }
+.swatch--pal-navy { background: linear-gradient(135deg,#0d1117 50%,#1f2937 50%); }
+.swatch--pal-oled { background: linear-gradient(135deg,#000 50%,#1c1c1c 50%); }
+.swatch--pal-deepsea { background: linear-gradient(135deg,#061d25 50%,#21444f 50%); }
+.swatch--pal-forest { background: linear-gradient(135deg,#0a1a11 50%,#283d31 50%); }
+.swatch--pal-plum { background: linear-gradient(135deg,#1a1028 50%,#3a2c50 50%); }
+.swatch--pal-light { background: linear-gradient(135deg,#f7f7fb 50%,#d8dcec 50%); }
+.swatch--pal-mist { background: linear-gradient(135deg,#eef2f7 50%,#ccd6e3 50%); }
+.swatch--pal-sky { background: linear-gradient(135deg,#edf6f9 50%,#bfdbe6 50%); }
+.swatch--pal-mint { background: linear-gradient(135deg,#eef6f1 50%,#c4dccc 50%); }
+.swatch--pal-lilac { background: linear-gradient(135deg,#f4f2fb 50%,#d4cdec 50%); }
+.swatch--pal-light.is-on,.swatch--pal-mist.is-on,.swatch--pal-sky.is-on,.swatch--pal-mint.is-on,.swatch--pal-lilac.is-on { color: var(--accent); }
+
+/* Back to Gharmonize (web only; hidden where the downloader is not served). */
+.topbar__home { align-items: center; background: var(--surface-3); border-radius: 999px; color: var(--text); display: inline-flex; flex: none; font-size: 12.5px; font-weight: 650; gap: 7px; height: 36px; padding: 0 14px 0 8px; text-decoration: none; transition: background .15s; white-space: nowrap; }
+.topbar__home:hover { background: var(--surface-4); color: var(--text); }
+.topbar__home:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.topbar__home[hidden] { display: none; }
+.topbar__home img { border-radius: 50%; flex: none; }
+@media (max-width: 700px) { .topbar__home { padding: 0; width: 36px; justify-content: center; } .topbar__home span { display: none; } }
+
+/* ---- Full player follows the player colour and accent ----
+   The full player always keeps a dark backdrop (white text, lyrics over the
+   cover), so light player colours use their own dark ink (--text) as base. */
+.np-full {
+    --np-base: var(--bg);
+    background:
+        radial-gradient(ellipse at 12% 15%, color-mix(in srgb, var(--accent) 42%, var(--np-base)), transparent 65%),
+        radial-gradient(ellipse at 92% 85%, color-mix(in srgb, var(--accent-2) 36%, var(--np-base)), transparent 65%),
+        color-mix(in srgb, var(--np-base) 86%, var(--accent) 14%);
+}
+:root[data-theme=light] .np-full { --np-base: color-mix(in srgb, var(--text) 90%, var(--accent) 10%); }
+.np-full__inner {
+    background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 22%, rgba(225,241,255,.14)), color-mix(in srgb, var(--accent-2) 18%, rgba(225,241,255,.12)));
+    border-color: color-mix(in srgb, var(--accent) 30%, rgba(226,242,255,.3));
+}
+.np-full__progress .range { --range-fill: color-mix(in srgb, var(--accent) 30%, #fff); }
+.np-full__progress .seekbar { --wave-played: color-mix(in srgb, var(--accent) 30%, #fff); }
+/* Toggles and hearts stay light enough on the dark backdrop in every theme. */
+.np-full .ctl--toggle.is-on { color: color-mix(in srgb, var(--accent) 60%, #fff); }
+.np-full .heart.is-on { color: color-mix(in srgb, var(--accent) 70%, #fff); }
+/* Very light accents get dark play icons, like the player bar. */
+:root:not([data-theme=light])[data-accent=silver] .np-full .ctl-play,
+:root:not([data-theme=light])[data-accent=amber] .np-full .ctl-play { color: var(--on-accent); }
+
+/* App background: besides the accent glow (top left) every player colour adds
+   its own glow (bottom right), so switching colours is visible even though the
+   dark bases are all close to black. Classic navy / light stay unchanged. */
+.app {
+    background:
+        radial-gradient(ellipse at 10% 0, color-mix(in srgb, var(--accent) 16%, transparent), transparent 60%),
+        radial-gradient(ellipse at 100% 100%, var(--bg-glow, transparent), transparent 60%),
+        var(--bg);
+}
+:root[data-theme=dark][data-palette=deepsea] { --bg-glow: rgba(34,211,238,.14); }
+:root[data-theme=dark][data-palette=forest] { --bg-glow: rgba(52,211,153,.12); }
+:root[data-theme=dark][data-palette=plum] { --bg-glow: rgba(167,139,250,.16); }
+:root[data-theme=light][data-palette=mist] { --bg-glow: rgba(100,116,139,.14); }
+:root[data-theme=light][data-palette=sky] { --bg-glow: rgba(14,165,233,.12); }
+:root[data-theme=light][data-palette=mint] { --bg-glow: rgba(16,185,129,.12); }
+:root[data-theme=light][data-palette=lilac] { --bg-glow: rgba(139,92,246,.12); }
