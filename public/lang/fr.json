@@ -2378,5 +2378,6 @@
   "jobs.retryStarted": "La tâche a été remise en file avec les mêmes réglages",
   "errors.RETRY_UNAVAILABLE": "Cette tâche ne peut pas être relancée (les fichiers envoyés sont supprimés après la tâche ; les réglages sont perdus au redémarrage du serveur).",
   "errors.RETRY_SOURCE_GONE": "Le fichier source n'existe plus.",
-  "errors.RETRY_NOT_FINISHED": "Seules les tâches échouées ou annulées peuvent être relancées."
+  "errors.RETRY_NOT_FINISHED": "Seules les tâches échouées ou annulées peuvent être relancées.",
+  "jobs.batchFailed": "{count} en échec"
 }

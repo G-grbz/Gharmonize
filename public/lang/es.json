@@ -2378,5 +2378,6 @@
   "jobs.retryStarted": "El trabajo se volvió a poner en cola con la misma configuración",
   "errors.RETRY_UNAVAILABLE": "Este trabajo no se puede reintentar (los archivos subidos se eliminan al terminar; la configuración se pierde al reiniciar el servidor).",
   "errors.RETRY_SOURCE_GONE": "El archivo de origen ya no existe.",
-  "errors.RETRY_NOT_FINISHED": "Solo se pueden reintentar trabajos fallidos o cancelados."
+  "errors.RETRY_NOT_FINISHED": "Solo se pueden reintentar trabajos fallidos o cancelados.",
+  "jobs.batchFailed": "{count} fallidos"
 }

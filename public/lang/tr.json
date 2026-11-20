@@ -2384,5 +2384,6 @@
   "jobs.retryStarted": "İş aynı ayarlarla yeniden kuyruğa alındı",
   "errors.RETRY_UNAVAILABLE": "Bu iş tekrar denenemiyor (yüklenen dosyalar iş bitince silinir; sunucu yeniden başlatıldıysa ayarlar da kaybolur).",
   "errors.RETRY_SOURCE_GONE": "Kaynak dosya artık yok, iş tekrar denenemiyor.",
-  "errors.RETRY_NOT_FINISHED": "Sadece hata alan veya iptal edilen işler tekrar denenebilir."
+  "errors.RETRY_NOT_FINISHED": "Sadece hata alan veya iptal edilen işler tekrar denenebilir.",
+  "jobs.batchFailed": "{count} başarısız"
 }

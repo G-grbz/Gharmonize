@@ -2353,5 +2353,6 @@
   "jobs.retryStarted": "Der Auftrag wurde mit denselben Einstellungen erneut eingereiht",
   "errors.RETRY_UNAVAILABLE": "Dieser Auftrag kann nicht wiederholt werden (hochgeladene Dateien werden danach gelöscht; nach einem Serverneustart gehen die Einstellungen verloren).",
   "errors.RETRY_SOURCE_GONE": "Die Quelldatei ist nicht mehr vorhanden.",
-  "errors.RETRY_NOT_FINISHED": "Nur fehlgeschlagene oder abgebrochene Aufträge können wiederholt werden."
+  "errors.RETRY_NOT_FINISHED": "Nur fehlgeschlagene oder abgebrochene Aufträge können wiederholt werden.",
+  "jobs.batchFailed": "{count} fehlgeschlagen"
 }

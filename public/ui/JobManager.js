@@ -791,85 +791,7 @@ updateJobUI(job, batchId = null) {
     const listRoot = document.getElementById('jobList');
     if (!listRoot) return;
 
-    if (!this.sessionSectionsInitialized) {
-        const empty = document.getElementById('job-empty');
-        if (empty) empty.remove();
-
-        const activeTitleKey = 'jobsPanel.activeGroupTitle';
-        const completedTitleKey = 'jobsPanel.completedGroupTitle';
-
-        const activeTitle = this.app.t(activeTitleKey);
-        const completedTitle = this.app.t(completedTitleKey);
-
-        listRoot.innerHTML = `
-            <section class="collapsible-section" data-section="active-session">
-                <button
-                    type="button"
-                    class="collapsible-section__header"
-                    aria-expanded="true"
-                >
-                    <span class="collapsible-section__title" data-i18n="${activeTitleKey}">
-                        ${activeTitle}
-                    </span>
-                    <span class="collapsible-section__badge" id="session-active-count">0</span>
-                    <span class="collapsible-section__icon" aria-hidden="true">▾</span>
-                </button>
-                <div class="collapsible-section__body" id="session-active-body"></div>
-            </section>
-
-            <section class="collapsible-section" data-section="completed-session">
-                <button
-                    type="button"
-                    class="collapsible-section__header"
-                    aria-expanded="false"
-                >
-                    <span class="collapsible-section__title" data-i18n="${completedTitleKey}">
-                        ${completedTitle}
-                    </span>
-                    <span class="collapsible-section__badge" id="session-completed-count">0</span>
-                    <span class="collapsible-section__icon" aria-hidden="true">▾</span>
-                </button>
-                <div class="collapsible-section__body" id="session-completed-body" hidden>
-                    <div class="jrow-toolbar">
-                        <button type="button" class="jrow-toolbar__btn" data-jobs-failed-only aria-pressed="false">${this.app.escapeHtml(this.app.t('jobs.failedOnly') || 'Only failed')}</button>
-                        <button type="button" class="jrow-toolbar__btn" data-jobs-clear>${this.app.escapeHtml(this.app.t('jobs.clearFinished') || 'Clear')}</button>
-                    </div>
-                </div>
-            </section>
-        `;
-
-        if (window.i18n?.apply) window.i18n.apply(listRoot);
-
-        listRoot.querySelectorAll('.collapsible-section__header').forEach(header => {
-            const body = header.parentElement.querySelector('.collapsible-section__body');
-            if (!body) return;
-            header.addEventListener('click', () => {
-                const expanded = header.getAttribute('aria-expanded') === 'true';
-                header.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-                body.hidden = expanded;
-                header.classList.toggle('is-collapsed', expanded);
-            });
-        });
-
-        if (!this.expandedJobs) this.expandedJobs = new Set();
-        bindJobRowToggles(listRoot, this.expandedJobs);
-        const completedSection = listRoot.querySelector('#session-completed-body');
-        completedSection?.querySelector('[data-jobs-failed-only]')?.addEventListener('click', (event) => {
-            const on = !completedSection.classList.contains('is-failed-only');
-            completedSection.classList.toggle('is-failed-only', on);
-            event.currentTarget.setAttribute('aria-pressed', String(on));
-        });
-        completedSection?.querySelector('[data-jobs-clear]')?.addEventListener('click', () => this.clearFinishedJobs());
-        listRoot.addEventListener('click', (event) => {
-            const button = event.target.closest?.('[data-retry]');
-            if (!button || !listRoot.contains(button)) return;
-            event.preventDefault();
-            event.stopPropagation();
-            this.retryJob(button.getAttribute('data-retry'), button);
-        });
-
-        this.sessionSectionsInitialized = true;
-    }
+    this.ensureSessionSections();
 
     const activeBody = document.getElementById('session-active-body');
     const completedBody = document.getElementById('session-completed-body');
@@ -880,78 +802,7 @@ updateJobUI(job, batchId = null) {
             this.jobStates.set(job.id, job);
             this.jobToBatch.set(job.id, batchKey);
 
-            if (statusNorm === 'completed' && job.resultPath && !Array.isArray(job.resultPath)) {
-                const nowTrackTitle = this.uiNowTitle(job);
-
-                const selIdx = Array.isArray(job.metadata?.selectedIndices)
-                    ? Number(job.metadata.selectedIndices[0])
-                    : null;
-
-                let entryBySel = null;
-                if (Number.isFinite(selIdx) && Array.isArray(job.metadata?.frozenEntries)) {
-                    entryBySel =
-                        job.metadata.frozenEntries.find(e => e.index === selIdx) ||
-                        job.metadata.frozenEntries[selIdx - 1] ||
-                        null;
-                }
-
-                const entry0 = Array.isArray(job.metadata?.frozenEntries) && job.metadata.frozenEntries.length
-                    ? job.metadata.frozenEntries[0]
-                    : null;
-
-                let resolvedTitle =
-                    nowTrackTitle ||
-                    job.metadata?.extracted?.track ||
-                    job.metadata?.extracted?.title ||
-                    entryBySel?.title ||
-                    entry0?.title ||
-                    job.metadata?.originalName ||
-                    (Number.isFinite(selIdx) &&
-                     this.app.previewManager?.currentPreview?.indexToTitle?.get(selIdx)) ||
-                    this.app.t('ui.track');
-
-                let hrefRaw;
-                if (typeof job.resultPath === 'string') {
-                    hrefRaw = job.resultPath;
-                } else if (job.resultPath && typeof job.resultPath === 'object') {
-                    hrefRaw = job.resultPath.outputPath || job.resultPath.path || '';
-                } else {
-                    hrefRaw = '';
-                }
-
-                if (hrefRaw) {
-                    this.appendBatchRow(batchKey, {
-                        title: resolvedTitle,
-                        href: hrefRaw
-                    });
-                }
-            }
-
             this.updateBatchProgress(batchKey);
-
-            const allJobs = Array.from(batch.jobs);
-            const completedJobs = allJobs.filter(jobId => {
-                const j = this.jobStates.get(jobId);
-                return j && this.normalizeStatus(j.status) === 'completed';
-            }).length;
-
-            if (completedJobs >= batch.total && !batch.el.querySelector('.zip-all')) {
-                const lastCompletedJob = allJobs
-                    .map(id => this.jobStates.get(id))
-                    .find(j => j && this.normalizeStatus(j.status) === 'completed' && j.zipPath);
-
-                if (lastCompletedJob && lastCompletedJob.zipPath) {
-                    const zipBtn = document.createElement('div');
-                    zipBtn.className = 'download-item zip-all';
-                    zipBtn.innerHTML = `
-                        <strong>${this.app.t('ui.all')}:</strong>
-                        <a href="${this.app.toRelative(lastCompletedJob.zipPath)}" class="download-btn" download>
-                            ${this.app.t('download.allZip')}
-                        </a>
-                    `;
-                    batch.el.querySelector('.download-list').appendChild(zipBtn);
-                }
-            }
         }
     }
 
@@ -1788,10 +1639,12 @@ updateJobUI(job, batchId = null) {
     jobElement.dataset.time = String(endedMs || startedMs || Date.now());
     jobElement.innerHTML = rowHtml;
 
-    const parentForJob = isTerminalJob ? completedBody : activeBody;
+    // Tracks of a sequential batch live inside the batch row's details.
+    const batchHost = batchKey ? this.batches.get(batchKey)?.el?.querySelector('.jrow-batch__jobs') : null;
+    const parentForJob = batchHost || (isTerminalJob ? completedBody : activeBody);
     if (parentForJob) {
         if (jobElement.parentElement !== parentForJob) parentForJob.appendChild(jobElement);
-        if (isTerminalJob) regroupFinishedRows(parentForJob, (key) => this.app.t(key), { rowSelector: '.job-item' });
+        if (isTerminalJob && !batchHost) regroupFinishedRows(parentForJob, (key) => this.app.t(key), { rowSelector: '.job-item' });
     }
 
     this.jobStates.set(job.id, job);
@@ -1859,7 +1712,95 @@ updateJobUI(job, batchId = null) {
         });
     }
 }
-    // Handles ensure batch in the browser UI layer.
+    // Builds the Active / Finished sections of the page job list once.
+    ensureSessionSections() {
+    const listRoot = document.getElementById('jobList');
+    if (!listRoot) return false;
+    if (!this.sessionSectionsInitialized) {
+        const empty = document.getElementById('job-empty');
+        if (empty) empty.remove();
+
+        const activeTitleKey = 'jobsPanel.activeGroupTitle';
+        const completedTitleKey = 'jobsPanel.completedGroupTitle';
+
+        const activeTitle = this.app.t(activeTitleKey);
+        const completedTitle = this.app.t(completedTitleKey);
+
+        listRoot.innerHTML = `
+            <section class="collapsible-section" data-section="active-session">
+                <button
+                    type="button"
+                    class="collapsible-section__header"
+                    aria-expanded="true"
+                >
+                    <span class="collapsible-section__title" data-i18n="${activeTitleKey}">
+                        ${activeTitle}
+                    </span>
+                    <span class="collapsible-section__badge" id="session-active-count">0</span>
+                    <span class="collapsible-section__icon" aria-hidden="true">▾</span>
+                </button>
+                <div class="collapsible-section__body" id="session-active-body"></div>
+            </section>
+
+            <section class="collapsible-section" data-section="completed-session">
+                <button
+                    type="button"
+                    class="collapsible-section__header"
+                    aria-expanded="false"
+                >
+                    <span class="collapsible-section__title" data-i18n="${completedTitleKey}">
+                        ${completedTitle}
+                    </span>
+                    <span class="collapsible-section__badge" id="session-completed-count">0</span>
+                    <span class="collapsible-section__icon" aria-hidden="true">▾</span>
+                </button>
+                <div class="collapsible-section__body" id="session-completed-body" hidden>
+                    <div class="jrow-toolbar">
+                        <button type="button" class="jrow-toolbar__btn" data-jobs-failed-only aria-pressed="false">${this.app.escapeHtml(this.app.t('jobs.failedOnly') || 'Only failed')}</button>
+                        <button type="button" class="jrow-toolbar__btn" data-jobs-clear>${this.app.escapeHtml(this.app.t('jobs.clearFinished') || 'Clear')}</button>
+                    </div>
+                </div>
+            </section>
+        `;
+
+        if (window.i18n?.apply) window.i18n.apply(listRoot);
+
+        listRoot.querySelectorAll('.collapsible-section__header').forEach(header => {
+            const body = header.parentElement.querySelector('.collapsible-section__body');
+            if (!body) return;
+            header.addEventListener('click', () => {
+                const expanded = header.getAttribute('aria-expanded') === 'true';
+                header.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+                body.hidden = expanded;
+                header.classList.toggle('is-collapsed', expanded);
+            });
+        });
+
+        if (!this.expandedJobs) this.expandedJobs = new Set();
+        bindJobRowToggles(listRoot, this.expandedJobs);
+        const completedSection = listRoot.querySelector('#session-completed-body');
+        completedSection?.querySelector('[data-jobs-failed-only]')?.addEventListener('click', (event) => {
+            const on = !completedSection.classList.contains('is-failed-only');
+            completedSection.classList.toggle('is-failed-only', on);
+            event.currentTarget.setAttribute('aria-pressed', String(on));
+        });
+        completedSection?.querySelector('[data-jobs-clear]')?.addEventListener('click', () => this.clearFinishedJobs());
+        listRoot.addEventListener('click', (event) => {
+            const button = event.target.closest?.('[data-retry]');
+            if (!button || !listRoot.contains(button)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.retryJob(button.getAttribute('data-retry'), button);
+        });
+
+        this.sessionSectionsInitialized = true;
+    }
+    return true;
+    }
+
+    // A sequential batch is one compact row: progress over all its tracks,
+    // "done/total", stop-all and (when ready) the zip; the tracks themselves
+    // are listed in its details.
     ensureBatch(batchId, total, meta) {
         let batch = this.batches.get(batchId);
 
@@ -1868,34 +1809,48 @@ updateJobUI(job, batchId = null) {
             return batch;
         }
 
-        const jobList = document.getElementById('jobList');
+        this.ensureSessionSections();
         const empty = document.getElementById('job-empty');
         if (empty) empty.remove();
 
-        const batchElement = document.createElement('div');
-        batchElement.className = 'job-item';
-        batchElement.id = `batch-${batchId}`;
+        const safeId = String(batchId);
+        const rowKey = `batch-${safeId}`;
+        const esc = (v) => this.app.escapeHtml(v);
         const sourceText = this.formatBatchSource(meta);
+        const formatText = [String(meta?.format || '').toUpperCase(), meta?.bitrate && !['auto', '0'].includes(String(meta.bitrate)) ? String(meta.bitrate) : '']
+            .filter(Boolean).join(' ');
+        if (!this.expandedJobs) this.expandedJobs = new Set();
+        const expanded = this.expandedJobs.has(rowKey);
+
+        // A restored session may still have the old element: replace it.
+        document.getElementById(rowKey)?.remove();
+        const batchElement = document.createElement('div');
+        batchElement.className = 'job-item jrow jrow--active jrow--batch';
+        batchElement.id = rowKey;
+        batchElement.dataset.time = String(Date.now());
         batchElement.innerHTML = `
-            <strong>${sourceText} — ${this.app.t('label.sequential')}</strong>
-            <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
-                ${meta?.format?.toUpperCase() || ''} • ${meta?.bitrate || ''}
+            <div class="jrow__head">
+                <span class="jrow__dot" aria-hidden="true"></span>
+                <div class="jrow__text">
+                    <div class="jrow__title" title="${esc(sourceText)}">${esc(sourceText)}</div>
+                    <div class="jrow__sub">${esc(this.app.t('label.sequential'))} · <span id="batch-done-${esc(safeId)}">0</span>/<span id="batch-total-${esc(safeId)}">${esc(total || '?')}</span>${formatText ? ` · ${esc(formatText)}` : ''}<span class="jrow-batch__note" id="batch-note-${esc(safeId)}"></span></div>
+                </div>
+                <div class="jrow__actions">
+                    <a class="jrow__btn jrow__btn--download" id="batch-zip-${esc(safeId)}" download hidden
+                        title="${esc(this.app.t('download.allZip'))}" aria-label="${esc(this.app.t('download.allZip'))}">⬇</a>
+                    <button type="button" class="jrow__btn jrow__btn--stop" data-stop-batch="${esc(safeId)}"
+                        title="${esc(this.app.t('btn.stop'))}" aria-label="${esc(this.app.t('btn.stop'))}">■</button>
+                    <button type="button" class="jrow__more" data-job-toggle="${esc(rowKey)}" aria-expanded="${expanded}"
+                        title="${esc(this.app.t('jobs.details'))}" aria-label="${esc(this.app.t('jobs.details'))}">›</button>
+                </div>
             </div>
-            <div class="progress-bar">
-                <div class="progress-fill" id="batch-progress-${batchId}" style="width: 0%"></div>
+            <div class="jrow__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span id="batch-progress-${esc(safeId)}" style="width:0%"></span></div>
+            <div class="jrow__details"${expanded ? '' : ' hidden'}>
+                <div class="jrow-batch__jobs" id="batch-jobs-${esc(safeId)}"></div>
             </div>
-            <div class="batch-info">
-                ${this.app.t('batch.done')}: <span id="batch-done-${batchId}">0</span> / <span id="batch-total-${batchId}">${total || '?'}</span>
-            </div>
-            <div class="batch-actions" style="margin:8px 0 4px; display:flex; justify-content:flex-end;">
-                <button class="btn-danger" data-stop-batch="${batchId}">
-                    ${this.app.t('btn.stop') || 'Hepsini Durdur'}
-                </button>
-            </div>
-            <div class="download-list" id="batch-list-${batchId}"></div>
         `;
 
-        jobList.appendChild(batchElement);
+        document.getElementById('session-active-body')?.appendChild(batchElement);
 
         batch = {
             el: batchElement,
@@ -1906,39 +1861,19 @@ updateJobUI(job, batchId = null) {
         };
 
         this.batches.set(batchId, batch);
-        const stopBtn = batchElement.querySelector(`[data-stop-batch="${batchId}"]`);
+        const stopBtn = batchElement.querySelector('[data-stop-batch]');
         if (stopBtn) {
-            stopBtn.addEventListener('click', () => this.cancelBatch(batchId));
+            stopBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.cancelBatch(batchId);
+            });
         }
         this.saveSessionState();
         return batch;
     }
 
-    // Handles append batch row in the browser UI layer.
-    appendBatchRow(batchId, { title, href }) {
-        const list = document.getElementById(`batch-list-${batchId}`);
-        if (!list) return;
-
-        let raw = '';
-            if (typeof href === 'string') {
-                raw = href;
-            } else if (href && typeof href === 'object') {
-                raw = href.outputPath || href.path || '';
-            }
-            if (!raw) return;
-
-    const finalHref = this.app.toRelative(raw);
-
-        const row = document.createElement('div');
-        row.className = 'download-item';
-        row.innerHTML = `
-            <span>${this.app.escapeHtml(title || this.app.t('ui.track'))}</span>
-            <a href="${finalHref}" class="download-btn" download>${this.app.t('download.single')}</a>
-        `;
-        list.appendChild(row);
-    }
-
-    // Updates batch progress for the browser UI layer.
+    // Updates the batch row: progress, counts, zip, and when every track has
+    // finished, its final state and place among the finished jobs.
     updateBatchProgress(batchId) {
         const batch = this.batches.get(batchId);
         if (!batch) return;
@@ -1951,13 +1886,18 @@ updateJobUI(job, batchId = null) {
 
         let totalProgressSum = 0;
         let completedCount = 0;
+        let failedCount = 0;
+        let lastEnded = 0;
 
         for (const j of jobs) {
             const status = this.normalizeStatus(j.status);
 
-            if (status === 'completed') {
+            if (['completed', 'error', 'canceled'].includes(status)) {
                 totalProgressSum += 100;
-                completedCount++;
+                if (status === 'completed') completedCount++;
+                else failedCount++;
+                const ended = jobTimeMs(j.completedAt) || jobTimeMs(j.updatedAt) || jobTimeMs(j.createdAt);
+                if (ended > lastEnded) lastEnded = ended;
                 continue;
             }
 
@@ -1968,33 +1908,65 @@ updateJobUI(job, batchId = null) {
                 cv = Number(j.convertProgress ?? 0) || 0;
             }
 
-            let single;
-            if (dl && cv) {
-                single = dl * 0.5 + cv * 0.5;
-            } else {
-                single = dl || cv;
-            }
+            const single = (dl && cv) ? dl * 0.5 + cv * 0.5 : (dl || cv);
             totalProgressSum += Math.max(0, Math.min(100, single));
         }
 
         const percentage = Math.min(100, Math.max(0, totalProgressSum / total));
-
         batch.done = completedCount;
 
-        const progressElement = document.getElementById(`batch-progress-${batchId}`);
-        const doneElement = document.getElementById(`batch-done-${batchId}`);
-        const totalElement = document.getElementById(`batch-total-${batchId}`);
-
+        const id = String(batchId);
+        const progressElement = document.getElementById(`batch-progress-${id}`);
+        const doneElement = document.getElementById(`batch-done-${id}`);
+        const totalElement = document.getElementById(`batch-total-${id}`);
+        const noteElement = document.getElementById(`batch-note-${id}`);
         if (progressElement) progressElement.style.width = `${percentage}%`;
-        if (doneElement) doneElement.textContent = completedCount;
-        if (totalElement) totalElement.textContent = total;
+        if (doneElement) doneElement.textContent = String(completedCount);
+        if (totalElement) totalElement.textContent = String(total);
+        if (noteElement) {
+            noteElement.textContent = failedCount
+                ? ` · ${this.app.t('jobs.batchFailed', { count: failedCount })}`
+                : '';
+        }
 
-        const anyActive = jobs.some(j => {
-            const s = this.normalizeStatus(j.status);
-            return !['completed', 'error', 'canceled'].includes(s);
-        });
-        const stopBtn = document.querySelector(`[data-stop-batch="${batchId}"]`);
-        if (stopBtn) stopBtn.disabled = !anyActive;
+        const anyActive = jobs.some(j => !['completed', 'error', 'canceled'].includes(this.normalizeStatus(j.status)));
+        const finished = !anyActive && jobs.length > 0 && jobs.length >= (batch.total || 0);
+        const stopBtn = batch.el?.querySelector('[data-stop-batch]');
+        if (stopBtn) {
+            stopBtn.disabled = !anyActive;
+            stopBtn.hidden = finished;
+        }
+
+        const zipJob = jobs.find(j => this.normalizeStatus(j.status) === 'completed' && j.zipPath);
+        const zipLink = document.getElementById(`batch-zip-${id}`);
+        if (zipLink) {
+            if (zipJob && finished) {
+                zipLink.href = this.app.toRelative(zipJob.zipPath);
+                zipLink.hidden = false;
+            } else {
+                zipLink.hidden = true;
+            }
+        }
+
+        const el = batch.el;
+        if (!el) return;
+        const state = !finished ? 'active'
+            : (completedCount === 0
+                ? (jobs.every(j => this.normalizeStatus(j.status) === 'canceled') ? 'canceled' : 'error')
+                : (failedCount > 0 ? 'warn' : 'done'));
+        el.classList.remove('jrow--active', 'jrow--done', 'jrow--warn', 'jrow--error', 'jrow--canceled');
+        el.classList.add(`jrow--${state}`);
+        const bar = el.querySelector(':scope > .jrow__bar');
+        if (bar) bar.hidden = finished;
+
+        const activeBody = document.getElementById('session-active-body');
+        const completedBody = document.getElementById('session-completed-body');
+        const target = finished ? completedBody : activeBody;
+        if (target && el.parentElement !== target) target.appendChild(el);
+        if (finished) {
+            el.dataset.time = String(lastEnded || Date.now());
+            if (completedBody) regroupFinishedRows(completedBody, (key) => this.app.t(key), { rowSelector: '.job-item' });
+        }
     }
 
     // Starts a failed or canceled job again with its original settings. The
@@ -2032,10 +2004,17 @@ updateJobUI(job, batchId = null) {
     // The retried job takes the old row's place on this page.
     adoptRetriedJob(oldId, newId) {
         if (!newId || this.jobStates.has(newId) || this.currentJobs.has(newId)) return;
+        // A retried track stays in its sequential batch.
+        const batchId = this.jobToBatch.get(oldId) || null;
+        const batch = batchId ? this.batches.get(batchId) : null;
+        if (batch) {
+            batch.jobs.add(newId);
+            this.jobToBatch.set(newId, batchId);
+        }
         if (this.jobStates.has(oldId)) this.removeJobCompletely(oldId);
         const empty = document.getElementById('job-empty');
         if (empty) empty.remove();
-        this.trackJob(newId);
+        this.trackJob(newId, batch ? batchId : null);
         this.saveSessionState();
     }
 

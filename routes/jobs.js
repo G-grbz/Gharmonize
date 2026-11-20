@@ -880,15 +880,20 @@ router.post("/api/jobs/:id/retry", rateLimit(20, 60_000), requireLocalJobAuth, (
   if (old && !["error", "canceled", "cancelled"].includes(status)) {
     return sendError(res, "RETRY_NOT_FINISHED", "Only failed or canceled jobs can be retried", 409);
   }
-  // Local-folder jobs need the admin, exactly like when they were created.
-  if (spec.inputPath && isPathInsideRoot(LOCAL_INPUT_DIR, path.resolve(spec.inputPath)) && !req.adminAuth) {
-    return sendError(res, "UNAUTHORIZED", "Unauthorized", 401);
-  }
-  if (spec.inputPath && !/^https?:\/\//i.test(spec.inputPath) && !fs.existsSync(spec.inputPath)) {
-    return sendError(res, "RETRY_SOURCE_GONE", "The source file is no longer available", 410);
+  // A file source must still be inside the local-input folder; such jobs
+  // need the admin, exactly like when they were created.
+  if (spec.inputPath && !/^https?:\/\//i.test(spec.inputPath)) {
+    const candidate = path.resolve(String(spec.inputPath));
+    if (!isPathInsideRoot(LOCAL_INPUT_DIR, candidate)) {
+      return sendError(res, "RETRY_UNAVAILABLE", "This job cannot be retried", 404);
+    }
+    if (!req.adminAuth) return sendError(res, "UNAUTHORIZED", "Unauthorized", 401);
+    if (!fs.existsSync(candidate)) {
+      return sendError(res, "RETRY_SOURCE_GONE", "The source file is no longer available", 410);
+    }
   }
   let init;
-  try { init = JSON.parse(spec.initial); } catch {
+  try { init = structuredClone(spec.initial); } catch {
     return sendError(res, "RETRY_UNAVAILABLE", "This job cannot be retried", 404);
   }
   init.clientBatch = null;
@@ -1686,7 +1691,7 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), requireLo
     };
     // Snapshot before processing changes the job, for "retry" later.
     let retryInitial = null;
-    try { retryInitial = JSON.stringify(jobInit); } catch {}
+    try { retryInitial = structuredClone(jobInit); } catch {}
     const job = createJob(jobInit);
     const jobId = job.id;
     rememberJobRetry(job, { inputPath, format, bitrate, initial: retryInitial });

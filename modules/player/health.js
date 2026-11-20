@@ -11,6 +11,11 @@ import path from 'node:path'
 import { songKey } from './songKey.js'
 import { albumBaseKey, artistsMatch } from './matching.js'
 
+// Covers are saved as cover.jpg: only real JPEG data is written.
+function isJpeg(bytes) {
+  return bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+}
+
 const LOW_BITRATE = 160_000
 const DUPLICATE_SECONDS = 4
 const LIST_MAX = 500
@@ -179,9 +184,15 @@ export function createLibraryHealth({ db, libraries, artwork, scanner, sources, 
     if (!res.ok) throw new HealthError('COVER_DOWNLOAD_FAILED', `Cover download failed (HTTP ${res.status}).`, 502)
     const bytes = Buffer.from(await res.arrayBuffer())
     if (bytes.length < 1000 || bytes.length > 15 * 1024 * 1024) throw new HealthError('COVER_DOWNLOAD_FAILED', 'The cover file looks wrong.', 502)
+    if (!isJpeg(bytes)) throw new HealthError('COVER_DOWNLOAD_FAILED', 'The cover file looks wrong.', 502)
     const target = path.join(dirs[0], 'cover.jpg')
-    if (fs.existsSync(target)) throw new HealthError('COVER_EXISTS', 'cover.jpg already exists in the album folder.', 409)
-    await fs.promises.writeFile(target, bytes, { flag: 'wx' })
+    // "wx" fails when the file exists, so there is no check-then-write gap.
+    try {
+      await fs.promises.writeFile(target, bytes, { flag: 'wx' })
+    } catch (error) {
+      if (error?.code === 'EEXIST') throw new HealthError('COVER_EXISTS', 'cover.jpg already exists in the album folder.', 409)
+      throw error
+    }
     artwork.invalidate()
     if (report) report.missingCovers = report.missingCovers.filter((a) => a.id !== album.id)
     return { ok: true, source: found.url || null }

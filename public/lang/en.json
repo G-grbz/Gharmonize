@@ -2384,5 +2384,6 @@
   "jobs.retryStarted": "The job was queued again with the same settings",
   "errors.RETRY_UNAVAILABLE": "This job cannot be retried (uploaded files are removed after a job; settings are lost when the server restarts).",
   "errors.RETRY_SOURCE_GONE": "The source file is gone, so the job cannot be retried.",
-  "errors.RETRY_NOT_FINISHED": "Only failed or canceled jobs can be retried."
+  "errors.RETRY_NOT_FINISHED": "Only failed or canceled jobs can be retried.",
+  "jobs.batchFailed": "{count} failed"
 }

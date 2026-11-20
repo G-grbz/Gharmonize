@@ -15,6 +15,14 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { normalizeKey } from './scanner.js'
 
+// Only real picture data (JPEG, PNG, WebP) is written to the cache.
+function isImageData(bytes) {
+  if (bytes.length < 12) return false
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return true
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return true
+  return bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP'
+}
+
 const PHOTO_HOSTS = /^https:\/\/[a-z0-9.-]+\.(dzcdn\.net|deezer\.com)\//i
 // Deezer answers artists without a photo with an empty-hash default picture.
 const PLACEHOLDER = /\/images\/artist\/\//i
@@ -154,6 +162,7 @@ export function createArtistPhotos({ cacheDir, db, logger = console, fetchImpl =
     if (!/^image\//i.test(res.headers?.get?.('content-type') || 'image/jpeg')) throw new Error('not an image')
     const bytes = Buffer.from(await res.arrayBuffer())
     if (bytes.length < 1000 || bytes.length > MAX_BYTES) throw new Error('bad size')
+    if (!isImageData(bytes)) throw new Error('not an image')
     await save(job.hash, bytes)
     for (const fn of listeners) { try { fn(job.artistId) } catch {} }
   }

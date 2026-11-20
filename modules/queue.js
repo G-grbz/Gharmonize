@@ -39,7 +39,7 @@ async function runQueue() {
       try {
         await fn();
       } catch (err) {
-        console.error(`[queue] Job ${jobId} hata:`, err);
+        console.error("[queue] Job %s hata:", String(jobId), err);
       }
     }
   } finally {

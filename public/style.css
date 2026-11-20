@@ -6194,6 +6194,7 @@ body.retag-mode #normalUrlActions {
   padding: 8px 10px;
 }
 
+.jrow--active { --jrow-dot: var(--primary); }
 .jrow--done { --jrow-dot: var(--success); }
 .jrow--warn { --jrow-dot: var(--warning); }
 .jrow--error { --jrow-dot: var(--error); }
@@ -6214,7 +6215,7 @@ body.retag-mode #normalUrlActions {
   width: 9px;
 }
 
-.jrow--done .jrow__dot,.jrow--warn .jrow__dot,.jrow--error .jrow__dot,.jrow--canceled .jrow__dot {
+.jrow--done > .jrow__head > .jrow__dot,.jrow--warn > .jrow__head > .jrow__dot,.jrow--error > .jrow__head > .jrow__dot,.jrow--canceled > .jrow__head > .jrow__dot {
   background: transparent;
   color: var(--jrow-dot);
   font-size: 13px;
@@ -6225,10 +6226,10 @@ body.retag-mode #normalUrlActions {
   width: 14px;
 }
 
-.jrow--done .jrow__dot:before { content: "✓"; }
-.jrow--warn .jrow__dot:before { content: "!"; }
-.jrow--error .jrow__dot:before { content: "✕"; }
-.jrow--canceled .jrow__dot:before { content: "■"; font-size: 10px; }
+.jrow--done > .jrow__head > .jrow__dot:before { content: "✓"; }
+.jrow--warn > .jrow__head > .jrow__dot:before { content: "!"; }
+.jrow--error > .jrow__head > .jrow__dot:before { content: "✕"; }
+.jrow--canceled > .jrow__head > .jrow__dot:before { content: "■"; font-size: 10px; }
 
 .jrow__text {
   flex: 1 1 auto;
@@ -6253,7 +6254,7 @@ body.retag-mode #normalUrlActions {
   white-space: nowrap;
 }
 
-.jrow--error .jrow__sub { color: color-mix(in oklab,var(--error) 75%,var(--text)); }
+.jrow--error > .jrow__head .jrow__sub { color: color-mix(in oklab,var(--error) 75%,var(--text)); }
 
 .jrow__actions {
   align-items: center;
@@ -6283,6 +6284,12 @@ body.retag-mode #normalUrlActions {
 .jrow__btn--stop { color: var(--error); font-size: 11px; }
 .jrow__btn--download { color: var(--primary); }
 .jrow__btn--retry { color: var(--primary); font-size: 16px; }
+.jrow__btn[hidden],.jrow__bar[hidden] { display: none; }
+
+/* Sequential batch: its tracks are compact rows inside the details. */
+.jrow-batch__jobs { display: flex; flex-direction: column; gap: 6px; }
+.jrow-batch__jobs > .jrow { background: var(--bg); border-style: dashed; }
+.jrow--batch > .jrow__head .jrow__title:before { content: "▤ "; color: var(--text-muted); font-weight: 400; }
 
 .jrow__more {
   border-color: transparent;
