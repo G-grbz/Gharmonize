@@ -5,7 +5,7 @@
 import { app } from './app.js'
 import { get, post, artworkUrl } from './api.js'
 import { h, t, icon, modal, toast, toastError, iconButton, plural, artwork } from './dom.js'
-import { refreshPlaylists } from './components.js'
+import { refreshPlaylists, onlinePlaylistRoute } from './components.js'
 
 /** Name that does not clash with the user's playlists: "Name", "Name 2"… */
 export function suggestName(base) {
@@ -24,9 +24,11 @@ export function suggestName(base) {
  *  - name: suggested playlist name
  *  - trackIds | getTrackIds(): library tracks to save
  *  - onlineItem: online album / playlist / track (downloaded into the playlist)
+ *  - onlineTracks: the songs of a mix that has no downloadable link (Deezer
+ *    artist mixes); fetched when not given. Each missing song is downloaded.
  *  - count: number shown in the dialog (optional)
  */
-export async function saveToPlaylistDialog({ name = '', trackIds = null, getTrackIds = null, onlineItem = null, count = null } = {}) {
+export async function saveToPlaylistDialog({ name = '', trackIds = null, getTrackIds = null, onlineItem = null, onlineTracks = null, count = null } = {}) {
   if (onlineItem && !onlineItem.library && !app.canDownload) {
     toast(t('player.downloads.notAllowed'), { type: 'error' })
     return null
@@ -91,6 +93,19 @@ export async function saveToPlaylistDialog({ name = '', trackIds = null, getTrac
   })
   if (!result) return null
   try {
+    // A mix without a downloadable link: owned songs now, the others are
+    // downloaded one by one into the playlist.
+    if (onlineItem?.downloadable === false) {
+      const tracks = onlineTracks || (await get(onlinePlaylistRoute(onlineItem))).tracks || []
+      const owned = [...new Set([...(trackIds || []), ...tracks.map((tr) => tr.library?.trackId)].map(Number).filter((n) => n > 0))]
+      const pl = await createOrExtend(result, owned)
+      await refreshPlaylists()
+      const missing = tracks.filter((tr) => !tr.library?.trackId && tr.url)
+      for (const tr of missing) await app.downloads.request(tr, { playlistId: pl.id, quiet: true })
+      toast(missing.length ? t('player.save.mixQueued', { n: missing.length, name: pl.name || result.name || '' }) : t('player.playlist.addedTo', { name: pl.name || result.name || '' }),
+        { type: 'success', action: { label: t('player.save.open'), run: () => app.nav(`/playlist/${pl.id}`) } })
+      return pl
+    }
     // Online album / playlist / track: download into the playlist.
     if (onlineItem && !(onlineItem.library?.trackId || onlineItem.library?.trackIds || onlineItem.library?.albumId)) {
       // Songs already in the library go in right away; the rest follow
@@ -135,6 +150,16 @@ export async function saveToPlaylistDialog({ name = '', trackIds = null, getTrac
     toastError(error)
     return null
   }
+}
+
+// New playlist with these songs, or the songs added to the chosen one.
+async function createOrExtend(result, ids) {
+  if (result.mode === 'new') return post('/playlists', { name: result.name, trackIds: ids })
+  const current = await get(`/playlists/${result.playlistId}`)
+  const have = new Set(current.tracks.map((tr) => tr.id))
+  const fresh = ids.filter((id) => !have.has(id))
+  if (fresh.length) await post(`/playlists/${result.playlistId}/tracks`, { trackIds: fresh })
+  return { id: result.playlistId, name: current.name }
 }
 
 async function libraryIdsOf(item) {

@@ -68,7 +68,7 @@ function runFfmpeg(args, { timeoutMs = FFMPEG_TIMEOUT_MS } = {}) {
   })
 }
 
-export function createArtworkService({ cacheDir, db, libraries, parseFile = null, logger = console }) {
+export function createArtworkService({ cacheDir, db, libraries, parseFile = null, logger = console, artistPhotos = null }) {
   const srcDir = path.join(cacheDir, 'artwork', 'src')
   const outDir = path.join(cacheDir, 'artwork', 'sized')
   fs.mkdirSync(srcDir, { recursive: true })
@@ -90,6 +90,11 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
     }
     return stmt
   }
+
+  // Artists followed from an online page may have no songs here; their
+  // follower still sees their photo.
+  const followedStmt = db.prepare("SELECT 1 FROM favorites WHERE user_id = ? AND item_type = 'artist' AND item_id = ?")
+  const followedBy = (userId, artistId) => Boolean(followedStmt.get(Number(userId) || 0, Number(artistId)))
 
   function libraryPath(id) {
     if (!libraryPaths) {
@@ -220,6 +225,8 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
     try { rows = kind === 'playlist' ? playlistRows(id, userId, VERSION_COLS) : candidateTracks(kind, id, userId, VERSION_COLS) } catch {}
     const hash = crypto.createHash('sha1').update(`${installId}\0${kind}\0${id}`)
     for (const r of rows) hash.update(`\0${r.id}\0${libraryPath(r.library_id)}\0${r.rel_path}\0${r.size}\0${r.mtime_ms}`)
+    // An artist's online photo (when one is stored) changes the URL too.
+    if (kind === 'artist' && artistPhotos) hash.update(`\0photo\0${artistPhotos.token(id)}`)
     const token = hash.digest('hex').slice(0, 16)
     if (kind !== 'playlist') {
       if (versions.size >= MEMO_LIMIT) versions.clear()
@@ -317,6 +324,16 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
       const result = kind === 'playlist'
         ? await playlistArtwork(id, size, userId)
         : await (async () => {
+          if (kind === 'artist' && artistPhotos) {
+            // Online photo first (only for artists this user can see), else
+            // the covers of the artist's own songs.
+            const own = candidateTracks('artist', id, userId, 't.id').length > 0
+            if (!own && !followedBy(userId, id)) return null
+            const photo = artistPhotos.photo(id)
+            if (photo) return resize(photo, size)
+            if (!own) return null
+            artistPhotos.want(id)
+          }
           const src = await sourceFor(kind, id, userId)
           return src ? resize(src, size) : null
         })()
@@ -334,5 +351,18 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
     libraryPaths = null
   }
 
-  return { getArtwork, versionFor, versionRefs, invalidate }
+  // A new artist photo: forget the remembered URL tokens and "no artwork"
+  // answers of that artist so the next API answer points at the photo.
+  artistPhotos?.onChange((artistId) => {
+    const suffix = `:artist:${Number(artistId)}`
+    for (const key of versions.keys()) if (key.endsWith(suffix)) versions.delete(key)
+    for (const key of negative.keys()) if (key.includes(`${suffix}:`)) negative.delete(key)
+  })
+
+  // Library health: does this album have any cover (embedded or folder)?
+  async function albumHasCover(albumId, userId) {
+    return Boolean(await sourceFor('album', albumId, userId))
+  }
+
+  return { getArtwork, versionFor, versionRefs, invalidate, albumHasCover }
 }

@@ -233,6 +233,7 @@ export function createCoreAdapter({ logger = console } = {}) {
       await m.mappedCache.mapMappedMusicWithCache({ ...resolved, items }, {
         url: info.url,
         source: mapped.source,
+        format,
         concurrency: common.spotifyConcurrency,
         replaceManifest: true,
         onUpdate: (idx, item) => {

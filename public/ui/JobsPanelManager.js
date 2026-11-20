@@ -1,5 +1,6 @@
 import { collectJobOutputPaths, outputExistenceClient } from './OutputExistenceClient.js';
 import { jobTimingMarkup, escapeTimingHtml } from './JobTimingView.js';
+import { jobRowMarkup, jobRowState, joinSummary, formatElapsed, jobTimeMs, jobDayGroup, jobDayLabel, bindJobRowToggles } from './JobRow.js';
 
 export class JobsPanelManager {
     // Initializes class state and defaults for the browser UI layer.
@@ -27,6 +28,11 @@ export class JobsPanelManager {
         this.progressCache = new Map();
         this.completedAtCache = new Map();
         this.storageKey = 'gharmonize_jobs_panel_state';
+        if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+            document.addEventListener('job:retried', (event) => {
+                if (event.detail?.from === 'page' && event.detail.oldId) this.forgetRetried(event.detail.oldId);
+            });
+        }
         this.lastSavedItems = null;
         this.lastServerItems = null;
         this.lastServerCheckAt = 0;
@@ -1224,8 +1230,9 @@ export class JobsPanelManager {
     if (!this.list) return;
     const prevScrollTop = this.list.scrollTop;
 
+    const hidden = this.hiddenJobIds();
     const allItems = Array.isArray(this.state.items)
-        ? this.state.items.slice()
+        ? this.state.items.filter(j => !hidden.has(String(j.id)))
         : [];
 
     const items = (this.filter === 'active')
@@ -1335,44 +1342,34 @@ export class JobsPanelManager {
         return;
     }
 
-    const jobsHtml = items.map(j => {
-        const p = this.prog(j);
-        let downloadLinks = '';
+    if (!this.expandedJobs) this.expandedJobs = new Set();
+    const isFinished = (j) => ['completed', 'error', 'canceled'].includes(this.norm(j.status));
+    const timeOf = (j) => jobTimeMs(j.completedAt) || jobTimeMs(j.updatedAt) || jobTimeMs(j.createdAt) || 0;
 
-        if (j.status === 'completed') {
-            if (typeof j.resultPath === 'string' && j.resultPath) {
-                downloadLinks = `<a class="link" href="${j.resultPath}" download>${this.t('jobsPanel.downloadFile')}</a>`;
-            } else if (Array.isArray(j.resultPath)) {
-                const successfulResults = j.resultPath.filter(r => r.outputPath && !r.error);
-                if (successfulResults.length > 0) {
-                    if (j.zipPath) {
-                        downloadLinks = `<a class="link" href="${j.zipPath}" download>${this.t('jobsPanel.downloadZip')}</a>`;
-                    } else {
-                        downloadLinks = `<span class="link" style="opacity:.8" title="${this.t('jobsPanel.multipleOutputs')}">${this.t('jobsPanel.multiple')}</span>`;
-                    }
-                }
-            } else if (typeof j.resultPath === 'object' && j.resultPath?.outputPath) {
-                downloadLinks = `<a class="link" href="${j.resultPath.outputPath}" download>${this.t('jobsPanel.downloadFile')}</a>`;
+    const rowFor = (j) => {
+        const p = this.prog(j);
+        const status = this.norm(j.status);
+        const finished = isFinished(j);
+
+        let downloadHref = '';
+        if (status === 'completed') {
+            if (j.zipPath) downloadHref = j.zipPath;
+            else if (typeof j.resultPath === 'string' && j.resultPath) downloadHref = j.resultPath;
+            else if (j.resultPath && !Array.isArray(j.resultPath) && j.resultPath.outputPath) downloadHref = j.resultPath.outputPath;
+            else if (Array.isArray(j.resultPath)) {
+                const ok = j.resultPath.filter(r => r && r.outputPath && !r.error);
+                if (ok.length === 1) downloadHref = ok[0].outputPath;
             }
         }
 
         const baseTitle = this.titleOf(j);
         const nowT = this.nowTitle(j);
-        const titleText = (j.metadata?.isPlaylist && nowT)
-            ? `${baseTitle} — ${nowT}`
-            : (nowT || baseTitle);
-
         const fmt = String(j.format || '').toLowerCase();
         const videoFormats = ['mp4', 'mkv', 'webm', 'avi', 'mov'];
         const audioFormats = ['mp3', 'aac', 'm4a', 'ogg', 'opus', 'flac', 'wav', 'alac', 'eac3', 'ac3'];
-
         let formatEmoji = '📁';
-        if (videoFormats.includes(fmt)) {
-            formatEmoji = '🎬';
-        } else if (audioFormats.includes(fmt)) {
-            formatEmoji = '🎧';
-        }
-
+        if (videoFormats.includes(fmt)) formatEmoji = '🎬';
+        else if (audioFormats.includes(fmt)) formatEmoji = '🎧';
         const fpsEmoji = '🎯';
         const sampleRateEmoji = '📡';
         const channelsEmoji = '🎚️';
@@ -1386,33 +1383,27 @@ export class JobsPanelManager {
             (j.lastLog && skippedKeywords.test(String(j.lastLog))) ||
             (j.lastLogKey && skippedKeywords.test(String(j.lastLogKey))) ||
             (j.error && skippedKeywords.test(String(j.error?.message || j.error)));
-
         const skippedBadge = showSkippedBadge
             ? `<span class="chip chip--warn" title="atlananlar">⚠️ ${this.t('jobs.skipped')}${skippedCount ? ` (${skippedCount})` : ''}</span>`
             : '';
 
-        const cancelInfo = (j.canceledBy === 'user')
-            ? `<div class="muted" style="font-size:12px;margin-top:4px;">
-                    ${this.t('status.canceled')}
-            </div>`
-            : '';
-
-        let completedAtInfo = '';
-        if (this.norm(j.status) === 'completed' && j.completedAt) {
-            const d = new Date(j.completedAt);
-            const formatted = d.toLocaleString();
-            completedAtInfo = `
-                <div class="muted" style="font-size:12px;margin-top:4px;">
-                    🕒 ${formatted}
-                </div>
-            `;
+        let fileList = '';
+        if (status === 'completed' && Array.isArray(j.resultPath)) {
+            const ok = j.resultPath.filter(r => r && r.outputPath && !r.error);
+            if (ok.length > 1 && !j.zipPath) {
+                fileList = `<div class="jrow-detail__files">${ok.map((r, i) => {
+                    const name = String(r.outputPath).split('/').pop() || `${i + 1}`;
+                    let label = name;
+                    try { label = decodeURIComponent(name); } catch (_) {}
+                    return `<a class="link" href="${escapeTimingHtml(r.outputPath)}" download>${escapeTimingHtml(label)}</a>`;
+                }).join('')}</div>`;
+            }
         }
 
-        return `
-            <div class="job-card status-${escapeTimingHtml(this.norm(j.status))}" data-job-id="${escapeTimingHtml(j.id)}">
-                <div class="job-title">${this.statusDot(j)}<span title="${escapeTimingHtml(titleText)}">${escapeTimingHtml(titleText)}</span></div>
-
-                <div class="job-meta">
+        const started = jobTimeMs(j.createdAt);
+        const ended = jobTimeMs(j.completedAt);
+        const details = `
+            <div class="job-meta">
                     <span class="pill">${this.sourcePill(j)}</span>
                     <span class="pill">${formatEmoji} ${(j.format || '').toUpperCase()} ${j.bitrate ? `• ${bitrateEmoji} ${j.bitrate}` : ''}</span>
                     ${j.sampleRate ? `
@@ -1436,17 +1427,17 @@ export class JobsPanelManager {
                     ` : ''}
                     ${videoFpsText ?
                         `<span class="pill" title="FPS">${fpsEmoji} ${videoFpsText} ${this.t('ui.fps') || 'FPS'}</span>` : ''}
-                    ${j.videoSettings?.audioChannels && j.videoSettings.audioChannels !== 'original' ?
+                    ${j.videoSettings?.audioTranscodeEnabled && j.videoSettings.audioChannels && j.videoSettings.audioChannels !== 'original' ?
                         `<span class="pill" title="${this.t('label.stereoConvert')}">
                             ${channelsEmoji} ${this.getChannelsText(j.videoSettings.audioChannels)}
                         </span>` : ''}
-                    ${j.videoSettings?.audioSampleRate && j.videoSettings.audioSampleRate !== '48000' ?
+                    ${j.videoSettings?.audioTranscodeEnabled && j.videoSettings.audioSampleRate && !['48000', 'original'].includes(String(j.videoSettings.audioSampleRate)) ?
                         `<span class="pill" title="${this.t('label.sampleRate')}">
                             ${sampleRateEmoji} ${parseInt(j.videoSettings.audioSampleRate)/1000}k
                         </span>` : ''}
-                    ${j.videoSettings?.audioCodec && j.videoSettings.audioCodec !== 'aac' ?
+                    ${j.videoSettings?.audioTranscodeEnabled && j.videoSettings.audioCodec && j.videoSettings.audioCodec !== 'aac' ?
                         `<span class="pill" title="${this.t('label.format')}">${this.t(`option.${j.videoSettings.audioCodec}`) || j.videoSettings.audioCodec.toUpperCase()}</span>` : ''}
-                    ${j.videoSettings?.audioBitrate && j.videoSettings.audioBitrate !== '192k' ?
+                    ${j.videoSettings?.audioTranscodeEnabled && j.videoSettings.audioBitrate && j.videoSettings.audioBitrate !== '192k' ?
                         `<span class="pill" title="${this.t('label.audioBitrate')}">
                             ${bitrateEmoji} ${j.videoSettings.audioBitrate}
                         </span>` : ''}
@@ -1468,77 +1459,110 @@ export class JobsPanelManager {
                     <span class="pill">${this.phasePill(j)}</span>
                     ${skippedBadge}
                 </div>
+            ${nowT && !finished ? `<div class="muted" style="font-size:12px">▶️ <strong>${escapeTimingHtml(nowT)}</strong></div>` : ''}
+            ${j.canceledBy === 'user' ? `<div class="muted" style="font-size:12px;margin-top:4px;">${this.t('status.canceled')}</div>` : ''}
+            ${status === 'completed' && j.completedAt ? `<div class="muted" style="font-size:12px;margin-top:4px;">🕒 ${escapeTimingHtml(new Date(j.completedAt).toLocaleString())}</div>` : ''}
+            ${jobTimingMarkup(j, key => this.t(key))}
+            ${fileList}
+            ${j.error ? `<div class="jrow-detail__error">${escapeTimingHtml(String(j.error?.message || j.error))}</div>` : ''}
+        `;
 
-                ${(() => {
-                    const nt = nowT;
-                    return nt ? `<div class="muted" style="font-size:12px">▶️ <strong>${nt}</strong></div>` : '';
-                })()}
+        let countText = '';
+        if (finished && Array.isArray(j.resultPath)) {
+            const ok = j.resultPath.filter(r => r && r.outputPath && !r.error).length;
+            const total = Math.max(j.resultPath.length, Number(j.playlist?.total) || 0);
+            if (total) countText = `${ok}/${total}`;
+        } else if (j.metadata?.isPlaylist || Number(j.playlist?.total) > 0) {
+            const counters = j.counters || {};
+            const total = Math.max(0, Number(j.playlist?.total || 0), Number(counters.dlTotal || 0), Number(counters.cvTotal || 0),
+                Array.isArray(j.metadata?.frozenEntries) ? j.metadata.frozenEntries.filter(Boolean).length : 0);
+            const done = Math.max(Number(counters.cvDone || j.playlist?.converted || j.playlist?.done || 0) || 0,
+                Number(counters.dlDone || j.playlist?.downloaded || 0) || 0);
+            if (total > 0) countText = `${Math.min(done, total)}/${total}`;
+        }
+        const formatLabel = [String(j.format || '').toUpperCase(), j.bitrate && !['auto', '0'].includes(String(j.bitrate)) && !['flac', 'wav', 'alac'].includes(fmt) ? String(j.bitrate) : '']
+            .filter(Boolean).join(' ');
+        const skippedText = skippedCount > 0 ? `${this.t('jobs.skipped')} ${skippedCount}` : '';
+        const errorText = status === 'error' ? String(j.error?.message || j.error || this.t('phase.error') || '').split('\n')[0].slice(0, 120) : '';
+        const summary = finished
+            ? joinSummary([formatLabel, countText, status === 'canceled' ? this.t('status.canceled') : '', errorText, skippedText, started && ended ? formatElapsed(ended - started) : ''])
+            : joinSummary([this.phasePill(j), countText, nowT && j.metadata?.isPlaylist ? `▶ ${nowT}` : '', formatLabel, skippedText]);
 
-                ${cancelInfo}
-                ${completedAtInfo}
-                ${jobTimingMarkup(j, key => this.t(key))}
+        const downloadLabel = escapeTimingHtml(this.t('jobsPanel.downloadFile'));
+        const stopLabel = escapeTimingHtml(this.t('btn.stop'));
+        const actionsHtml = [
+            downloadHref ? `<a class="jrow__btn jrow__btn--download" href="${escapeTimingHtml(downloadHref)}" download title="${downloadLabel}" aria-label="${downloadLabel}">⬇</a>` : '',
+            !finished ? `<button type="button" class="jrow__btn jrow__btn--stop" data-stop-panel="${escapeTimingHtml(j.id)}" title="${stopLabel}" aria-label="${stopLabel}">■</button>` : '',
+            ['error', 'canceled'].includes(status) && j.retryable
+                ? `<button type="button" class="jrow__btn jrow__btn--retry" data-retry-panel="${escapeTimingHtml(j.id)}" title="${escapeTimingHtml(this.t('jobs.retry'))}" aria-label="${escapeTimingHtml(this.t('jobs.retry'))}">↻</button>`
+                : ''
+        ].join('');
 
-                <div class="progress panel" role="progressbar"
-                     aria-valuemin="0" aria-valuemax="100" aria-valuenow="${p}">
-                    <span style="width:${p}%"></span>
-                </div>
+        const state = jobRowState(status, { skipped: skippedCount });
+        return `<div class="jrow jrow--${state} jrow--panel" data-job-id="${escapeTimingHtml(j.id)}" data-time="${timeOf(j)}">${jobRowMarkup({
+            id: j.id,
+            state,
+            title: (j.metadata?.isPlaylist ? baseTitle : (nowT || baseTitle)) || '',
+            summary,
+            progress: finished ? null : p,
+            actionsHtml,
+            detailsHtml: details,
+            expanded: this.expandedJobs.has(j.id),
+            moreLabel: this.t('jobs.details')
+        })}</div>`;
+    };
 
-                <div class="row panel">
-                    <span>${p}%</span>
-                    <span style="display:flex; gap:8px; align-items:center;">
-                        ${downloadLinks}
-                        <button class="btn-danger" data-stop-panel="${j.id}" ${(['completed', 'error', 'canceled'].includes(this.norm(j.status))) ? 'disabled' : ''} title="${this.t('btn.stop')}">
-                            ${this.t('btn.stop')}
-                        </button>
-                    </span>
+    const active = items.filter(j => !isFinished(j));
+    const finished = items.filter(isFinished).sort((a, b) => timeOf(b) - timeOf(a));
+    const failedOnly = !!this.failedOnly;
+
+    let finishedHtml = '';
+    let lastGroup = null;
+    for (const j of finished) {
+        const group = jobDayGroup(timeOf(j));
+        if (group !== lastGroup) {
+            finishedHtml += `<div class="jrow-day">${escapeTimingHtml(jobDayLabel(group, (k) => this.t(k)))}</div>`;
+            lastGroup = group;
+        }
+        finishedHtml += rowFor(j);
+    }
+
+    const activeTitle = this.t('jobsPanel.activeGroupTitle');
+    const finishedTitle = this.t('jobsPanel.completedGroupTitle');
+    this.list.innerHTML = `
+        ${updateNotification}
+        ${active.length ? `
+        <section class="jrow-section">
+            <div class="jrow-section__head">
+                <span class="jrow-section__title">${escapeTimingHtml(activeTitle)}</span>
+                <span class="collapsible-section__badge">${active.length}</span>
+            </div>
+            <div class="jrow-section__body">${active.map(rowFor).join('')}</div>
+        </section>` : ''}
+        ${finished.length ? `
+        <section class="jrow-section">
+            <div class="jrow-section__head">
+                <span class="jrow-section__title">${escapeTimingHtml(finishedTitle)}</span>
+                <span class="collapsible-section__badge">${finished.length}</span>
+                <div class="jrow-toolbar jrow-toolbar--inline">
+                    <button type="button" class="jrow-toolbar__btn" data-panel-failed-only aria-pressed="${failedOnly}">${escapeTimingHtml(this.t('jobs.failedOnly'))}</button>
+                    <button type="button" class="jrow-toolbar__btn" data-panel-clear>${escapeTimingHtml(this.t('jobs.clearFinished'))}</button>
                 </div>
             </div>
-        `;
-    }).join('');
-
-    if (this.filter === 'active') {
-        const activeTitleKey = 'jobsPanel.activeGroupTitle';
-        const activeTitle = this.t(activeTitleKey);
-
-        this.list.innerHTML = `
-            ${updateNotification}
-            <section class="collapsible-section">
-                <button
-                    type="button"
-                    class="collapsible-section__header"
-                    aria-expanded="true"
-                >
-                    <span class="collapsible-section__title" data-i18n="${activeTitleKey}">
-                        ${activeTitle}
-                    </span>
-                    <span class="collapsible-section__badge">${items.length}</span>
-                    <span class="collapsible-section__icon" aria-hidden="true">▾</span>
-                </button>
-                <div class="collapsible-section__body">
-                    ${jobsHtml}
-                </div>
-            </section>
-        `;
-    } else {
-        this.list.innerHTML = `
-            ${updateNotification}
-            ${jobsHtml}
-        `;
-    }
+            <div class="jrow-section__body${failedOnly ? ' is-failed-only' : ''}">${finishedHtml}</div>
+        </section>` : ''}
+    `;
 
     if (window.i18n?.apply) window.i18n.apply(this.list);
-    if (this.filter === 'active' && items.length > 0) {
-        const header = this.list.querySelector('.collapsible-section__header');
-        const body   = this.list.querySelector('.collapsible-section__body');
-        if (header && body) {
-            header.addEventListener('click', () => {
-                const expanded = header.getAttribute('aria-expanded') === 'true';
-                header.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-                body.hidden = expanded;
-                header.classList.toggle('is-collapsed', expanded);
-            });
-        }
-    }
+    bindJobRowToggles(this.list, this.expandedJobs);
+    this.list.querySelector('[data-panel-failed-only]')?.addEventListener('click', () => {
+        this.failedOnly = !this.failedOnly;
+        this.render();
+    });
+    this.list.querySelector('[data-panel-clear]')?.addEventListener('click', () => this.clearFinished());
+    this.list.querySelectorAll('[data-retry-panel]').forEach((button) => {
+        button.onclick = () => this.retryJob(button.getAttribute('data-retry-panel'), button);
+    });
 
     const viewBtn = this.list.querySelector('.jobs-update-view');
         if (viewBtn) {
@@ -1599,6 +1623,73 @@ export class JobsPanelManager {
     this.list.scrollTop = prevScrollTop;
     this.saveState();
 }
+    // Finished jobs the user cleared from this panel (kept per browser; the
+    // server keeps its own history).
+    hiddenJobIds() {
+        if (this.hiddenIds) return this.hiddenIds;
+        let list = [];
+        try { list = JSON.parse(localStorage.getItem('gharmonize_jobs_panel_hidden') || '[]'); } catch (_) {}
+        this.hiddenIds = new Set(Array.isArray(list) ? list.map(String) : []);
+        return this.hiddenIds;
+    }
+
+    // Starts a failed or canceled job again; the old entry is hidden here and
+    // the page's job list switches to the new job too.
+    async retryJob(jobId, button = null) {
+        if (!jobId) return null;
+        if (button) button.disabled = true;
+        try {
+            const token = localStorage.getItem(this.tokenKey) || '';
+            const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry`, {
+                method: 'POST',
+                headers: token ? { Authorization: `Bearer ${token}` } : {}
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                const code = data?.error?.code || '';
+                const text = code ? this.t(`errors.${code}`) : '';
+                throw new Error(text && text !== `errors.${code}` ? text : (data?.error?.message || 'error'));
+            }
+            this.forgetRetried(jobId);
+            document.dispatchEvent(new CustomEvent('job:retried', { detail: { oldId: jobId, newId: data.id, from: 'panel' } }));
+            this.notify?.(this.t('jobs.retryStarted'), 'success');
+            return data.id;
+        } catch (error) {
+            if (button) button.disabled = false;
+            this.notify?.(`${this.t('notif.errorPrefix')}: ${error.message}`, 'error');
+            return null;
+        }
+    }
+
+    forgetRetried(jobId) {
+        const hidden = this.hiddenJobIds();
+        hidden.add(String(jobId));
+        try { localStorage.setItem('gharmonize_jobs_panel_hidden', JSON.stringify([...hidden].slice(-500))); } catch (_) {}
+        this.render();
+    }
+
+    // Hides every finished job (completed, failed, canceled) after a confirmation.
+    async clearFinished() {
+        const hidden = this.hiddenJobIds();
+        const finished = (this.state.items || [])
+            .filter(j => ['completed', 'error', 'canceled'].includes(this.norm(j.status)) && !hidden.has(String(j.id)));
+        if (!finished.length) return;
+        const confirm = this.modalManager?.showConfirm?.bind(this.modalManager);
+        const ok = confirm
+            ? await confirm({
+                title: this.t('jobs.clearFinished'),
+                message: this.t('jobs.clearFinishedConfirm', { count: finished.length }),
+                confirmText: this.t('btn.confirm'),
+                cancelText: this.t('btn.cancel'),
+                type: 'warning'
+            })
+            : window.confirm(this.t('jobs.clearFinishedConfirm', { count: finished.length }));
+        if (!ok) return;
+        for (const j of finished) hidden.add(String(j.id));
+        try { localStorage.setItem('gharmonize_jobs_panel_hidden', JSON.stringify([...hidden].slice(-500))); } catch (_) {}
+        this.render();
+    }
+
     // Handles t in the browser UI layer.
     t(key, vars) {
         return (window.i18n?.t?.(key, vars)) ?? key;

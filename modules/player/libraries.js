@@ -133,7 +133,8 @@ export function createLibraryStore(db, { defaultLibraryDir, now = () => Date.now
       db.prepare('DELETE FROM libraries WHERE id = ?').run(row.id)
       db.prepare('DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)').run()
       db.prepare(`DELETE FROM artists WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)
-        AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)`).run()
+        AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
+      AND NOT EXISTS (SELECT 1 FROM favorites WHERE favorites.item_type = 'artist' AND favorites.item_id = artists.id)`).run()
     })
   }
 

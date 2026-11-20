@@ -78,7 +78,7 @@ import java.util.Locale
 private fun num(n: Int): String = NumberFormat.getIntegerInstance().format(n)
 
 /** Turkish plural suffix follows the spoken decade: 1990'lar, 1980'ler. */
-private fun decadeLabel(decade: Int): String =
+fun decadeLabel(decade: Int): String =
   if (Locale.getDefault().language == "tr") "$decade'" + (if (decade % 100 in setOf(10, 30, 40, 60, 90)) "lar" else "ler") else "$decade"
 
 
@@ -142,17 +142,15 @@ fun MixCard(state: AppState, mix: Mix) {
 
 /** Home: "Mixes for you" row plus the weekly listening teaser. */
 @Composable
-fun HomeInsights(state: AppState, reloadKey: Int) {
-  val mixes = rememberLoad("mixes", reloadKey) { state.api.mixes() }
-  mixes.value?.let { list ->
+fun HomeInsights(state: AppState, mixes: List<Mix>?) {
+  mixes?.let { list ->
     ShelfRow(stringResource(R.string.home_mixes), list, subtitle = stringResource(R.string.home_mixes_sub)) { _, m -> MixCard(state, m) }
   }
 }
 
 @Composable
-fun StatsTeaser(state: AppState, reloadKey: Int) {
-  val week = rememberLoad("week", reloadKey) { state.api.stats("week") }
-  val s = week.value ?: return
+fun StatsTeaser(state: AppState, s: ListeningStats?) {
+  s ?: return
   if (s.plays == 0) return
   Surface(
     onClick = { state.navigate(Route.Stats) },
@@ -181,7 +179,9 @@ fun MixScreen(state: AppState, id: String) {
   val data = rememberLoad("mix", id) { state.api.mix(id) }
   // New songs (not in the library yet) that fit the mix.
   val online = rememberLoad("mix-online", id) { runCatching { state.api.mixOnline(id) }.getOrDefault(emptyList()) }
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+  val selection = rememberSongSelection("mix-$id")
+  SelectionScaffold(state, data.value?.second.orEmpty(), selection, data.value?.first?.let { mixTitle(it) }.orEmpty()) { pad ->
+  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = pad)) {
     data.error?.let { e -> item { ErrorBox(state.errorText(e)) { data.reload() } } }
     val (mix, tracks) = data.value ?: run { if (data.loading) item { Loading() }; return@LazyColumn }
     item {
@@ -197,12 +197,13 @@ fun MixScreen(state: AppState, id: String) {
         Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { PlayShuffle(state, tracks) }
       }
     }
-    itemsIndexed(tracks, key = { _, t -> "mx-${t.id}" }) { i, _ -> TrackRow(state, tracks, i) }
+    itemsIndexed(tracks, key = { _, t -> "mx-${t.id}" }) { i, _ -> TrackRow(state, tracks, i, selection = selection) }
     online.value?.takeIf { it.isNotEmpty() }?.let { items ->
       item { SectionTitle(stringResource(R.string.mix_online_title), subtitle = stringResource(R.string.mix_online_hint)) }
       itemsIndexed(items, key = { _, o -> "mo-${o.url}" }) { i, _ -> OnlineTrackRow(state, items, i) }
     }
   }
+}
 }
 
 // ---- statistics -----------------------------------------------------------------------------

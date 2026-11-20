@@ -4,8 +4,7 @@ import {
   downloadYouTubeVideo,
   buildEntriesMap,
   parsePlaylistIndexFromPath,
-  isYouTubeAutomix,
-  idsToMusicUrls
+  isYouTubeAutomix
 } from "./yt.js";
 import { sanitizeFilename, normalizeTitle, parseIdFromPath } from "./utils.js"
 import { convertMedia } from "./media.js";

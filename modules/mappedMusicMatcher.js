@@ -274,6 +274,43 @@ export function isCatalogMusicProvider(provider = '') {
   return CATALOG_MUSIC_PROVIDERS.has(String(provider || '').trim().toLowerCase());
 }
 
+// The candidate credits the source artist: in its channel/byline, in its
+// title, or (for a multi-artist credit) one collaborator in the byline or all
+// of them in the title. Text-matching candidates without this are usually
+// covers of the same song by someone else, so they only win as a last resort.
+export function hasMusicArtistEvidence(artist = '', candidateTitle = '', candidateChannel = '') {
+  const full = norm(artist);
+  if (!full) return false;
+  if (hasName(candidateChannel, full) || hasName(candidateTitle, full)) return true;
+  const names = artistNames(artist);
+  if (names.length < 2) return false;
+  return names.some((name) => hasName(candidateChannel, name)) ||
+    names.every((name) => hasName(candidateTitle, name));
+}
+
+// Highest candidate length accepted when the source gives no duration.
+export const MAPPED_MUSIC_MAX_UNKNOWN_DURATION_SEC = Math.max(
+  60,
+  Number(process.env.MAPPED_MUSIC_MAX_UNKNOWN_DURATION_SEC || 20 * 60)
+);
+
+// A loose sanity bound, not a match rule: the closest candidate still wins
+// even when no duration fits well (5:47 may become 6:00), but an hour-long
+// compilation or a short clip never stands in for one song. Allowed: up to
+// twice the source length, down to half of it, and always ±90 s.
+export function isPlausibleMusicDuration(sourceMs, candidateSeconds) {
+  const duration = Number(candidateSeconds);
+  if (!Number.isFinite(duration) || duration <= 0) return true;
+  const source = Number(sourceMs) / 1000;
+  if (!Number.isFinite(source) || source <= 0) return duration <= MAPPED_MUSIC_MAX_UNKNOWN_DURATION_SEC;
+  const allowed = Math.max(90, duration > source ? source : source / 2);
+  return Math.abs(duration - source) <= allowed;
+}
+
+export function mappedMusicMatchMode(format) {
+  return String(format || '').trim().toLowerCase() === 'mp4' ? 'video' : 'song';
+}
+
 export function buildCatalogMusicSearchQueries(artist = '', title = '') {
   const rawTitle = normalizeMusicDisplayText(title).trim();
   const kafeTitle = rawTitle.replace(/\bcafe\b/gi, 'kafe');

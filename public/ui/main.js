@@ -143,6 +143,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const app = new MediaConverterApp();
+    jobsPanelManager.modalManager = app.modalManager;
+    jobsPanelManager.notify = (message, type) => app.showNotification(message, type, type === 'error' ? 'error' : 'queue');
     await app.initialize();
     const trackExtractorManager = new TrackExtractorManager(app);
     await trackExtractorManager.initialize();

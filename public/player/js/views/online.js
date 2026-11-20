@@ -3,16 +3,31 @@
 // and download into the library.
 
 import { app } from '../app.js'
-import { get } from '../api.js'
-import { h, t, icon, iconButton, artwork, contextMenu, fmtLong, fmtNumber, plural, emptyState } from '../dom.js'
-import { hero, actionBar, onlineTrackList, shelf, onlineCard, playOnline, providerName, createPlaylistFlow, grid, setTint } from '../components.js'
+import { get, post, api } from '../api.js'
+import { h, t, icon, iconButton, artwork, contextMenu, fmtLong, fmtNumber, plural, emptyState, toast, toastError } from '../dom.js'
+import { hero, actionBar, onlineTrackList, shelf, onlineCard, playOnline, providerName, createPlaylistFlow, grid, setTint, refreshPlaylists, artistBio } from '../components.js'
 import { downloadButton } from '../downloads.js'
 import { saveButton } from '../playlistSave.js'
 
 function sourceMenu(item) {
+  const link = item.url || item.sourceUrl
   return iconButton('more', t('player.common.more'), (e) => contextMenu([
-    item.url && { label: t('player.menu.openSource', { provider: providerName(item.provider) }), icon: 'external', run: () => window.open(item.url, '_blank', 'noopener,noreferrer') }
+    item.seed && app.providers.includes('deezer') && { label: t('player.menu.goToArtist'), icon: 'user', run: () => app.nav(`/online/artist?name=${encodeURIComponent(item.seed)}`) },
+    link && { label: t('player.menu.openSource', { provider: providerName(item.provider) }), icon: 'external', run: () => window.open(link, '_blank', 'noopener,noreferrer') }
   ], e.currentTarget), { cls: 'icon-btn--lg', size: 26 })
+}
+
+// Mixes without a downloadable link: every missing song is downloaded on its own.
+function downloadEachButton(tracks) {
+  const btn = h('button', { type: 'button', class: 'btn btn--outline' }, icon('download', { size: 18 }), h('span', { text: t('player.online.downloadMissing') }))
+  btn.addEventListener('click', async () => {
+    const missing = tracks.filter((tr) => !tr.library && tr.url)
+    if (!missing.length) return
+    btn.disabled = true
+    for (const tr of missing) await app.downloads.request(tr, { quiet: true })
+    toast(t('player.online.downloadQueuedMany', { n: missing.length }))
+  })
+  return btn
 }
 
 function ownedChip(owned, total) {
@@ -68,12 +83,38 @@ function onlineSave(item, kind, tracks) {
     name: item.title,
     trackIds: ownedIds,
     onlineItem: all ? null : { ...item, kind, trackCount: tracks.length },
+    onlineTracks: item.downloadable === false ? tracks : null,
     count: tracks.length
   }), { cls: 'icon-btn--lg', size: 24 })
 }
 
+// Follow: the list is tied to a player playlist and checked every day.
+function followButton(pl, current) {
+  let follow = current
+  const btn = h('button', { type: 'button', class: 'btn btn--outline btn--pill' })
+  const paint = () => {
+    btn.classList.toggle('is-on', Boolean(follow))
+    btn.textContent = follow ? t('player.follow.following') : t('player.follow.follow')
+    btn.title = t('player.follow.hint')
+  }
+  paint()
+  btn.addEventListener('click', async () => {
+    btn.disabled = true
+    try {
+      if (follow) {
+        if (follow.playlistId) return app.nav(`/playlist/${follow.playlistId}`)
+      } else {
+        follow = await post('/follows/playlists', { provider: pl.provider, id: pl.id, url: pl.url, title: pl.title, artworkUrl: pl.artworkUrl, mix: pl.mix })
+        await refreshPlaylists()
+        toast(t('player.follow.started', { name: pl.title }), { type: 'success', action: { label: t('player.save.open'), run: () => app.nav(`/playlist/${follow.playlistId}`) } })
+      }
+    } catch (error) { toastError(error) } finally { btn.disabled = false; paint() }
+  })
+  return btn
+}
+
 async function playlistView(query) {
-  const data = await get('/online/playlist', { provider: query.get('provider'), id: query.get('id'), url: query.get('url') })
+  const data = await get('/online/playlist', { provider: query.get('provider'), id: query.get('id'), url: query.get('url'), mix: query.get('mix') })
   const pl = data.playlist
   const tracks = data.tracks || []
   const owned = tracks.filter((tr) => tr.library).length
@@ -81,24 +122,54 @@ async function playlistView(query) {
   const root = h('div', { class: 'detail' },
     hero({
       art: artwork(pl.artworkUrl, { alt: pl.title, placeholder: 'list', seed: pl.title, lazy: false }),
-      kind: `${t('player.kind.playlist')} · ${providerName(pl.provider)}`,
+      kind: `${pl.mix ? t('player.kind.mix') : t('player.kind.playlist')} · ${providerName(pl.provider)}`,
       title: pl.title,
       meta: [pl.artist, plural(tracks.length, 'player.count.track', 'player.count.tracks'), ownedChip(owned, tracks.length)]
     }))
   const extra = []
   if (app.canDownload && owned < tracks.length) {
-    extra.push(downloadButton({ ...pl, kind: 'playlist', trackCount: tracks.length }, { compact: false }))
+    extra.push(pl.downloadable === false ? downloadEachButton(tracks) : downloadButton({ ...pl, kind: 'playlist', trackCount: tracks.length }, { compact: false }))
   }
   if (owned || app.canDownload) extra.push(onlineSave(pl, 'playlist', tracks))
+  if (pl.downloadable !== false) extra.push(followButton(pl, data.follow))
   extra.push(sourceMenu(pl))
   root.append(playable(tracks) ? actionBar({ onPlay: () => playFirst(tracks, context), extra }) : h('div', { class: 'action-bar' }, ...extra))
   root.append(tracks.length ? onlineTrackList(tracks, { context }) : emptyState('list', t('player.online.emptyPlaylist')))
   return { node: root, hero: true }
 }
 
+// Follow button of an artist that is not in the library (yet). The server
+// keeps the artist while it is followed, so new-release alerts work and the
+// follow carries on once its songs are downloaded.
+function onlineFollowButton(artist) {
+  let on = Boolean(artist.follow?.following)
+  const btn = h('button', { type: 'button', class: ['btn', 'btn--outline', 'btn--pill', on && 'is-on'] })
+  const paint = () => { btn.classList.toggle('is-on', on); btn.textContent = on ? t('player.artist.following') : t('player.artist.follow') }
+  paint()
+  btn.addEventListener('click', async () => {
+    btn.disabled = true
+    try {
+      const res = on
+        ? await api('/follows/artists', { method: 'DELETE', query: { name: artist.title } })
+        : await api('/follows/artists', { method: 'PUT', body: { name: artist.title, deezerId: artist.provider === 'deezer' ? artist.id : null } })
+      on = Boolean(res.favorite)
+      paint()
+      toast(on ? t('player.favorite.added') : t('player.favorite.removed'))
+    } catch (error) { toastError(error) } finally { btn.disabled = false }
+  })
+  return btn
+}
+
 async function artistView(query) {
   const data = await get('/online/artist', { id: query.get('id'), name: query.get('name') })
   const artist = data.artist
+  // In the library: one page for both (library rows + every online row).
+  if (artist.library?.artistId) {
+    const { renderArtistPage } = await import('./detail.js')
+    const page = await renderArtistPage(artist.library.artistId, data)
+    history.replaceState(null, '', `#/artist/${artist.library.artistId}`)
+    return page
+  }
   const context = { label: artist.title }
   const root = h('div', { class: 'detail detail--artist' },
     hero({
@@ -108,9 +179,7 @@ async function artistView(query) {
       title: artist.title,
       meta: [artist.fans ? t('player.online.fans', { n: fmtNumber(artist.fans) }) : null, data.albums.length ? plural(data.albums.length, 'player.count.album', 'player.count.albums') : null]
     }))
-  const extra = []
-  if (artist.library?.artistId) extra.push(h('a', { class: 'btn btn--outline btn--pill', href: `#/artist/${artist.library.artistId}` }, icon('library', { size: 18 }), t('player.online.openInLibrary')))
-  extra.push(sourceMenu(artist))
+  const extra = [onlineFollowButton(artist), sourceMenu(artist)]
   root.append(playable(data.topTracks) ? actionBar({ onPlay: () => playFirst(data.topTracks, context), extra }) : h('div', { class: 'action-bar' }, ...extra))
   if (data.albums.length) {
     const ownedAlbums = data.albums.length - data.missingAlbums
@@ -121,6 +190,9 @@ async function artistView(query) {
   if (data.topTracks.length) root.append(h('section', { class: 'section' }, h('h2', { class: 'section-title', text: t('player.artist.popular') }), onlineTrackList(data.topTracks.slice(0, 10), { context })))
   if (data.albums.length) root.append(shelf({ title: t('player.artist.albums'), items: data.albums, render: (item, i) => onlineCard(item, data.albums, i) }))
   if (data.singles.length) root.append(shelf({ title: t('player.artist.singlesEps'), items: data.singles, render: (item, i) => onlineCard(item, data.singles, i) }))
+  const bioSlot = h('div', { class: 'hero__bio', hidden: true })
+  root.querySelector('.hero')?.append(bioSlot)
+  artistBio(bioSlot, { name: artist.title, deezerId: artist.provider === 'deezer' ? artist.id : null })
   if (data.related.length) root.append(shelf({ title: t('player.artist.related'), items: data.related, render: (item, i) => onlineCard(item, data.related, i) }))
   return { node: root, hero: true }
 }

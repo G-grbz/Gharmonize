@@ -24,7 +24,8 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import com.gharmonize.player.App
 import com.gharmonize.player.ui.MainActivity
 import com.google.common.util.concurrent.Futures
@@ -32,17 +33,17 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.Executors
 
 /** Background playback with media notification, lock screen and headset keys. */
 @OptIn(UnstableApi::class)
-class PlaybackService : MediaSessionService() {
-  private var session: MediaSession? = null
+class PlaybackService : MediaLibraryService() {
+  private var session: MediaLibrarySession? = null
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   // Play history: time actually spent playing the current item.
@@ -51,7 +52,71 @@ class PlaybackService : MediaSessionService() {
   private var currentId: String? = null
   private var retries = 0
   private var lastRetryAt = 0L
-  private var autoplayBusy = false
+  private var autoplayJob: Job? = null
+  private var autoplayRevision = 0L
+  private var autoplayAttempted = false
+  private var autoplayAttemptedAtEnd = false
+
+  // ---- crossfade -----------------------------------------------------------------------
+  // In the last seconds of a song the next one starts on a helper player and
+  // the volumes trade places (equal-power curve). When the song ends, the main
+  // player moves to the next item at the helper's position and the helper is
+  // released. Any user action during the fade cancels it.
+  private lateinit var buildPlayer: (Boolean) -> ExoPlayer
+  private var mainPlayer: ExoPlayer? = null
+  private var helper: ExoPlayer? = null
+  private var fadeStart = 0L
+  private var fadeMs = 1L
+  private var handingOver = false
+  private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+  private val crossfadeTick = object : Runnable {
+    override fun run() {
+      runCatching { crossfadeStep() }
+      handler.postDelayed(this, if (helper != null) 50L else 250L)
+    }
+  }
+
+  private fun crossfadeStep() {
+    val p = mainPlayer ?: return
+    val h = helper
+    if (h != null) {
+      if (handingOver) {
+        // The main player took over: drop the helper once it plays.
+        if (p.playbackState == Player.STATE_READY && p.isPlaying) cancelCrossfade()
+        return
+      }
+      val x = ((SystemClock.elapsedRealtime() - fadeStart).toFloat() / fadeMs).coerceIn(0f, 1f)
+      p.volume = kotlin.math.cos(x * Math.PI / 2).toFloat()
+      h.volume = kotlin.math.sin(x * Math.PI / 2).toFloat()
+      return
+    }
+    val seconds = (application as App).prefs.crossfadeSeconds
+    if (seconds <= 0 || !p.isPlaying || p.repeatMode == Player.REPEAT_MODE_ONE) return
+    val duration = p.duration
+    if (duration == C.TIME_UNSET || duration < (seconds * 2 + 5) * 1000L) return
+    val remaining = duration - p.currentPosition
+    if (remaining > seconds * 1000L || remaining < 800) return
+    val nextIndex = p.nextMediaItemIndex
+    if (nextIndex == C.INDEX_UNSET) return
+    val next = p.getMediaItemAt(nextIndex)
+    if (!next.mediaId.startsWith("t:")) return
+    val hp = buildPlayer(false)
+    hp.volume = 0f
+    hp.setMediaItem(withPlayableUri(next))
+    hp.prepare()
+    hp.play()
+    helper = hp
+    fadeStart = SystemClock.elapsedRealtime()
+    fadeMs = remaining
+    handingOver = false
+  }
+
+  private fun cancelCrossfade() {
+    helper?.let { runCatching { it.stop(); it.release() } }
+    helper = null
+    handingOver = false
+    mainPlayer?.volume = 1f
+  }
 
   override fun onCreate() {
     super.onCreate()
@@ -61,7 +126,9 @@ class PlaybackService : MediaSessionService() {
       .setConnectTimeoutMs(10_000)
       .setReadTimeoutMs(30_000)
       .setAllowCrossProtocolRedirects(true)
-    val dataSource = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, http)) { spec -> app.resolveDataSpec(spec) }
+    val stream = ResolvingDataSource.Factory(DefaultDataSource.Factory(this, http)) { spec -> app.resolveDataSpec(spec) }
+    // Songs saved on the phone play from there; the others stream.
+    val dataSource = Offline.playbackFactory(this, stream)
     // The equalizer runs inside the player's own audio pipeline.
     val renderers = object : DefaultRenderersFactory(this) {
       override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
@@ -70,34 +137,41 @@ class PlaybackService : MediaSessionService() {
           .setAudioProcessors(arrayOf(EqualizerProcessor()))
           .build()
     }
-    val player = ExoPlayer.Builder(this, renderers)
-      .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
-      .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
-      .setHandleAudioBecomingNoisy(true)
-      .setWakeMode(C.WAKE_MODE_NETWORK)
-      .build()
+    buildPlayer = { main ->
+      ExoPlayer.Builder(this, renderers)
+        .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
+        // Only the main player takes audio focus; the crossfade helper must
+        // not pause it.
+        .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), main)
+        .setHandleAudioBecomingNoisy(main)
+        .setWakeMode(C.WAKE_MODE_NETWORK)
+        .build()
+    }
+    val player = buildPlayer(true)
     player.addListener(historyListener(player))
+    mainPlayer = player
+    handler.post(crossfadeTick)
+    // While music plays, new releases of followed artists are checked now and then.
+    scope.launch {
+      while (true) {
+        kotlinx.coroutines.delay(30 * 60 * 1000L)
+        runCatching { com.gharmonize.player.data.ReleaseNotifier.check(app) }
+      }
+    }
 
     val openApp = PendingIntent.getActivity(
       this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
       PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
-    session = MediaSession.Builder(this, player)
+    // A library session: the app's own UI, and Android Auto / other media
+    // browsers that list mixes, playlists and saved songs (AutoLibrary).
+    session = MediaLibrarySession.Builder(this, player, AutoLibrary(this, scope))
       .setSessionActivity(openApp)
       .setBitmapLoader(AuthBitmapLoader(app))
-      .setCallback(object : MediaSession.Callback {
-        // Controllers send items without their URIs; rebuild them from the id.
-        override fun onAddMediaItems(
-          mediaSession: MediaSession,
-          controller: MediaSession.ControllerInfo,
-          mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> =
-          Futures.immediateFuture(mediaItems.map(::withPlayableUri).toMutableList())
-      })
       .build()
   }
 
-  override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+  override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session
 
   // Swiping the app away from recents ends playback as well; stopping (idle)
   // also removes the media notification so nothing keeps the service alive.
@@ -107,6 +181,8 @@ class PlaybackService : MediaSessionService() {
   }
 
   override fun onDestroy() {
+    handler.removeCallbacks(crossfadeTick)
+    cancelCrossfade()
     session?.run {
       flushPlay(player, completed = false)
       player.release()
@@ -118,6 +194,15 @@ class PlaybackService : MediaSessionService() {
   }
 
   private fun historyListener(player: ExoPlayer) = object : Player.Listener {
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+      // Paused by the user (or focus loss) during a fade: stop the helper too.
+      if (!playWhenReady && helper != null) cancelCrossfade()
+    }
+
+    override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+      if (reason == Player.DISCONTINUITY_REASON_SEEK && helper != null && !handingOver) cancelCrossfade()
+    }
+
     override fun onIsPlayingChanged(isPlaying: Boolean) {
       if (isPlaying) playingSince = SystemClock.elapsedRealtime()
       else if (playingSince > 0) {
@@ -127,17 +212,33 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+      val h = helper
+      if (h != null && !handingOver) {
+        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && mediaItem?.mediaId == h.currentMediaItem?.mediaId) {
+          // The faded-in song continues on the main player from where it is.
+          handingOver = true
+          player.volume = h.volume
+          player.seekTo(h.currentPosition + 60)
+        } else cancelCrossfade()
+      }
       flushPlay(player, completed = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
       currentId = mediaItem?.mediaId
       retries = 0
-      keepPlaying(player)
+      resetAutoplay()
     }
 
     override fun onPlaybackStateChanged(state: Int) {
       if (state == Player.STATE_ENDED) {
         flushPlay(player, completed = true)
-        keepPlaying(player, resume = true)
       }
+    }
+
+    override fun onEvents(source: Player, events: Player.Events) {
+      if (events.contains(Player.EVENT_REPEAT_MODE_CHANGED)) resetAutoplay()
+      if (events.containsAny(
+        Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED,
+        Player.EVENT_PLAY_WHEN_READY_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+      )) keepPlaying(player)
     }
 
     // The home ↔ Tailscale switch breaks the open connection: re-resolve the
@@ -156,32 +257,38 @@ class PlaybackService : MediaSessionService() {
     }
   }
 
-  /**
-   * When the last song of the queue starts, similar library songs are added
-   * after it, so the queue is never empty and the music keeps going if the
-   * user does nothing. `resume` also starts them when the queue already ended.
-   */
-  private fun keepPlaying(player: ExoPlayer, resume: Boolean = false) {
+  private fun resetAutoplay() {
+    autoplayRevision++
+    autoplayJob?.cancel()
+    autoplayJob = null
+    autoplayAttempted = false
+    autoplayAttemptedAtEnd = false
+  }
+
+  /** Fetch a continuation as soon as playback reaches the last queue item. */
+  private fun keepPlaying(player: ExoPlayer) {
     val app = application as App
-    if (!app.prefs.autoplay || autoplayBusy || player.repeatMode != Player.REPEAT_MODE_OFF) return
-    if (player.mediaItemCount == 0 || player.nextMediaItemIndex != C.INDEX_UNSET) return
-    if (player.currentMediaItem?.mediaId?.startsWith("t:") != true) return
-    val ids = (0 until player.mediaItemCount).mapNotNull { player.getMediaItemAt(it).mediaId.takeIf { id -> id.startsWith("t:") }?.removePrefix("t:")?.toLongOrNull() }
-    val at = player.currentMediaItemIndex
-    val seeds = (maxOf(0, at - 9)..at).mapNotNull { player.getMediaItemAt(it).mediaId.takeIf { id -> id.startsWith("t:") }?.removePrefix("t:")?.toLongOrNull() }
-    if (seeds.isEmpty()) return
-    autoplayBusy = true
-    scope.launch {
-      val known = ids.toSet()
-      val tracks = runCatching { app.api.autoplay(seeds, ids) }.getOrDefault(emptyList()).filter { it.id !in known }
-      withContext(Dispatchers.Main) {
-        autoplayBusy = false
-        if (tracks.isEmpty() || session?.player !== player) return@withContext
-        player.addMediaItems(tracks.map { PlayerController.trackItem(it, auto = true) })
-        if (resume && player.playbackState == Player.STATE_ENDED) {
-          player.seekToNextMediaItem()
-          player.play()
-        }
+    if (!app.prefs.autoplay || autoplayJob?.isActive == true || player.repeatMode != Player.REPEAT_MODE_OFF) return
+    if (!player.playWhenReady || player.playbackState == Player.STATE_IDLE || player.nextMediaItemIndex != C.INDEX_UNSET) return
+    val item = player.currentMediaItem ?: return
+    if (item.mediaMetadata.extras?.getBoolean("downloadsOnly") == true) return
+    val ended = player.playbackState == Player.STATE_ENDED
+    if (autoplayAttemptedAtEnd || (autoplayAttempted && !ended)) return
+    autoplayAttempted = true
+    autoplayAttemptedAtEnd = ended
+    val revision = autoplayRevision
+    val queue = (0 until player.mediaItemCount).map(player::getMediaItemAt)
+    autoplayJob = scope.launch(Dispatchers.Main) {
+      val next = autoplayItems(app.api, item, queue)
+      if (next.isEmpty() || session?.player !== player || revision != autoplayRevision ||
+        player.currentMediaItem?.mediaId != item.mediaId || player.nextMediaItemIndex != C.INDEX_UNSET ||
+        !app.prefs.autoplay || player.repeatMode != Player.REPEAT_MODE_OFF) return@launch
+      val resume = player.playWhenReady && player.playbackState == Player.STATE_ENDED
+      autoplayJob = null
+      player.addMediaItems(next)
+      if (resume) {
+        player.seekToNextMediaItem()
+        player.play()
       }
     }
   }

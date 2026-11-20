@@ -11,6 +11,8 @@ import { CatalogError, clampLimit, clampOffset } from './catalog.js'
 import { BridgeError } from './bridge.js'
 import { OnlineError, freshDeezerPreview } from './online.js'
 import { DiscoveryError } from './discovery.js'
+import { FollowError } from './follows.js'
+import { HealthError } from './health.js'
 import { getInstallId } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -28,7 +30,7 @@ async function defaultAdminBridge() {
   return { getSession: mod.getAdminSessionFromRequest, verifyPassword: mod.verifyAdminPassword }
 }
 
-const KNOWN_ERRORS = [PlayerAuthError, LibraryError, CatalogError, BridgeError, OnlineError, DiscoveryError]
+const KNOWN_ERRORS = [PlayerAuthError, LibraryError, CatalogError, BridgeError, OnlineError, DiscoveryError, FollowError, HealthError]
 
 function sendError(res, status, code, message) {
   res.set('Cache-Control', 'no-store')
@@ -50,7 +52,7 @@ function bool(value) {
 }
 
 export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getMode = () => getRemoteAccessMode() } = {}) {
-  const { auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, online, bridge, annotator, discovery, onlineCache, getConfig, updateConfig, connectInfo } = ctx
+  const { auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, online, bridge, annotator, discovery, biography, onlineCache, getConfig, updateConfig, connectInfo, follows, releases, health } = ctx
   const router = express.Router()
   let bridgePromise = null
   const getAdminBridge = () => (bridgePromise ||= Promise.resolve(adminBridge()).catch((error) => { bridgePromise = null; throw error }))
@@ -297,6 +299,13 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     res.json(artist)
   })
 
+  // All of an artist's songs in the libraries this user can see.
+  router.get('/artists/:id/tracks', requireUser, (req, res) => {
+    const id = intParam(req.params.id)
+    if (!catalog.getArtist(id, uid(req))) return sendError(res, 404, 'NOT_FOUND', 'Artist not found.')
+    res.json({ items: catalog.artistTracks(id, uid(req), { sort: String(req.query.sort || 'album'), limit: req.query.limit, offset: req.query.offset }) })
+  })
+
   // ---- mixes & listening statistics ---------------------------------------------
 
   router.get('/mixes', requireUser, (req, res) => res.json({ items: ctx.mixes.list(uid(req)) }))
@@ -319,6 +328,15 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
 
   // ---- personal --------------------------------------------------------------
 
+  // Follow / unfollow an artist by name (online artist pages, including
+  // artists with no songs here yet).
+  router.put('/follows/artists', requireUser, (req, res) => {
+    const body = req.body || {}
+    const result = catalog.followArtistByName(uid(req), body.name, true)
+    if (body.deezerId && result.id) discovery.rememberArtistPhoto?.(result.id, String(body.deezerId)).catch(() => {})
+    res.json(result)
+  })
+  router.delete('/follows/artists', requireUser, (req, res) => res.json(catalog.followArtistByName(uid(req), req.query.name, false)))
   router.put('/favorites/:type/:id', requireUser, (req, res) => res.json(catalog.setFavorite(uid(req), req.params.type, intParam(req.params.id), true)))
   router.delete('/favorites/:type/:id', requireUser, (req, res) => res.json(catalog.setFavorite(uid(req), req.params.type, intParam(req.params.id), false)))
 
@@ -340,7 +358,11 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
 
   router.get('/playlists', requireUser, (req, res) => res.json({ items: catalog.listPlaylists(uid(req)) }))
   router.post('/playlists', requireUser, (req, res) => res.status(201).json(catalog.createPlaylist(uid(req), req.body || {})))
-  router.get('/playlists/:id', requireUser, (req, res) => res.json(catalog.getPlaylist(intParam(req.params.id), uid(req))))
+  router.get('/playlists/:id', requireUser, (req, res) => {
+    const pl = catalog.getPlaylist(intParam(req.params.id), uid(req))
+    // A playlist kept in sync with an online list says where it comes from.
+    res.json({ ...pl, follow: follows?.forPlaylist(uid(req), pl.id) || null })
+  })
   // Songs that would fit this playlist (library first, then new ones).
   router.get('/playlists/:id/suggestions', requireUser, rateLimit(60, 60_000), async (req, res) => {
     const pl = catalog.getPlaylist(intParam(req.params.id), uid(req))
@@ -350,10 +372,30 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     const round = Math.max(0, Math.min(1000, Number.parseInt(req.query.round, 10) || 0))
     res.json(await suggestionsFor(req, { seedIds: pl.tracks.map((tr) => tr.id), artists, seedKey: `playlist:${pl.id}:${round}` }))
   })
-  // More songs like the ones just played, for "keep playing" at the end of the queue.
-  router.get('/autoplay', requireUser, (req, res) => {
+  // More songs like the ones just played, for "keep playing" at the end of the
+  // queue: the same artist (also inside collaborations), related artists and
+  // songs their radio plays (Deezer, when enabled), the same genre; listened
+  // songs first within each tier, topped up from the library so it never ends.
+  router.get('/autoplay', requireUser, rateLimit(120, 60_000), async (req, res) => {
     const ids = (value) => String(value || '').split(',').map((v) => Number.parseInt(v, 10)).filter((n) => n > 0).slice(0, 300)
-    res.json({ items: catalog.similarTracks(uid(req), { seedIds: ids(req.query.seed).slice(-20), excludeIds: ids(req.query.exclude), limit: Math.min(30, Number(req.query.limit) || 15) }) })
+    const userId = uid(req)
+    const seedIds = ids(req.query.seed).slice(-20)
+    let artist = String(req.query.artist || '').trim().slice(0, 200)
+    if (!artist && seedIds.length) artist = catalog.getTracksByIds(seedIds.slice(-1), userId)[0]?.artist || ''
+    let related = { artists: [], trackIds: [] }
+    try { if (discovery?.autoplayRelated) related = await discovery.autoplayRelated(req.playerUser, artist) } catch {}
+    res.json({ items: catalog.similarTracks(userId, {
+      seedIds,
+      excludeIds: ids(req.query.exclude),
+      artist,
+      genre: String(req.query.genre || '').trim().slice(0, 100),
+      relatedArtists: related.artists,
+      boostIds: related.trackIds,
+      limit: Math.min(30, Number(req.query.limit) || 15),
+      perArtist: 5,
+      preferHistory: true,
+      fill: true
+    }) })
   })
   router.patch('/playlists/:id', requireUser, (req, res) => res.json(catalog.updatePlaylist(intParam(req.params.id), uid(req), req.body || {})))
   router.delete('/playlists/:id', requireUser, (req, res) => { catalog.deletePlaylist(intParam(req.params.id), uid(req)); res.json({ ok: true }) })
@@ -393,7 +435,7 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   // Badges each online result with "already in your library" and
   // "downloading now" so the client can show play / download / progress.
   function annotateOnline(result, userId) {
-    return { ...result, tracks: annotator.items(result.tracks, userId), albums: annotator.items(result.albums, userId), artists: annotator.items(result.artists, userId) }
+    return { ...result, tracks: annotator.items(result.tracks, userId), albums: annotator.items(result.albums, userId), artists: annotator.items(result.artists, userId), playlists: annotator.items(result.playlists || [], userId) }
   }
 
   router.get('/online/providers', requireUser, (req, res) => {
@@ -401,7 +443,7 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   })
 
   router.get('/online/search', requireUser, rateLimit(60, 60_000), async (req, res) => {
-    const kinds = String(req.query.kinds || 'track,album,artist').split(',').map((k) => k.trim()).filter((k) => ['track', 'album', 'artist'].includes(k))
+    const kinds = String(req.query.kinds || 'track,album,artist').split(',').map((k) => k.trim()).filter((k) => ['track', 'album', 'artist', 'playlist'].includes(k))
     const only = req.query.providers ? String(req.query.providers).split(',').map((p) => p.trim()) : null
     const result = await online.search(req.query.q, { kinds: kinds.length ? kinds : ['track'], limit: req.query.limit, only })
     res.json(annotateOnline(result, uid(req)))
@@ -411,7 +453,9 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
 
   router.get('/discover', requireUser, rateLimit(60, 60_000), async (req, res) => {
     const scope = ['personal', 'global'].includes(req.query.scope) ? req.query.scope : 'all'
-    res.json(await discovery.discover(req.playerUser, { lang: req.query.lang, scope }))
+    // round: bumped by the refresh button for another pick of artists today.
+    const round = Math.min(Math.max(Math.floor(Number(req.query.round) || 0), 0), 1000)
+    res.json(await discovery.discover(req.playerUser, { lang: req.query.lang, scope, round }))
   })
   // Fresh 30 s preview link (Deezer links expire after minutes). Browsers get
   // a redirect, the phone app asks for JSON so its token never leaves the server.
@@ -432,7 +476,43 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     res.json(await discovery.onlineAlbum(req.playerUser, { provider: req.query.provider, id: req.query.id, url: req.query.url, artist: req.query.artist }))
   })
   router.get('/online/playlist', requireUser, rateLimit(60, 60_000), async (req, res) => {
-    res.json(await discovery.onlinePlaylist(req.playerUser, { provider: req.query.provider, id: req.query.id, url: req.query.url }))
+    const data = await discovery.onlinePlaylist(req.playerUser, { provider: req.query.provider, id: req.query.id, url: req.query.url, mix: req.query.mix })
+    res.json({ ...data, follow: req.query.mix ? null : follows?.find(uid(req), { provider: req.query.provider, id: req.query.id, url: req.query.url }) || null })
+  })
+
+  // ---- notifications & new releases of followed artists ----------------------------
+  router.get('/notifications', requireUser, (req, res) => res.json(releases.notifications(uid(req), { limit: req.query.limit })))
+  router.post('/notifications/read', requireUser, (req, res) => res.json(releases.markRead(uid(req), Array.isArray(req.body?.ids) ? req.body.ids : null)))
+  router.get('/releases/settings', requireUser, (req, res) => res.json(releases.settings(uid(req))))
+  router.put('/releases/settings', requireUser, (req, res) => res.json(releases.updateSettings(uid(req), req.body || {})))
+  router.post('/releases/check', requireUser, rateLimit(6, 60_000), async (req, res) => {
+    if (!getConfig().discoveryEnabled) return sendError(res, 409, 'DISCOVERY_DISABLED', 'Online data is turned off.')
+    res.json(await releases.checkUser(uid(req), { force: true }))
+  })
+
+  // ---- followed online playlists ---------------------------------------------------
+  router.get('/follows/playlists', requireUser, (req, res) => res.json({ items: follows.list(uid(req)) }))
+  router.post('/follows/playlists', requireUser, rateLimit(30, 60_000), async (req, res) => {
+    if (!getConfig().discoveryEnabled) return sendError(res, 409, 'DISCOVERY_DISABLED', 'Online data is turned off.')
+    res.status(201).json(await follows.follow(req.playerUser, req.body || {}))
+  })
+  router.delete('/follows/playlists/:id', requireUser, (req, res) => res.json(follows.unfollow(uid(req), intParam(req.params.id))))
+  router.post('/follows/playlists/:id/sync', requireUser, rateLimit(20, 60_000), async (req, res) => {
+    const own = follows.list(uid(req)).find((f) => f.id === intParam(req.params.id))
+    if (!own) return sendError(res, 404, 'NOT_FOUND', 'Not followed.')
+    res.json(await follows.sync(own.id))
+  })
+  // Mixes (YouTube Music / Deezer / Spotify artist radios) and playlists
+  // (Apple Music, Spotify, YouTube Music) made around one artist.
+  router.get('/online/artist-mixes', requireUser, rateLimit(60, 60_000), async (req, res) => {
+    res.json(await discovery.artistMixes(req.playerUser, { name: req.query.name, lang: req.query.lang }))
+  })
+  // Artist biography (Wikipedia, language order from SPOTIFY_MARKET then
+  // SPOTIFY_FALLBACK_MARKETS). Nothing is asked online while every online
+  // provider is switched off.
+  router.get('/online/artist-bio', requireUser, rateLimit(60, 60_000), async (req, res) => {
+    if (!biography || !(getConfig().onlineProviders || []).length) return res.json({ bio: null })
+    res.json({ bio: await biography.get({ name: req.query.name, deezerId: req.query.deezerId, lang: req.query.lang }) })
   })
   router.get('/online/artist', requireUser, rateLimit(60, 60_000), async (req, res) => {
     res.json(await discovery.onlineArtist(req.playerUser, { id: req.query.id, name: req.query.name }))
@@ -500,6 +580,13 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   router.delete('/me/devices/:tokenId', requireUser, (req, res) => res.json({ ok: auth.revokeToken(String(req.params.tokenId), { userId: uid(req) }) }))
 
   // ---- administration --------------------------------------------------------
+
+  // ---- library health (admin) ---------------------------------------------------------
+  router.get('/admin/health', requireAdmin, (_req, res) => res.json(health.status()))
+  router.post('/admin/health/check', requireAdmin, (req, res) => res.json(health.start(uid(req))))
+  router.post('/admin/health/trash', requireAdmin, async (req, res) => res.json(await health.trash(intParam(req.body?.trackId))))
+  router.post('/admin/health/cover', requireAdmin, rateLimit(60, 60_000), async (req, res) => res.json(await health.fixCover(intParam(req.body?.albumId))))
+  router.post('/admin/health/redownload', requireAdmin, rateLimit(60, 60_000), async (req, res) => res.json(await health.redownload(req.playerUser, intParam(req.body?.trackId))))
 
   router.get('/admin/config', requireAdmin, (_req, res) => res.json({ config: getConfig(), remoteAccess: getMode() }))
   router.patch('/admin/config', requireAdmin, (req, res) => res.json({ config: updateConfig(req.body || {}) }))

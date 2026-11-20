@@ -6,7 +6,7 @@ const PROVIDER_TIMEOUT_MS = 9000
 const CACHE_TTL_MS = 10 * 60 * 1000
 const CACHE_MAX = 300
 // Merged results prefer the source with the richest metadata.
-const PROVIDER_PRIORITY = { spotify: 0, deezer: 1, youtube: 2 }
+const PROVIDER_PRIORITY = { spotify: 0, deezer: 1, apple: 2, youtube: 3 }
 
 export class OnlineError extends Error {
   constructor(code, message, status = 502) {
@@ -186,9 +186,9 @@ function deezerProvider({ fetchImpl } = {}) {
     name: 'deezer',
     available: () => true,
     async search(q, kind, limit) {
-      const path = kind === 'album' ? 'album' : kind === 'artist' ? 'artist' : 'track'
+      const path = ['album', 'artist', 'playlist'].includes(kind) ? kind : 'track'
       const body = await deezerGet(`/search/${path}?q=${encodeURIComponent(q)}&limit=${limit}`, { fetchImpl })
-      const map = kind === 'album' ? mapDeezerAlbum : kind === 'artist' ? mapDeezerArtist : mapDeezerTrack
+      const map = { album: mapDeezerAlbum, artist: mapDeezerArtist, playlist: mapDeezerPlaylist }[path] || mapDeezerTrack
       return (body?.data || []).map(map).filter(Boolean)
     }
   }
@@ -237,12 +237,18 @@ export function mapYouTubeItem(item, kind = null) {
   }
 }
 
-function youtubeProvider({ searchImpl } = {}) {
+function youtubeProvider({ searchImpl, searchPlaylistsImpl } = {}) {
   return {
     name: 'youtube',
     available: () => true,
     async search(q, kind, limit) {
       if (kind === 'artist') return []
+      if (kind === 'playlist') {
+        // Only YouTube Music's own lists: one request on the shared YouTube
+        // Music queue (community lists were mostly noise).
+        const find = searchPlaylistsImpl || (await import('../yt.js')).searchYouTubeMusicPlaylists
+        return (await find(q, { limit, community: false }) || []).map((item) => mapYouTubeItem(item, 'playlist')).filter(Boolean)
+      }
       const search = searchImpl || (await import('../yt.js')).searchYouTubeContent
       const result = await search(q, { limit, type: kind === 'album' ? 'album' : 'track' })
       return (result?.items || []).map((item) => mapYouTubeItem(item, kind)).filter(Boolean)
@@ -285,6 +291,21 @@ export function mapSpotifyAlbum(a) {
   }
 }
 
+export function mapSpotifyPlaylist(p) {
+  if (!p?.id || !p?.name) return null
+  return {
+    provider: 'spotify',
+    kind: 'playlist',
+    id: p.id,
+    title: text(p.name),
+    artist: text(p.owner?.display_name) || 'Spotify',
+    trackCount: Number(p.tracks?.total) || null,
+    artworkUrl: p.images?.[0]?.url || null,
+    url: p.external_urls?.spotify || `https://open.spotify.com/playlist/${p.id}`,
+    editorial: String(p.owner?.id || '').toLowerCase() === 'spotify'
+  }
+}
+
 export function mapSpotifyArtist(a) {
   if (!a?.id || !a?.name) return null
   return {
@@ -313,6 +334,11 @@ function spotifyProvider({ makeClient, env = process.env } = {}) {
       if (kind === 'artist') {
         const res = await api.searchArtists(q, { limit, market })
         return (res?.body?.artists?.items || []).map(mapSpotifyArtist).filter(Boolean)
+      }
+      if (kind === 'playlist') {
+        // Spotify's answer can contain null entries for hidden lists.
+        const res = await api.searchPlaylists(q, { limit, market })
+        return (res?.body?.playlists?.items || []).filter(Boolean).map(mapSpotifyPlaylist).filter(Boolean)
       }
       const res = await api.searchTracks(q, { limit, market })
       return (res?.body?.tracks?.items || []).map(mapSpotifyTrack).filter(Boolean)
@@ -359,11 +385,11 @@ export function mergeOnlineItems(lists) {
   return order.map((key) => merged.get(key))
 }
 
-export function createOnlineSearch({ providers = null, getEnabledProviders = () => ['deezer', 'youtube', 'spotify'], logger = console, now = () => Date.now(), fetchImpl, searchImpl, makeClient } = {}) {
+export function createOnlineSearch({ providers = null, getEnabledProviders = () => ['deezer', 'youtube', 'spotify'], logger = console, now = () => Date.now(), fetchImpl, searchImpl, searchPlaylistsImpl, makeClient } = {}) {
   const all = providers || [
     spotifyProvider({ makeClient }),
     deezerProvider({ fetchImpl }),
-    youtubeProvider({ searchImpl })
+    youtubeProvider({ searchImpl, searchPlaylistsImpl })
   ]
   const cache = new Map()
 
@@ -389,7 +415,7 @@ export function createOnlineSearch({ providers = null, getEnabledProviders = () 
 
   async function search(query, { kinds = ['track', 'album', 'artist'], limit = 12, only = null } = {}) {
     const q = String(query || '').trim().slice(0, 200)
-    const out = { query: q, providers: {}, tracks: [], albums: [], artists: [] }
+    const out = { query: q, providers: {}, tracks: [], albums: [], artists: [], playlists: [] }
     if (!q) return out
     const list = activeProviders().filter((p) => !only || only.includes(p.name))
     const max = Math.min(Math.max(Number(limit) || 12, 1), 30)
@@ -410,6 +436,7 @@ export function createOnlineSearch({ providers = null, getEnabledProviders = () 
       const merged = mergeOnlineItems(lists).slice(0, max * 2)
       if (kind === 'track') out.tracks = merged
       else if (kind === 'album') out.albums = merged
+      else if (kind === 'playlist') out.playlists = merged
       else out.artists = merged
     }
     return out

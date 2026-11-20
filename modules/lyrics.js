@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { parseFile } from "music-metadata";
 import { spawnSafe } from "./safeProcess.js";
 import { getCache, setCache } from "./cache.js";
 import { FFMPEG_BIN } from "./binaries.js";
@@ -55,7 +56,8 @@ export class LyricsFetcher {
   // Handles search lyrics metadata in core application logic.
   async searchLyrics(artist, title, duration = null, options = {}) {
     const { onLog = null } = options;
-    const cacheKey = `lyrics_${artist}_${title}_${duration}`;
+    // LRCLIB is asked with whole seconds; a measured file length has decimals.
+    const cacheKey = `lyrics_${artist}_${title}_${duration ? Math.round(duration) : duration}`;
 
     const searchLogMsg = {
       logKey: "log.lyrics.searching",
@@ -408,7 +410,9 @@ export async function attachLyricsToMedia(filePath, metadata, options = {}) {
       metadata.track ||
       "";
 
-    const duration = metadata.duration;
+    const measured = await parseFile(filePath, { duration: true, skipCovers: true })
+      .then((media) => Number(media.format.duration), () => 0);
+    const duration = measured > 0 ? measured : metadata.duration;
 
     if (!artist || !title || artist === title) {
       const parts = baseName.split(/\s*[-–—]\s*/);

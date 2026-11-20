@@ -3,19 +3,20 @@ import path from "path";
 import { execFileSafe } from "./safeProcess.js";
 import { terminateProcess } from "./processTermination.js";
 import { getBinaryRuntimeEnv } from "./binaries.js";
-import { resolveYtDlp, withYT403Workarounds, isMusicEnabled, hasCookieArgs, stripCookieArgs } from "./yt.js";
+import { resolveYtDlp, withYT403Workarounds, hasCookieArgs, stripCookieArgs, searchYouTubeMusicSongs } from "./yt.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
 import { getUserAgent, getYouTubeHeaders, addGeoArgs, getExtraArgs, FLAGS } from "./config.js";
 import { addCookieArgs, getJsRuntimeArgs } from "./utils.js";
-import { isSoundCloudDurationCompatible, isSoundCloudTextDurationMatch } from "./soundcloud.js";
 import {
   buildCatalogMusicSearchQueries,
   isCatalogMusicProvider,
-  isCatalogTextDurationMatch,
   scoreCatalogMusicCandidateText,
+  hasMusicArtistEvidence,
+  isPlausibleMusicDuration,
   isMappedMusicDurationCompatible,
-  isMappedMusicDurationTight,
+  MAPPED_MUSIC_YT_STRICT_MATCH_SCORE,
+  mappedMusicMatchMode,
   MAPPED_MUSIC_YT_SEARCH_RESULTS,
   MAPPED_MUSIC_YT_SEARCH_RETRIES,
   MAPPED_MUSIC_YT_SEARCH_RETRY_BACKOFF_MS,
@@ -51,19 +52,7 @@ const YT_DOWNLOAD_WATCHDOG_POLL_MS = Math.max(
   Math.min(10000, Number(process.env.YT_DOWNLOAD_WATCHDOG_POLL_MS || 5000))
 );
 const SOUNDCLOUD_YT_MIN_MATCH_SCORE = Math.max(1, Number(process.env.SOUNDCLOUD_YT_MIN_MATCH_SCORE || 6));
-const SOUNDCLOUD_YT_RELAXED_MATCH_SCORE = Math.max(1, Number(process.env.SOUNDCLOUD_YT_RELAXED_MATCH_SCORE || 4));
 const SOUNDCLOUD_YT_SEARCH_RESULTS = Math.max(5, Math.min(20, Number(process.env.SOUNDCLOUD_YT_SEARCH_RESULTS || 10)));
-const SOUNDCLOUD_YT_TIGHT_DURATION_BASE_SEC = Math.max(3, Number(process.env.SOUNDCLOUD_YT_TIGHT_DURATION_BASE_SEC || 8));
-const SOUNDCLOUD_YT_TIGHT_DURATION_RATIO = Math.max(0.01, Math.min(0.20, Number(process.env.SOUNDCLOUD_YT_TIGHT_DURATION_RATIO || 0.05)));
-const SOUNDCLOUD_YT_DURATION_BASE_TOLERANCE_SEC = Math.max(5, Number(process.env.SOUNDCLOUD_YT_DURATION_BASE_TOLERANCE_SEC || 30));
-const SOUNDCLOUD_YT_DURATION_RATIO_TOLERANCE = Math.max(0.05, Math.min(1, Number(process.env.SOUNDCLOUD_YT_DURATION_RATIO_TOLERANCE || 0.20)));
-const SOUNDCLOUD_YT_DURATION_MIN_RATIO = Math.max(0.1, Math.min(1, Number(process.env.SOUNDCLOUD_YT_DURATION_MIN_RATIO || 0.65)));
-const SOUNDCLOUD_YT_DURATION_MAX_RATIO = Math.max(1, Number(process.env.SOUNDCLOUD_YT_DURATION_MAX_RATIO || 1.5));
-const YT_MATCH_PROBE_TIMEOUT_MS = Math.max(3000, Number(
-  process.env.MAPPED_MUSIC_YT_PROBE_TIMEOUT_MS ||
-  process.env.SOUNDCLOUD_YT_PROBE_TIMEOUT_MS ||
-  20000
-));
 const _searchCache = new Map();
 const _SEARCH_CACHE_MAX = 800;
 let _catalogSearchCooldownUntil = 0;
@@ -383,15 +372,14 @@ function entryDurationSeconds(entry = null) {
   const seconds = Number(entry?.duration ?? 0);
   if (Number.isFinite(seconds) && seconds > 0) return seconds;
   const ms = Number(entry?.duration_ms ?? entry?.durationMs ?? 0);
-  return Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0;
+  if (Number.isFinite(ms) && ms > 0) return ms / 1000;
+  const time = String(entry?.duration_string || '');
+  return /^\d{1,3}(?::[0-5]\d){1,2}$/.test(time)
+    ? time.split(':').reduce((total, part) => total * 60 + Number(part), 0)
+    : 0;
 }
 
-function isUnsafeSoundCloudYouTubeCandidate(entry = null) {
-  const status = String(entry?.live_status || '').toLowerCase();
-  return entry?.is_live === true || status === 'is_live' || status === 'is_upcoming';
-}
-
-function scoreSearchEntries(entries, artist, title, { provider = '', sourceMs = 0 } = {}) {
+function scoreSearchEntries(entries, artist, title, { provider = '' } = {}) {
   const aNorm = _normMatch(artist || '');
   const tNorm = _normMatch(title || '');
   const ranked = [];
@@ -400,21 +388,8 @@ function scoreSearchEntries(entries, artist, title, { provider = '', sourceMs = 
     const vid = e?.id;
     if (!vid) continue;
 
-    if (provider === 'soundcloud') {
-      if (isUnsafeSoundCloudYouTubeCandidate(e)) continue;
-      const duration = entryDurationSeconds(e);
-      if (duration > 0 && !isSoundCloudDurationCompatible(sourceMs, duration, {
-        baseToleranceSec: SOUNDCLOUD_YT_DURATION_BASE_TOLERANCE_SEC,
-        ratioTolerance: SOUNDCLOUD_YT_DURATION_RATIO_TOLERANCE,
-        minRatio: SOUNDCLOUD_YT_DURATION_MIN_RATIO,
-        maxRatio: SOUNDCLOUD_YT_DURATION_MAX_RATIO
-      })) continue;
-    } else if (isCatalogMusicProvider(provider)) {
-      const status = String(e?.live_status || '').toLowerCase();
-      if (e?.is_live === true || status === 'is_live' || status === 'is_upcoming') continue;
-      const duration = entryDurationSeconds(e);
-      if (duration > 0 && !isMappedMusicDurationCompatible(sourceMs, duration)) continue;
-    }
+    const status = String(e?.live_status || '').toLowerCase();
+    if (e?.is_live === true || status === 'is_live' || status === 'is_upcoming') continue;
 
     const et = _normMatch(e?.title || '');
     const ch = _normMatch(e?.uploader || e?.channel || '');
@@ -463,112 +438,91 @@ function formatDurationSeconds(seconds) {
     : `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function youtubeMatchFromEntry(entry = null) {
+function youtubeMatchFromEntry(entry = null, song = false) {
   const id = String(entry?.id || '').trim();
   if (!id) return null;
   const duration = entryDurationSeconds(entry) || null;
   const thumbnail = entry?.thumbnail ||
     (Array.isArray(entry?.thumbnails) ? entry.thumbnails.at(-1)?.url : null) ||
     null;
-  const useMusic = isMusicEnabled();
   return {
     id,
     title: String(entry?.title || '').trim(),
     uploader: String(entry?.uploader || entry?.channel || '').trim(),
     duration,
     duration_string: entry?.duration_string || formatDurationSeconds(duration),
-    webpage_url: useMusic
+    webpage_url: song
       ? `https://music.youtube.com/watch?v=${id}`
       : `https://www.youtube.com/watch?v=${id}`,
     thumbnail
   };
 }
 
-async function probeYouTubeCandidate(entry = null) {
-  const id = String(entry?.id || '').trim();
-  if (!id) return null;
-  const YTDLP_BIN = resolveYtDlp();
-  if (!YTDLP_BIN) throw new Error('yt-dlp not found');
+// How close (in seconds) to the closest candidate another candidate still
+// counts as "equally close"; within this band the better title/artist match
+// wins, so a one-second difference never beats the right recording.
+const MUSIC_DURATION_WINDOW_SEC = 3;
 
-  const args = withYT403Workarounds([
-    ...getYtDlpCommonArgs(),
-    '--skip-download',
-    '--no-playlist',
-    '--dump-single-json',
-    '--socket-timeout', '10',
-    `https://www.youtube.com/watch?v=${id}`
-  ]);
-
-  return new Promise((resolve, reject) => {
-    execFileSafe(
-      YTDLP_BIN,
-      args,
-      { maxBuffer: 32 * 1024 * 1024, timeout: YT_MATCH_PROBE_TIMEOUT_MS, env: getBinaryRuntimeEnv() },
-      (err, stdout, stderr) => {
-        if (err) {
-          const tail = String(stderr || '').split('\n').slice(-10).join('\n');
-          return reject(new Error(`[ytm-duration-probe] yt-dlp error: ${err.code}\n${tail}`));
-        }
-        try {
-          const parsed = String(stdout || '').trim();
-          return resolve(parsed ? JSON.parse(parsed) : null);
-        } catch (e) {
-          return reject(new Error(`[ytm-duration-probe] JSON parse error: ${e.message}`));
-        }
-      }
-    );
-  });
+function musicCandidate(entry, score, artist, sourceMs, rank) {
+  const duration = entryDurationSeconds(entry);
+  if (!isPlausibleMusicDuration(sourceMs, duration)) return null;
+  return {
+    entry,
+    score,
+    rank,
+    artist: hasMusicArtistEvidence(artist, entry?.title || '', entry?.uploader || entry?.channel || ''),
+    distance: sourceMs > 0 && duration > 0 ? Math.abs(sourceMs / 1000 - duration) : Infinity
+  };
 }
 
-async function verifySoundCloudCandidate(entry, sourceMs) {
-  if (!entry?.id || !sourceMs) return entry;
-  const knownDuration = entryDurationSeconds(entry);
-  if (knownDuration > 0) {
-    return isSoundCloudDurationCompatible(sourceMs, knownDuration, {
-      baseToleranceSec: SOUNDCLOUD_YT_DURATION_BASE_TOLERANCE_SEC,
-      ratioTolerance: SOUNDCLOUD_YT_DURATION_RATIO_TOLERANCE,
-      minRatio: SOUNDCLOUD_YT_DURATION_MIN_RATIO,
-      maxRatio: SOUNDCLOUD_YT_DURATION_MAX_RATIO
-    }) ? entry : null;
+// Duration decides among candidates whose text already matches the source:
+// the closest one wins, but candidates within a few seconds of it are
+// compared by score first (then distance, then search order).
+function pickMusicMatch(candidates = []) {
+  if (!candidates.length) return null;
+  const closest = Math.min(...candidates.map((c) => c.distance));
+  const pool = Number.isFinite(closest)
+    ? candidates.filter((c) => c.distance <= closest + MUSIC_DURATION_WINDOW_SEC)
+    : candidates;
+  let best = null;
+  for (const c of pool) {
+    if (!best || c.score > best.score ||
+      (c.score === best.score && (c.distance < best.distance || (c.distance === best.distance && c.rank < best.rank)))) {
+      best = c;
+    }
   }
-
-  try {
-    const full = await probeYouTubeCandidate(entry);
-    const candidate = { ...entry, ...(full || {}), id: entry.id };
-    const duration = entryDurationSeconds(candidate);
-    if (!duration || !isSoundCloudDurationCompatible(sourceMs, duration, {
-        baseToleranceSec: SOUNDCLOUD_YT_DURATION_BASE_TOLERANCE_SEC,
-        ratioTolerance: SOUNDCLOUD_YT_DURATION_RATIO_TOLERANCE,
-        minRatio: SOUNDCLOUD_YT_DURATION_MIN_RATIO,
-        maxRatio: SOUNDCLOUD_YT_DURATION_MAX_RATIO
-      })) return null;
-    return candidate;
-  } catch {
-    // Source duration is known. If we cannot verify the YouTube candidate,
-    // rejecting it is safer than downloading an arbitrary long mix/video.
-    return null;
-  }
+  return best;
 }
 
-async function verifyCatalogCandidate(entry, sourceMs) {
-  if (!entry?.id || !sourceMs) return entry;
-  const knownDuration = entryDurationSeconds(entry);
-  if (knownDuration > 0) {
-    return isMappedMusicDurationCompatible(sourceMs, knownDuration) ? entry : null;
-  }
+// Good enough to stop asking more queries: the source artist is credited and
+// the length is within a second (or the source has no length).
+function isConfidentMusicMatch(candidates, sourceMs) {
+  return candidates.some((c) => c.artist && (!sourceMs || c.distance <= 1));
+}
 
-  try {
-    const full = await probeYouTubeCandidate(entry);
-    const candidate = { ...entry, ...(full || {}), id: entry.id };
-    const duration = entryDurationSeconds(candidate);
-    if (!duration || !isMappedMusicDurationCompatible(sourceMs, duration)) return null;
-    return candidate;
-  } catch {
-    // Catalog metadata normally has a precise source duration. If YouTube does
-    // not expose enough metadata to validate a candidate, skip it rather than
-    // downloading an arbitrary mix, live stream, lecture, or compilation.
-    return null;
+async function findMusicSongs(queries, artist, title, { provider, sourceMs, album, resultLimit, onStage }) {
+  const candidates = [];
+  let failed = false;
+  const minimum = provider === 'soundcloud' ? SOUNDCLOUD_YT_MIN_MATCH_SCORE : MAPPED_MUSIC_YT_STRICT_MATCH_SCORE;
+  const albumQuery = album && _normMatch(album) !== _normMatch(title) ? queries[0] + " " + album : "";
+  for (const query of uniqueSearchQueries([queries[0], albumQuery, ...queries.slice(1)])) {
+    let entries;
+    try {
+      entries = await searchYouTubeMusicSongs(query, { limit: Math.max(12, resultLimit), onWait: onStage });
+    } catch {
+      // Not the same as "no songs": the caller must not remember a video
+      // fallback chosen only because YouTube Music could not be asked.
+      failed = true;
+      continue;
+    }
+    for (const { entry, score } of scoreSearchEntries(entries, artist, title, { provider })) {
+      if (score < minimum) continue;
+      const candidate = musicCandidate(entry, score, artist, sourceMs, candidates.length);
+      if (candidate) candidates.push(candidate);
+    }
+    if (isConfidentMusicMatch(candidates, sourceMs)) break;
   }
+  return { candidates, failed };
 }
 
 async function waitForCatalogSearchCooldown(provider, onStage) {
@@ -622,7 +576,10 @@ export async function searchYtmBestMatch(artist, title, options = {}) {
   if (!queries.length) return null;
 
   const sourceMs = sourceDurationMs(sourceItem);
-  const cacheKey = `${provider || 'default'}|${Math.round(sourceMs || 0)}|${queries.map(_normMatch).join('|')}`;
+  const catalogProvider = isCatalogMusicProvider(provider);
+  const mode = mappedMusicMatchMode(options.format);
+  const album = sourceItem?.album || '';
+  const cacheKey = JSON.stringify([provider, mode, sourceMs, album, ...queries.map(_normMatch)]);
   const cached = _cacheGet(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -631,99 +588,74 @@ export async function searchYtmBestMatch(artist, title, options = {}) {
   const resultLimit = provider === 'soundcloud'
     ? Math.max(YT_SEARCH_RESULTS, SOUNDCLOUD_YT_SEARCH_RESULTS)
     : (isCatalogMusicProvider(provider) ? MAPPED_MUSIC_YT_SEARCH_RESULTS : YT_SEARCH_RESULTS);
+  // With a known artist, candidates crediting that artist come first; the
+  // rest (often covers by someone else) are only a last resort.
+  const credited = _normMatch(scoreArtist)
+    ? (list) => list.filter((c) => c.artist)
+    : (list) => list;
+  const finish = (pick, song, remember = true) => {
+    const match = pick ? youtubeMatchFromEntry(pick.entry, song) : null;
+    if (remember) _cacheSet(cacheKey, match);
+    return match;
+  };
 
-  let bestMatch = null;
-  let bestScore = -1;
+  // Every format except MP4 prefers YouTube Music "Songs" (the audio
+  // release); videos are the fallback when no credited song exists.
+  let songs = [];
+  let songSearchFailed = false;
+  if (mode === 'song') {
+    ({ candidates: songs, failed: songSearchFailed } = await findMusicSongs(queries, scoreArtist, scoreTitle, {
+      provider, sourceMs, album, resultLimit, onStage: options.onStage
+    }));
+    const song = pickMusicMatch(credited(songs));
+    if (song) return finish(song, true);
+  }
+
+  const videos = [];
   let firstFallback = null;
   let lastSearchError = null;
   let successfulSearchResponses = 0;
+  const soundCloud = provider === 'soundcloud';
+  const minimum = soundCloud ? SOUNDCLOUD_YT_MIN_MATCH_SCORE : (catalogProvider ? MAPPED_MUSIC_YT_STRICT_MATCH_SCORE : 1);
 
-  for (let queryIndex = 0; queryIndex < queries.length; queryIndex++) {
-    const query = queries[queryIndex];
-    let data = null;
+  for (const query of queries) {
+    let data;
     try {
       data = await runMappedMusicSearchQuery(query, resultLimit, provider, options.onStage);
     } catch (error) {
-      if (provider !== 'soundcloud' && !isCatalogMusicProvider(provider)) throw error;
-      if (isCatalogMusicProvider(provider) && isYouTubeSearchRateLimitError(error)) throw error;
+      if (songs.length) break;
+      if (!catalogProvider && !soundCloud) throw error;
+      if (catalogProvider && isYouTubeSearchRateLimitError(error)) throw error;
       lastSearchError = error;
-      // For catalog providers, a failed artist+title search may still recover
-      // with the title-only query. SoundCloud likewise keeps its broader fallbacks.
       continue;
     }
 
     successfulSearchResponses++;
     const entries = Array.isArray(data?.entries) ? data.entries : [];
-    if (!entries.length) continue;
-
-    const ranked = scoreSearchEntries(entries, scoreArtist, scoreTitle, { provider, sourceMs });
-    for (const candidate of ranked) {
-      let verifiedEntry = candidate.entry;
-      if (provider === 'soundcloud' && sourceMs > 0) {
-        verifiedEntry = await verifySoundCloudCandidate(verifiedEntry, sourceMs);
-        if (!verifiedEntry) continue;
-      } else if (isCatalogMusicProvider(provider) && sourceMs > 0) {
-        verifiedEntry = await verifyCatalogCandidate(verifiedEntry, sourceMs);
-        if (!verifiedEntry) continue;
-      }
-
-      const match = youtubeMatchFromEntry(verifiedEntry);
-      if (!match) continue;
-      if (!firstFallback) firstFallback = match;
-
-      const candidateDuration = entryDurationSeconds(verifiedEntry);
-      const accepted = provider === 'soundcloud'
-        ? isSoundCloudTextDurationMatch(candidate.score, sourceMs, candidateDuration, scoreTitle, {
-            strictScore: SOUNDCLOUD_YT_MIN_MATCH_SCORE,
-            relaxedScore: SOUNDCLOUD_YT_RELAXED_MATCH_SCORE,
-            tightBaseSec: SOUNDCLOUD_YT_TIGHT_DURATION_BASE_SEC,
-            tightRatio: SOUNDCLOUD_YT_TIGHT_DURATION_RATIO
-          })
-        : isCatalogMusicProvider(provider)
-          ? isCatalogTextDurationMatch(candidate.score, sourceMs, candidateDuration)
-          : candidate.score > 0;
-      if (!accepted) continue;
-
-      const durationBonus = provider === 'soundcloud' && isSoundCloudTextDurationMatch(
-        SOUNDCLOUD_YT_RELAXED_MATCH_SCORE,
-        sourceMs,
-        candidateDuration,
-        scoreTitle,
-        {
-          strictScore: Number.MAX_SAFE_INTEGER,
-          relaxedScore: SOUNDCLOUD_YT_RELAXED_MATCH_SCORE,
-          tightBaseSec: SOUNDCLOUD_YT_TIGHT_DURATION_BASE_SEC,
-          tightRatio: SOUNDCLOUD_YT_TIGHT_DURATION_RATIO
-        }
-      ) ? 2 : (isCatalogMusicProvider(provider) && isMappedMusicDurationTight(sourceMs, candidateDuration) ? 1 : 0);
-      const effectiveScore = candidate.score + durationBonus;
-      if (effectiveScore > bestScore) {
-        bestScore = effectiveScore;
-        bestMatch = match;
-      }
-
-      // Catalog candidates in the same ytsearch response must be compared, not
-      // accepted on the first safe hit. This lets a cleaner top-ranked title
-      // beat a noisier but still technically valid result without issuing an
-      // additional YouTube search. Because duration can add at most one point,
-      // stop once a lower text score can no longer catch the current winner.
-      if (isCatalogMusicProvider(provider) && bestMatch && candidate.score + 1 < bestScore) break;
-      if (provider === 'soundcloud' && candidate.score >= SOUNDCLOUD_YT_MIN_MATCH_SCORE) break;
-      if (provider !== 'soundcloud' && candidate.score >= 6) break;
+    const ranked = scoreSearchEntries(entries, scoreArtist, scoreTitle, { provider });
+    for (const { entry, score } of ranked) {
+      const candidate = musicCandidate(entry, score, scoreArtist, sourceMs, videos.length);
+      if (!candidate) continue;
+      if (!firstFallback) firstFallback = candidate;
+      if (score >= minimum) videos.push(candidate);
     }
-
-    if (isCatalogMusicProvider(provider) && bestMatch) break;
-    if (provider !== 'soundcloud' && !isCatalogMusicProvider(provider) && bestScore >= 6) break;
-    if (provider === 'soundcloud' && bestMatch && bestScore >= SOUNDCLOUD_YT_MIN_MATCH_SCORE + 2) break;
+    if (isConfidentMusicMatch(videos, sourceMs)) break;
   }
 
-  const fallback = (provider === 'soundcloud' || isCatalogMusicProvider(provider))
-    ? bestMatch
-    : (bestScore > 0 ? bestMatch : firstFallback);
-  if (!fallback && lastSearchError && isCatalogMusicProvider(provider) && successfulSearchResponses === 0) throw lastSearchError;
-  if (!fallback && lastSearchError && provider !== 'soundcloud' && !isCatalogMusicProvider(provider)) throw lastSearchError;
-  _cacheSet(cacheKey, fallback || null);
-  return fallback || null;
+  // A video picked because YouTube Music could not be asked is not
+  // remembered, so the next attempt looks for the song again.
+  const remember = !songSearchFailed;
+  const video = pickMusicMatch(credited(videos));
+  if (video) return finish(video, false, remember);
+  // Last resort without the artist's credit: only when the length agrees
+  // with the source too, otherwise it is most likely a different recording.
+  const fits = (c) => c && (c.artist || isMappedMusicDurationCompatible(sourceMs, entryDurationSeconds(c.entry)));
+  const looseSong = pickMusicMatch(songs.filter(fits));
+  if (looseSong) return finish(looseSong, true, remember);
+  const fallbackEntry = !catalogProvider && !soundCloud && fits(firstFallback) ? firstFallback : null;
+  const looseVideo = pickMusicMatch(videos.filter(fits)) || fallbackEntry;
+  if (!looseVideo && lastSearchError && catalogProvider && !successfulSearchResponses) throw lastSearchError;
+  return finish(looseVideo, false, remember);
 }
 
 // Backward-compatible id-only API.
@@ -733,7 +665,7 @@ export async function searchYtmBestId(artist, title, options = {}) {
 }
 
 // Handles ids to music URLs in core application logic.
-export function idsToMusicUrls(ids, useMusic = isMusicEnabled()) {
+export function idsToMusicUrls(ids, useMusic = false) {
   return ids.map((id) =>
     useMusic
       ? `https://music.youtube.com/watch?v=${id}`
@@ -776,7 +708,7 @@ function getYtDlpCommonArgs() {
 export async function mapSpotifyToYtm(
   sp,
   onUpdate,
-  { concurrency = 3, onLog = null, shouldCancel = null, onStage = null } = {}
+  { concurrency = 3, onLog = null, shouldCancel = null, onStage = null, format } = {}
 ) {
   if (!Array.isArray(sp?.items) || sp.items.length === 0) {
     return [];
@@ -785,7 +717,6 @@ export async function mapSpotifyToYtm(
   let i = 0,
     running = 0;
   const results = new Array(sp.items.length);
-  const useMusic = isMusicEnabled();
   const mappingProvider = String(sp?.provider || '').trim().toLowerCase();
   const effectiveConcurrency = isCatalogMusicProvider(mappingProvider)
     ? Math.max(1, Math.min(Number(concurrency) || 1, 3))
@@ -830,7 +761,7 @@ export async function mapSpotifyToYtm(
             const searchTitle = it.match_title || it.matchTitle || it.title;
             ytMatch = await searchYtmBestMatch(searchArtist, searchTitle, {
               provider: sp?.provider || it?.source_provider || "",
-              sourceItem: it, onStage: stage
+              sourceItem: it, onStage: stage, format
             });
             if (onLog && ytMatch?.id)
               onLog({
@@ -867,11 +798,7 @@ export async function mapSpotifyToYtm(
             uploader: it.artist,
             duration: ytMatch?.duration || null,
             duration_string: ytMatch?.duration_string || null,
-            webpage_url: ytMatch?.webpage_url || (vid
-              ? useMusic
-                ? `https://music.youtube.com/watch?v=${vid}`
-                : `https://www.youtube.com/watch?v=${vid}`
-              : ""),
+            webpage_url: ytMatch?.webpage_url || "",
             thumbnail: ytMatch?.thumbnail || null,
           };
           results[idx] = item;

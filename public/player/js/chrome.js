@@ -3,7 +3,7 @@
 
 import { app, bus, store } from './app.js'
 import { get, post, artworkUrl } from './api.js'
-import { h, append, t, icon, iconButton, setIcon, artwork, fmtTime, clear, contextMenu, toast, toastError, plural } from './dom.js'
+import { h, append, t, icon, iconButton, setIcon, artwork, fmtTime, fmtRelative, clear, contextMenu, toast, toastError, plural } from './dom.js'
 import { itemArtwork } from './engine.js'
 import { heartButton, createPlaylistFlow, trackMenu, onlineMenu, trackInfo, markCurrent, providerName, primaryArtist, mixArt, mixTitle, mixDescription, averageColor, playCollection } from './components.js'
 import { applyTheme, currentTheme } from './theme.js'
@@ -27,6 +27,56 @@ function slider({ cls = '', label, onInput, onCommit }) {
 function paintRange(input, buffered = null) {
   input.style.setProperty('--fill', `${Number(input.value) / 10}%`)
   if (buffered != null) input.style.setProperty('--buffered', `${Math.max(0, Math.min(100, buffered * 100))}%`)
+}
+
+// Notifications (new releases of followed artists): bell with an unread
+// count and a small panel. Checked on load, on focus and every 10 minutes.
+function notificationsButton() {
+  const badge = h('span', { class: 'notif-badge', hidden: true })
+  const btn = h('button', { type: 'button', class: 'icon-btn topbar__btn notif-btn', title: t('player.notif.title'), 'aria-label': t('player.notif.title') }, icon('bell', { size: 20 }), badge)
+  let panel = null
+  const refresh = async () => {
+    try {
+      const res = await get('/notifications', { limit: 30 })
+      badge.hidden = !res.unread
+      badge.textContent = res.unread > 9 ? '9+' : String(res.unread)
+      return res
+    } catch { return null }
+  }
+  const outside = (e) => { if (panel && !panel.contains(e.target) && !btn.contains(e.target)) close() }
+  const close = () => { panel?.remove(); panel = null; document.removeEventListener('pointerdown', outside, true) }
+  const row = (n) => {
+    const kind = n.data?.recordKind === 'single' ? t('player.notif.newSingle') : t('player.notif.newAlbum')
+    const el = h('button', { type: 'button', class: ['notif-row', !n.read && 'is-unread'] },
+      artwork(n.artworkUrl, { cls: 'notif-row__art', placeholder: 'album', seed: n.title }),
+      h('span', { class: 'notif-row__text' },
+        h('b', { text: n.title }),
+        h('small', { text: [n.body, kind, fmtRelative(n.createdAt)].filter(Boolean).join(' · ') })))
+    el.addEventListener('click', async () => {
+      close()
+      try { await post('/notifications/read', { ids: [n.id] }) } catch {}
+      refresh()
+      if (n.link) app.nav(n.link)
+    })
+    return el
+  }
+  btn.addEventListener('click', async () => {
+    if (panel) return close()
+    const res = await refresh()
+    const items = res?.items || []
+    const markAll = res?.unread ? h('button', { type: 'button', class: 'link-btn', text: t('player.notif.markAll') }) : null
+    markAll?.addEventListener('click', async () => { try { await post('/notifications/read', {}) } catch {} close(); refresh() })
+    panel = h('div', { class: 'notif-panel', role: 'dialog', 'aria-label': t('player.notif.title') },
+      h('div', { class: 'notif-panel__head' }, h('b', { text: t('player.notif.title') }), markAll),
+      items.length ? h('div', { class: 'notif-list' }, items.map(row)) : h('p', { class: 'muted small notif-panel__empty', text: t('player.notif.empty') }),
+      h('a', { class: 'link-btn notif-panel__more', href: '#/account', text: t('player.notif.settings'), onclick: close }))
+    btn.parentElement?.append(panel)
+    document.addEventListener('pointerdown', outside, true)
+  })
+  refresh()
+  setInterval(refresh, 10 * 60 * 1000)
+  window.addEventListener('focus', refresh)
+  return btn
 }
 
 export function codecName(codec, container = '') {
@@ -280,7 +330,7 @@ function buildTopbar() {
       iconButton('chevL', t('player.common.back'), () => history.back(), { cls: 'topbar__round' }),
       iconButton('chevR', t('player.common.forward'), () => history.forward(), { cls: 'topbar__round' })),
     h('label', { class: 'topbar__search' }, icon('search', { size: 20 }), search),
-    h('div', { class: 'topbar__right' }, homeLink, themeBtn, avatar))
+    h('div', { class: 'topbar__right' }, homeLink, notificationsButton(), themeBtn, avatar))
 }
 
 // ---- player bar ------------------------------------------------------------------------
@@ -372,7 +422,7 @@ function buildPlayerBar() {
   })
   bus.on('player:time', ({ position, duration, buffered }) => {
     if (!seek.dragging) posLabel.textContent = fmtTime(position)
-    durLabel.textContent = fmtTime(duration)
+    durLabel.textContent = fmtTime(Math.round(duration))
     seek.set(duration ? position / duration : 0, duration ? buffered / duration : 0)
     miniProgress.firstChild.style.width = `${duration ? (position / duration) * 100 : 0}%`
   })
@@ -780,7 +830,7 @@ function buildFullPlayer() {
     shuffle.classList.toggle('is-on', p.shuffle)
     repeat.classList.toggle('is-on', p.repeat !== 'off')
     pos.textContent = fmtTime(p.position)
-    dur.textContent = fmtTime(p.duration)
+    dur.textContent = fmtTime(Math.round(p.duration))
     seek.set(p.duration ? p.position / p.duration : 0)
     applyRing()
     root.querySelector('button')?.focus()
@@ -864,7 +914,7 @@ function buildFullPlayer() {
   bus.on('player:time', ({ position, duration, buffered }) => {
     if (root.hidden) return
     if (!seek.dragging && !ring.dragging) pos.textContent = fmtTime(position)
-    dur.textContent = fmtTime(duration)
+    dur.textContent = fmtTime(Math.round(duration))
     seek.set(duration ? position / duration : 0, duration ? buffered / duration : 0)
     ring.update()
   })

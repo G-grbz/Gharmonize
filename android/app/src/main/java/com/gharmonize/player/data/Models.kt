@@ -46,6 +46,8 @@ data class Artist(
   val appearsOn: List<Album> = emptyList(),
   val topTracks: List<Track> = emptyList(),
   val singles: List<Track> = emptyList(),
+  /** Followed from an online page, no songs in the library (yet). */
+  val onlineOnly: Boolean = false,
 )
 
 data class Playlist(
@@ -82,7 +84,13 @@ data class OnlineItem(
   val downloadProgress: Int,
   val raw: JSONObject,
 ) {
+  val libraryTrack: Track? get() = raw.optJSONObject("library")?.optJSONObject("track")?.let(::parseTrack)
   val owned: Boolean get() = libraryTrackId != null || libraryAlbumId != null || libraryArtistId != null
+  /** Mixes without a link the download pipeline can read (Deezer artist mixes): songs are downloaded one by one. */
+  val downloadable: Boolean get() = raw.optBoolean("downloadable", true)
+  val isMix: Boolean get() = !raw.isNull("mix") && raw.optString("mix").isNotBlank()
+  /** Stable key for caches: mixes may have no url. */
+  val key: String get() = url.ifBlank { "$provider:$kind:$id" }
 }
 
 /** Home shelf: either library items or online items. */
@@ -118,7 +126,10 @@ data class DownloadRow(
 data class AlbumMissing(val found: Boolean, val total: Int, val missing: List<OnlineItem>, val onlineAlbum: OnlineItem?)
 
 data class SearchResult(val tracks: List<Track>, val albums: List<Album>, val artists: List<Artist>)
-data class OnlineSearchResult(val tracks: List<OnlineItem>, val albums: List<OnlineItem>, val artists: List<OnlineItem>)
+data class OnlineSearchResult(val tracks: List<OnlineItem>, val albums: List<OnlineItem>, val artists: List<OnlineItem>, val playlists: List<OnlineItem> = emptyList())
+
+/** Mixes (artist radios) and playlists made around one artist. */
+data class ArtistMixes(val artist: String, val mixes: List<OnlineItem>, val playlists: List<OnlineItem>)
 
 data class Me(val username: String, val displayName: String, val role: String, val canDownload: Boolean)
 
@@ -179,6 +190,7 @@ fun parseArtist(o: JSONObject): Artist = Artist(
   appearsOn = o.optJSONArray("appearsOn").mapObjects(::parseAlbum),
   topTracks = o.optJSONArray("topTracks").mapObjects(::parseTrack),
   singles = o.optJSONArray("singles").mapObjects(::parseTrack),
+  onlineOnly = o.has("trackCount") && o.optInt("trackCount") == 0,
 )
 
 fun parsePlaylist(o: JSONObject): Playlist = Playlist(

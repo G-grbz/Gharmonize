@@ -7,9 +7,13 @@
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.CAMERA" />
   <uses-feature android:name="android.hardware.camera" android:required="false" />
+  <!-- Also runs on Google TV / Android TV (remote, no touchscreen). -->
+  <uses-feature android:name="android.software.leanback" android:required="false" />
+  <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
   <application
       android:name=".App"
@@ -20,6 +24,7 @@
       android:supportsRtl="true"
       android:networkSecurityConfig="@xml/network_security_config"
       android:theme="@style/Theme.Gharmonize"
+      android:banner="@drawable/tv_banner"
       tools:targetApi="35">
 
     <activity
@@ -40,6 +45,38 @@
       </intent-filter>
     </activity>
 
+    <!-- Google TV / Android TV: big-screen UI, signed in from the phone -->
+    <activity
+        android:name=".tv.TvActivity"
+        android:exported="true"
+        android:launchMode="singleTask"
+        android:banner="@drawable/tv_banner"
+        android:screenOrientation="landscape">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+      </intent-filter>
+      <!-- Cards of the app's rows on the TV home screen -->
+      <intent-filter>
+        <action android:name="com.gharmonize.player.tv.OPEN" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+    </activity>
+
+    <!-- Android TV home screen rows: covers for the launcher, and its
+         "please publish your rows" broadcast. -->
+    <provider
+        android:name=".tv.TvArtProvider"
+        android:authorities="${applicationId}.tvart"
+        android:exported="true" />
+    <receiver
+        android:name=".tv.TvChannelsReceiver"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.media.tv.action.INITIALIZE_PROGRAMS" />
+      </intent-filter>
+    </receiver>
+
     <!-- Portrait QR scanner -->
     <activity
         android:name="com.journeyapps.barcodescanner.CaptureActivity"
@@ -52,6 +89,23 @@
         android:foregroundServiceType="mediaPlayback">
       <intent-filter>
         <action android:name="androidx.media3.session.MediaSessionService" />
+        <action android:name="androidx.media3.session.MediaLibraryService" />
+        <action android:name="android.media.browse.MediaBrowserService" />
+      </intent-filter>
+    </service>
+    <!-- Android Auto: browse and play from the car screen -->
+    <meta-data
+        android:name="com.google.android.gms.car.application"
+        android:resource="@xml/automotive_app_desc" />
+
+    <!-- Saves songs on the phone for listening without a connection -->
+    <service
+        android:name=".playback.OfflineDownloadService"
+        android:exported="false"
+        android:foregroundServiceType="dataSync">
+      <intent-filter>
+        <action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" />
+        <category android:name="android.intent.category.DEFAULT" />
       </intent-filter>
     </service>
   </application>

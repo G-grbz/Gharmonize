@@ -32,6 +32,26 @@ class Prefs(context: Context) {
     get() = sp.getString("user", null)?.let { runCatching { JSONObject(it) }.getOrNull() }
     set(value) = sp.edit().putString("user", value?.toString()).apply()
 
+  /** Seconds the end of a song overlaps the next one (0 = off). */
+  var crossfadeSeconds: Int
+    get() = sp.getInt("crossfade_seconds", 0)
+    set(value) = sp.edit().putInt("crossfade_seconds", value.coerceIn(0, 12)).apply()
+
+  /** Highest server notification already shown on this phone. */
+  var lastNotificationId: Long
+    get() = sp.getLong("last_notification_id", 0L)
+    set(value) = sp.edit().putLong("last_notification_id", value).apply()
+
+  /** Quality of songs saved on the phone (same choices as streaming). */
+  var offlineQuality: String
+    get() = sp.getString("offline_quality", "high") ?: "high"
+    set(value) = sp.edit().putString("offline_quality", value).apply()
+
+  /** Save songs on the phone only on Wi-Fi / unmetered networks. */
+  var offlineWifiOnly: Boolean
+    get() = sp.getBoolean("offline_wifi_only", false)
+    set(value) = sp.edit().putBoolean("offline_wifi_only", value).apply()
+
   /** Streaming quality on Wi-Fi / unmetered networks. */
   var qualityWifi: String
     get() = sp.getString("quality_wifi", "original") ?: "original"
@@ -46,6 +66,32 @@ class Prefs(context: Context) {
   var theme: String
     get() = sp.getString("theme", "system") ?: "system"
     set(value) = sp.edit().putString("theme", value).apply()
+
+  /** Ready-made TV theme (see tv/TvThemes.kt). */
+  var tvTheme: String
+    get() = sp.getString("tv_theme", "classic") ?: "classic"
+    set(value) = sp.edit().putString("tv_theme", value).apply()
+
+  /** TV home rows: chosen order / visibility, and the rows seen (JSON). */
+  var tvHomeRows: String?
+    get() = sp.getString("tv_home_rows", null)
+    set(value) = sp.edit().putString("tv_home_rows", value).apply()
+  var tvHomeCatalog: String?
+    get() = sp.getString("tv_home_catalog", null)
+    set(value) = sp.edit().putString("tv_home_catalog", value).apply()
+
+  /** Android TV home-screen channels: what was published (skip unchanged), ask-once flags. */
+  var tvChannelState: String?
+    get() = sp.getString("tv_channel_state", null)
+    set(value) = sp.edit().putString("tv_channel_state", value).apply()
+  var tvAskedChannels: String?
+    get() = sp.getString("tv_asked_channels", null)
+    set(value) = sp.edit().putString("tv_asked_channels", value).apply()
+
+  /** Lyrics shown beside the TV player. */
+  var tvLyrics: Boolean
+    get() = sp.getBoolean("tv_lyrics", false)
+    set(value) = sp.edit().putBoolean("tv_lyrics", value).apply()
 
   /** Accent colour key (see ui/Theme.kt ACCENTS). */
   var accent: String

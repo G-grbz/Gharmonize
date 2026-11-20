@@ -6,7 +6,7 @@ import { createHash } from "crypto";
 import { registerJobProcess } from "./store.js";
 import { getCache, setCache, mergeCacheEntries, PREVIEW_MAX_ENTRIES } from "./cache.js";
 import { findOnPATH, isExecutable, toNFC, addCookieArgs, getJsRuntimeArgs, parseIdFromPath } from "./utils.js";
-import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, getLocaleConfig, FLAGS } from "./config.js";
+import { getYouTubeHeaders, getUserAgent, addGeoArgs, getExtraArgs, FLAGS } from "./config.js";
 import {
   YTDLP_BIN as BINARY_YTDLP_BIN,
   DENO_BIN,
@@ -25,14 +25,6 @@ import {
   pickYtMusicAlbumArtist,
   isYtMusicAlbumContext
 } from "./ytMusicMetadata.js";
-
-// Checks whether music enabled is valid for the yt-dlp YouTube download pipeline.
-export function isMusicEnabled() {
-  const v = process.env.YT_USE_MUSIC;
-  if (v === "0") return false;
-  if (v === "1") return true;
-  return false;
-}
 
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_USER_AGENT = getUserAgent();
@@ -233,11 +225,6 @@ export function normalizeYouTubeUrl(input) {
       url = new URL("https://www.youtube.com/watch");
       if (id) url.searchParams.set("v", id);
       if (list) url.searchParams.set("list", list);
-    }
-
-    if (isMusicEnabled() && url.hostname === "www.youtube.com" &&
-        url.pathname === "/watch" && url.searchParams.get("v")) {
-      url.hostname = getLocaleConfig().hostnameForWatch(true);
     }
 
     const DROP_PARAMS = ["feature", "pp", "si", "start_radio", "persist_app", "t"];
@@ -441,14 +428,6 @@ function addFfmpegLocationArgs(args = []) {
   return args;
 }
 
-// Handles ids to music URLs in the yt-dlp YouTube download pipeline.
-export function idsToMusicUrls(ids) {
-  return ids.map(id => isMusicEnabled() ?
-    `https://music.youtube.com/watch?v=${id}` :
-    `https://www.youtube.com/watch?v=${id}`
-  );
-}
-
 // Handles ids to watch URLs in the yt-dlp YouTube download pipeline.
 export function idsToWatchUrls(ids) {
   return ids.map(id =>
@@ -475,11 +454,14 @@ function idsToDownloadUrls(ids, frozenEntries = [], sourceUrl = "") {
     if (!id) return id;
     if (/^https?:\/\//i.test(id)) return id;
 
+    const mappedUrl = byIdWebpage.get(id);
     if (isLikelyYouTubeVideoId(id)) {
-      return normalizeYouTubeUrl(`https://www.youtube.com/watch?v=${id}`);
+      // Keep the matched song/fallback host without accepting a redirect to a
+      // different ID or an untrusted destination from frozen preview data.
+      const musicUrl = "https://music.youtube.com/watch?v=" + id;
+      return mappedUrl === musicUrl ? musicUrl : "https://www.youtube.com/watch?v=" + id;
     }
 
-    const mappedUrl = byIdWebpage.get(id);
     if (mappedUrl && /^https?:\/\//i.test(mappedUrl)) {
       return mappedUrl;
     }
@@ -932,6 +914,7 @@ function normalizeSearchWebpageUrl(entry = {}, item = {}, type = "track") {
 }
 
 const YTM_SEARCH_TYPE_PARAMS = {
+  song: "EgWKAQIIAWoKEAMQBBAJEAoQBQ%3D%3D",
   album: "EgWKAQIYAWoKEAMQBBAJEAoQBQ%3D%3D",
   artist: "EgWKAQIgAWoKEAMQBBAJEAoQBQ%3D%3D"
 };
@@ -1023,6 +1006,7 @@ function isYtmSearchItemType(item = {}, targetType = "") {
   if (targetType === "album") return type === "album";
   if (targetType === "artist") return type === "artist";
   if (targetType === "playlist") return type === "playlist";
+  if (targetType === "song") return type === "track" && item.musicVideoType === "MUSIC_VIDEO_TYPE_ATV";
   if (targetType === "track") return type === "track" && !isLikelyNonMusicYtmItem(item);
   return true;
 }
@@ -1063,11 +1047,23 @@ function extractYtmSearchItemsFromTree(data, { targetType = "", limit = 30 } = {
   return uniqueMusicHomeItems(out, limit);
 }
 
-async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = "", region = "", timeoutMs: timeoutOverride = null, useCookies = true } = {}) {
-  const q = String(query || "").trim();
-  if (!q || ytmApiGate.retryAfterMs()) return [];
+function ytmSearchBlockedError() {
+  return Object.assign(new Error(ytmRateLimitWarning), {
+    code: "YTM_RATE_LIMITED", status: 429, retryAfterMs: ytmApiGate.retryAfterMs()
+  });
+}
 
-  const searchType = normalizeSearchType(type);
+// throwOnError: report a failed/blocked request instead of answering "no
+// results" (song matching must not mistake an outage for a missing song).
+async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = "", region = "", timeoutMs: timeoutOverride = null, useCookies = true, params = "", throwOnError = false } = {}) {
+  const q = String(query || "").trim();
+  if (!q) return [];
+  if (ytmApiGate.retryAfterMs()) {
+    if (throwOnError) throw ytmSearchBlockedError();
+    return [];
+  }
+
+  const searchType = type === "song" ? type : normalizeSearchType(type);
   const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
   const safeRegion = normalizeDiscoverRegion(region || getInnertubeRegion(), safeLang);
   const timeoutMs = Number.isFinite(Number(timeoutOverride)) && Number(timeoutOverride) > 0
@@ -1119,7 +1115,9 @@ async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = 
       query: q
     };
 
-    if (YTM_SEARCH_TYPE_PARAMS[searchType]) {
+    if (params) {
+      body.params = params;
+    } else if (YTM_SEARCH_TYPE_PARAMS[searchType]) {
       body.params = YTM_SEARCH_TYPE_PARAMS[searchType];
     }
 
@@ -1136,12 +1134,45 @@ async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = 
       limit
     });
     if (items.length || !cookieHeader) return items;
-  } catch {
-    if (!cookieHeader) return [];
+  } catch (error) {
+    if (!cookieHeader) {
+      if (throwOnError) throw error;
+      return [];
+    }
   }
   // Signed-in search failed or found nothing: the public search still works.
-  if (ytmApiGate.retryAfterMs()) return [];
-  return searchYouTubeMusicContent(q, { limit, type, lang, region, timeoutMs: timeoutOverride, useCookies: false });
+  if (ytmApiGate.retryAfterMs()) {
+    if (throwOnError) throw ytmSearchBlockedError();
+    return [];
+  }
+  return searchYouTubeMusicContent(q, { limit, type, lang, region, timeoutMs: timeoutOverride, useCookies: false, params, throwOnError });
+}
+
+// Longest YouTube Music cooldown a song search waits out before giving up
+// (the caller then falls back to videos without remembering that choice).
+const YTM_SONG_SEARCH_MAX_WAIT_MS = Math.max(0, Number(process.env.YTM_SONG_SEARCH_MAX_WAIT_MS ?? 60000) || 0);
+
+// YouTube Music "Songs" for a query. Throws when YouTube Music could not be
+// asked (after waiting out a short cooldown and one retry); [] means the
+// search really found no songs.
+export async function searchYouTubeMusicSongs(query, { onWait = null, ...options } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const cooldown = ytmApiGate.retryAfterMs();
+    if (cooldown > YTM_SONG_SEARCH_MAX_WAIT_MS) throw ytmSearchBlockedError();
+    const wait = cooldown || (attempt ? 1500 : 0);
+    if (wait) {
+      try { onWait?.("waiting"); } catch {}
+      await new Promise((resolve) => setTimeout(resolve, wait + 250));
+      try { onWait?.("matching"); } catch {}
+    }
+    try {
+      return await searchYouTubeMusicContent(query, { ...options, type: "song", throwOnError: true });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || ytmSearchBlockedError();
 }
 
 async function searchYouTubeMusicArtistAlbums(query, { limit = 12, lang = "", region = "" } = {}) {
@@ -1190,6 +1221,141 @@ async function searchYouTubeMusicArtistAlbums(query, { limit = 12, lang = "", re
   }
 
   return uniqueMusicHomeItems(filterSearchItemsForQuery(albums, q, "album"), limit);
+}
+
+// Gharmonize Player: YouTube Music playlists for a query. Lists made by
+// YouTube Music ("featured") come first, then community lists whose text
+// matches every query word. Only music.youtube.com is asked (no yt-dlp).
+const YTM_PLAYLIST_SEARCH_PARAMS = Object.freeze({
+  featured: "EgeKAQQoADgBagwQDhAKEAMQBBAJEAU%3D",
+  community: "EgeKAQQoAEABagwQDhAKEAMQBBAJEAU%3D"
+});
+
+export async function searchYouTubeMusicPlaylists(query, { limit = 12, lang = "", region = "", community = true } = {}) {
+  const q = String(query || "").trim();
+  if (!q) return [];
+  const safeLimit = normalizeSearchLimit(limit);
+  const [featured, others] = await Promise.all([
+    searchYouTubeMusicContent(q, { limit: safeLimit, type: "playlist", lang, region, params: YTM_PLAYLIST_SEARCH_PARAMS.featured }).catch(() => []),
+    community
+      ? searchYouTubeMusicContent(q, { limit: safeLimit, type: "playlist", lang, region, params: YTM_PLAYLIST_SEARCH_PARAMS.community }).catch(() => [])
+      : []
+  ]);
+  const tokens = getSearchQueryTokens(q);
+  const matching = tokens.length
+    ? others.filter((item) => {
+      const haystack = getSearchItemMatchText(item);
+      return tokens.every((token) => haystack.includes(token));
+    })
+    : others;
+  return uniqueMusicHomeItems([...featured, ...matching], safeLimit * 2);
+}
+
+// Artist header buttons: "Mix" (RDEM…, the artist radio) and "Shuffle"
+// (RDAO…). The Mix is preferred; it needs its start video to be readable.
+function findYtmRadioEndpoint(header) {
+  const found = [];
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 10) return;
+    for (const key of ["watchEndpoint", "watchPlaylistEndpoint"]) {
+      const endpoint = node[key];
+      if (endpoint?.videoId && /^RD[A-Za-z0-9_-]+$/.test(String(endpoint.playlistId || ""))) found.push(endpoint);
+    }
+    for (const child of Object.values(node)) if (child && typeof child === "object") walk(child, depth + 1);
+  };
+  walk(header);
+  return found.find((endpoint) => /^RDEM/.test(endpoint.playlistId)) || null;
+}
+
+async function postPublicYtm(endpoint, payload, { lang = "", region = "" } = {}) {
+  const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
+  const safeRegion = normalizeDiscoverRegion(region || getInnertubeRegion(), safeLang);
+  const timeoutMs = Number(process.env.YTM_SEARCH_TIMEOUT_MS || 12000);
+  const clientVersion = String(process.env.YTM_CLIENT_VERSION || getDefaultYtmClientVersion()).trim();
+  return requestSharedYtmJson((signal) => fetch(`${YTM_ORIGIN}/youtubei/v1/${endpoint}?prettyPrint=false`, {
+    method: "POST",
+    headers: {
+      "Accept": "application/json",
+      "Accept-Language": getDiscoverHl(safeLang),
+      "Content-Type": "application/json",
+      "Origin": YTM_ORIGIN,
+      "Referer": `${YTM_ORIGIN}/`,
+      "User-Agent": DEFAULT_USER_AGENT,
+      "X-Goog-AuthUser": "0",
+      "X-Origin": YTM_ORIGIN,
+      "X-Youtube-Client-Name": "67",
+      "X-Youtube-Client-Version": clientVersion
+    },
+    signal,
+    body: JSON.stringify({
+      context: {
+        client: { clientName: "WEB_REMIX", clientVersion, hl: getDiscoverHl(safeLang), gl: safeRegion },
+        user: { lockedSafetyMode: false },
+        request: { useSsl: true }
+      },
+      ...payload
+    })
+  }), { timeoutMs, retries: 0 });
+}
+
+// Artist rows of a YouTube Music search answer: channel id + name. (The
+// generic item normaliser prefers the row's shuffle endpoint and drops it.)
+function collectYtmArtistRows(data) {
+  const out = [];
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 24 || out.length >= 20) return;
+    const row = node.musicResponsiveListItemRenderer;
+    if (row) {
+      const browseId = String(row.navigationEndpoint?.browseEndpoint?.browseId || "");
+      const title = textFromRuns(row.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text);
+      if (/^UC[A-Za-z0-9_-]{10,}$/.test(browseId) && title) out.push({ browseId, title, thumbnail: findYtmThumbnail(row) });
+      return;
+    }
+    for (const child of Object.values(node)) if (child && typeof child === "object") walk(child, depth + 1);
+  };
+  walk(data);
+  return out;
+}
+
+// Gharmonize Player: an artist's YouTube Music page, found by exact name.
+// Returns the artist "Mix" (artist radio, an automix the download pipeline
+// already handles) and the playlist shelves of the page ("Featured on",
+// playlists by the artist). Asked without cookies, so it is not personal.
+export async function getYouTubeMusicArtistMixes(query, { limit = 12, lang = "", region = "" } = {}) {
+  const q = String(query || "").trim();
+  if (!q || ytmApiGate.retryAfterMs()) return null;
+  const found = await postPublicYtm("search", { query: q, params: YTM_SEARCH_TYPE_PARAMS.artist }, { lang, region });
+  const want = normalizeSearchMatchText(q);
+  const artist = collectYtmArtistRows(found).find((row) => normalizeSearchMatchText(row.title) === want);
+  if (!artist) return null;
+  const browseId = artist.browseId;
+  const safeLang = normalizeDiscoverLang(lang || getInnertubeLang());
+  const data = await postPublicYtm("browse", { browseId }, { lang, region });
+
+  const header = data?.header?.musicImmersiveHeaderRenderer || data?.header?.musicVisualHeaderRenderer || data?.header || {};
+  const title = textFromRuns(header.title) || artist.title || q;
+  // The search row has a square picture; the page header a wide banner.
+  const thumbnail = artist.thumbnail || findYtmThumbnail(header) || null;
+  const radio = findYtmRadioEndpoint(header);
+  let mix = null;
+  if (radio) {
+    const url = new URL(`${YTM_ORIGIN}/watch`);
+    url.searchParams.set("v", radio.videoId);
+    url.searchParams.set("list", radio.playlistId);
+    mix = { type: "playlist", id: radio.playlistId, playlistId: radio.playlistId, videoId: radio.videoId || null, title, thumbnail, webpage_url: url.toString(), url: url.toString() };
+  }
+  const shelves = filterDiscoverShelves(buildMusicHomeShelvesFromInnertube(data, { maxShelves: 12, limitPerShelf: limit }), {
+    targetType: "playlist",
+    limitPerShelf: limit,
+    maxShelves: 4,
+    lang: safeLang
+  }).map((shelf) => ({
+    title: String(shelf.title || "").trim(),
+    // "Similar artists" rows open artist shuffles (RDAO…), not playlists.
+    items: (shelf.items || []).filter((item) => !/^RDA[OM]/.test(String(item.playlistId || item.id || "")))
+  }))
+    .filter((shelf) => shelf.items.length);
+  return { artist: { title, browseId, thumbnail }, mix, shelves };
 }
 
 // Searches YouTube content for the ytlive browser UI.
@@ -3975,7 +4141,12 @@ function getYtmRendererDuration(renderer = {}) {
   const fixed = (Array.isArray(renderer.fixedColumns) ? renderer.fixedColumns : [])
     .map((column) => textFromRuns(column?.musicResponsiveListItemFixedColumnRenderer?.text))
     .find(Boolean);
-  return fixed || textFromRuns(renderer.duration) || "";
+  const explicit = fixed || textFromRuns(renderer.duration);
+  if (explicit) return explicit;
+  return (renderer.flexColumns || []).flatMap((column) =>
+    column?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || []
+  ).map((run) => String(run?.text || "").trim())
+    .find((text) => /^\d{1,3}(?::[0-5]\d){1,2}$/.test(text)) || "";
 }
 
 function getDirectYtmItemRenderer(value = {}) {
@@ -4031,6 +4202,7 @@ function normalizeYtmRendererItem(value = {}, index = 0) {
     type: item.type,
     browseId: item.browseId || null,
     playlistId: item.playlistId || null,
+    musicVideoType: endpoint?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType || null,
     params: item.params || null,
     title: title || item.id,
     duration: null,

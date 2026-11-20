@@ -80,15 +80,20 @@ export function createLibraryMatcher(db) {
     let rows
     try { rows = ftsCandidates.all({ $match: match, $uid }) } catch { return null }
     let best = null
+    let bestDistance = Infinity
+    const wantDuration = Number(duration) || 0
     for (const row of rows) {
       if (cleanTitleForMatch(row.title) !== wantTitle) continue
       if (!artistsMatch(row.artist_name, split.artist) && !artistsMatch(row.album_artist, split.artist)) continue
-      const wantDuration = Number(duration) || 0
       const haveDuration = Number(row.duration) || 0
       // Same song, very different length → probably another version.
       if (wantDuration > 0 && haveDuration > 0 && Math.abs(wantDuration - haveDuration) > Math.max(15, wantDuration * 0.12)) continue
-      best = row.id
-      break
+      if (!wantDuration) return row.id
+      const distance = haveDuration > 0 ? Math.abs(wantDuration - haveDuration) : Infinity
+      if (best === null || distance < bestDistance) {
+        best = row.id
+        bestDistance = distance
+      }
     }
     return best
   }

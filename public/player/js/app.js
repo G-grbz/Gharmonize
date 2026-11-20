@@ -39,6 +39,8 @@ const PREF_DEFAULTS = {
   progressStyle: 'classic',
   autoplay: true,
   preload: true,
+  // Seconds the end of a song overlaps the next one (0 = off).
+  crossfade: 0,
   homeFilter: 'all'
 }
 

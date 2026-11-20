@@ -169,7 +169,8 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     insertFts: db.prepare('INSERT INTO tracks_fts (rowid, title, artist, album, album_artist, genre) VALUES (?, ?, ?, ?, ?, ?)'),
     orphanAlbums: db.prepare('DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)'),
     orphanArtists: db.prepare(`DELETE FROM artists WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)
-      AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)`),
+      AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
+      AND NOT EXISTS (SELECT 1 FROM favorites WHERE favorites.item_type = 'artist' AND favorites.item_id = artists.id)`),
     orphanFavorites: db.prepare(`DELETE FROM favorites WHERE
       (item_type = 'track' AND NOT EXISTS (SELECT 1 FROM tracks WHERE id = favorites.item_id)) OR
       (item_type = 'album' AND NOT EXISTS (SELECT 1 FROM albums WHERE id = favorites.item_id)) OR
@@ -412,9 +413,29 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     if (running) await running.catch(() => {})
   }
 
+  // Drops tracks whose files were moved away (library health "trash").
+  function forgetTracks(ids = []) {
+    const list = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0)
+    if (!list.length) return 0
+    transaction(db, () => {
+      for (const id of list) { stmt.deleteFts.run(id); stmt.deleteTrack.run(id) }
+      stmt.orphanAlbums.run()
+      stmt.orphanArtists.run()
+      stmt.orphanFavorites.run()
+      for (const lib of stmt.libraries.all()) {
+        db.prepare('UPDATE libraries SET track_count = (SELECT COUNT(*) FROM tracks WHERE library_id = ?) WHERE id = ?').run(lib.id, lib.id)
+      }
+    })
+    if (onTrackChanges) {
+      try { onTrackChanges({ libraryId: null, changedIds: [], removedIds: list }) } catch {}
+    }
+    return list.length
+  }
+
   return {
     requestScan,
     indexFiles,
+    forgetTracks,
     stop,
     getStatus: () => ({ ...status, queue: [...pending] }),
     isRunning: () => Boolean(running)

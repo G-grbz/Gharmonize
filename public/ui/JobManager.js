@@ -1,5 +1,6 @@
 import { collectJobOutputPaths, outputExistenceClient } from './OutputExistenceClient.js';
 import { jobTimingMarkup } from './JobTimingView.js';
+import { jobRowMarkup, jobRowState, joinSummary, formatElapsed, jobTimeMs, bindJobRowToggles, regroupFinishedRows } from './JobRow.js';
 
 export class JobManager {
     // Initializes class state and defaults for the browser UI layer.
@@ -52,6 +53,10 @@ export class JobManager {
             this.handleOutputLocationBadgeKeydown = this.handleOutputLocationBadgeKeydown.bind(this);
             document.addEventListener('click', this.handleOutputLocationBadgeClick);
             document.addEventListener('keydown', this.handleOutputLocationBadgeKeydown);
+            document.addEventListener('job:retried', (event) => {
+                const { oldId, newId, from } = event.detail || {};
+                if (from !== 'page') this.adoptRetriedJob(oldId, newId);
+            });
         }
     }
 
@@ -824,7 +829,12 @@ updateJobUI(job, batchId = null) {
                     <span class="collapsible-section__badge" id="session-completed-count">0</span>
                     <span class="collapsible-section__icon" aria-hidden="true">▾</span>
                 </button>
-                <div class="collapsible-section__body" id="session-completed-body" hidden></div>
+                <div class="collapsible-section__body" id="session-completed-body" hidden>
+                    <div class="jrow-toolbar">
+                        <button type="button" class="jrow-toolbar__btn" data-jobs-failed-only aria-pressed="false">${this.app.escapeHtml(this.app.t('jobs.failedOnly') || 'Only failed')}</button>
+                        <button type="button" class="jrow-toolbar__btn" data-jobs-clear>${this.app.escapeHtml(this.app.t('jobs.clearFinished') || 'Clear')}</button>
+                    </div>
+                </div>
             </section>
         `;
 
@@ -839,6 +849,23 @@ updateJobUI(job, batchId = null) {
                 body.hidden = expanded;
                 header.classList.toggle('is-collapsed', expanded);
             });
+        });
+
+        if (!this.expandedJobs) this.expandedJobs = new Set();
+        bindJobRowToggles(listRoot, this.expandedJobs);
+        const completedSection = listRoot.querySelector('#session-completed-body');
+        completedSection?.querySelector('[data-jobs-failed-only]')?.addEventListener('click', (event) => {
+            const on = !completedSection.classList.contains('is-failed-only');
+            completedSection.classList.toggle('is-failed-only', on);
+            event.currentTarget.setAttribute('aria-pressed', String(on));
+        });
+        completedSection?.querySelector('[data-jobs-clear]')?.addEventListener('click', () => this.clearFinishedJobs());
+        listRoot.addEventListener('click', (event) => {
+            const button = event.target.closest?.('[data-retry]');
+            if (!button || !listRoot.contains(button)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.retryJob(button.getAttribute('data-retry'), button);
         });
 
         this.sessionSectionsInitialized = true;
@@ -1507,6 +1534,7 @@ updateJobUI(job, batchId = null) {
     if (job.metadata?.source === 'soundcloud') {
         jobTitle = `🎵 ${job.metadata.spotifyTitle || this.app.t('ui.soundCloudPlaylist')}`;
     }
+    const rowTitle = jobTitle;
     {
         const nowTrack = this.uiNowTitle(job);
         if (job.metadata?.isPlaylist && nowTrack) {
@@ -1660,11 +1688,14 @@ updateJobUI(job, batchId = null) {
         }
     }
 
-    const jobContent = `
+    const isTerminalJob = ['completed', 'canceled', 'error'].includes(statusNorm);
+    const multiFileList = Array.isArray(job.resultPath) ? resultContent : '';
+
+    // Everything that used to fill the card stays available behind "›".
+    const detailsContent = `
     <div class="job-item-content">
-        <strong title="${this.app.escapeHtml(jobTitle)}">${this.app.escapeHtml(jobTitle)}</strong>
-        <div style="font-size: 13px; color: var(--text-muted); margin: 8px 0;">
-            ${phaseInfo}
+        <div class="jrow-detail__meta">
+            ${phaseInfo ? `<span>${phaseInfo.replace(/^ • /, '')}</span>` : ''}
             ${skippedBadge}
         </div>
         ${formatInfoHTML}
@@ -1674,112 +1705,93 @@ updateJobUI(job, batchId = null) {
         ${completedAtInfo}
         ${phaseDetails}
         ${jobTimingMarkup(job, key => this.app.t(key))}
-
-        ${(() => {
-            const nt = this.uiNowTitle(job);
-            return nt ? `<div class="muted" style="font-size:12px; margin: 8px 0 4px 0;">▶️ <strong>${this.app.escapeHtml(nt)}</strong></div>` : '';
-        })()}
-
-        <div class="progress-bar">
-            <div class="progress-fill" style="width: ${totalProgress}%"></div>
-        </div>
-        <div class="job-actions" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;">
-            <span class="status status-${job.status}">${statusText[job.status]}</span>
-            <div style="display:flex; gap:8px; align-items:center; flex-direction: column;">
-                ${resultContent}
-                <button class="btn-danger" data-stop="${job.id}" ${(['completed', 'error', 'canceled'].includes(statusNorm)) ? 'disabled' : ''} title="${this.app.t('btn.stop')}">${this.app.t('btn.stop')}</button>
-            </div>
-        </div>
-        ${job.error ? `<div style="color: var(--error); font-size: 13px; margin-top: 8px; padding: 8px; background: var(--bg-card); border-radius: 6px;">${this.app.escapeHtml(job.error)}</div>` : ''}
+        ${multiFileList ? `<div class="jrow-detail__files">${multiFileList}</div>` : ''}
+        ${!multiFileList && resultContent ? `<div class="jrow-detail__files">${resultContent}</div>` : ''}
+        ${job.error ? `<div class="jrow-detail__error">${this.app.escapeHtml(job.error)}</div>` : ''}
     </div>
 `;
+
+    // One-line summary: format, progress in songs, phase / result, time.
+    const formatLabel = joinSummary([
+        String(job.format || '').toUpperCase(),
+        job.bitrate && !['auto', '0'].includes(String(job.bitrate)) && !['flac', 'wav', 'alac'].includes(String(job.format || '').toLowerCase()) ? String(job.bitrate) : ''
+    ]).replace(' · ', ' ');
+    const playlistUi = (job.metadata?.isPlaylist || job.playlist?.total) ? this.getPlaylistUiState(job) : null;
+    let countText = '';
+    if (isTerminalJob && Array.isArray(job.resultPath)) {
+        const ok = job.resultPath.filter(r => r && r.outputPath && !r.error).length;
+        const total = Math.max(job.resultPath.length, playlistUi?.total || 0);
+        countText = total ? `${ok}/${total}` : '';
+    } else if (playlistUi?.total) {
+        countText = `${playlistUi.processed}/${playlistUi.total}`;
+    }
+    const startedMs = jobTimeMs(job.createdAt);
+    const endedMs = jobTimeMs(job.completedAt);
+    const elapsedText = isTerminalJob && startedMs && endedMs ? formatElapsed(endedMs - startedMs) : '';
+    const phaseKey = this.normalizeStatus(job.currentPhase || job.phase || job.status);
+    const phaseLabel = {
+        queued: this.app.t('status.queued'),
+        preparing: this.app.t('phase.preparing'),
+        mapping: this.app.t('phase.mapping'),
+        downloading: this.app.t('phase.downloading'),
+        converting: this.app.t('phase.converting')
+    }[phaseKey] || statusText[job.status] || '';
+    const skippedText = skippedCount > 0 ? `${this.app.t('jobs.skipped')} ${skippedCount}` : '';
+    const nowTrackText = !isTerminalJob && job.metadata?.isPlaylist ? this.uiNowTitle(job) : '';
+    const rowState = jobRowState(statusNorm, { skipped: skippedCount });
+    const errorText = statusNorm === 'error'
+        ? String(job.error?.message || job.error || statusText.error || '').split('\n')[0].slice(0, 120)
+        : '';
+    const summary = isTerminalJob
+        ? joinSummary([formatLabel, countText, statusNorm === 'canceled' ? statusText.canceled : '', errorText, skippedText, elapsedText])
+        : joinSummary([phaseLabel, countText, nowTrackText ? `▶ ${nowTrackText}` : '', formatLabel, skippedText]);
+
+    // Direct download for a single file or the zip; several files without a
+    // zip are listed in the details.
+    let downloadHref = '';
+    if (statusNorm === 'completed') {
+        if (job.zipPath) downloadHref = job.zipPath;
+        else if (typeof job.resultPath === 'string') downloadHref = job.resultPath;
+        else if (job.resultPath && !Array.isArray(job.resultPath) && job.resultPath.outputPath) downloadHref = job.resultPath.outputPath;
+        else if (Array.isArray(job.resultPath)) {
+            const ok = job.resultPath.filter(r => r && r.outputPath && !r.error);
+            if (ok.length === 1) downloadHref = ok[0].outputPath;
+        }
+    }
+    const downloadLabel = this.app.escapeHtml(this.app.t('download.single') || 'Download');
+    const actionsHtml = [
+        downloadHref ? `<a class="jrow__btn jrow__btn--download" href="${this.app.toRelative(downloadHref)}" download title="${downloadLabel}" aria-label="${downloadLabel}">⬇</a>` : '',
+        !isTerminalJob ? `<button type="button" class="jrow__btn jrow__btn--stop" data-stop="${job.id}" title="${this.app.escapeHtml(this.app.t('btn.stop'))}" aria-label="${this.app.escapeHtml(this.app.t('btn.stop'))}">■</button>` : '',
+        ['error', 'canceled'].includes(statusNorm) && job.retryable
+            ? `<button type="button" class="jrow__btn jrow__btn--retry" data-retry="${this.app.escapeHtml(job.id)}" title="${this.app.escapeHtml(this.app.t('jobs.retry'))}" aria-label="${this.app.escapeHtml(this.app.t('jobs.retry'))}">↻</button>`
+            : ''
+    ].join('');
+
+    if (!this.expandedJobs) this.expandedJobs = new Set();
+    const rowHtml = jobRowMarkup({
+        id: job.id,
+        state: rowState,
+        title: rowTitle || this.app.t('jobsPanel.job') || '',
+        summary,
+        progress: isTerminalJob ? null : totalProgress,
+        actionsHtml,
+        detailsHtml: detailsContent,
+        expanded: this.expandedJobs.has(job.id),
+        moreLabel: this.app.t('jobs.details') || 'Details'
+    });
 
     if (!jobElement) {
         jobElement = document.createElement('div');
         jobElement.id = `job-${job.id}`;
-
-        if (statusNorm === 'completed') {
-            jobElement.className = 'job-item job-item--collapsible';
-            const isExpanded = false;
-            jobElement.innerHTML = `
-                <button class="job-item-header" aria-expanded="${isExpanded}">
-                    <div class="job-item-header__content">
-                        <span class="job-item-header__title">${this.app.escapeHtml(jobTitle)}</span>
-                        <span class="job-item-header__status status status-${job.status}">${statusText[job.status]}</span>
-                    </div>
-                    <span class="job-item-header__icon" aria-hidden="true">▾</span>
-                </button>
-                <div class="job-item-body" ${isExpanded ? '' : 'hidden'}>
-                    ${jobContent}
-                </div>
-            `;
-        } else {
-            jobElement.className = 'job-item';
-            jobElement.innerHTML = jobContent;
-        }
-    } else {
-        if (statusNorm === 'completed' && !jobElement.classList.contains('job-item--collapsible')) {
-            jobElement.className = 'job-item job-item--collapsible';
-            const isExpanded = false;
-            jobElement.innerHTML = `
-                <button class="job-item-header" aria-expanded="${isExpanded}">
-                    <div class="job-item-header__content">
-                        <span class="job-item-header__title">${this.app.escapeHtml(jobTitle)}</span>
-                        <span class="job-item-header__status status status-${job.status}">${statusText[job.status]}</span>
-                    </div>
-                    <span class="job-item-header__icon" aria-hidden="true">▾</span>
-                </button>
-                <div class="job-item-body" ${isExpanded ? '' : 'hidden'}>
-                    ${jobContent}
-                </div>
-            `;
-        } else if (statusNorm === 'completed') {
-            const header = jobElement.querySelector('.job-item-header');
-            const body = jobElement.querySelector('.job-item-body');
-            if (header && body) {
-                const titleSpan = header.querySelector('.job-item-header__title');
-                const statusSpan = header.querySelector('.job-item-header__status');
-                if (titleSpan) titleSpan.textContent = jobTitle;
-                if (statusSpan) statusSpan.textContent = statusText[job.status];
-                statusSpan.className = `job-item-header__status status status-${job.status}`;
-
-                body.innerHTML = jobContent;
-            }
-        } else {
-            jobElement.innerHTML = jobContent;
-        }
     }
+    jobElement.className = `job-item jrow jrow--${rowState}`;
+    jobElement.dataset.time = String(endedMs || startedMs || Date.now());
+    jobElement.innerHTML = rowHtml;
 
-    const parentForJob = ['completed', 'canceled', 'error'].includes(statusNorm)
-        ? completedBody
-        : activeBody;
-
+    const parentForJob = isTerminalJob ? completedBody : activeBody;
     if (parentForJob) {
-        const isTerminal = ['completed', 'canceled', 'error'].includes(statusNorm);
-
-        if (isTerminal) {
-            parentForJob.insertBefore(jobElement, parentForJob.firstChild || null);
-        } else {
-            if (jobElement.parentElement !== parentForJob) {
-                parentForJob.appendChild(jobElement);
-            }
-        }
-    }
-
-    if (statusNorm === 'completed' || statusNorm === 'error' || statusNorm === 'canceled') {
-        const header = jobElement.querySelector('.job-item-header');
-        const body = jobElement.querySelector('.job-item-body');
-        if (header && body) {
-            if (!header.dataset.hasListener) {
-                header.addEventListener('click', () => {
-                    const expanded = header.getAttribute('aria-expanded') === 'true';
-                    header.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-                    body.hidden = expanded;
-                    header.classList.toggle('is-collapsed', expanded);
-                });
-                header.dataset.hasListener = 'true';
-            }
-        }
+        if (jobElement.parentElement !== parentForJob) parentForJob.appendChild(jobElement);
+        if (isTerminalJob) regroupFinishedRows(parentForJob, (key) => this.app.t(key), { rowSelector: '.job-item' });
     }
 
     this.jobStates.set(job.id, job);
@@ -1985,6 +1997,67 @@ updateJobUI(job, batchId = null) {
         if (stopBtn) stopBtn.disabled = !anyActive;
     }
 
+    // Starts a failed or canceled job again with its original settings. The
+    // old row is replaced by the new job (also when the panel asks for it).
+    async retryJob(jobId, button = null) {
+        if (!jobId) return null;
+        if (button) button.disabled = true;
+        try {
+            const token = localStorage.getItem('gharmonize_admin_token') || '';
+            const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry`, {
+                method: 'POST',
+                headers: token ? { Authorization: `Bearer ${token}` } : {}
+            });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                const code = data?.error?.code || '';
+                if (['RETRY_UNAVAILABLE', 'RETRY_SOURCE_GONE'].includes(code)) {
+                    const known = this.jobStates.get(jobId);
+                    if (known) { known.retryable = false; this.updateJobUI(known, this.jobToBatch.get(jobId) || null); }
+                }
+                const text = code ? this.app.t(`errors.${code}`) : '';
+                throw new Error(text && text !== `errors.${code}` ? text : (data?.error?.message || 'error'));
+            }
+            document.dispatchEvent(new CustomEvent('job:retried', { detail: { oldId: jobId, newId: data.id, from: 'page' } }));
+            this.adoptRetriedJob(jobId, data.id);
+            this.app.showNotification(this.app.t('jobs.retryStarted'), 'success', 'queue');
+            return data.id;
+        } catch (error) {
+            if (button) button.disabled = false;
+            this.app.showNotification(`${this.app.t('notif.errorPrefix')}: ${error.message}`, 'error', 'error');
+            return null;
+        }
+    }
+
+    // The retried job takes the old row's place on this page.
+    adoptRetriedJob(oldId, newId) {
+        if (!newId || this.jobStates.has(newId) || this.currentJobs.has(newId)) return;
+        if (this.jobStates.has(oldId)) this.removeJobCompletely(oldId);
+        const empty = document.getElementById('job-empty');
+        if (empty) empty.remove();
+        this.trackJob(newId);
+        this.saveSessionState();
+    }
+
+    // Removes every finished job (completed, failed, canceled) from the list
+    // after a confirmation; running jobs stay.
+    async clearFinishedJobs() {
+        const finished = Array.from(this.jobStates.values())
+            .filter(j => ['completed', 'canceled', 'error'].includes(this.normalizeStatus(j.status)));
+        if (!finished.length) return;
+        const ok = await (this.app.modalManager?.showConfirm?.({
+            title: this.app.t('jobs.clearFinished') || 'Clear',
+            message: this.app.t('jobs.clearFinishedConfirm', { count: finished.length }) || `${finished.length}`,
+            confirmText: this.app.t('btn.confirm') || 'OK',
+            cancelText: this.app.t('btn.cancel') || 'Cancel',
+            type: 'warning'
+        }) ?? Promise.resolve(true));
+        if (!ok) return;
+        for (const job of finished) this.removeJobCompletely(job.id);
+        const body = document.getElementById('session-completed-body');
+        if (body) regroupFinishedRows(body, (key) => this.app.t(key), { rowSelector: '.job-item' });
+    }
+
     // Removes job state completely from the browser UI layer.
     removeJobCompletely(jobId) {
     const batchId = this.jobToBatch.get(jobId) || null;
@@ -2004,6 +2077,8 @@ updateJobUI(job, batchId = null) {
     if (el && el.parentElement) {
         el.parentElement.removeChild(el);
     }
+    const finishedBody = document.getElementById('session-completed-body');
+    if (finishedBody) regroupFinishedRows(finishedBody, (key) => this.app.t(key), { rowSelector: '.job-item' });
 
     let activeCount = 0;
     let completedCount = 0;

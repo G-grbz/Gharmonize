@@ -80,6 +80,14 @@ export class UploadManager {
               ? probeResult.defaultSelection.audio
               : (audioStreams[0] ? [audioStreams[0].index] : []);
 
+          if (hasVideo) {
+            for (const warning of this.audioKeepWarnings(audioStreams, selectedAudio, currentFormat)) {
+              const notify = this.app.notificationManager?.showNotification?.bind(this.app.notificationManager);
+              if (notify) notify(`⚠️ ${warning}`, 'warning', 'audio-keep', 12000);
+              else this.app.showNotification(`⚠️ ${warning}`, 'warning', 'audio-keep');
+            }
+          }
+
           const baseResult = {
             audio: selectedAudio,
             subtitles: [],
@@ -153,6 +161,39 @@ export class UploadManager {
       );
       return null;
     }
+  }
+
+  // Warnings for the selected audio streams when "Change Audio Codec" is off:
+  // the source audio is kept, so say beforehand when the container cannot
+  // hold it, or when volume/loudnorm cannot be applied without changing it.
+  audioKeepWarnings(audioStreams = [], selectedIndices = [], container = 'mp4') {
+    const videoSettings = this.app.videoManager?.videoSettings || {};
+    if (videoSettings.audioTranscodeEnabled) return [];
+    const fmt = String(container || '').toLowerCase();
+    if (!['mp4', 'mkv', 'mov', 'webm'].includes(fmt)) return [];
+    const audio = this.app.getCurrentAudioProcessingSettings?.() || {};
+    const gain = Number(audio.volumeGain);
+    const filters = !!audio.loudnorm || (Number.isFinite(gain) && gain > 0 && gain !== 1);
+    const target = fmt === 'webm' ? 'Opus' : 'AAC';
+    const selected = new Set(selectedIndices.map(Number));
+    const out = [];
+    for (const stream of audioStreams) {
+      if (!selected.has(Number(stream.index)) || !stream.keep) continue;
+      const vars = {
+        codec: String(stream.codec || '?').toUpperCase(),
+        channels: stream.channels || '?',
+        container: fmt.toUpperCase(),
+        target
+      };
+      if (stream.keep.copyInto && stream.keep.copyInto[fmt] === false) {
+        out.push(this.app.t('streamSelection.audioKeepContainer', vars) ||
+          `${vars.codec} (${vars.channels}) → ${vars.container}: ${target}`);
+      } else if (filters && !stream.keep.keepWithFilters) {
+        out.push(this.app.t('streamSelection.audioKeepFiltersSkipped', vars) ||
+          `${vars.codec} (${vars.channels}): volume/loudnorm skipped`);
+      }
+    }
+    return [...new Set(out)];
   }
 
   // Shows stream payload selection modal in the browser UI layer.
@@ -295,6 +336,7 @@ export class UploadManager {
                       </label>
                     `).join('')}
                   </div>
+                  <div class="stream-audio-keep-warning" id="audioKeepWarning" role="status" hidden></div>
                 </div>
                 ${
                   (currentFormat === 'mp4' || currentFormat === 'mkv') && subtitleStreams.length > 0
@@ -546,10 +588,30 @@ export class UploadManager {
           cb.checked = defaults.size > 0 ? defaults.has(value) : index === 0;
         });
       };
+      const keepWarningEl = modal.querySelector('#audioKeepWarning');
+      const updateAudioKeepWarning = () => {
+        if (!keepWarningEl) return;
+        const selected = audioCheckboxes.filter(cb => cb.checked).map(cb => parseInt(cb.value, 10));
+        const container = modal.querySelector('input[name="outputContainer"]:checked')?.value || currentFormat;
+        const warnings = this.audioKeepWarnings(audioStreams, selected, container);
+        keepWarningEl.replaceChildren(...warnings.map((text) => {
+          const line = document.createElement('p');
+          line.textContent = `⚠️ ${text}`;
+          return line;
+        }));
+        keepWarningEl.hidden = warnings.length === 0;
+      };
       modal.querySelector('#clearAudioSelectionBtn')?.addEventListener('click', () => {
         audioCheckboxes.forEach(cb => { cb.checked = false; });
+        updateAudioKeepWarning();
       });
-      modal.querySelector('#resetAudioSelectionBtn')?.addEventListener('click', resetAudioSelection);
+      modal.querySelector('#resetAudioSelectionBtn')?.addEventListener('click', () => {
+        resetAudioSelection();
+        updateAudioKeepWarning();
+      });
+      audioCheckboxes.forEach(cb => cb.addEventListener('change', updateAudioKeepWarning));
+      modal.querySelectorAll('input[name="outputContainer"]').forEach(radio => radio.addEventListener('change', updateAudioKeepWarning));
+      updateAudioKeepWarning();
 
       const previewToggle = modal.querySelector('#previewClipEnabled');
       const previewFields = modal.querySelector('#previewClipFields');

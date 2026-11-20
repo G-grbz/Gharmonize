@@ -1,7 +1,7 @@
 import { visibleSql } from './access.js'
 import { normalizeKey } from './scanner.js'
 import { primaryArtistKey, albumBaseKey, artistsMatch, cleanTitleForMatch } from './matching.js'
-import { songKey } from './songKey.js'
+import { songKey, artistCredits } from './songKey.js'
 import { seededRandom, seededShuffle, localDayKey } from './mixes.js'
 
 export const MOOD_PRESETS = ['energizing', 'workout', 'feel-good', 'relax', 'sad', 'romance', 'commute', 'party', 'focus', 'sleep']
@@ -21,9 +21,16 @@ const TTL = {
   detail: DAY,
   ytPlaylist: 6 * HOUR,
   genres: 30 * DAY,
-  spotify: 6 * HOUR
+  spotify: 6 * HOUR,
+  artistMixes: DAY,
+  artistMixesMissing: 3 * DAY,
+  applePlaylists: 3 * DAY
 }
 const SHELF_TIMEOUT_MS = 10_000
+const WARM_RETRY_MS = 30 * 60 * 1000
+// Artists the personal shelves are built from: a wide pool, a different
+// handful every day (and on every manual refresh).
+const SEED_POOL = 24
 // Deezer's official per-country "Top" charts (Deezer Charts editor).
 export const DEEZER_COUNTRY_CHARTS = { tr: { id: '1116189071', country: 'TR' }, de: { id: '1111143121', country: 'DE' }, fr: { id: '1109890291', country: 'FR' }, es: { id: '1116190041', country: 'ES' } }
 const NEW_RELEASE_WINDOW_DAYS = 180
@@ -41,23 +48,13 @@ function timeout(promise, ms) {
   return Promise.race([promise, new Promise((resolve) => { timer = setTimeout(() => resolve(undefined), ms) })]).finally(() => clearTimeout(timer))
 }
 
-function dayIndex(now) {
-  return Math.floor(now / DAY)
-}
-
-function rotate(list, by) {
-  if (!list.length) return list
-  const k = ((by % list.length) + list.length) % list.length
-  return [...list.slice(k), ...list.slice(0, k)]
-}
-
 export function normalizeLang(value, fallback = 'en') {
   const lang = String(value || '').trim().toLowerCase().slice(0, 2)
   return ['tr', 'en', 'de', 'fr', 'es'].includes(lang) ? lang : fallback
 }
 
-export function createDiscovery({ db, cache, sources, annotator, getConfig, logger = console, now = () => Date.now(), shelfTimeoutMs = SHELF_TIMEOUT_MS }) {
-  const { deezer, youtube, spotify } = sources
+export function createDiscovery({ db, cache, sources, annotator, getConfig, logger = console, now = () => Date.now(), shelfTimeoutMs = SHELF_TIMEOUT_MS, artistPhotos = null }) {
+  const { deezer, youtube, spotify, apple } = sources
   const enabled = (name) => {
     const cfg = getConfig()
     if (!cfg.discoveryEnabled) return false
@@ -67,6 +64,35 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
   }
 
   // ---- cached source calls ----------------------------------------------------
+
+  // Cache key, lifetime and loader of the per-artist mix lookups. Unknown
+  // artists (null) are re-checked sooner than known ones.
+  const missingSooner = (ttl) => ({ ttlFor: (value) => (value ? ttl : TTL.artistMixesMissing) })
+  const mixSpec = {
+    yt: (name, lang) => [`yt:artist-mixes:${lang}:${normalizeKey(name)}`, TTL.artistMixes, () => youtube.artistMixes(name, { lang }), missingSooner(TTL.artistMixes)],
+    dz: (name) => [`dz:artist-mix:${normalizeKey(name)}`, TTL.artistMixes, () => deezerMix(name), missingSooner(TTL.artistMixes)],
+    ap: (name, lang) => [`ap:artist-playlists:${lang}:${normalizeKey(name)}`, TTL.applePlaylists, () => apple.artistPlaylists(name, { lang }), missingSooner(TTL.applePlaylists)],
+    sp: (name) => [`sp:artist-playlists:${normalizeKey(name)}`, TTL.artistMixes, () => spotify.artistPlaylists(name), {}]
+  }
+
+  // Home mix shelves never make the page wait: they show what is cached and
+  // fetch the rest in the background, one lookup at a time, so the shared
+  // YouTube Music request queue is not filled up ahead of searches.
+  const warming = new Set()
+  const warmFailedAt = new Map()
+  let warmChain = Promise.resolve()
+  function cachedOrWarm([key, ttl, loader, opts]) {
+    const entry = cache.entry(key)
+    const fresh = entry && entry.expiresAt > now()
+    if (!fresh && !warming.has(key) && now() - (warmFailedAt.get(key) || 0) > WARM_RETRY_MS) {
+      warming.add(key)
+      warmChain = warmChain
+        .then(() => cache.refresh(key, ttl, loader, opts))
+        .then(() => warmFailedAt.delete(key), () => warmFailedAt.set(key, now()))
+        .finally(() => warming.delete(key))
+    }
+    return entry ? entry.value : null
+  }
 
   const dz = {
     chartTracks: () => cache.wrap('dz:chart:tracks', TTL.chart, () => deezer.chartTracks(40)),
@@ -91,11 +117,18 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
   const yt = {
     home: (lang) => cache.wrap(`yt:home:${lang}`, TTL.ytHome, () => youtube.home({ lang, shelves: 10, limit: 20 })),
     discover: (preset, lang) => cache.wrap(`yt:discover:${preset}:${lang}`, TTL.ytDiscover, () => youtube.discover(preset, { lang, limit: 24 })),
-    playlist: (url, artist) => cache.wrap(`yt:playlist:${url}`, TTL.ytPlaylist, () => youtube.playlist(url, { artist }))
+    playlist: (url, artist, automix = false) => cache.wrap(`yt:playlist:${url}`, TTL.ytPlaylist, () => youtube.playlist(url, { artist, automix })),
+    artistMixes: (name, lang) => cache.wrap(...mixSpec.yt(name, lang))
   }
   const sp = {
     newReleases: () => cache.wrap('sp:new-releases', TTL.spotify, () => spotify.newReleases(30)),
-    album: (id) => cache.wrap(`sp:album:${id}`, TTL.detail, () => spotify.album(id))
+    album: (id) => cache.wrap(`sp:album:${id}`, TTL.detail, () => spotify.album(id)),
+    artistPlaylists: (name) => cache.wrap(...mixSpec.sp(name)),
+    playlist: (id) => cache.wrap(`sp:playlist:${id}`, TTL.ytPlaylist, () => spotify.playlist(id))
+  }
+  const ap = {
+    artistPlaylists: (name, lang) => cache.wrap(...mixSpec.ap(name, lang)),
+    playlist: (url) => cache.wrap(`ap:playlist:${url}`, TTL.ytPlaylist, () => apple.playlist(url))
   }
 
   // ---- personal seeds from the user's own (visible) library ----------------
@@ -119,6 +152,25 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     push(db.prepare(`SELECT ar.name, COUNT(*) AS n FROM tracks t JOIN artists ar ON ar.id = t.artist_id
       WHERE ${VIS} GROUP BY ar.id ORDER BY n DESC LIMIT 40`).all({ $uid }))
     return names.slice(0, limit)
+  }
+
+  // A daily pick from the seed pool. Artists you listen to most come up more
+  // often, the others take turns (weighted sampling: key = r^(1/w)). `round`
+  // is bumped by the refresh button for another pick on the same day.
+  function pickSeeds(userId, count, round = 0) {
+    const pool = seedArtists(userId, SEED_POOL)
+    const rnd = seededRandom(`${userId}:${localDayKey(now())}:seeds:${round}`)
+    if (pool.length <= count) return seededShuffle(pool, rnd)
+    return pool
+      .map((name, i) => ({ name, key: Math.pow(rnd(), 1 + i / 4) }))
+      .sort((a, b) => b.key - a.key)
+      .slice(0, count)
+      .map((x) => x.name)
+  }
+
+  // Same items, a different order every day / refresh.
+  function dailyOrder(items, userId, salt, round = 0) {
+    return seededShuffle(items, seededRandom(`${userId}:${localDayKey(now())}:${salt}:${round}`))
   }
 
   function topGenre(userId) {
@@ -165,11 +217,110 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     return builders
   }
 
-  function personalBuilders(userId) {
+  // ---- mixes ---------------------------------------------------------------
+
+  // Deezer's artist mix (artist radio). It has no link the download pipeline
+  // can read, so its songs are downloaded one by one.
+  async function deezerMix(name) {
+    const id = await dz.artistId(name)
+    if (!id) return null
+    const artist = await dz.artist(id).catch(() => null)
+    const title = artist?.title || name
+    return {
+      provider: 'deezer',
+      kind: 'playlist',
+      id: `artist-mix-${id}`,
+      title: `${title} Mix`,
+      artist: 'Deezer',
+      artworkUrl: artist?.artworkUrl || null,
+      url: null,
+      sourceUrl: `https://www.deezer.com/artist/${id}`,
+      mix: 'deezer',
+      mixId: String(id),
+      downloadable: false,
+      seed: title
+    }
+  }
+
+  const settle = (promise) => timeout(Promise.resolve(promise).catch(() => null), shelfTimeoutMs).then((v) => v ?? null)
+  const MIX_TITLE = /\b(radio|mix)\b/i
+
+  // Mixes and playlists made around one artist, from every enabled source.
+  async function artistMixes(user, { name, lang } = {}) {
+    const artist = String(name || '').trim().slice(0, 200)
+    if (!artist || !getConfig().discoveryEnabled) return { enabled: false, artist, mixes: [], playlists: [] }
+    const safeLang = normalizeLang(lang, normalizeLang(process.env.YT_LANG))
+    const [ytRes, dzMix, apRes, spRes] = await Promise.all([
+      enabled('youtube') ? settle(yt.artistMixes(artist, safeLang)) : null,
+      enabled('deezer') ? settle(cache.wrap(...mixSpec.dz(artist))) : null,
+      enabled('apple') ? settle(ap.artistPlaylists(artist, safeLang)) : null,
+      enabled('spotify') ? settle(sp.artistPlaylists(artist)) : null
+    ])
+    const spotifyLists = spRes || []
+    const mixes = [ytRes?.mix, dzMix, ...spotifyLists.filter((p) => MIX_TITLE.test(p.title))].filter(Boolean)
+    const seen = new Set(mixes.map((m) => m.url || m.id))
+    // Sources take turns so one of them does not fill the whole row.
+    const lanes = [spotifyLists.filter((p) => !MIX_TITLE.test(p.title)), apRes?.items || [], ...(ytRes?.shelves || []).map((s) => s.items)]
+    const rounds = Math.max(0, ...lanes.map((l) => l.length))
+    const mixed = []
+    for (let i = 0; i < rounds; i++) for (const lane of lanes) if (lane[i]) mixed.push(lane[i])
+    const playlists = mixed
+      .filter((p) => {
+        const key = p.url || p.id
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      }).slice(0, 30)
+    return { enabled: true, artist, mixes: annotator.items(mixes, user.id), playlists: annotator.items(playlists, user.id) }
+  }
+
+  // Home "mix" shelves: one per source, built from the artists you listen to.
+  // Only cached lookups are used (see cachedOrWarm); the rest follow on a
+  // later load.
+  function mixBuilders(userId, lang, round = 0) {
+    const today = pickSeeds(userId, 8, round)
+    if (!today.length) return []
+    const builders = []
+    const cached = (names, spec) => names.map((name) => cachedOrWarm(spec(name))).filter(Boolean)
+    if (enabled('youtube')) {
+      builders.push(async () => {
+        const found = cached(today.slice(0, 6), (name) => mixSpec.yt(name, lang))
+        const mixes = shelf('mixes-youtube', 'youtube', 'playlists', found.map((r) => r.mix).filter(Boolean), { titleKey: 'player.discover.ytMixes' })
+        // "Featured on" lists of each artist, taking turns between artists.
+        const lists = found.map((r) => r.shelves?.[0]?.items || [])
+        const items = []
+        const seen = new Set()
+        for (let i = 0; i < 6; i++) {
+          for (const l of lists) {
+            const item = l[i]
+            if (item && !seen.has(item.url)) { seen.add(item.url); items.push(item) }
+          }
+        }
+        return [mixes, shelf('mixes-yt-featured', 'youtube', 'playlists', dailyOrder(items.slice(0, 24), userId, 'yt-featured', round), { titleKey: 'player.discover.ytFeatured' })]
+      })
+    }
+    if (enabled('deezer')) {
+      builders.push(async () => shelf('mixes-deezer', 'deezer', 'playlists', cached(today.slice(0, 8), (name) => mixSpec.dz(name)), { titleKey: 'player.discover.dzMixes' }))
+    }
+    if (enabled('apple')) {
+      builders.push(async () => {
+        // A few lists per artist, a different few every day.
+        const items = cached(today.slice(0, 4), (name) => mixSpec.ap(name, lang)).flatMap((r) => dailyOrder(r.items || [], userId, `apple:${r.artist}`, round).slice(0, 3))
+        return shelf('mixes-apple', 'apple', 'playlists', items, { titleKey: 'player.discover.appleLists' })
+      })
+    }
+    if (enabled('spotify')) {
+      builders.push(async () => shelf('mixes-spotify', 'spotify', 'playlists', cached(today.slice(0, 6), (name) => mixSpec.sp(name)).flat(), { titleKey: 'player.discover.spLists' }))
+    }
+    return builders
+  }
+
+  function personalBuilders(userId, round = 0) {
     if (!enabled('deezer')) return []
+    // New releases: from your main artists. The other shelves: today's pick.
     const seeds = seedArtists(userId, 8)
     if (!seeds.length) return []
-    const today = rotate(seeds, dayIndex(now()))
+    const today = pickSeeds(userId, 4, round)
     const builders = []
 
     // New releases by artists you already listen to / own.
@@ -193,15 +344,16 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
         const top = await dz.artistTop(id)
         // Only songs you do not own yet: the "fill your library" shelf.
         const missing = annotator.items(top, userId).filter((t) => !t.library)
-        return shelf(`missing-${artistKey}`, 'deezer', 'tracks', missing.slice(0, 20), { titleKey: 'player.discover.missingFromArtist', titleVars: { artist: name }, seed: name })
+        return shelf(`missing-${artistKey}`, 'deezer', 'tracks', dailyOrder(missing, userId, `missing:${artistKey}`, round).slice(0, 20), { titleKey: 'player.discover.missingFromArtist', titleVars: { artist: name }, seed: name })
       })
       builders.push(async () => {
         const id = await dz.artistId(name)
         if (!id) return null
-        return shelf(`fans-${artistKey}`, 'deezer', 'artists', await dz.artistRelated(id), { titleKey: 'player.discover.fansOf', titleVars: { artist: name }, seed: name })
+        return shelf(`fans-${artistKey}`, 'deezer', 'artists', dailyOrder(await dz.artistRelated(id), userId, `fans:${artistKey}`, round), { titleKey: 'player.discover.fansOf', titleVars: { artist: name }, seed: name })
       })
     }
-    const radioSeed = today[0]
+    // The radio comes from a fourth artist when there is one.
+    const radioSeed = today[3] || today[0]
     builders.push(async () => {
       const id = await dz.artistId(radioSeed)
       if (!id) return null
@@ -238,15 +390,17 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
   }
 
   // Personal shelves first (they are what makes it "ours"), then global ones.
-  async function discover(user, { lang, scope = 'all' } = {}) {
+  async function discover(user, { lang, scope = 'all', round = 0 } = {}) {
     if (!getConfig().discoveryEnabled) return { enabled: false, shelves: [], partial: false, generatedAt: now() }
     const safeLang = normalizeLang(lang, normalizeLang(process.env.YT_LANG))
     const builders = [
-      ...(scope === 'global' ? [] : personalBuilders(user.id)),
+      ...(scope === 'global' ? [] : mixBuilders(user.id, safeLang, round)),
+      ...(scope === 'global' ? [] : personalBuilders(user.id, round)),
       ...(scope === 'personal' ? [] : await globalShelves(safeLang))
     ]
     const { shelves, partial } = await runBuilders(builders)
-    return { enabled: true, shelves: annotator.shelves(shelves, user.id), partial, generatedAt: now(), lang: safeLang }
+    // Mix lookups still loading in the background: the client asks again soon.
+    return { enabled: true, shelves: annotator.shelves(shelves, user.id), partial: partial || warming.size > 0, generatedAt: now(), lang: safeLang }
   }
 
   async function mood(user, preset, { lang } = {}) {
@@ -344,17 +498,50 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     return { available: true, found: true, album: annotator.items([data.album], user.id)[0], total: tracks.length, missing }
   }
 
-  async function onlinePlaylist(user, { provider, id, url } = {}) {
+  function playlistAnswer(user, playlist, tracks) {
+    return { playlist: annotator.items([playlist], user.id)[0], tracks: annotator.items(tracks, user.id) }
+  }
+
+  async function onlinePlaylist(user, { provider, id, url, mix } = {}) {
+    if (provider === 'deezer' && mix === 'artist') {
+      const artistId = requireId(id)
+      if (!/^\d+$/.test(artistId)) throw new DiscoveryError('INVALID_ID', 'Invalid id.')
+      const [artist, tracks] = await Promise.all([dz.artist(artistId).catch(() => null), dz.artistRadio(artistId)])
+      if (!artist) throw new DiscoveryError('NOT_FOUND', 'Artist not found online.', 404)
+      const playlist = {
+        provider: 'deezer', kind: 'playlist', id: `artist-mix-${artistId}`, title: `${artist.title} Mix`, artist: 'Deezer',
+        artworkUrl: artist.artworkUrl, url: null, sourceUrl: artist.url, mix: 'deezer', mixId: artistId, downloadable: false, seed: artist.title, trackCount: tracks.length
+      }
+      return playlistAnswer(user, playlist, tracks)
+    }
     if (provider === 'deezer') {
       const data = await dz.playlist(requireId(id))
       if (!data) throw new DiscoveryError('NOT_FOUND', 'Playlist not found.', 404)
-      return { playlist: annotator.items([data.playlist], user.id)[0], tracks: annotator.items(data.tracks, user.id) }
+      return playlistAnswer(user, data.playlist, data.tracks)
     }
     if (provider === 'youtube') {
       const link = requireYouTubeUrl(url)
-      const data = await yt.playlist(link, null)
-      const playlist = { provider: 'youtube', kind: 'playlist', id: link, title: data.title, artist: 'YouTube Music', trackCount: data.count, url: link, artworkUrl: data.tracks[0]?.artworkUrl || null }
-      return { playlist: annotator.items([playlist], user.id)[0], tracks: annotator.items(data.tracks, user.id) }
+      // Mixes (RD…, but not YouTube Music's own RDCLAK playlists) are read
+      // like the download pipeline reads them.
+      const listId = new URL(link).searchParams.get('list') || ''
+      const automix = /^RD/.test(listId) && !/^RDCLAK/.test(listId)
+      const data = await yt.playlist(link, null, automix)
+      const playlist = { provider: 'youtube', kind: 'playlist', id: listId || link, title: data.title, artist: 'YouTube Music', trackCount: data.count, url: link, artworkUrl: data.tracks[0]?.artworkUrl || null, mix: automix ? 'youtube' : undefined }
+      return playlistAnswer(user, playlist, data.tracks)
+    }
+    if (provider === 'spotify') {
+      const listId = requireId(id)
+      const data = await sp.playlist(listId)
+      if (!data) throw new DiscoveryError('NOT_FOUND', 'Playlist not found.', 404)
+      const playlist = { provider: 'spotify', kind: 'playlist', id: listId, title: data.title, artist: 'Spotify', trackCount: data.count, url: `https://open.spotify.com/playlist/${listId}`, artworkUrl: data.tracks[0]?.artworkUrl || null }
+      return playlistAnswer(user, playlist, data.tracks)
+    }
+    if (provider === 'apple') {
+      if (!apple) throw new DiscoveryError('PROVIDER_DISABLED', 'Apple Music is not available.', 409)
+      const data = await ap.playlist(String(url || ''))
+      if (!data) throw new DiscoveryError('INVALID_URL', 'Not an Apple Music playlist link.')
+      const playlist = { provider: 'apple', kind: 'playlist', id: new URL(url).pathname.split('/').pop(), title: data.title, artist: 'Apple Music', trackCount: data.count, url, artworkUrl: data.tracks[0]?.artworkUrl || null }
+      return playlistAnswer(user, playlist, data.tracks)
     }
     throw new DiscoveryError('UNKNOWN_PROVIDER', 'Unknown provider.')
   }
@@ -374,14 +561,46 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     if (!artist) throw new DiscoveryError('NOT_FOUND', 'Artist not found online.', 404)
     const sorted = [...albums].sort((a, b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')))
     const annotatedAlbums = annotator.items(sorted, user.id)
+    const mainArtist = annotator.items([artist], user.id)[0]
+    const relatedArtists = annotator.items(related, user.id)
+    // The photos are already here: library artists keep them (no extra lookup).
+    for (const a of [mainArtist, ...relatedArtists]) {
+      if (a.library?.artistId && a.artworkUrl) artistPhotos?.remember(a.library.artistId, a.title, a.artworkUrl)
+    }
     return {
-      artist: annotator.items([artist], user.id)[0],
+      artist: { ...mainArtist, follow: followState(user.id, mainArtist) },
       topTracks: annotator.items(top, user.id),
       albums: annotatedAlbums.filter((a) => a.recordType !== 'single'),
       singles: annotatedAlbums.filter((a) => a.recordType === 'single'),
-      related: annotator.items(related, user.id),
+      related: relatedArtists,
       missingAlbums: annotatedAlbums.filter((a) => a.recordType !== 'single' && !a.library).length
     }
+  }
+
+  // Follow state of an online artist: the library artist when the user has
+  // their songs, else an artist kept only because someone follows it.
+  const artistIdByKey = db.prepare('SELECT id FROM artists WHERE name_key = ?')
+  const isFollowed = db.prepare("SELECT 1 FROM favorites WHERE user_id = ? AND item_type = 'artist' AND item_id = ?")
+  function followState(userId, artist) {
+    const artistId = artist.library?.artistId || artistIdByKey.get(normalizeKey(artist.title))?.id || null
+    return { artistId, following: Boolean(artistId && isFollowed.get(Number(userId), artistId)) }
+  }
+
+  // Deezer photo of an artist (exact name only). undefined = cannot tell now.
+  async function artistPhotoUrl(name) {
+    if (!enabled('deezer')) return undefined
+    const id = await dz.artistId(String(name || '').slice(0, 200))
+    if (!id) return null
+    const artist = await dz.artist(id)
+    return artist?.artworkUrl || null
+  }
+
+  // Keeps the photo of a just-followed artist (the Deezer artist is usually
+  // still cached from the page the follow came from).
+  async function rememberArtistPhoto(artistId, deezerId) {
+    if (!artistPhotos || !enabled('deezer') || !/^\d+$/.test(String(deezerId))) return
+    const artist = await dz.artist(deezerId).catch(() => null)
+    if (artist?.artworkUrl) artistPhotos.remember(artistId, artist.title, artist.artworkUrl)
   }
 
   // Online songs that fit a personal mix: artist radios of the mix's artists
@@ -413,9 +632,45 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     return { enabled: true, items: seededShuffle(pool, rnd).slice(0, limit), ownedIds }
   }
 
+  // For the autoplay continuation: artists Deezer calls related to `artist`
+  // and the user's own songs that Deezer's artist radio plays. A collaboration
+  // is looked up as the whole credit and as its first two names. Empty when
+  // Deezer is off or does not answer in time (the lookups are cached).
+  async function autoplayRelated(user, artist, { timeoutMs = 3000 } = {}) {
+    const empty = { artists: [], trackIds: [] }
+    const full = String(artist || '').trim().slice(0, 200)
+    if (!full || !enabled('deezer')) return empty
+    const names = [...new Set([full, ...artistCredits(full).slice(0, 2)])]
+    const lists = await Promise.all(names.map(async (name) => {
+      try {
+        const id = await timeout(dz.artistId(name), timeoutMs)
+        if (!id) return null
+        const [related, radio] = await Promise.all([
+          timeout(dz.artistRelated(id), timeoutMs).catch(() => []),
+          timeout(dz.artistRadio(id), timeoutMs).catch(() => [])
+        ])
+        return { related: related || [], radio: radio || [] }
+      } catch { return null }
+    }))
+    const found = lists.filter(Boolean)
+    const artists = [...new Set(found.flatMap((entry) => entry.related.map((a) => a.title)).filter(Boolean))].slice(0, 30)
+    const trackIds = [...new Set(annotator.items(found.flatMap((entry) => entry.radio), user.id)
+      .map((item) => item.library?.trackId).filter(Boolean))]
+    return { artists, trackIds }
+  }
+
   async function mixSuggestions(user, { mixId, artists = [], limit = 15 } = {}) {
     return radioSuggestions(user, { artists, seedKey: mixId, limit })
   }
 
-  return { discover, mood, onlineAlbum, albumMissing, onlinePlaylist, onlineArtist, seedArtists, mixSuggestions, radioSuggestions, moods: () => MOOD_PRESETS }
+  // Deezer discography of an artist (by exact name or a known id), for the
+  // new-release watch. null when Deezer is off or the artist is unknown.
+  async function artistReleases(name, knownId = null) {
+    if (!enabled('deezer')) return null
+    const id = knownId || await dz.artistId(String(name || '').slice(0, 200))
+    if (!id) return null
+    return { id: String(id), albums: await dz.artistAlbums(id) }
+  }
+
+  return { discover, mood, onlineAlbum, albumMissing, onlinePlaylist, onlineArtist, artistPhotoUrl, rememberArtistPhoto, artistMixes, artistReleases, seedArtists, mixSuggestions, radioSuggestions, autoplayRelated, moods: () => MOOD_PRESETS }
 }

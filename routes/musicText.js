@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import express from 'express';
 import { searchYtmBestMatch } from '../modules/sp.js';
+import { mappedMusicMatchMode } from '../modules/mappedMusicMatcher.js';
 import { rateLimit, concurrencyLimit } from '../modules/rateLimit.js';
 import { sendOk, sendError } from '../modules/utils.js';
 
@@ -64,13 +65,13 @@ async function mapConcurrent(items, limit, mapper, onSettled = null) {
   return results;
 }
 
-async function matchOne(item) {
+async function matchOne(item, format) {
   try {
-    const match = await searchYtmBestMatch(item.artist, item.title || item.query, { provider: 'text' });
+    const match = await searchYtmBestMatch(item.artist, item.title || item.query, { provider: 'text', format });
     if (!match?.id) {
       return { ...item, matched: false, match: null, error: 'No safe YouTube match found' };
     }
-    return { ...item, matched: true, match, error: null };
+    return { ...item, matched: true, match: { ...match, matchMode: mappedMusicMatchMode(format) }, error: null };
   } catch (error) {
     return {
       ...item,
@@ -81,8 +82,8 @@ async function matchOne(item) {
   }
 }
 
-async function matchBatch(items, workerCount, onSettled = null) {
-  const results = await mapConcurrent(items, workerCount, matchOne, onSettled);
+async function matchBatch(items, workerCount, format, onSettled = null) {
+  const results = await mapConcurrent(items, workerCount, (item) => matchOne(item, format), onSettled);
   const matched = results.filter((item) => item?.matched).length;
   return {
     items: results,
@@ -115,7 +116,7 @@ function publicOperation(operation) {
   };
 }
 
-function createMatchOperation(items, workerCount) {
+function createMatchOperation(items, workerCount, format) {
   cleanupMatchOperations();
   const now = Date.now();
   const operation = {
@@ -136,7 +137,7 @@ function createMatchOperation(items, workerCount) {
   // modal, navigating between Classic/YTLive, or losing the initiating fetch
   // does not terminate the server-side operation. A later client can resume it
   // by operation id and reconstruct the exact per-row state.
-  void matchBatch(items, workerCount, (result, index) => {
+  void matchBatch(items, workerCount, format, (result, index) => {
     operation.items[index] = result;
     operation.completed += 1;
     if (result?.matched) operation.matched += 1;
@@ -183,7 +184,7 @@ router.post('/api/music/text-match/operations', rateLimit(10, 60_000), concurren
     const items = validateRequestItems(req, res);
     if (!items) return;
     const workerCount = clampInt(req.body?.concurrency, 1, 8, 3);
-    const operation = createMatchOperation(items, workerCount);
+    const operation = createMatchOperation(items, workerCount, req.body?.format);
     return sendOk(res, publicOperation(operation));
   } catch (error) {
     return sendError(res, 'MUSIC_TEXT_MATCH_START_FAILED', error?.message || 'Music text matching could not be started', 500);
@@ -205,7 +206,7 @@ router.post('/api/music/text-match', rateLimit(10, 60_000), concurrencyLimit(2),
     const items = validateRequestItems(req, res);
     if (!items) return;
     const workerCount = clampInt(req.body?.concurrency, 1, 8, 3);
-    const result = await matchBatch(items, workerCount);
+    const result = await matchBatch(items, workerCount, req.body?.format);
     return sendOk(res, result);
   } catch (error) {
     return sendError(res, 'MUSIC_TEXT_MATCH_FAILED', error?.message || 'Music text matching failed', 500);

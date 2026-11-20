@@ -1328,6 +1328,7 @@ export class VideoSettingsManager {
                 <input type="checkbox" id="audioTranscodeCheckbox" />
                 <span data-i18n="label.audioTranscode">${this.t('label.audioTranscode', 'Change Audio Codec')}</span>
               </label>
+              <small class="vs-hint" data-i18n="label.audioTranscodeOffHint">${this.t('label.audioTranscodeOffHint', 'Off: the source audio is kept as is. With volume or loudnorm on, it is re-encoded in the same codec, channels and sample rate.')}</small>
             </div>
 
             <div id="audioCodecSettings" class="vs-audio-box" style="display:none;">

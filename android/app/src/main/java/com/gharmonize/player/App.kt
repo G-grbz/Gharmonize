@@ -39,6 +39,7 @@ class App : Application() {
       signedOut.value = signedOut.value + 1
     }
     images = ImageLoader(this)
+    com.gharmonize.player.playback.Offline.init(this)
     com.gharmonize.player.playback.AudioEq.load(prefs)
   }
 
@@ -51,7 +52,8 @@ class App : Application() {
     val headers = prefs.token?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
     val url = when (uri.host) {
       "stream" -> {
-        val q = streamQuality()
+        // Saved songs ask for a fixed quality (?q=); streams follow the network.
+        val q = uri.getQueryParameter("q")?.takeIf { it.matches(Regex("[a-z]{1,16}")) } ?: streamQuality()
         "$base/api/player/stream${uri.encodedPath}" + if (q != "original") "?quality=$q" else ""
       }
       "artwork" -> "$base/api/player/artwork${uri.encodedPath}?size=${uri.getQueryParameter("size") ?: "512"}"
@@ -93,6 +95,8 @@ class App : Application() {
       private set
 
     fun streamUri(trackId: Long): Uri = Uri.parse("$SCHEME://stream/$trackId")
+    /** A song saved on the phone, in a fixed quality. */
+    fun offlineUri(trackId: Long, quality: String): Uri = Uri.parse("$SCHEME://stream/$trackId?q=${Uri.encode(quality)}")
     fun previewUri(provider: String, id: String): Uri = Uri.parse("$SCHEME://preview/$provider/${Uri.encode(id)}")
     fun artworkUri(ref: String?, size: Int = 512): Uri? =
       ref?.takeIf { it.isNotBlank() }?.let { if (it.startsWith("http")) Uri.parse(it) else Uri.parse("$SCHEME://artwork/$it?size=$size") }

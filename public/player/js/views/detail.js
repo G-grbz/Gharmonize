@@ -2,10 +2,10 @@
 
 import { app } from '../app.js'
 import { get, post, patch, del, artworkUrl } from '../api.js'
-import { h, t, icon, iconButton, clear, artwork, fmtLong, plural, contextMenu, modal, toast, toastError, confirmDialog, skeletonShelf, debounce, emptyState, fmtRelative } from '../dom.js'
+import { h, t, icon, iconButton, clear, artwork, fmtLong, fmtNumber, plural, contextMenu, modal, toast, toastError, confirmDialog, skeletonShelf, debounce, emptyState, fmtRelative, spinner } from '../dom.js'
 import {
   hero, actionBar, trackList, onlineTrackList, shelf, albumCard, onlineCard, heartButton, playTracks, playCollection, queueCollection,
-  playlistSubmenu, refreshPlaylists, primaryArtist, selectButton
+  playlistSubmenu, refreshPlaylists, primaryArtist, selectButton, providerName, artistBio
 } from '../components.js'
 import { saveButton } from '../playlistSave.js'
 import { downloadButton } from '../downloads.js'
@@ -104,7 +104,14 @@ async function loadAlbumMissing(id, album, slot) {
 
 // ---- artist -------------------------------------------------------------------
 
-async function artistView(id) {
+// One artist page for library and online: the library rows plus every row
+// of the online page (popular, albums, singles & EPs, related). `online` is
+// the /online/artist answer when the online page already loaded it.
+export async function renderArtistPage(id, online = null) {
+  return artistView(id, online)
+}
+
+async function artistView(id, preOnline = null) {
   const artist = await get(`/artists/${id}`)
   const src = artworkUrl(artist.artwork, 512)
   const context = { label: artist.name, route: `/artist/${id}` }
@@ -130,8 +137,7 @@ async function artistView(id) {
     onShuffle: () => playCollection('artist', artist.id, { shuffle: true, context }),
     extra: [follow, iconButton('more', t('player.common.more'), (e) => contextMenu([
       { label: t('player.menu.playNext'), icon: 'playNext', run: () => queueCollection('artist', id, 'next') },
-      { label: t('player.menu.addToQueue'), icon: 'queue', run: () => queueCollection('artist', id, 'add') },
-      app.providers.includes('deezer') && { label: t('player.menu.moreOnline'), icon: 'globe', run: () => app.nav(`/online/artist?name=${encodeURIComponent(artist.name)}`) }
+      { label: t('player.menu.addToQueue'), icon: 'queue', run: () => queueCollection('artist', id, 'add') }
     ], e.currentTarget), { cls: 'icon-btn--lg', size: 26 })]
   }))
 
@@ -152,38 +158,95 @@ async function artistView(id) {
     root.append(popular)
   }
   if (artist.albums.length) root.append(shelf({ title: t('player.artist.discography'), items: artist.albums, render: albumCard }))
+  // Online rows sit between the discography and the (long) song list; the
+  // related artists close the page.
+  const online = app.providers.includes('deezer') || preOnline
+  const slot = online ? h('div', { class: 'online-artist-slot' }, preOnline ? null : skeletonShelf(5)) : null
+  const relatedSlot = online ? h('div', { class: 'online-artist-slot' }) : null
+  if (slot) root.append(slot)
+  // Biography in the free space of the hero (filled once found).
+  const bioSlot = app.providers.length || preOnline ? h('div', { class: 'hero__bio', hidden: true }) : null
+  if (bioSlot) root.querySelector('.hero')?.append(bioSlot)
+  if (artist.trackCount) root.append(artistAllSongs(artist, context))
   if (artist.singles.length) root.append(h('section', { class: 'section' }, h('h2', { class: 'section-title', text: t('player.artist.singles') }), trackList(artist.singles, { context, showAlbum: false })))
   if (artist.appearsOn.length) root.append(shelf({ title: t('player.artist.appearsOn'), items: artist.appearsOn, render: albumCard }))
-
-  if (app.providers.includes('deezer')) {
-    const slot = h('div', { class: 'online-artist-slot' }, skeletonShelf(5))
-    root.append(slot)
-    loadOnlineArtist(artist.name, slot)
-  }
+  if (relatedSlot) root.append(relatedSlot)
+  if (online) {
+    const heroMeta = root.querySelector('.hero__meta')
+    if (preOnline) paintOnlineArtist(preOnline, artist.name, slot, relatedSlot, heroMeta, bioSlot)
+    else loadOnlineArtist(artist.name, slot, relatedSlot, heroMeta, bioSlot)
+  } else if (bioSlot) artistBio(bioSlot, { name: artist.name })
   return { node: root, hero: true }
 }
 
-async function loadOnlineArtist(name, slot) {
+// Every song of the artist in the library, with sorting and multi-select
+// (play, queue, add to a playlist, like) like album and playlist pages.
+const ARTIST_SORTS = ['album', 'alpha', 'recent', 'plays']
+function artistAllSongs(artist, context) {
+  const sort = h('select', { class: 'select select--sm', 'aria-label': t('player.library.sort') },
+    ARTIST_SORTS.map((key) => h('option', { value: key, text: t(`player.artist.sort.${key}`), selected: key === (app.prefs.artistSongsSort || 'album') })))
+  const listSlot = h('div', { class: 'artist-all__list' }, spinner(24))
+  const section = h('section', { class: 'section artist-all' },
+    h('div', { class: 'section-head' },
+      h('h2', { class: 'section-title' }, t('player.artist.allSongs'), h('span', { class: 'muted artist-all__count', text: ` · ${artist.trackCount}` })),
+      h('div', { class: 'artist-all__tools' }, sort, selectButton(() => listSlot.querySelector('.tracklist')))),
+    listSlot)
+  let seq = 0
+  const load = async () => {
+    const mine = ++seq
+    try {
+      const res = await get(`/artists/${artist.id}/tracks`, { sort: sort.value, limit: 500 })
+      if (mine !== seq) return
+      listSlot.replaceChildren(res.items.length
+        ? trackList(res.items, { context, showAlbum: true, showPlays: sort.value === 'plays' })
+        : emptyState('music', t('player.artist.noSongs')))
+    } catch (error) {
+      if (mine === seq) { listSlot.replaceChildren(); toastError(error) }
+    }
+  }
+  sort.addEventListener('change', () => { app.setPref('artistSongsSort', sort.value); load() })
+  load()
+  return section
+}
+
+async function loadOnlineArtist(name, slot, relatedSlot, heroMeta, bioSlot) {
   try {
     const data = await get('/online/artist', { name })
     if (!slot.isConnected) return
-    clear(slot)
-    const missingAlbums = data.albums.filter((a) => !a.library)
-    const missingTop = data.topTracks.filter((tr) => !tr.library)
-    if (missingAlbums.length || missingTop.length) {
-      slot.append(h('div', { class: 'online-banner' },
-        icon('sparkles', { size: 22 }),
-        h('div', {},
-          h('b', { text: t('player.artist.completeTitle') }),
-          h('span', { text: t('player.artist.completeText', { albums: data.missingAlbums, tracks: missingTop.length }) })),
-        h('a', { class: 'btn btn--outline btn--sm', href: `#/online/artist?id=${data.artist.id}`, text: t('player.artist.openOnline') })))
-    }
-    if (missingTop.length) slot.append(h('section', { class: 'section' }, h('h2', { class: 'section-title', text: t('player.artist.popularMissing') }), onlineTrackList(missingTop.slice(0, 10), { context: { label: name } })))
-    if (missingAlbums.length) slot.append(shelf({ title: t('player.artist.missingAlbums'), items: missingAlbums, render: (item, i) => onlineCard(item, missingAlbums, i) }))
-    if (data.related.length) slot.append(shelf({ title: t('player.artist.related'), items: data.related, render: (item, i) => onlineCard(item, data.related, i) }))
+    paintOnlineArtist(data, name, slot, relatedSlot, heroMeta, bioSlot)
   } catch {
     slot.remove()
+    relatedSlot.remove()
+    if (bioSlot?.isConnected) artistBio(bioSlot, { name })
   }
+}
+
+function paintOnlineArtist(data, name, slot, relatedSlot, heroMeta, bioSlot) {
+  clear(slot)
+  clear(relatedSlot)
+  if (bioSlot) artistBio(bioSlot, { name, deezerId: data.artist.provider === 'deezer' ? data.artist.id : null })
+  const provider = providerName(data.artist.provider)
+  const titled = (key) => `${t(key)} · ${provider}`
+  const context = { label: name }
+  if (data.artist.fans && heroMeta) heroMeta.append(h('span', { class: 'dot', text: '•' }), t('player.online.fans', { n: fmtNumber(data.artist.fans) }))
+  // Counted over the songs shown (top 10), and only the parts that are > 0.
+  const top = data.topTracks.slice(0, 10)
+  const missingTop = top.filter((tr) => !tr.library).length
+  const albums = data.missingAlbums
+  const gapText = albums && missingTop ? t('player.artist.completeText', { albums, tracks: missingTop })
+    : albums ? t('player.artist.completeTextAlbums', { albums })
+      : missingTop ? t('player.artist.completeTextTracks', { tracks: missingTop }) : ''
+  if (gapText) {
+    slot.append(h('div', { class: 'online-banner' },
+      icon('sparkles', { size: 22 }),
+      h('div', {},
+        h('b', { text: t('player.artist.completeTitle') }),
+        h('span', { text: gapText }))))
+  }
+  if (top.length) slot.append(h('section', { class: 'section' }, h('h2', { class: 'section-title', text: titled('player.artist.popular') }), onlineTrackList(top, { context })))
+  if (data.albums.length) slot.append(shelf({ title: titled('player.artist.albums'), items: data.albums, render: (item, i) => onlineCard(item, data.albums, i) }))
+  if (data.singles.length) slot.append(shelf({ title: titled('player.artist.singlesEps'), items: data.singles, render: (item, i) => onlineCard(item, data.singles, i) }))
+  if (data.related.length) relatedSlot.append(shelf({ title: t('player.artist.related'), items: data.related, render: (item, i) => onlineCard(item, data.related, i) }))
 }
 
 // ---- playlist -------------------------------------------------------------------
@@ -344,10 +407,44 @@ async function playlistView(id) {
     onPlay: () => playTracks(pl.tracks, 0, context, { shuffle: false }),
     onShuffle: () => playTracks(pl.tracks, randomIndex(Math.max(1, pl.tracks.length)), context, { shuffle: true }),
     extra
-  }), listHolder)
+  }), followBanner(pl, reload), listHolder)
   paintList()
   if (pl.editable) root.append(playlistSuggestions(pl, reload), playlistFinder(pl, reload))
   return { node: root, hero: true }
+}
+
+// A playlist that follows an online list: where it comes from, last check,
+// "sync now" and "stop following" (the playlist itself stays).
+function followBanner(pl, reload) {
+  const f = pl.follow
+  if (!f) return null
+  const when = h('span')
+  const paintWhen = (row) => {
+    when.textContent = row.lastSyncAt ? t('player.follow.lastSync', { when: fmtRelative(row.lastSyncAt) }) : t('player.follow.never')
+  }
+  paintWhen(f)
+  const syncBtn = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.follow.syncNow') })
+  syncBtn.addEventListener('click', async () => {
+    syncBtn.disabled = true
+    try {
+      const row = await post(`/follows/playlists/${f.id}/sync`)
+      paintWhen(row)
+      toast(row.lastAdded ? t('player.follow.synced', { n: row.lastAdded }) : t('player.follow.upToDate'))
+      await reload()
+    } catch (error) { toastError(error) } finally { syncBtn.disabled = false }
+  })
+  const stopBtn = h('button', { type: 'button', class: 'link-btn', text: t('player.follow.stop') })
+  stopBtn.addEventListener('click', async () => {
+    try {
+      await del(`/follows/playlists/${f.id}`)
+      toast(t('player.follow.stopped'))
+      banner.remove()
+    } catch (error) { toastError(error) }
+  })
+  const banner = h('div', { class: 'online-banner follow-banner' }, icon('refresh', { size: 22 }),
+    h('div', {}, h('b', { text: t('player.follow.banner', { provider: providerName(f.provider) }) }), when, h('span', { text: t('player.follow.hint') })),
+    h('div', { class: 'follow-banner__actions' }, syncBtn, stopBtn))
+  return banner
 }
 
 export async function render(name, params) {

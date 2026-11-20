@@ -6,6 +6,7 @@ import { sendOk, sendError, uniqueId } from "../modules/utils.js";
 import { sanitizeLogValue } from "../modules/security.js";
 import { createDownloadQueue } from "../modules/sp.js";
 import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
+import { mappedMusicMatchMode } from "../modules/mappedMusicMatcher.js";
 import {
   isSpotifyUrl,
   resolveSpotifyUrl,
@@ -1036,6 +1037,7 @@ async function processSpotifyIntegrated(jobId, sp, format, bitrate, { market } =
         {
           url: job.metadata?.spotifyUrl || "",
           source,
+          format,
           concurrency: parallel,
           shouldCancel,
           replaceManifest,
@@ -1335,6 +1337,7 @@ async function processSingleTrack(jobId, sp, format, bitrate) {
     await mapMappedMusicWithCache(sp, {
       url: job.metadata?.spotifyUrl || "",
       source,
+      format,
       concurrency: 1,
       onStage: (_index, phase) => trackStage(phase),
       shouldCancel,
@@ -1690,7 +1693,7 @@ function scheduleSpotifyTempCleanup(jobId, files) {
 
 router.post("/api/spotify/preview/start", async (req, res) => {
   try {
-    const { url, market: marketIn } = req.body || {};
+    const { url, market: marketIn, format } = req.body || {};
     if (!url || !isMappedMusicUrl(url)) {
       return sendError(res, 'UNSUPPORTED_URL_FORMAT', "Spotify, Apple Music, Deezer, TIDAL, or SoundCloud URL is required", 400);
     }
@@ -1729,6 +1732,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
       id,
       url,
       source,
+      matchMode: mappedMusicMatchMode(format),
       status: "running",
       title: sp.title || (sp.kind === "track" ? `${sourceLabel} Track` : `${sourceLabel} Playlist`),
       total: Math.max((sp.items || []).length, Number(sp.totalHint) || 0),
@@ -1755,6 +1759,7 @@ router.post("/api/spotify/preview/start", async (req, res) => {
           {
             url,
             source,
+            format,
             concurrency: effectiveMapConcurrency,
             replaceManifest,
             indexOffset,

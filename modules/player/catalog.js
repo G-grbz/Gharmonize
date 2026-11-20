@@ -1,7 +1,7 @@
 import { normalizeKey } from './scanner.js'
 import { transaction } from './db.js'
 import { visibleSql, uidLiteral } from './access.js'
-import { uniqueSongs, songKey } from './songKey.js'
+import { uniqueSongs, songKey, artistCreditKeys } from './songKey.js'
 
 export class CatalogError extends Error {
   constructor(code, message, status = 400) {
@@ -214,8 +214,12 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
   function listArtists({ sort = 'alpha', limit, offset, favorites = false, userId } = {}) {
     const params = { $uid: Number(userId) || 0, $limit: clampLimit(limit, 100), $offset: clampOffset(offset) }
     const order = sort === 'tracks' ? 'track_count DESC, ar.name COLLATE NOCASE' : sort === 'random' ? 'RANDOM()' : 'ar.name COLLATE NOCASE'
-    const rows = q(`${ARTIST_BASE} ${favorites ? `WHERE ${favoriteExpr('artist', 'ar.id')}` : ''}
-      GROUP BY ar.id ORDER BY ${order} LIMIT $limit OFFSET $offset`).all(params)
+    // Followed artists include the ones followed from an online page that
+    // have no songs here yet (trackCount 0).
+    const rows = favorites
+      ? q(`${ARTIST_BASE.replace('FROM artists ar JOIN ta ON ta.aid = ar.id', `FROM favorites f JOIN artists ar ON ar.id = f.item_id LEFT JOIN ta ON ta.aid = ar.id`)}
+        WHERE f.user_id = $uid AND f.item_type = 'artist' GROUP BY ar.id ORDER BY ${order} LIMIT $limit OFFSET $offset`).all(params)
+      : q(`${ARTIST_BASE} GROUP BY ar.id ORDER BY ${order} LIMIT $limit OFFSET $offset`).all(params)
     return rows.map(serializeArtist)
   }
 
@@ -239,6 +243,22 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
       topTracks: topTracks.map(serializeTrack),
       singles: singles.map(serializeTrack)
     }
+  }
+
+  // Every visible song of an artist: their own tracks and the tracks of
+  // their albums (the same set the artist's track count is made of).
+  const ARTIST_TRACK_SORTS = {
+    album: 't.year DESC NULLS LAST, t.album_title COLLATE NOCASE, COALESCE(t.disc_no, 1), COALESCE(t.track_no, 9999), t.title COLLATE NOCASE',
+    alpha: 't.title COLLATE NOCASE, t.id',
+    recent: 't.added_at DESC, t.id DESC',
+    plays: 'play_count DESC, t.title COLLATE NOCASE'
+  }
+  function artistTracks(id, userId, { sort = 'album', limit, offset } = {}) {
+    const params = { $id: Number(id), $uid: Number(userId) || 0, $limit: clampLimit(limit, MAX_LIMIT), $offset: clampOffset(offset) }
+    return q(`SELECT ${TRACK_COLUMNS}, ${favoriteExpr('track', 't.id')} AS favorite,
+        COALESCE((SELECT SUM(ps.play_count) FROM play_stats ps WHERE ps.track_id = t.id), 0) AS play_count
+      FROM tracks t WHERE (t.artist_id = $id OR t.album_id IN (SELECT id FROM albums WHERE artist_id = $id)) AND ${VISIBLE}
+      ORDER BY ${ARTIST_TRACK_SORTS[sort] || ARTIST_TRACK_SORTS.album} LIMIT $limit OFFSET $offset`).all(params).map(serializeTrack)
   }
 
   function search(input, { limit, userId } = {}) {
@@ -297,6 +317,26 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
       q('DELETE FROM favorites WHERE user_id = ? AND item_type = ? AND item_id = ?').run(Number(userId), type, id)
     }
     return { type, id, favorite: Boolean(value) }
+  }
+
+  // Follows an artist by name (from an online page). An artist without songs
+  // here gets a row of its own that stays while someone follows it; when its
+  // songs arrive later the scanner reuses the row, so the follow carries on.
+  function followArtistByName(userId, name, value = true) {
+    const clean = String(name || '').trim().slice(0, 300)
+    const key = normalizeKey(clean)
+    if (!key) throw new CatalogError('INVALID_NAME', 'Artist name is required.')
+    let row = q('SELECT id FROM artists WHERE name_key = ?').get(key)
+    if (!row && !value) return { type: 'artist', id: null, favorite: false }
+    if (!row) row = { id: Number(q('INSERT INTO artists (name, name_key, created_at) VALUES (?, ?, ?)').run(clean, key, now()).lastInsertRowid) }
+    const result = setFavorite(userId, 'artist', row.id, value)
+    if (!value) {
+      // Nobody follows it and it has no songs: drop the placeholder row.
+      q(`DELETE FROM artists WHERE id = ? AND NOT EXISTS (SELECT 1 FROM tracks WHERE artist_id = artists.id)
+        AND NOT EXISTS (SELECT 1 FROM albums WHERE artist_id = artists.id)
+        AND NOT EXISTS (SELECT 1 FROM favorites WHERE item_type = 'artist' AND item_id = artists.id)`).run(row.id)
+    }
+    return result
   }
 
   function recordPlay(userId, { trackId, playedMs = 0, completed = false, context = '', deviceId = '' } = {}) {
@@ -405,28 +445,59 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
     return out
   }
 
-  // Library songs that fit a set of seed songs: same artists (strongest),
+  // Library artists whose credit shares a name with one of `names` (a
+  // collaboration "A, B" matches A's and B's own songs and vice versa).
+  function artistIdsForCredits(names = []) {
+    const wanted = new Set(names.flatMap((name) => artistCreditKeys(name)))
+    if (!wanted.size) return []
+    return q('SELECT id, name FROM artists').all()
+      .filter((row) => artistCreditKeys(row.name).some((key) => wanted.has(key)))
+      .map((row) => row.id)
+  }
+
+  // Library songs that fit a set of seed songs: the same artists, also inside
+  // collaborations (strongest), related artists / songs an artist radio plays,
   // the same folders (downloaded albums / playlists group similar music) and
   // the same genres. Songs already among the seeds (also as other files of
   // the same song) or excluded are skipped; at most `perArtist` per artist
-  // keeps the list varied; less played songs come first within a score.
-  function similarTracks(userId, { seedIds = [], excludeIds = [], limit = 20, perArtist = 3 } = {}) {
+  // keeps the list varied. Within a score, less played songs come first, or
+  // with `preferHistory` songs the user already listened to. `fill` tops the
+  // list up from the rest of the library (listened songs first) so a
+  // continuation never ends empty.
+  function similarTracks(userId, {
+    seedIds = [], excludeIds = [], limit = 20, perArtist = 3, artist = '', genre = '',
+    relatedArtists = [], boostIds = [], preferHistory = false, fill = false
+  } = {}) {
     const seeds = [...new Set((seedIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 200)
-    if (!seeds.length) return []
+    if (!seeds.length && !artist && !genre && !fill) return []
     const exclude = [...new Set([...seeds, ...(excludeIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0)])]
-    const params = { $uid: Number(userId) || 0, $seeds: JSON.stringify(seeds), $exclude: JSON.stringify(exclude), $limit: clampLimit(limit, 20) * 6 }
+    const seedArtistNames = seeds.length
+      ? q(`SELECT DISTINCT artist_name FROM tracks WHERE id IN (SELECT value FROM json_each($seeds))`).all({ $seeds: JSON.stringify(seeds) }).map((r) => r.artist_name)
+      : []
+    const artistIds = artistIdsForCredits([...seedArtistNames, artist].filter(Boolean))
+    const ownArtists = new Set(artistIds)
+    const relatedIds = artistIdsForCredits((relatedArtists || []).slice(0, 40)).filter((id) => !ownArtists.has(id))
+    const boost = [...new Set((boostIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 200)
+    const params = {
+      $uid: Number(userId) || 0, $seeds: JSON.stringify(seeds), $exclude: JSON.stringify(exclude),
+      $limit: clampLimit(limit, 20) * 6, $genre: genre, $history: Number(preferHistory),
+      $artists: JSON.stringify(artistIds), $related: JSON.stringify(relatedIds), $boost: JSON.stringify(boost),
+      $fill: Number(fill)
+    }
     const dir = (alias) => `(${alias}.library_id || ':' || rtrim(${alias}.rel_path, replace(${alias}.rel_path, '/', '')))`
-    const rows = q(`WITH seeds AS (SELECT s.* FROM tracks s WHERE s.id IN (SELECT value FROM json_each($seeds)))
+    const rows = q(`WITH seeds AS (SELECT s.* FROM tracks s WHERE s.id IN (SELECT value FROM json_each($seeds)) AND ${visibleSql('s', '$uid')})
       SELECT ${TRACK_COLUMNS}, ${favoriteExpr('track', 't.id')} AS favorite, COALESCE(ps.play_count, 0) AS plays,
-        (CASE WHEN t.artist_id IN (SELECT artist_id FROM seeds WHERE artist_id IS NOT NULL) THEN 3 ELSE 0 END
-        + CASE WHEN instr(t.rel_path, '/') > 0 AND ${dir('t')} IN (SELECT ${dir('seeds')} FROM seeds WHERE instr(seeds.rel_path, '/') > 0) THEN 2 ELSE 0 END
+        (CASE WHEN t.artist_id IN (SELECT value FROM json_each($artists)) THEN 4
+              WHEN t.artist_id IN (SELECT value FROM json_each($related)) OR t.id IN (SELECT value FROM json_each($boost)) THEN 2
+              ELSE 0 END
+        + CASE WHEN NOT $history AND instr(t.rel_path, '/') > 0 AND ${dir('t')} IN (SELECT ${dir('seeds')} FROM seeds WHERE instr(seeds.rel_path, '/') > 0) THEN 2 ELSE 0 END
         + CASE WHEN t.genre IS NOT NULL AND TRIM(t.genre) != '' AND LOWER(t.genre) NOT IN ('music', 'other', 'unknown')
-            AND t.genre IN (SELECT genre FROM seeds) THEN 1 ELSE 0 END) AS score
+            AND (t.genre COLLATE NOCASE IN (SELECT genre FROM seeds) OR ($genre != '' AND t.genre = $genre COLLATE NOCASE)) THEN 1 ELSE 0 END) AS score
       FROM tracks t LEFT JOIN play_stats ps ON ps.track_id = t.id AND ps.user_id = $uid
-      WHERE ${VISIBLE} AND t.id NOT IN (SELECT value FROM json_each($exclude)) AND score > 0
-      ORDER BY score DESC, plays ASC, RANDOM() LIMIT $limit`).all(params)
-    const seedSongs = new Set(q(`SELECT t.title, t.artist_name FROM tracks t WHERE t.id IN (SELECT value FROM json_each($exclude))`)
-      .all({ $exclude: params.$exclude }).map((r) => songKey(r.title, r.artist_name)).filter(Boolean))
+      WHERE ${VISIBLE} AND t.id NOT IN (SELECT value FROM json_each($exclude)) AND (score > 0 OR $fill)
+      ORDER BY score DESC, ($history AND plays > 0) DESC, CASE WHEN $history THEN 0 ELSE plays END, RANDOM() LIMIT $limit`).all(params)
+    const seedSongs = new Set(q(`SELECT t.title, t.artist_name FROM tracks t WHERE t.id IN (SELECT value FROM json_each($exclude)) AND ${VISIBLE}`)
+      .all({ $exclude: params.$exclude, $uid: params.$uid }).map((r) => songKey(r.title, r.artist_name)).filter(Boolean))
     const perArtistCount = new Map()
     const out = []
     for (const row of uniqueSongs(rows)) {
@@ -600,6 +671,8 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
     getAlbum,
     listArtists,
     getArtist,
+    followArtistByName,
+    artistTracks,
     search,
     listGenres,
     getStats,

@@ -18,6 +18,7 @@ import { toDownloadPath, resolveDownloadPathToAbs } from "./outputPaths.js";
 import { ensureOwnership } from "./fsOwnership.js";
 import { FFMPEG_BIN as BINARY_FFMPEG_BIN } from "./binaries.js";
 import { getFfmpegCaps } from "./ffmpegCaps.js";
+import { planKeptVideoAudioStreams } from "./videoAudioPlan.js";
 import { assertPathWithinAny, sanitizeLogValue } from "./security.js";
 import {
   describeRingtone,
@@ -1141,8 +1142,11 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     videoHwaccel = "nvenc";
   }
 
-  const audioCodec = videoSettings.audioTranscodeEnabled ?
-                         videoSettings.audioCodec : 'aac';
+  // "Change Audio Codec" off: the source audio is kept (copied, or re-encoded
+  // in its own codec when volume/loudnorm must run; see videoAudioPlan.js).
+  const audioTranscodeOn = !!videoSettings.audioTranscodeEnabled;
+  let audioCodec = audioTranscodeOn ? videoSettings.audioCodec : 'copy';
+  let keptAudio = null;
   const audioBitrate = videoSettings.audioTranscodeEnabled ?
                           videoSettings.audioBitrate : '192k';
    const audioChannels = videoSettings.audioTranscodeEnabled ?
@@ -1150,7 +1154,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
   const audioSampleRate = videoSettings.audioTranscodeEnabled ?
                              videoSettings.audioSampleRate : '48000';
 
-  if (String(audioCodec || "").toLowerCase() === "copy") {
+  // Tempo correction lives inside "Change Audio Codec"; with it off the
+  // audio keeps its timing (and a copied track cannot be stretched anyway).
+  if (String(audioCodec || "").toLowerCase() === "copy" && (isVideo || audioTranscodeOn)) {
     atempoAdjust = "none";
   }
 
@@ -2123,6 +2129,26 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
     const useQsv   = hwMode === "qsv";
     const useVaapi = hwMode === "vaapi";
     effectiveHwMode = useNvenc ? "nvenc" : useQsv ? "qsv" : useVaapi ? "vaapi" : "off";
+    if (!audioTranscodeOn) {
+      const known = Array.isArray(srcInfo?.audioStreams) ? srcInfo.audioStreams : [];
+      const outputs = hasExplicitAudioSelection
+        ? selectedAudioStreams.filter((i) => Number.isInteger(Number(i)) && Number(i) >= 0)
+        : (known.length ? [known[0].index] : (srcInfo?.ok ? [] : [null]));
+      if (outputs.length) {
+        const filtersRequested =
+          (Number.isFinite(volumeGain) && volumeGain > 0 && volumeGain !== 1) || loudnormEnabled;
+        keptAudio = planKeptVideoAudioStreams({
+          format,
+          sources: outputs.map((i) => known.find((stream) => stream.index === Number(i)) || null),
+          filtersRequested
+        });
+        audioCodec = keptAudio.allCopy ? "copy" : "kept";
+        console.log(`🎵 Source audio kept: ${keptAudio.streams.map((plan) => `${plan.mode}:${plan.encoder}`).join(", ")} | filters=${keptAudio.applyFilters ? "on" : "off"}`);
+        for (const warning of keptAudio.warnings) {
+          console.warn(`⚠️ Source audio: ${warning}`);
+        }
+      }
+    }
     const timeline = videoTimelineFilters({
       isVideo, videoTranscoded: hasVideoFlag && selectedCodec.encoder !== 'copy',
       sourceFps: srcInfo?.frameRate, targetFps, audioCodec
@@ -2723,6 +2749,17 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
 
     if (audioCodec === 'copy') {
         args.push("-c:a", "copy");
+    } else if (keptAudio) {
+        // Each output audio stream in its own codec, channels and rate.
+        let strict = false;
+        keptAudio.streams.forEach((plan, i) => {
+            args.push(`-c:a:${i}`, plan.encoder);
+            if (plan.encoder === 'copy') return;
+            if (plan.experimental) strict = true;
+            if (plan.bitrate) args.push(`-b:a:${i}`, plan.bitrate);
+            if (plan.sampleRate) args.push(`-ar:a:${i}`, String(plan.sampleRate));
+        });
+        if (strict) args.push("-strict", "-2");
     } else {
         const aCodecRaw = String(audioCodec || '').toLowerCase();
         const aCodec = (aCodecRaw === 'dts') ? 'dca' : audioCodec;
@@ -2892,7 +2929,9 @@ function computeWidthForScaling({ scaleMode, targetWidth, srcW }) {
       !isVideo || !hasExplicitAudioSelection || selectedAudioStreams.length > 0;
     const canApplyAudioFilters =
       hasAudioOutputSelected &&
-      (!isVideo || String(audioCodec || "").toLowerCase() !== "copy");
+      (!isVideo || (keptAudio
+        ? keptAudio.streams.every((plan) => plan.mode !== "copy")
+        : String(audioCodec || "").toLowerCase() !== "copy"));
     // Run synchronization before atempo/volume/loudnorm, so intentional tempo
     // presets are not undone and both loudnorm passes analyze the same audio.
     if (audioTimelineFilter && canApplyAudioFilters) preLoudnormFilters.push(audioTimelineFilter);

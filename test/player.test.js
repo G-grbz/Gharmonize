@@ -302,6 +302,16 @@ test('player end-to-end: setup, login, catalog, search, stream, personal data', 
   r = await call('GET', `/artists/${r.body.artists[0].id}`)
   assert.equal(r.body.albums.length, 1)
   assert.equal(r.body.topTracks.length, 2)
+  // Artist page "All songs": every song, sortable.
+  const artistId = r.body.id
+  r = await call('GET', `/artists/${artistId}/tracks`)
+  assert.equal(r.status, 200)
+  assert.equal(r.body.items.length, 2)
+  assert.deepEqual(r.body.items.map((tr) => tr.trackNo), [1, 2], 'album order by default')
+  const alpha = (await call('GET', `/artists/${artistId}/tracks?sort=alpha`)).body.items.map((tr) => tr.title)
+  assert.deepEqual(alpha, [...alpha].sort((a, b) => a.localeCompare(b, 'tr')))
+  assert.equal((await call('GET', `/artists/${artistId}/tracks?sort=bogus`)).status, 200, 'unknown sort falls back')
+  assert.equal((await call('GET', '/artists/999999/tracks')).status, 404)
 
   // Original stream with ranges.
   const size = fs.statSync(path.join(downloads, 'Sezen Aksu', 'Gülümse', '01 - Hadi Bakalım.mp3')).size

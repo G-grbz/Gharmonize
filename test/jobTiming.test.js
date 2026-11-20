@@ -207,9 +207,13 @@ test('cached matches report their own stage before downstream work and cache hol
   const items = ['A', 'B', 'C'].map(title => ({ title, artist: 'Artist' }));
   const context = vm.createContext({
     getMappedMusicSourceKey: () => 'fixture', parseMappedMusicSourceKey: () => ({}),
-    readMappedMusicManifest: () => ({ tracks: [{ sourceItemKey: 'A', youtubeId: 'aaaaaaaaaaa' }, { sourceItemKey: 'C', youtubeId: 'ccccccccccc' }] }),
+    readMappedMusicManifest: () => ({ tracks: [
+      { sourceItemKey: 'A', youtubeId: 'aaaaaaaaaaa', matchMode: 'song', matchValidationVersion: 5 },
+      { sourceItemKey: 'B', youtubeId: 'oldvideo123', matchMode: 'video', matchValidationVersion: 5 },
+      { sourceItemKey: 'C', youtubeId: 'ccccccccccc', matchMode: 'song', matchValidationVersion: 5 }
+    ] }),
     getMappedMusicSourceItemKey: item => item.title, getMappedMusicSourceItemId: () => '', getMappedMusicSourceItemUrl: () => '',
-    isCatalogMusicProvider: () => false, toDurationMs: n => n || null,
+    mappedMusicMatchMode: () => 'song', MATCH_VERSION: 5, toDurationMs: n => n || null,
     normalizeManifestEntry: entry => entry, mappedItemFromManifestEntry: (entry, index) => ({ ...entry, id: entry.youtubeId, index: index + 1 }),
     manifestEntryFromMatch: ({ sourceItem, matchItem, index }) => ({ sourceItemKey: sourceItem.title, youtubeId: matchItem.id, index }),
     writeMappedMusicManifest: manifest => ({ manifest }), safeString: v => v, nowIso: () => 'fixture',

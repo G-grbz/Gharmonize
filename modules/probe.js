@@ -1,6 +1,7 @@
 import { spawnSafe } from "./safeProcess.js";
 import fs from "fs";
 import { FFPROBE_BIN } from "./binaries.js";
+import { describeAudioStreamForUi } from "./videoAudioPlan.js";
 
 // Handles media probe data media file in core application logic.
 export async function probeMediaFile(filePath) {
@@ -102,6 +103,10 @@ export function parseStreams(probeData) {
 
     switch (stream.codec_type) {
       case 'audio':
+        streamInfo.profile = stream.profile || null;
+        // What a conversion with "Change Audio Codec" off can do with it
+        // (copy into each container / keep the codec with volume-loudnorm).
+        streamInfo.keep = describeAudioStreamForUi({ ...streamInfo, tags: stream.tags });
         audioStreams.push(streamInfo);
         break;
       case 'subtitle':

@@ -239,6 +239,7 @@ router.post("/api/playlist/preview", async (req, res) => {
           {
             url,
             source,
+            format: req.body?.format,
             replaceManifest: false,
             indexOffset: start,
             concurrency: resolveSpotifyConcurrency(

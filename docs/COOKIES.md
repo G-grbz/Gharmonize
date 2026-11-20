@@ -47,5 +47,4 @@ The following variables control cookie and language/region behavior. Full descri
 - `YT_ACCEPT_LANGUAGE`
 - `YT_DEFAULT_REGION`
 - `YT_403_WORKAROUNDS`
-- `YT_USE_MUSIC`
 - `YTDLP_UA`

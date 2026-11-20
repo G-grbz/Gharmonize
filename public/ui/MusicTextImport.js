@@ -84,7 +84,7 @@ async function parseApiResponse(response) {
   return data;
 }
 
-export async function startMusicTextMatchOperation(items = [], { concurrency = 3, signal, fetchImpl = globalThis.fetch } = {}) {
+export async function startMusicTextMatchOperation(items = [], { concurrency = 3, format, signal, fetchImpl = globalThis.fetch } = {}) {
   const payloadItems = toMatchPayloadItems(items);
   if (!payloadItems.length) return null;
   if (typeof fetchImpl !== 'function') throw new Error('Fetch is not available');
@@ -94,6 +94,7 @@ export async function startMusicTextMatchOperation(items = [], { concurrency = 3
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       items: payloadItems,
+      format,
       concurrency: Math.max(1, Math.min(8, Number(concurrency) || 3))
     }),
     signal
@@ -162,6 +163,7 @@ export async function waitForMusicTextMatchOperation(operationId, {
 // persist operationId and resume polling later.
 export async function matchMusicTextItems(items = [], {
   concurrency = 3,
+  format,
   signal,
   operationId = '',
   onOperation,
@@ -177,7 +179,7 @@ export async function matchMusicTextItems(items = [], {
     operation = await getMusicTextMatchOperation(operationId, { signal, fetchImpl });
     operation = { ...operation, itemIds };
   } else {
-    operation = await startMusicTextMatchOperation(payloadItems, { concurrency, signal, fetchImpl });
+    operation = await startMusicTextMatchOperation(payloadItems, { concurrency, format, signal, fetchImpl });
     operation = { ...operation, itemIds: operation?.itemIds?.length ? operation.itemIds : itemIds };
   }
   if (!operation?.id) throw new Error('Music text matching could not be started');
@@ -520,4 +522,9 @@ export function resetMusicTextJob(items = [], jobId, terminalStatus = '') {
     return { ...item, status: item.match?.id ? 'matched' : 'pending', jobId: null, error: null };
   });
   return { items: next, changed };
+}
+
+export function hasMusicTextMatchForFormat(item, format) {
+  const mode = format === 'mp4' ? 'video' : 'song';
+  return item.status === 'matched' && Boolean(item.match?.id) && item.match.matchMode === mode;
 }

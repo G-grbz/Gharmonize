@@ -261,6 +261,51 @@ const MIGRATIONS = [
   // after switching to a substitute upload (only one switch per download).
   `
   ALTER TABLE downloads ADD COLUMN alternate_of TEXT;
+  `,
+  // v8: followed online playlists, kept in sync with a player playlist.
+  `
+  CREATE TABLE followed_playlists (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    source_key TEXT NOT NULL,
+    source_id TEXT,
+    source_url TEXT,
+    title TEXT NOT NULL,
+    artwork_url TEXT,
+    playlist_id INTEGER REFERENCES playlists(id) ON DELETE SET NULL,
+    known TEXT NOT NULL DEFAULT '[]',
+    last_sync_at INTEGER,
+    last_added INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE (user_id, source_key)
+  );
+  CREATE INDEX followed_playlists_sync_idx ON followed_playlists(last_sync_at);
+  `,
+  // v9: new releases of followed artists, and per-user notifications.
+  `
+  CREATE TABLE artist_watch (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    artist_id INTEGER NOT NULL,
+    deezer_id TEXT,
+    known TEXT NOT NULL DEFAULT '[]',
+    checked_at INTEGER,
+    PRIMARY KEY (user_id, artist_id)
+  );
+  CREATE TABLE notifications (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    artwork_url TEXT,
+    link TEXT,
+    data TEXT,
+    created_at INTEGER NOT NULL,
+    read_at INTEGER
+  );
+  CREATE INDEX notifications_user_idx ON notifications(user_id, created_at);
   `
 ]
 

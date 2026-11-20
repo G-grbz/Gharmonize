@@ -6,6 +6,7 @@ import {
   MUSIC_TEXT_QUEUE_STORAGE_KEY,
   parseMusicTextList,
   matchMusicTextItems,
+  hasMusicTextMatchForFormat,
   buildMusicTextJobPayload,
   loadMusicTextQueue,
   loadMusicTextQueueState,
@@ -816,9 +817,9 @@ class YTLiveMusicApp {
     const runnable = this.musicTextItems.filter((item) => ['pending', 'error', 'not-found', 'matched'].includes(item.status));
     if (!runnable.length) return null;
 
-    const reusable = runnable.filter((item) => item.status === 'matched' && item.match?.id);
-    const needsMatch = runnable.filter((item) => !(item.status === 'matched' && item.match?.id));
     const outputPayload = this.getOutputPayload();
+    const reusable = runnable.filter((item) => hasMusicTextMatchForFormat(item, outputPayload.format));
+    const needsMatch = runnable.filter((item) => !hasMusicTextMatchForFormat(item, outputPayload.format));
     const playlistTitle = this.tt('musicQueue.textPlaylistTitle', 'Yapıştırılan müzik listesi');
 
     if (!needsMatch.length) {
@@ -861,6 +862,7 @@ class YTLiveMusicApp {
 
     try {
       const result = await matchMusicTextItems(needsMatch, {
+        format: outputPayload.format,
         concurrency: this.getSpotifyConcurrency(),
         onOperation: (serverOperation) => {
           this.applyMusicTextMatchOperationProgress(serverOperation, {
@@ -3221,6 +3223,7 @@ class YTLiveMusicApp {
       body: JSON.stringify({
         url,
         market: this.getCurrentRegion(),
+        format: this.getSelectedFormat(),
         youtubeConcurrency: spotifyConcurrency,
         spotifyConcurrency
       })
@@ -4571,6 +4574,7 @@ class YTLiveMusicApp {
         method: 'POST',
         body: JSON.stringify({
           market: this.getCurrentRegion(),
+          format: this.getSelectedFormat(),
           youtubeConcurrency: spotifyConcurrency,
           spotifyConcurrency
         })
@@ -4834,6 +4838,7 @@ class YTLiveMusicApp {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         market: this.getCurrentRegion(),
+        format: this.getSelectedFormat(),
         youtubeConcurrency: spotifyConcurrency,
         spotifyConcurrency
       })
@@ -4852,6 +4857,7 @@ class YTLiveMusicApp {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         market: this.getCurrentRegion(),
+        format: this.getSelectedFormat(),
         youtubeConcurrency: spotifyConcurrency,
         spotifyConcurrency
       })

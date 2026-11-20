@@ -1,0 +1,240 @@
+package com.gharmonize.player.ui
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.gharmonize.player.R
+import com.gharmonize.player.data.Track
+
+/** Multi-selection of songs (artist page "All songs"). */
+class SongSelection {
+  var active by mutableStateOf(false)
+    private set
+  val ids = mutableStateListOf<Long>()
+
+  fun start(first: Long? = null) {
+    active = true
+    if (first != null && first !in ids) ids.add(first)
+  }
+
+  fun stop() {
+    active = false
+    ids.clear()
+  }
+
+  fun toggle(id: Long) {
+    if (id in ids) ids.remove(id) else ids.add(id)
+  }
+
+  /** Selected songs in list order. */
+  fun pick(tracks: List<Track>): List<Track> {
+    val set = ids.toSet()
+    return tracks.filter { it.id in set }
+  }
+}
+
+@Composable
+fun rememberSongSelection(key: Any?): SongSelection = remember(key) { SongSelection() }
+
+/** Screen with a song list: the selection bar at the bottom, back leaves selecting. */
+@Composable
+fun SelectionScaffold(
+  state: AppState,
+  tracks: List<Track>,
+  selection: SongSelection,
+  name: String,
+  content: @Composable (bottomPadding: androidx.compose.ui.unit.Dp) -> Unit,
+) {
+  androidx.activity.compose.BackHandler(enabled = selection.active) { selection.stop() }
+  Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+    content(if (selection.active) 140.dp else 24.dp)
+    if (selection.active) SongSelectionBar(state, tracks, selection, name, Modifier.align(Alignment.BottomCenter))
+  }
+}
+
+val ARTIST_SONG_SORTS = listOf(
+  "album" to R.string.sort_album,
+  "alpha" to R.string.sort_alpha,
+  "recent" to R.string.sort_recent,
+  "plays" to R.string.sort_plays,
+)
+
+/** "All songs": every song of the artist in the library, sortable and selectable. */
+fun LazyListScope.artistSongsSection(
+  state: AppState,
+  total: Int,
+  songs: LoadState<List<Track>>,
+  sort: String,
+  onSort: (String) -> Unit,
+  selection: SongSelection,
+) {
+  item(key = "all-head") {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+      Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.all_songs), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(" · $total", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = { if (selection.active) selection.stop() else selection.start() }, enabled = !songs.value.isNullOrEmpty()) {
+          Text(stringResource(if (selection.active) R.string.select_done else R.string.select_songs))
+        }
+      }
+      LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(ARTIST_SONG_SORTS) { (key, label) ->
+          FilterChip(selected = sort == key, onClick = { if (sort != key) onSort(key) }, label = { Text(stringResource(label)) })
+        }
+      }
+    }
+  }
+  val list = songs.value
+  if (list == null) {
+    if (songs.loading) item(key = "all-loading") { Loading() }
+    return
+  }
+  itemsIndexed(list, key = { _, t -> "all-${t.id}" }) { i, _ -> SelectableTrackRow(state, list, i, selection) }
+}
+
+/** Tap plays (or toggles while selecting); long press starts selecting. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SelectableTrackRow(state: AppState, tracks: List<Track>, index: Int, selection: SongSelection, downloadsOnly: Boolean = false) {
+  val t = tracks[index]
+  val checked = t.id in selection.ids
+  val isCurrent = state.player.current?.mediaId == "t:${t.id}"
+  var menu by remember { mutableStateOf(false) }
+  Row(
+    Modifier.fillMaxWidth()
+      .combinedClickable(
+        onClick = { if (selection.active) selection.toggle(t.id) else state.player.play(tracks, index, downloadsOnly = downloadsOnly) },
+        onLongClick = { if (selection.active) selection.toggle(t.id) else selection.start(t.id) },
+      )
+      .padding(start = if (selection.active) 4.dp else 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    if (selection.active) Checkbox(checked = checked, onCheckedChange = { selection.toggle(t.id) })
+    Artwork(t.artwork, Modifier.size(48.dp), size = 128)
+    Spacer(Modifier.width(12.dp))
+    Column(Modifier.weight(1f)) {
+      Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
+        color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        OnPhoneMark(t.id)
+        Text(listOfNotNull(t.album.ifBlank { null }, if (t.duration > 0) fmtTime(t.duration) else null).joinToString(" · "),
+          maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+    }
+    if (!selection.active) {
+      Box {
+        IconButton(onClick = { menu = true }) { Icon(FluentIcons.MoreVert, stringResource(R.string.more)) }
+        TrackMenu(state, t, menu) { menu = false }
+      }
+    }
+  }
+}
+
+/** Bottom bar while selecting: play, queue, save to a playlist. */
+@Composable
+fun SongSelectionBar(
+  state: AppState,
+  tracks: List<Track>,
+  selection: SongSelection,
+  suggestedName: String,
+  modifier: Modifier = Modifier,
+  onRemove: ((List<Track>) -> Unit)? = null,
+  downloadsOnly: Boolean = false,
+) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val picked = selection.pick(tracks)
+  val n = picked.size
+  var save by remember { mutableStateOf(false) }
+  if (save) SavePlaylistDialog(state, picked.map { it.id }, suggestedName, onDismiss = { save = false }, onSaved = { selection.stop() })
+  Surface(
+    modifier.fillMaxWidth().padding(12.dp),
+    shape = MaterialTheme.shapes.large,
+    color = MaterialTheme.colorScheme.secondaryContainer,
+    tonalElevation = 3.dp,
+  ) {
+    Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { selection.stop() }) { Icon(FluentIcons.Close, stringResource(R.string.close)) }
+        Text(
+          if (n > 0) stringResource(R.string.selected_count, n) else stringResource(R.string.select_hint),
+          fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        TextButton(onClick = {
+          if (n == tracks.size) selection.ids.clear()
+          else { selection.ids.clear(); selection.ids.addAll(tracks.map { it.id }) }
+        }) { Text(stringResource(if (n == tracks.size && n > 0) R.string.select_none else R.string.select_all)) }
+      }
+      Row(Modifier.fillMaxWidth()) {
+        BarAction(FluentIcons.PlayArrow, stringResource(R.string.play), n > 0) {
+          state.player.play(picked, 0, downloadsOnly = downloadsOnly)
+          selection.stop()
+        }
+        BarAction(FluentIcons.QueueMusic, stringResource(R.string.queue), n > 0) {
+          picked.forEach { state.player.addToQueue(it) }
+          state.messageRes(R.string.queued_many, n)
+          selection.stop()
+        }
+        BarAction(FluentIcons.Playlist, stringResource(R.string.save_short), n > 0) { save = true }
+        if (onRemove != null) {
+          BarAction(FluentIcons.Close, stringResource(R.string.offline_remove), n > 0) { onRemove(picked); selection.stop() }
+        } else {
+          BarAction(FluentIcons.Download, stringResource(R.string.offline_save_short), n > 0) {
+            val added = com.gharmonize.player.playback.Offline.download(context, picked)
+            if (added > 0) state.messageRes(R.string.offline_queued, added)
+            selection.stop()
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Selection bar action: icon above a short label, equal width. */
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.BarAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+  val tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+  Column(
+    Modifier.weight(1f).clip(MaterialTheme.shapes.medium).clickable(enabled = enabled, onClick = onClick).padding(vertical = 8.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
+    Icon(icon, null, tint = tint)
+    Text(label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+  }
+}

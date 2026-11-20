@@ -2,7 +2,7 @@
 // devices and pairing codes for the mobile app.
 
 import { app, bus } from '../app.js'
-import { get, post, del } from '../api.js'
+import { get, post, del, put } from '../api.js'
 import { h, t, icon, clear, toggle, toast, toastError, fmtRelative, confirmDialog, errorText } from '../dom.js'
 import { applyAccent, currentAccent, ACCENTS, applyPalette, currentPalette, PALETTES } from '../theme.js'
 import { showShortcuts } from '../chrome.js'
@@ -97,6 +97,36 @@ function passwordCard() {
   return card(t('player.account.password'), h('p', { class: 'muted', text: t('player.account.passwordHint') }), form)
 }
 
+// New releases of followed artists: notify, optionally download.
+function releasesCard(perms) {
+  const status = h('span', { class: 'muted small' })
+  const autoRow = h('div')
+  get('/releases/settings').then((s) => {
+    if (perms.canDownload) autoRow.replaceWith(settingRow(t('player.notif.autoDownload'), t('player.notif.autoDownloadHint'), toggle(s.autoDownload, (v) => put('/releases/settings', { autoDownload: v }).catch(toastError))))
+  }).catch(() => {})
+  const check = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.notif.checkNow') })
+  check.addEventListener('click', async () => {
+    check.disabled = true
+    status.textContent = t('player.common.loading')
+    try {
+      const res = await post('/releases/check')
+      status.textContent = t('player.notif.checked', { artists: res.checked, found: res.found })
+    } catch (error) { status.textContent = ''; toastError(error) } finally { check.disabled = false }
+  })
+  return card(t('player.notif.cardTitle'),
+    h('p', { class: 'muted small', text: t('player.notif.cardText') }),
+    h('a', { class: 'btn btn--outline btn--sm', href: '#/library/followed', text: t('player.library.followedOpen') }),
+    autoRow,
+    settingRow(t('player.notif.checkTitle'), null, h('div', { class: 'row-actions' }, check, status)))
+}
+
+const CROSSFADE_SECONDS = [0, 2, 4, 6, 8, 12]
+function crossfadeSelect() {
+  const sel = h('select', { class: 'select' }, CROSSFADE_SECONDS.map((n) => h('option', { value: String(n), selected: (Number(app.prefs.crossfade) || 0) === n, text: n ? t('player.crossfade.seconds', { n }) : t('player.crossfade.off') })))
+  sel.addEventListener('change', () => app.setPref('crossfade', Number(sel.value)))
+  return sel
+}
+
 export async function render() {
   const me = await get('/me')
   app.me = me
@@ -118,7 +148,8 @@ export async function render() {
     settingRow(t('player.quality.title'), t('player.quality.hint'), quality),
     settingRow(t('player.quality.normalize'), t('player.quality.normalizeHint'), toggle(app.prefs.normalize, (v) => { app.setPref('normalize', v); app.player.applyVolume() })),
     settingRow(t('player.account.autoplay'), t('player.account.autoplayHint'), toggle(app.prefs.autoplay, (v) => app.setPref('autoplay', v))),
-    settingRow(t('player.account.preload'), t('player.account.preloadHint'), toggle(app.prefs.preload, (v) => app.setPref('preload', v)))))
+    settingRow(t('player.account.preload'), t('player.account.preloadHint'), toggle(app.prefs.preload, (v) => app.setPref('preload', v))),
+    settingRow(t('player.crossfade.title'), t('player.crossfade.hint'), crossfadeSelect())))
 
   const progress = h('select', { class: 'select' }, PROGRESS_STYLES.map((key) => h('option', { value: key, selected: progressStyle() === key, text: t(`player.progress.${key}`) })))
   progress.addEventListener('change', () => app.setPref('progressStyle', progress.value))
@@ -136,7 +167,7 @@ export async function render() {
     settingRow(t('player.account.canDownload'), null, h('span', { class: ['pill', perms.canDownload && 'pill--accent'], text: perms.canDownload ? t('player.common.yes') : t('player.common.no') })),
     settingRow(t('player.account.libraries'), null, h('div', { class: 'chips chips--wrap' }, (perms.libraries || []).map((l) => h('span', { class: 'chip chip--static', text: l.name }))))))
 
-  cards.append(devicesCard(me), passwordCard())
+  cards.append(releasesCard(perms), devicesCard(me), passwordCard())
   root.append(
     h('div', { class: 'row-actions' }, h('button', { type: 'button', class: 'btn btn--danger', onclick: () => import('../app.js').then(({ bus }) => bus.emit('logout')) }, icon('logout', { size: 18 }), t('player.auth.logout'))))
   return { node: root }

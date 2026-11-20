@@ -39,6 +39,8 @@ sealed interface Route {
   data class Mix(val id: String) : Route
   data class Wrapped(val year: Int) : Route
   data object Equalizer : Route
+  data object Offline : Route
+  data object Notifications : Route
 }
 
 /** UI state shared by all screens: navigation, player, downloads, messages. */
@@ -51,6 +53,14 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
   val top: Route get() = stack.last()
 
   var me by mutableStateOf<Me?>(null)
+  /** Unread server notifications (new releases of followed artists). */
+  var unreadNotifications by mutableStateOf(0)
+
+  fun checkNotifications() {
+    scope.launch {
+      runCatching { com.gharmonize.player.data.ReleaseNotifier.check(app) }.onSuccess { unreadNotifications = it.second }
+    }
+  }
   val canDownload: Boolean get() = me?.canDownload == true
 
   /** Live download state by source URL, for the badges on online items. */

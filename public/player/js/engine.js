@@ -55,7 +55,10 @@ export function fromOnline(item, extra = {}) {
   if (!item) return null
   adoptDownload(item)
   if (item.library?.trackId) {
-    return fromTrack({ id: item.library.trackId, title: item.title, artist: item.artist, album: item.album, genre: item.genre, year: item.year, duration: item.duration, artwork: `track/${item.library.trackId}` }, extra)
+    return fromTrack(item.library.track || {
+      id: item.library.trackId, title: item.title, artist: item.artist, album: item.album,
+      genre: item.genre, year: item.year, artwork: `track/${item.library.trackId}`
+    }, extra)
   }
   if (!item.previewUrl) return null
   return {
@@ -250,7 +253,7 @@ export class Engine {
     if (!this.current) return
     if (!this.audio.getAttribute('src')) return this.load(this.current, { autoplay: true, startAt: this.pendingStart })
     if (this.audio.paused) this.resume()
-    else this.audio.pause()
+    else this.pause()
   }
 
   resume() {
@@ -260,7 +263,10 @@ export class Engine {
     })
   }
 
-  pause() { this.audio.pause() }
+  pause() {
+    this.finishFade()
+    this.audio.pause()
+  }
 
   next({ auto = false } = {}) {
     if (!this.queue.length) return
@@ -276,9 +282,12 @@ export class Engine {
       this.emitQueue()
       return
     }
-    if (auto && app.prefs.autoplay) {
+    if (auto && app.prefs.autoplay && !this.context?.downloadsOnly) {
+      const seed = this.current
       this.autoplayMore().then((added) => {
-        if (added) { this.index += 1; this.load(this.current, { autoplay: true }); this.emitQueue() } else this.stopAtEnd()
+        if (this.current !== seed) return
+        if (added || this.index < this.queue.length - 1) this.next({ auto })
+        else this.stopAtEnd()
       })
       return
     }
@@ -418,6 +427,7 @@ export class Engine {
 
   load(item, { autoplay = true, startAt = null, keepHistory = false, quality = null } = {}) {
     if (!item) return
+    this.finishFade()
     if (!keepHistory) this.flushPlay(false)
     const src = this.srcFor(item, quality || app.prefs.quality)
     const other = this.audio === this.a ? this.b : this.a
@@ -447,13 +457,23 @@ export class Engine {
     this.save()
   }
 
-  applyVolume() {
+  // Volume for an item (user volume × ReplayGain when "normalize" is on).
+  volumeFor(item) {
     let factor = 1
-    const item = this.current
     if (app.prefs.normalize && item?.replayGain) {
       const gain = Number(item.replayGain.track ?? item.replayGain.album)
       if (Number.isFinite(gain)) factor = Math.min(1, Math.pow(10, gain / 20))
     }
+    return clamp01(this.volume * factor)
+  }
+
+  applyVolume() {
+    // During a crossfade the fade sets the volumes (and follows this.volume).
+    if (this.fade) {
+      for (const audio of [this.a, this.b]) audio.muted = this.muted
+      return
+    }
+    const factor = this.volumeFor(this.current) / (this.volume || 1)
     for (const audio of [this.a, this.b]) {
       audio.volume = clamp01(this.volume * factor)
       audio.muted = this.muted
@@ -474,7 +494,68 @@ export class Engine {
       this.updatePositionState()
     }
     if (this.playing && Date.now() - this.lastSave > 10_000) this.save()
-    if (app.prefs.preload && duration && duration - pos < 25) this.preloadNext()
+    if ((app.prefs.preload || this.crossfadeSeconds()) && duration && duration - pos < 25) this.preloadNext()
+    const cf = this.crossfadeSeconds()
+    if (cf && !this.fade && this.playing && duration > cf * 2 + 5 && duration - pos <= cf) this.startCrossfade(cf)
+  }
+
+  crossfadeSeconds() {
+    const n = Number(app.prefs.crossfade) || 0
+    return n > 0 ? Math.min(n, 12) : 0
+  }
+
+  // The next song starts under the end of this one; volumes trade places on
+  // an equal-power curve. The outgoing element plays on, ignored by the
+  // engine (its events only count for this.audio), until the fade is done.
+  startCrossfade(seconds) {
+    if (this.repeat === 'one' || this.sleep.endOfTrack) return
+    const nextIndex = this.index < this.queue.length - 1 ? this.index + 1 : (this.repeat === 'all' ? 0 : -1)
+    const nextItem = nextIndex >= 0 ? this.queue[nextIndex] : null
+    if (!nextItem || nextItem.uid === this.current?.uid) return
+    const outgoing = this.audio
+    const incoming = outgoing === this.a ? this.b : this.a
+    const src = this.srcFor(nextItem)
+    if (incoming.dataset.uid !== nextItem.uid || incoming.getAttribute('src') !== src) {
+      incoming.dataset.uid = nextItem.uid
+      incoming.src = src
+    }
+    try { incoming.currentTime = 0 } catch {}
+    this.flushPlay(true)
+    const outItem = this.current
+    this.index = nextIndex
+    this.audio = incoming
+    this.played = { uid: nextItem.uid, seconds: 0, lastPos: null }
+    incoming.volume = 0
+    incoming.muted = this.muted
+    const started = performance.now()
+    const duration = seconds * 1000
+    const step = () => {
+      const p = Math.min(1, (performance.now() - started) / duration)
+      outgoing.volume = clamp01(this.volumeFor(outItem) * Math.cos(p * Math.PI / 2))
+      incoming.volume = clamp01(this.volumeFor(nextItem) * Math.sin(p * Math.PI / 2))
+      if (p >= 1) this.finishFade()
+    }
+    this.fade = { outgoing, timer: setInterval(step, 50) }
+    incoming.play().catch(() => this.finishFade())
+    this.prefetchAutoplay()
+    this.updateMediaSession()
+    this.emitState()
+    this.emitQueue()
+    bus.emit('player:track', nextItem)
+    this.save()
+  }
+
+  // Ends a crossfade now: the outgoing song stops, volumes go back to normal.
+  finishFade() {
+    const fade = this.fade
+    if (!fade) return
+    clearInterval(fade.timer)
+    this.fade = null
+    fade.outgoing.pause()
+    fade.outgoing.removeAttribute('src')
+    fade.outgoing.load()
+    fade.outgoing.dataset.uid = ''
+    this.applyVolume()
   }
 
   preloadNext() {
@@ -528,6 +609,7 @@ export class Engine {
   }
 
   fadeOutAndPause() {
+    this.finishFade()
     const audio = this.audio
     const start = audio.volume
     const steps = 20
@@ -547,45 +629,45 @@ export class Engine {
   // added right away, so the queue shows what comes next (and the user can
   // change it) instead of being empty until the end.
   prefetchAutoplay() {
-    if (!app.prefs.autoplay || this.repeat !== 'off' || this.autoplayBusy) return
-    if (this.index < this.queue.length - 1 || this.current?.type !== 'library') return
-    this.autoplayBusy = true
-    this.autoplayMore().then((added) => { if (added) this.emitQueue() }).finally(() => { this.autoplayBusy = false })
+    if (!app.prefs.autoplay || this.repeat !== 'off') return
+    if (this.index < this.queue.length - 1 || !this.current || this.context?.downloadsOnly) return
+    this.autoplayMore().then((added) => { if (added) this.emitQueue() })
   }
 
-  // Keeps the music going with similar songs from the library.
-  async autoplayMore() {
-    const seed = [...this.queue].reverse().find((item) => item.type === 'library')
-    const known = new Set(this.queue.slice(-300).filter((i) => i.type === 'library').map((i) => i.id))
-    // Songs like the last ones played (artists, folders, genres) first.
-    const seeds = this.queue.slice(Math.max(0, this.index - 9), this.index + 1).filter((i) => i.type === 'library').map((i) => i.id)
-    if (seeds.length) {
-      try {
-        const res = await get('/autoplay', { seed: seeds.join(','), exclude: [...known].slice(-200).join(','), limit: 15 })
-        const fresh = (res.items || []).filter((track) => !known.has(track.id))
-        if (fresh.length) {
-          this.queue.push(...fresh.map((track) => fromTrack(track, { auto: true })))
-          this.ordered?.push(...this.queue.slice(-fresh.length))
-          return true
-        }
-      } catch {}
+  // Continue from the current recording's artist and genre.
+  autoplayMore() {
+    const seed = this.current
+    const queue = this.queue
+    if (!seed || this.context?.downloadsOnly) return Promise.resolve(false)
+    if (this.autoplayRequest?.seed === seed && this.autoplayRequest.queue === queue) return this.autoplayRequest.promise
+    const request = { seed, queue, promise: this.fetchAutoplay(seed, queue) }
+    this.autoplayRequest = request
+    request.promise.finally(() => { if (this.autoplayRequest === request) this.autoplayRequest = null })
+    return request.promise
+  }
+
+  async fetchAutoplay(seed, queue) {
+    const known = new Set(queue.slice(-300).filter((i) => i.type === 'library').map((i) => i.id))
+    try {
+      const res = await get('/autoplay', {
+        seed: seed.type === 'library' ? seed.id : '',
+        artist: seed.artist || '',
+        genre: seed.genre || '',
+        exclude: [...known].slice(-200).join(','),
+        limit: 15
+      })
+      if (this.queue !== queue || this.current !== seed || this.index !== queue.length - 1
+        || this.repeat !== 'off' || !app.prefs.autoplay) return false
+      const fresh = (res.items || []).filter((track) => !known.has(track.id)
+        && (track.artist !== seed.artist || track.title !== seed.title))
+      if (!fresh.length) return false
+      const continuation = fresh.map((track) => fromTrack(track, { auto: true }))
+      this.queue.push(...continuation)
+      this.ordered?.push(...continuation)
+      return true
+    } catch {
+      return false
     }
-    const attempts = []
-    if (seed?.genre) attempts.push({ sort: 'random', limit: 40, genre: seed.genre })
-    if (seed?.artistId) attempts.push({ sort: 'random', limit: 40, artistId: seed.artistId })
-    attempts.push({ sort: 'random', limit: 40 })
-    for (const query of attempts) {
-      try {
-        const res = await get('/tracks', query)
-        const fresh = (res.items || []).filter((track) => !known.has(track.id)).slice(0, 15)
-        if (fresh.length) {
-          this.queue.push(...fresh.map((track) => fromTrack(track, { auto: true })))
-          this.ordered?.push(...this.queue.slice(-fresh.length))
-          return true
-        }
-      } catch {}
-    }
-    return false
   }
 
   flushPlay(completed, { beacon = false } = {}) {

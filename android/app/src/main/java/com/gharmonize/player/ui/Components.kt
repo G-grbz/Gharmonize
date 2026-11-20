@@ -52,7 +52,7 @@ import com.gharmonize.player.data.Track
 import org.json.JSONObject
 
 fun fmtTime(seconds: Double): String {
-  val s = seconds.toLong().coerceAtLeast(0)
+  val s = (seconds + 0.5).toLong().coerceAtLeast(0)
   val h = s / 3600
   val m = (s % 3600) / 60
   val sec = s % 60
@@ -138,7 +138,10 @@ fun AlbumCard(state: AppState, album: Album) =
 
 @Composable
 fun ArtistCard(state: AppState, artist: Artist) =
-  Card(artist.name, stringResource(R.string.kind_artist), artist.artwork, round = true) { state.navigate(Route.Artist(artist.id)) }
+  // Followed from an online page, no songs here yet: open the online page.
+  Card(artist.name, stringResource(R.string.kind_artist), artist.artwork, round = true) {
+    state.navigate(if (artist.onlineOnly) Route.OnlineArtist(null, artist.name) else Route.Artist(artist.id))
+  }
 
 @Composable
 fun TrackCard(state: AppState, tracks: List<Track>, index: Int) {
@@ -152,7 +155,7 @@ fun OnlineCard(state: AppState, items: List<OnlineItem>, index: Int) {
   val owned = item.libraryTrackId != null || (item.kind == "album" && item.libraryComplete)
   val badge: (@Composable () -> Unit)? = when {
     owned -> { { OwnedBadge() } }
-    state.canDownload && item.kind in setOf("track", "album", "playlist") -> { { DownloadButton(state, item, small = true) } }
+    state.canDownload && item.downloadable && item.kind in setOf("track", "album", "playlist") -> { { DownloadButton(state, item, small = true) } }
     else -> null
   }
   Card(item.title, item.artist, item.artworkUrl, round = item.kind == "artist", badge = badge) {
@@ -195,18 +198,24 @@ fun DownloadButton(state: AppState, item: OnlineItem, small: Boolean = false) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean = true, number: Int? = null) {
+fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean = true, number: Int? = null, selection: SongSelection? = null, playSingle: Boolean = false) {
   val t = tracks[index]
   val playingId = state.player.current?.mediaId
   val isCurrent = playingId == "t:${t.id}"
   var menu by remember { mutableStateOf(false) }
   var favorite by remember(t.id, t.favorite) { mutableStateOf(t.favorite) }
+  val selecting = selection?.active == true
   Row(
     Modifier.fillMaxWidth()
-      .combinedClickable(onClick = { state.player.play(tracks, index) }, onLongClick = { menu = true })
-      .padding(horizontal = 16.dp, vertical = 6.dp),
+      .combinedClickable(
+        // With a selection: long press starts selecting, taps then toggle.
+        onClick = { if (selecting) selection?.toggle(t.id) else if (playSingle) state.player.play(listOf(t)) else state.player.play(tracks, index) },
+        onLongClick = { when { selecting -> selection?.toggle(t.id); selection != null -> selection.start(t.id); else -> menu = true } },
+      )
+      .padding(start = if (selecting) 4.dp else 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
+    if (selecting) androidx.compose.material3.Checkbox(checked = t.id in selection!!.ids, onCheckedChange = { selection.toggle(t.id) })
     if (number != null) {
       Text("$number", modifier = Modifier.width(28.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
     }
@@ -217,16 +226,21 @@ fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean 
     Column(Modifier.weight(1f)) {
       Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
         color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-      Text(listOfNotNull(t.artist.ifBlank { null }, if (t.duration > 0) fmtTime(t.duration) else null).joinToString(" · "),
-        maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        OnPhoneMark(t.id)
+        Text(listOfNotNull(t.artist.ifBlank { null }, if (t.duration > 0) fmtTime(t.duration) else null).joinToString(" · "),
+          maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
     }
-    IconButton(onClick = { state.setFavorite(t.id, !favorite) { favorite = it }; favorite = !favorite }) {
-      Icon(if (favorite) FluentIcons.Favorite else FluentIcons.FavoriteBorder, stringResource(R.string.like),
-        tint = if (favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    Box {
-      IconButton(onClick = { menu = true }) { Icon(FluentIcons.MoreVert, stringResource(R.string.more)) }
-      TrackMenu(state, t, menu) { menu = false }
+    if (!selecting) {
+      IconButton(onClick = { state.setFavorite(t.id, !favorite) { favorite = it }; favorite = !favorite }) {
+        Icon(if (favorite) FluentIcons.Favorite else FluentIcons.FavoriteBorder, stringResource(R.string.like),
+          tint = if (favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      Box {
+        IconButton(onClick = { menu = true }) { Icon(FluentIcons.MoreVert, stringResource(R.string.more)) }
+        TrackMenu(state, t, menu) { menu = false }
+      }
     }
   }
 }
@@ -239,6 +253,15 @@ fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Uni
     DropdownMenuItem(text = { Text(stringResource(R.string.play_next)) }, onClick = { state.player.playNext(t); state.messageRes(R.string.queued_next, t.title); onDismiss() })
     DropdownMenuItem(text = { Text(stringResource(R.string.add_to_queue)) }, onClick = { state.player.addToQueue(t); state.messageRes(R.string.queued, t.title); onDismiss() })
     DropdownMenuItem(text = { Text(stringResource(R.string.save_to_playlist)) }, onClick = { save = true; onDismiss() })
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    if (com.gharmonize.player.playback.Offline.isOnPhone(t.id)) {
+      DropdownMenuItem(text = { Text(stringResource(R.string.offline_remove_one)) }, onClick = { com.gharmonize.player.playback.Offline.remove(ctx, listOf(t.id)); onDismiss() })
+    } else {
+      DropdownMenuItem(text = { Text(stringResource(R.string.offline_save)) }, onClick = {
+        if (com.gharmonize.player.playback.Offline.download(ctx, listOf(t)) > 0) state.messageRes(R.string.offline_queued, 1)
+        onDismiss()
+      })
+    }
     t.albumId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_album)) }, onClick = { state.navigate(Route.Album(id)); onDismiss() }) }
     t.artistId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_artist)) }, onClick = { state.navigate(Route.Artist(id)); onDismiss() }) }
   }
@@ -246,11 +269,11 @@ fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Uni
 
 /** Online track row: owned → play, preview → 30 s clip, otherwise download. */
 @Composable
-fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int) {
+fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSingle: Boolean = false) {
   val item = state.withDownload(items[index])
   val owned = item.libraryTrackId != null
   Row(
-    Modifier.fillMaxWidth().clickable { state.playOnline(items, index) }.padding(horizontal = 16.dp, vertical = 6.dp),
+    Modifier.fillMaxWidth().clickable { if (playSingle) state.playOnline(listOf(item), 0) else state.playOnline(items, index) }.padding(horizontal = 16.dp, vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Artwork(item.artworkUrl, Modifier.size(48.dp), size = 128)
@@ -301,7 +324,7 @@ fun SuggestionRow(state: AppState, items: List<OnlineItem>, index: Int, onAdd: (
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HeaderBlock(art: String?, kind: String, title: String, meta: String, round: Boolean = false, actions: @Composable () -> Unit) {
+fun HeaderBlock(art: String?, kind: String, title: String, meta: String, round: Boolean = false, footer: (@Composable () -> Unit)? = null, actions: @Composable () -> Unit) {
   Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
     Artwork(art, Modifier.size(200.dp), shape = if (round) CircleShape else MaterialTheme.shapes.large, size = 600,
       placeholder = if (round) FluentIcons.Person else FluentIcons.Album)
@@ -311,6 +334,7 @@ fun HeaderBlock(art: String?, kind: String, title: String, meta: String, round: 
     if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(12.dp))
     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { actions() }
+    footer?.invoke()
   }
 }
 

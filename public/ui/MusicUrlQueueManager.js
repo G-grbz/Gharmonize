@@ -2,6 +2,7 @@ import {
     MUSIC_TEXT_QUEUE_STORAGE_KEY,
     parseMusicTextList,
     matchMusicTextItems,
+  hasMusicTextMatchForFormat,
     buildMusicTextJobPayload,
     loadMusicTextQueue,
     loadMusicTextQueueState,
@@ -662,9 +663,9 @@ export class MusicUrlQueueManager {
         const runnable = this.textItems.filter((item) => ['pending', 'error', 'not-found', 'matched'].includes(item.status));
         if (!runnable.length) return null;
 
-        const reusable = runnable.filter((item) => item.status === 'matched' && item.match?.id);
-        const needsMatch = runnable.filter((item) => !(item.status === 'matched' && item.match?.id));
         const outputPayload = this.getClassicTextOutputPayload();
+        const reusable = runnable.filter((item) => hasMusicTextMatchForFormat(item, outputPayload.format));
+        const needsMatch = runnable.filter((item) => !hasMusicTextMatchForFormat(item, outputPayload.format));
         const playlistTitle = this.app.t('musicQueue.textPlaylistTitle');
 
         // If every runnable row already has a safe match (for example after a
@@ -709,6 +710,7 @@ export class MusicUrlQueueManager {
 
         try {
             const result = await matchMusicTextItems(needsMatch, {
+                format: outputPayload.format,
                 concurrency: this.getTextMatchConcurrency(),
                 onOperation: (serverOperation) => {
                     this.applyTextMatchOperationProgress(serverOperation, {

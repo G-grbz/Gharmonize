@@ -82,13 +82,13 @@ private fun DownloadRowView(state: AppState, row: DownloadRow) {
     when {
       row.active -> IconButton(onClick = { state.scope.launch { runCatching { state.api.cancelDownload(row.id) }; state.refreshDownloads() } }) { Icon(FluentIcons.Close, stringResource(R.string.cancel)) }
       row.status == "failed" || row.status == "canceled" -> IconButton(onClick = { state.scope.launch { runCatching { state.api.retryDownload(row.id) }; state.startPolling() } }) { Icon(FluentIcons.Refresh, stringResource(R.string.retry)) }
-      row.trackIds.isNotEmpty() -> IconButton(onClick = { state.scope.launch { runCatching { state.api.tracksByIds(row.trackIds) }.onSuccess { state.player.play(it, 0) } } }) { Icon(FluentIcons.PlayArrow, stringResource(R.string.play)) }
+      row.trackIds.isNotEmpty() -> IconButton(onClick = { state.scope.launch { runCatching { state.api.tracksByIds(row.trackIds) }.onSuccess { state.player.play(it, 0, downloadsOnly = true) } } }) { Icon(FluentIcons.PlayArrow, stringResource(R.string.play)) }
     }
   }
 }
 
 @Composable
-private fun statusText(row: DownloadRow): String = when (row.status) {
+fun statusText(row: DownloadRow): String = when (row.status) {
   "queued" -> stringResource(R.string.dl_queued)
   "resolving" -> stringResource(R.string.dl_resolving)
   "downloading" -> stringResource(R.string.dl_downloading, row.progress)
@@ -108,6 +108,11 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
   val active by app.servers.active.collectAsState()
   var wifi by remember { mutableStateOf(app.prefs.qualityWifi) }
   var mobile by remember { mutableStateOf(app.prefs.qualityMobile) }
+  var offlineQ by remember { mutableStateOf(app.prefs.offlineQuality) }
+  var crossfade by remember { mutableStateOf(app.prefs.crossfadeSeconds) }
+  var offlineWifi by remember { mutableStateOf(app.prefs.offlineWifiOnly) }
+  var releaseAuto by remember { mutableStateOf<Boolean?>(null) }
+  androidx.compose.runtime.LaunchedEffect(Unit) { releaseAuto = runCatching { app.api.releaseSettings().optBoolean("autoDownload") }.getOrNull() }
   var progress by remember { mutableStateOf(app.prefs.progressStyle) }
   var coverVolume by remember { mutableStateOf(app.prefs.coverVolume) }
   var autoplay by remember { mutableStateOf(app.prefs.autoplay) }
@@ -148,6 +153,33 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
       HorizontalDivider(Modifier.padding(top = 8.dp))
       SettingItem(stringResource(R.string.settings_quality_wifi), qualityLabel(wifi)) { picker = "wifi" }
       SettingItem(stringResource(R.string.settings_quality_mobile), qualityLabel(mobile)) { picker = "mobile" }
+      SettingItem(stringResource(R.string.settings_crossfade), if (crossfade > 0) stringResource(R.string.crossfade_seconds, crossfade) else stringResource(R.string.crossfade_off)) { picker = "crossfade" }
+      // Sign a Google TV in to this account by scanning its QR code.
+      TvLinkItem(state)
+      // New releases of followed artists: download them automatically.
+      val auto = releaseAuto
+      if (auto != null && state.canDownload) {
+        Row(Modifier.fillMaxWidth().clickable {
+          releaseAuto = !auto
+          state.scope.launch { runCatching { app.api.setReleaseAutoDownload(!auto) } }
+        }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+          Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.notif_auto), style = MaterialTheme.typography.bodyLarge)
+            Text(stringResource(R.string.notif_auto_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+          androidx.compose.material3.Switch(checked = auto, onCheckedChange = { v -> releaseAuto = v; state.scope.launch { runCatching { app.api.setReleaseAutoDownload(v) } } })
+        }
+      }
+      // Songs saved on the phone.
+      SettingItem(stringResource(R.string.offline_title), stringResource(R.string.offline_settings_hint)) { state.navigate(Route.Offline) }
+      SettingItem(stringResource(R.string.settings_offline_quality), qualityLabel(offlineQ)) { picker = "offline" }
+      Row(Modifier.fillMaxWidth().clickable { offlineWifi = !offlineWifi; com.gharmonize.player.playback.Offline.setWifiOnly(offlineWifi) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+          Text(stringResource(R.string.settings_offline_wifi), style = MaterialTheme.typography.bodyLarge)
+          Text(stringResource(R.string.settings_offline_wifi_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.material3.Switch(checked = offlineWifi, onCheckedChange = { offlineWifi = it; com.gharmonize.player.playback.Offline.setWifiOnly(it) })
+      }
       SettingItem(stringResource(R.string.equalizer), stringResource(if (com.gharmonize.player.playback.AudioEq.params.enabled) R.string.eq_on else R.string.eq_off)) { state.navigate(Route.Equalizer) }
       SettingItem(stringResource(R.string.settings_progress), progressLabel(progress)) { picker = "progress" }
       Row(Modifier.fillMaxWidth().clickable { coverVolume = !coverVolume; app.prefs.coverVolume = coverVolume }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -183,12 +215,12 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
   }
 
   picker?.let { which ->
-    val options = when (which) { "theme" -> listOf("system", "dark", "light"); "language" -> com.gharmonize.player.AppLocale.CHOICES; "progress" -> PROGRESS_STYLES; else -> QUALITIES }
-    val selected = when (which) { "wifi" -> wifi; "mobile" -> mobile; "language" -> language; "progress" -> progress; else -> theme }
+    val options = when (which) { "theme" -> listOf("system", "dark", "light"); "language" -> com.gharmonize.player.AppLocale.CHOICES; "progress" -> PROGRESS_STYLES; "crossfade" -> listOf("0", "2", "4", "6", "8", "12"); else -> QUALITIES }
+    val selected = when (which) { "wifi" -> wifi; "mobile" -> mobile; "offline" -> offlineQ; "crossfade" -> crossfade.toString(); "language" -> language; "progress" -> progress; else -> theme }
     AlertDialog(
       onDismissRequest = { picker = null },
       confirmButton = { TextButton(onClick = { picker = null }) { Text(stringResource(R.string.close)) } },
-      title = { Text(stringResource(when (which) { "theme" -> R.string.settings_theme; "progress" -> R.string.settings_progress; "language" -> R.string.settings_language; "wifi" -> R.string.settings_quality_wifi; else -> R.string.settings_quality_mobile })) },
+      title = { Text(stringResource(when (which) { "theme" -> R.string.settings_theme; "progress" -> R.string.settings_progress; "language" -> R.string.settings_language; "wifi" -> R.string.settings_quality_wifi; "offline" -> R.string.settings_offline_quality; "crossfade" -> R.string.settings_crossfade; else -> R.string.settings_quality_mobile })) },
       text = {
         Column(Modifier.verticalScroll(rememberScrollState())) {
           options.forEach { opt ->
@@ -196,6 +228,8 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
               when (which) {
                 "wifi" -> { wifi = opt; app.prefs.qualityWifi = opt }
                 "mobile" -> { mobile = opt; app.prefs.qualityMobile = opt }
+                "offline" -> { offlineQ = opt; app.prefs.offlineQuality = opt }
+                "crossfade" -> { crossfade = opt.toInt(); app.prefs.crossfadeSeconds = crossfade }
                 "progress" -> { progress = opt; app.prefs.progressStyle = opt }
                 // New language: texts and content (home, recommendations) follow.
                 "language" -> if (opt != language) { com.gharmonize.player.AppLocale.apply(app, opt); activity?.recreate() }
@@ -205,7 +239,7 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
             }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
               RadioButton(selected = opt == selected, onClick = null)
               Spacer(Modifier.width(8.dp))
-              Text(when (which) { "theme" -> themeLabel(opt); "language" -> languageLabel(opt); "progress" -> progressLabel(opt); else -> qualityLabel(opt) })
+              Text(when (which) { "theme" -> themeLabel(opt); "language" -> languageLabel(opt); "progress" -> progressLabel(opt); "crossfade" -> if (opt == "0") stringResource(R.string.crossfade_off) else stringResource(R.string.crossfade_seconds, opt.toInt()); else -> qualityLabel(opt) })
             }
           }
         }
@@ -272,7 +306,7 @@ private fun paletteLabel(key: String): String = stringResource(when (key) {
 })
 
 @Composable
-private fun SettingItem(title: String, value: String, hint: String? = null, onClick: (() -> Unit)? = null) {
+fun SettingItem(title: String, value: String, hint: String? = null, onClick: (() -> Unit)? = null) {
   Column(Modifier.fillMaxWidth().let { if (onClick != null) it.clickable(onClick = onClick) else it }.padding(horizontal = 16.dp, vertical = 12.dp)) {
     Text(title, style = MaterialTheme.typography.bodyLarge)
     if (value.isNotBlank()) Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

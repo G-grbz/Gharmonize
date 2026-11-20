@@ -12,6 +12,10 @@ const coarse = () => window.matchMedia?.('(pointer: coarse)').matches
 // ---- play helpers ---------------------------------------------------------------
 
 export function playTracks(tracks, index = 0, context = null, opts = {}) {
+  if (context?.route?.startsWith('/search?')) {
+    tracks = [tracks[index]]
+    index = 0
+  }
   const items = tracks.map((track) => fromTrack(track)).filter(Boolean)
   if (!items.length) return toast(t('player.playback.nothing'))
   app.player.play(items, Math.min(index, items.length - 1), { context, ...opts })
@@ -21,7 +25,9 @@ export function playOnline(items, index = 0, context = null) {
   const target = items[index]
   const queue = []
   let start = 0
+  const search = context?.route?.startsWith('/search?')
   items.forEach((item, i) => {
+    if (search && i !== index) return
     const q = fromOnline(item)
     if (!q) return
     if (i === index) start = queue.length
@@ -174,13 +180,15 @@ export function onlineMenu(item, at) {
     !owned && item.previewUrl && { label: t('player.menu.preview'), icon: 'play', run: () => playOnline([item], 0) },
     owned && { label: t('player.menu.playNext'), icon: 'playNext', run: () => app.player.playNext([fromOnline(item)]) },
     owned && { label: t('player.menu.addToQueue'), icon: 'queue', run: () => app.player.addToQueue([fromOnline(item)]) },
-    !owned && app.canDownload && ['track', 'album', 'playlist'].includes(item.kind) && { label: t('player.downloads.download'), icon: 'download', run: () => app.downloads.request(item) },
+    !owned && app.canDownload && item.downloadable !== false && ['track', 'album', 'playlist'].includes(item.kind) && { label: t('player.downloads.download'), icon: 'download', run: () => app.downloads.request(item) },
+    !owned && app.canDownload && item.kind === 'playlist' && { label: t('player.save.title'), icon: 'playlistAdd', run: () => saveToPlaylistDialog({ name: item.title, onlineItem: item, count: item.trackCount ?? null }) },
     item.kind === 'track' && (owned || app.canDownload) && { label: owned ? t('player.menu.addToPlaylist') : t('player.menu.downloadToPlaylist'), icon: 'playlistAdd', submenu: owned ? playlistSubmenu(async () => [owned]) : playlistSubmenu(null, { onlineItem: item }) },
     'sep',
     item.providerIds?.deezerAlbum && { label: t('player.menu.goToAlbum'), icon: 'album', run: () => app.nav(`/online/album?provider=deezer&id=${item.providerIds.deezerAlbum}`) },
     item.library?.albumId && { label: t('player.menu.openInLibrary'), icon: 'library', run: () => app.nav(`/album/${item.library.albumId}`) },
-    (item.providerIds?.deezerArtist || item.artist) && item.kind !== 'artist' && app.providers.includes('deezer') && { label: t('player.menu.goToArtist'), icon: 'user', run: () => app.nav(item.providerIds?.deezerArtist ? `/online/artist?id=${item.providerIds.deezerArtist}` : `/online/artist?name=${encodeURIComponent(primaryArtist(item.artist))}`) },
-    item.url && item.provider !== 'library' && { label: t('player.menu.openSource', { provider: providerName(item.provider) }), icon: 'external', run: () => window.open(item.url, '_blank', 'noopener,noreferrer') }
+    item.kind === 'playlist' && item.seed && app.providers.includes('deezer') && { label: t('player.menu.goToArtist'), icon: 'user', run: () => app.nav(`/online/artist?name=${encodeURIComponent(item.seed)}`) },
+    (item.providerIds?.deezerArtist || item.artist) && !['artist', 'playlist'].includes(item.kind) && app.providers.includes('deezer') && { label: t('player.menu.goToArtist'), icon: 'user', run: () => app.nav(item.providerIds?.deezerArtist ? `/online/artist?id=${item.providerIds.deezerArtist}` : `/online/artist?name=${encodeURIComponent(primaryArtist(item.artist))}`) },
+    (item.url || item.sourceUrl) && item.provider !== 'library' && { label: t('player.menu.openSource', { provider: providerName(item.provider) }), icon: 'external', run: () => window.open(item.url || item.sourceUrl, '_blank', 'noopener,noreferrer') }
   ], at)
 }
 
@@ -205,7 +213,7 @@ export function trackInfo(track) {
 }
 
 export function providerName(provider) {
-  return { deezer: 'Deezer', youtube: 'YouTube Music', spotify: 'Spotify' }[provider] || provider || ''
+  return { deezer: 'Deezer', youtube: 'YouTube Music', spotify: 'Spotify', apple: 'Apple Music' }[provider] || provider || ''
 }
 
 export function primaryArtist(name) {
@@ -251,13 +259,15 @@ export function albumCard(album) {
 }
 
 export function artistCard(artist) {
+  // Followed from an online page, no songs here yet: open the online page.
+  const onlineOnly = artist.trackCount === 0
   return card({
     art: artwork(artworkUrl(artist.artwork, 256), { alt: artist.name, round: true, placeholder: 'user', seed: artist.name }),
     title: artist.name,
     subtitle: artist.plays ? plural(artist.plays, 'player.count.play', 'player.count.plays') : t('player.kind.artist'),
-    href: `#/artist/${artist.id}`,
+    href: onlineOnly ? `#/online/artist?name=${encodeURIComponent(artist.name)}` : `#/artist/${artist.id}`,
     cls: 'card--artist',
-    onPlay: () => playCollection('artist', artist.id)
+    onPlay: onlineOnly ? null : () => playCollection('artist', artist.id)
   })
 }
 
@@ -370,7 +380,8 @@ export function onlineCard(item, list = [item], index = 0, context = null) {
   if (['album', 'playlist'].includes(item.kind) && (owned || app.canDownload)) {
     badges.append(saveButton(() => ({ name: item.title, onlineItem: item, count: item.trackCount ?? null })))
   }
-  if (!owned && app.canDownload && ['track', 'album', 'playlist'].includes(item.kind)) badges.append(downloadButton(item))
+  if (item.mix) badges.append(h('span', { class: 'badge badge--mix', text: t('player.badge.mix') }))
+  if (!owned && app.canDownload && item.downloadable !== false && ['track', 'album', 'playlist'].includes(item.kind)) badges.append(downloadButton(item))
   const el = card({
     art: artwork(item.artworkUrl, { alt: item.title, round: isArtist, placeholder: isArtist ? 'user' : item.kind === 'album' ? 'album' : 'music', seed: item.title }),
     title: item.title,
@@ -399,7 +410,8 @@ export function onlineAlbumRoute(item) {
 }
 
 export function onlinePlaylistRoute(item) {
-  if (item.provider === 'youtube') return `/online/playlist?provider=youtube&url=${encodeURIComponent(item.url)}`
+  if (item.mix === 'deezer') return `/online/playlist?provider=deezer&mix=artist&id=${encodeURIComponent(item.mixId)}`
+  if (item.provider === 'youtube' || item.provider === 'apple') return `/online/playlist?provider=${item.provider}&url=${encodeURIComponent(item.url)}`
   return `/online/playlist?provider=${item.provider}&id=${encodeURIComponent(item.id)}`
 }
 
@@ -680,6 +692,7 @@ export function onlineTrackList(items, { context = null, showAlbum = true, numbe
   const list = h('div', { class: ['tracklist', 'tracklist--online', !showAlbum && 'tracklist--noalbum'], role: 'list' })
   items.forEach((item, index) => {
     const owned = adoptDownload(item)
+    const duration = item.library?.track?.duration || item.duration
     const row = h('div', { class: ['tl-row', !owned && 'is-missing'], role: 'listitem', tabindex: '0', dataset: owned ? { trackId: String(owned) } : null })
     const play = () => playOnline(items, index, context)
     // A download can finish while the list is open: decide on each tap.
@@ -699,7 +712,7 @@ export function onlineTrackList(items, { context = null, showAlbum = true, numbe
           h('span', { class: 'tl-name', text: item.title, title: item.title }),
           h('span', { class: 'tl-artist' }, item.explicit ? h('span', { class: 'chip-mini', text: 'E' }) : null, h('span', { text: item.artist || '' })))),
       h('span', { class: 'tl-album' }, showAlbum ? h('span', { text: item.album || '' }) : null),
-      h('span', { class: 'tl-dur', text: item.duration ? fmtTime(item.duration) : '' }),
+      h('span', { class: 'tl-dur', text: duration ? fmtTime(Math.round(duration)) : '' }),
       h('span', { class: 'tl-actions' }, action ? action(item, row) : null, status, iconButton('more', t('player.common.more'), (e) => onlineMenu(item, e.currentTarget), { cls: 'tl-more', size: 18 }))
     )
     if (canPlay) {
@@ -851,4 +864,33 @@ export function infinite(container, load, render, { page = 60 } = {}) {
   observer.observe(sentinel)
   more()
   return { reset: () => { offset = 0; done = false; clear(container) } }
+}
+
+// Artist biography (Wikipedia; language order set on the server), shown in
+// the free space of the artist hero. A few lines there; the whole text opens
+// in a dialog. `slot` is removed when nothing is found.
+export async function artistBio(slot, { name, deezerId = null }) {
+  try {
+    const res = await get('/online/artist-bio', { name, deezerId, lang: document.documentElement.lang || 'en' })
+    const bio = res?.bio
+    if (!bio?.text || !slot.isConnected) { slot.remove(); return }
+    const source = () => h('a', { class: 'artist-bio__source', href: bio.url, target: '_blank', rel: 'noopener noreferrer', text: t('player.artist.bioSource', { source: bio.source, lang: String(bio.lang).toUpperCase() }) })
+    const text = h('p', { class: 'artist-bio__text', text: bio.text, lang: bio.lang })
+    const more = h('button', { type: 'button', class: 'link-btn', text: t('player.common.showMore') })
+    more.addEventListener('click', () => modal({
+      title: name,
+      build: () => h('div', { class: 'artist-bio artist-bio--full' },
+        h('p', { class: 'artist-bio__text', text: bio.text, lang: bio.lang }),
+        h('div', { class: 'artist-bio__foot' }, source()))
+    }))
+    slot.replaceChildren(
+      h('span', { class: 'hero__kind', text: t('player.artist.bio') }),
+      text,
+      h('div', { class: 'artist-bio__foot' }, more, source()))
+    slot.hidden = false
+    // Short texts need no "show more".
+    requestAnimationFrame(() => { if (text.scrollHeight <= text.clientHeight + 2) more.remove() })
+  } catch {
+    slot.remove()
+  }
 }

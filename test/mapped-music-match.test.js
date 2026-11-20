@@ -7,6 +7,10 @@ import {
   isCatalogMusicProvider,
   isCatalogTextDurationMatch,
   isMappedMusicDurationCompatible,
+  mappedMusicMatchMode,
+  MAPPED_MUSIC_YT_STRICT_MATCH_SCORE,
+  hasMusicArtistEvidence,
+  isPlausibleMusicDuration,
   scoreCatalogMusicCandidateText
 } from '../modules/mappedMusicMatcher.js';
 
@@ -97,9 +101,33 @@ test('a negative search expires while a recent positive match remains reusable',
   assert.equal(context.get('found'), undefined);
 });
 
-test('the real search loop accepts recovered candidates for every catalogue provider', async () => {
+function matcherScenario({ songs = () => [], videos = () => [], counts = null } = {}) {
   const source = fs.readFileSync(new URL('../modules/sp.js', import.meta.url), 'utf8');
+  const helpers = source.slice(source.indexOf('const MUSIC_DURATION_WINDOW_SEC'), source.indexOf('async function waitForCatalogSearchCooldown'));
   const search = source.slice(source.indexOf('export async function searchYtmBestMatch'), source.indexOf('// Backward-compatible id-only API')).replace(/^export /, '');
+  const cache = new Map();
+  const context = vm.createContext({
+    buildMappedMusicSearchQueries: buildCatalogMusicSearchQueries,
+    sourceDurationMs: (item) => item.duration_ms, _normMatch: (value) => String(value).toLowerCase(),
+    _cacheGet: (key) => cache.get(key), _cacheSet: (key, value) => cache.set(key, value),
+    isCatalogMusicProvider, mappedMusicMatchMode, MAPPED_MUSIC_YT_STRICT_MATCH_SCORE,
+    MAPPED_MUSIC_YT_SEARCH_RESULTS: 5, YT_SEARCH_RESULTS: 3,
+    uniqueSearchQueries: (values) => [...new Set(values.filter(Boolean))],
+    searchYouTubeMusicSongs: async (query) => { if (counts) counts.songs++; return songs(query); },
+    runMappedMusicSearchQuery: async (query) => { if (counts) counts.videos++; return { entries: videos(query) }; },
+    hasMusicArtistEvidence, isPlausibleMusicDuration, isMappedMusicDurationCompatible,
+    SOUNDCLOUD_YT_MIN_MATCH_SCORE: 6,
+    isYouTubeSearchRateLimitError: () => false,
+    scoreSearchEntries: (entries, artist, title) => entries
+      .map((entry) => ({ entry, score: scoreCatalogMusicCandidateText(artist, title, entry.title, entry.uploader) })),
+    youtubeMatchFromEntry: (entry, song) => entry && { ...entry, song: Boolean(song) },
+    entryDurationSeconds: (entry) => entry.duration, isCatalogTextDurationMatch
+  });
+  vm.runInContext(helpers + search + '\nglobalThis.search = searchYtmBestMatch;', context);
+  return context.search;
+}
+
+test('the real search loop accepts recovered candidates for every catalogue provider', async () => {
   const fixtures = [
     { artist: 'Sedat Anar, Uğur Önür', title: 'Veda', duration_ms: 99534,
       entry: { id: '2CzRCsLhIfY', title: 'Sedat Anar ft. Uğur Önür - Veda', uploader: 'Sedat Anar', duration: 100 } },
@@ -112,29 +140,103 @@ test('the real search loop accepts recovered candidates for every catalogue prov
   ];
   for (const provider of ['spotify', 'apple', 'apple_music', 'deezer', 'tidal', 'text']) {
     for (const row of fixtures) {
-      let requests = 0;
-      const context = vm.createContext({
-        buildMappedMusicSearchQueries: (artist, title) => buildCatalogMusicSearchQueries(artist, title),
-        sourceDurationMs: (item) => item.duration_ms, _normMatch: (value) => value.toLowerCase(),
-        _cacheGet: () => undefined, _cacheSet: () => {}, isCatalogMusicProvider,
-        MAPPED_MUSIC_YT_SEARCH_RESULTS: 5, YT_SEARCH_RESULTS: 3,
-        source: row,
-        runMappedMusicSearchQuery: async () => { requests++; return { entries: [row.entry] }; },
-        isYouTubeSearchRateLimitError: () => false,
-        scoreSearchEntries: (entries, artist, title, { sourceMs }) => entries
-          .filter((entry) => isMappedMusicDurationCompatible(sourceMs, entry.duration))
-          .map((entry) => ({ entry, score: scoreCatalogMusicCandidateText(artist, title, entry.title, entry.uploader) })),
-        verifyCatalogCandidate: async (entry) => entry,
-        youtubeMatchFromEntry: (entry) => entry,
-        entryDurationSeconds: (entry) => entry.duration, isCatalogTextDurationMatch,
-        isMappedMusicDurationTight: () => true,
-      });
-      vm.runInContext(search + '\nglobalThis.search = searchYtmBestMatch;', context);
-      const result = await context.search(row.artist, row.title, { provider, sourceItem: row });
-      assert.equal(result?.id || null, row.rejected ? null : row.entry.id, `${provider}: ${row.title}`);
-      if (!row.rejected) assert.equal(requests, 1, 'successful first query must not trigger fallbacks');
+      const search = matcherScenario({ videos: () => [row.entry] });
+      const result = await search(row.artist, row.title, { provider, sourceItem: row });
+      assert.equal(result?.id || null, row.rejected ? null : row.entry.id, provider + ': ' + row.title);
     }
   }
+});
+
+test('Songs take priority and catalogue edits rank by source duration with video fallback', async () => {
+  const title = 'Gül Tükendi, Ben Tükendim';
+  const artist = 'Kıvırcık Ali';
+  const entry = (id, duration) => ({ id, duration, title, uploader: artist });
+  const search = matcherScenario({
+    songs: () => [entry('far', 360), entry('within-one-second', 348), entry('alternate-edit', 310)],
+    videos: () => [entry('video', 347)]
+  });
+  const source = (provider, duration_ms, format = 'mp3') => ({ provider, format, sourceItem: { duration_ms } });
+  assert.equal((await search(artist, title, source('deezer', 347000))).id, 'within-one-second');
+  assert.equal((await search(artist, title, source('spotify', 310000))).id, 'alternate-edit');
+  assert.equal((await search(artist, title, source('deezer', 347000, 'mp4'))).id, 'video');
+  assert.equal((await search(artist, title, source('deezer', 347000, 'mkv'))).song, true);
+  const videoOnly = matcherScenario({ videos: () => [entry('video-at-six-minutes', 360)] });
+  assert.equal((await videoOnly(artist, title, source('deezer', 347000))).id, 'video-at-six-minutes');
+});
+
+test('a cover by another artist never beats the original because it is a second closer', async () => {
+  const title = 'Gül Tükendi, Ben Tükendim';
+  const artist = 'Kıvırcık Ali';
+  const search = matcherScenario({
+    songs: () => [
+      { id: 'cover', duration: 347, title, uploader: 'Başka Sanatçı' },
+      { id: 'original', duration: 348, title, uploader: artist }
+    ]
+  });
+  const match = await search(artist, title, { provider: 'deezer', sourceItem: { duration_ms: 347000 } });
+  assert.equal(match.id, 'original');
+  assert.equal(match.song, true);
+});
+
+test('within a few seconds the stronger match wins; 5:40-5:50 is never skipped for 6:00', async () => {
+  const title = 'Gül Tükendi, Ben Tükendim';
+  const artist = 'Kıvırcık Ali';
+  const search = matcherScenario({
+    songs: () => [
+      { id: 'six-minutes', duration: 360, title, uploader: artist },
+      { id: 'five-fifty', duration: 350, title, uploader: artist }
+    ]
+  });
+  assert.equal((await search(artist, title, { provider: 'deezer', sourceItem: { duration_ms: 347000 } })).id, 'five-fifty');
+});
+
+test('the closest credited video still downloads, but never an hour-long compilation', async () => {
+  const title = 'Gül Tükendi, Ben Tükendim';
+  const artist = 'Kıvırcık Ali';
+  const source = { provider: 'deezer', sourceItem: { duration_ms: 347000 } };
+  const compilation = matcherScenario({ videos: () => [{ id: 'one-hour', duration: 3600, title, uploader: artist }] });
+  assert.equal(await compilation(artist, title, source), null);
+  const both = matcherScenario({ videos: () => [
+    { id: 'one-hour', duration: 3600, title, uploader: artist },
+    { id: 'seven-minutes', duration: 420, title, uploader: artist }
+  ] });
+  assert.equal((await both(artist, title, source)).id, 'seven-minutes');
+  assert.equal(isPlausibleMusicDuration(347000, 360), true);
+  assert.equal(isPlausibleMusicDuration(347000, 694), true);
+  assert.equal(isPlausibleMusicDuration(347000, 3600), false);
+  assert.equal(isPlausibleMusicDuration(347000, 120), false);
+  assert.equal(isPlausibleMusicDuration(0, 25 * 60), false);
+  assert.equal(isPlausibleMusicDuration(0, 5 * 60), true);
+});
+
+test('a YouTube Music outage falls back to a video without remembering it', async () => {
+  const title = 'Gül Tükendi, Ben Tükendim';
+  const artist = 'Kıvırcık Ali';
+  const counts = { songs: 0, videos: 0 };
+  let down = true;
+  const search = matcherScenario({
+    counts,
+    songs: () => {
+      if (down) throw Object.assign(new Error('rate limited'), { code: 'YTM_RATE_LIMITED' });
+      return [{ id: 'song', duration: 348, title, uploader: artist }];
+    },
+    videos: () => [{ id: 'video', duration: 347, title, uploader: artist }]
+  });
+  const source = { provider: 'deezer', sourceItem: { duration_ms: 347000 } };
+  assert.equal((await search(artist, title, source)).id, 'video');
+  down = false;
+  const again = await search(artist, title, source);
+  assert.equal(again.id, 'song');
+  assert.equal(again.song, true);
+});
+
+test('artist evidence: byline, title, or a collaborator of a multi-artist credit', () => {
+  assert.equal(hasMusicArtistEvidence('Kıvırcık Ali', 'Gül Tükendi', 'Kivircik Ali'), true);
+  assert.equal(hasMusicArtistEvidence('Kıvırcık Ali', 'Kıvırcık Ali - Gül Tükendi', 'Some Channel'), true);
+  assert.equal(hasMusicArtistEvidence('Kıvırcık Ali', 'Gül Tükendi', 'Başka Sanatçı'), false);
+  assert.equal(hasMusicArtistEvidence('Ilkay Sencan, Mahmut Orhan', 'Şaşkın', 'Mahmut Orhan & Ilkay Sencan'), true);
+  assert.equal(hasMusicArtistEvidence('Ilkay Sencan, Mahmut Orhan', 'Şaşkın', 'Mahmut Orhan'), true);
+  assert.equal(hasMusicArtistEvidence('', 'Şaşkın', 'Mahmut Orhan'), false);
 });
 
 test('catalog duration guard accepts release variation but rejects long false matches', () => {

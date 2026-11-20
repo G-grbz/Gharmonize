@@ -32,6 +32,24 @@ export function primaryArtistKey(artist) {
   return normalizeKey(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
 }
 
+const CREDIT_SPLIT_RE = /\s*(?:,|&|;|\/|\sx\s|\sve\s|\sand\s|\svs\.?\s|\swith\s|\sfeat\.?\s|\sft\.?\s|\sfeaturing\s)\s*/i
+
+// Every name in an artist credit, folded: "Ilkay Sencan, Mahmut Orhan" →
+// ["ilkay sencan", "mahmut orhan"]. Lets a collaboration find each artist's
+// own songs (and the other way round).
+export function artistCreditKeys(artist) {
+  const keys = artistCredits(artist)
+    .map((name) => normalizeKey(name).replace(/[^\p{L}\p{N}]+/gu, ' ').trim())
+    .filter(Boolean)
+  return [...new Set(keys)]
+}
+
+// The same names as written: "Ilkay Sencan, Mahmut Orhan" → ["Ilkay Sencan", "Mahmut Orhan"].
+export function artistCredits(artist) {
+  const text = String(artist || '').replace(/\s[-•·]\s.*$/, '')
+  return text.split(CREDIT_SPLIT_RE).map((name) => name.trim()).filter(Boolean)
+}
+
 /** "title|artist" key that is equal for copies of the same recording. */
 export function songKey(title, artist) {
   const t = cleanTitleForMatch(title)

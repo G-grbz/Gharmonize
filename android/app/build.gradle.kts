@@ -86,4 +86,6 @@ dependencies {
   implementation("androidx.media3:media3-session:$media3")
   implementation("androidx.media3:media3-datasource:$media3")
   implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+  // Android TV home screen channels (rows of the TV launcher)
+  implementation("androidx.tvprovider:tvprovider:1.0.0")
 }

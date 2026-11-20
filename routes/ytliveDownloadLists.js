@@ -204,6 +204,7 @@ router.post("/api/ytlive/download-lists/:id/resolve", async (req, res) => {
       {
         url: sourceUrl,
         source,
+        format: req.body?.format,
         replaceManifest: false,
         concurrency: resolveSpotifyConcurrency(
           req.body?.spotifyConcurrency,
@@ -297,6 +298,7 @@ router.post("/api/ytlive/download-lists/:id/resolve/start", async (req, res) => 
           {
             url: sourceUrl,
             source,
+            format: req.body?.format,
             replaceManifest: false,
             concurrency,
             onUpdate: (idx, item, meta = {}) => {
@@ -387,6 +389,7 @@ router.post("/api/ytlive/download-lists/:id/sync", async (req, res) => {
     const cacheResult = await mapMappedMusicWithCache(sp, {
       url: sourceUrl,
       source,
+      format: req.body?.format,
       concurrency: resolveSpotifyConcurrency(
         req.body?.spotifyConcurrency,
         req.body?.youtubeConcurrency,

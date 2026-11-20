@@ -18,7 +18,6 @@ const DEFAULT_UA =
 let lastInvalidExtraArgs = null;
 
 export const FLAGS = {
-  USE_MUSIC:             bool(process.env.YT_USE_MUSIC, false),
   FORCE_IPV4:            bool(process.env.YT_FORCE_IPV4, true),
   APPLY_403_WORKAROUNDS: bool(process.env.YT_403_WORKAROUNDS, true),
   STRIP_COOKIES:         bool(process.env.YT_STRIP_COOKIES, false),
@@ -78,7 +77,5 @@ export function getLocaleConfig() {
     acceptLanguage:  DEFAULT_AL,
     userAgent:       DEFAULT_UA,
     flags:           { ...FLAGS },
-    hostnameForWatch: (useMusic = FLAGS.USE_MUSIC) =>
-      useMusic ? "music.youtube.com" : "www.youtube.com",
   };
 }

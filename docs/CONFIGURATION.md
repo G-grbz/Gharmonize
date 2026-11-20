@@ -650,15 +650,9 @@ Toggle special handling for HTTP 403 Forbidden errors from YouTube.
 YT_403_WORKAROUNDS=1
 ```
 
-### `YT_USE_MUSIC`
-Controls whether downloads are made against `youtube.com` or `music.youtube.com`.
+### Catalogue music matching
 
-- `0` → normal youtube.com
-- `1` → music.youtube.com (YouTube Music)
-
-```dotenv
-YT_USE_MUSIC=1
-```
+MP4 searches standard YouTube. Other formats search the YouTube Music Songs catalogue first and use YouTube videos as a fallback. When the source provides a duration, the closest candidate with credible title and artist metadata wins within each search.
 
 ### `YTDLP_UA`
 User-Agent string used by yt-dlp when talking to YouTube. A stable, commonly-used Chrome UA often works best.

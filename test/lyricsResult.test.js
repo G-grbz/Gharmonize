@@ -4,17 +4,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 
-function fixture({ lyrics = 'A lyric', embedded = true, sidecar = null } = {}) {
+function fixture({ lyrics = 'A lyric', embedded = true, sidecar = null, measured = 0, searches = [] } = {}) {
   const source = fs.readFileSync(new URL('../modules/lyrics.js', import.meta.url), 'utf8');
   const attach = source.slice(source.indexOf('export async function attachLyricsToMedia'))
     .replace(/^export /, '');
   const messages = [];
   const context = vm.createContext({
     fs: { readFileSync() { return lyrics; } }, path,
+    parseFile: async () => ({ format: { duration: measured } }),
     normalizeArtistName: (s) => s, normalizeTitle: (s) => s,
     emitLog: (_, payload) => messages.push(payload),
     lyricsFetcher: {
-      async searchLyrics() { return lyrics ? { plainLyrics: lyrics } : null; },
+      async searchLyrics(artist, title, duration) { searches.push(duration); return lyrics ? { plainLyrics: lyrics } : null; },
       async downloadLyrics() { return sidecar; }
     },
     async embedLyricsInMedia() { return embedded; }
@@ -52,4 +53,18 @@ test('Lyrics distinguish failed embedding from missing lyrics without breaking t
   }), null);
   const legacy = fixture({ sidecar: '/tmp/track.lrc' });
   assert.equal(await legacy.attach('/tmp/track.mp3', metadata), '/tmp/track.lrc');
+});
+
+test('Lyrics are looked up with the length of the downloaded file, not the source', async () => {
+  const searches = [];
+  const { attach } = fixture({ measured: 348.2, searches });
+  await attach('/tmp/track.mp3', { ...metadata, duration: 347 }, {
+    includeLyrics: false, embedLyrics: true, returnDetails: true
+  });
+  assert.equal(searches[0], 348.2);
+  const unknown = [];
+  await fixture({ measured: 0, searches: unknown }).attach('/tmp/track.mp3', { ...metadata, duration: 347 }, {
+    includeLyrics: false, embedLyrics: true, returnDetails: true
+  });
+  assert.equal(unknown[0], 347, 'falls back to the source length when the file cannot be read');
 });

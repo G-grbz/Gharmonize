@@ -6,13 +6,14 @@ import { parseDeezerUrl } from "./deezer.js";
 import { parseTidalUrl } from "./tidal.js";
 import { parseSoundCloudUrl } from "./soundcloud.js";
 import { idsToMusicUrls, mapSpotifyToYtm } from "./sp.js";
-import { isCatalogMusicProvider } from "./mappedMusicMatcher.js";
+import { mappedMusicMatchMode } from "./mappedMusicMatcher.js";
 import { parseSpotifyUrl } from "./spotify.js";
 
 const BASE_DIR = process.env.DATA_DIR || process.cwd();
 const TEMP_DIR = path.resolve(BASE_DIR, "temp");
 const CACHE_DIR = path.join(TEMP_DIR, "mapped-music-cache");
 const MANIFEST_VERSION = 1;
+const MATCH_VERSION = 5;
 
 function nowIso() {
   return new Date().toISOString();
@@ -259,6 +260,7 @@ function normalizeManifestEntry(raw = {}, fallbackIndex = 0) {
         ? Number(raw.youtubeDuration) * 1000
         : null),
     matchValidationVersion: Math.max(0, Number(raw.matchValidationVersion || 0) || 0),
+    matchMode: raw.matchMode === "video" || raw.matchMode === "song" ? raw.matchMode : null,
     youtubeUrl,
     thumbnail: safeString(raw.thumbnail, 1500) || null,
     matchedAt: raw.matchedAt || nowIso(),
@@ -279,11 +281,8 @@ function writeMappedMusicManifest(manifest) {
     matchedCount: (Array.isArray(manifest?.tracks) ? manifest.tracks : []).filter((entry) => entry?.youtubeId).length
   }, manifest?.sourceKey);
   const paths = getMappedMusicCachePaths(normalized.sourceKey);
-  const urls = idsToMusicUrls(
-    normalized.tracks
-      .map((entry) => entry.youtubeId)
-      .filter(Boolean)
-  );
+  const urls = normalized.tracks.filter((entry) => entry.youtubeId)
+    .map((entry) => entry.youtubeUrl || idsToMusicUrls([entry.youtubeId])[0]);
   writeJsonAtomic(paths.jsonFile, normalized);
   writeTextAtomic(paths.urlListFile, urls.join("\n"));
   return {
@@ -369,7 +368,8 @@ function manifestEntryFromMatch({
   sourceItem,
   matchItem,
   source,
-  index
+  index,
+  matchMode
 }) {
   const sourceItemUrl = getMappedMusicSourceItemUrl(sourceItem, source);
   const youtubeId = safeString(matchItem?.id, 120);
@@ -382,7 +382,8 @@ function manifestEntryFromMatch({
     sourceArtist: sourceItem?.artist || sourceItem?.uploader || "",
     sourceAlbum: sourceItem?.album || "",
     sourceCoverUrl: sourceItem?.coverUrl || sourceItem?.thumbnailUrl || sourceItem?.imageUrl || "",
-    duration_ms: toDurationMs(sourceItem?.duration_ms),
+    duration_ms: toDurationMs(sourceItem?.duration_ms ?? sourceItem?.durationMs) ||
+      toDurationMs(Number(sourceItem?.duration) * 1000),
     index,
     youtubeId,
     youtubeTitle: matchItem?.title || "",
@@ -390,7 +391,8 @@ function manifestEntryFromMatch({
     youtubeDuration_ms: Number.isFinite(Number(matchItem?.duration)) && Number(matchItem?.duration) > 0
       ? Number(matchItem.duration) * 1000
       : null,
-    matchValidationVersion: source === "soundcloud" ? 1 : (isCatalogMusicProvider(source) ? 2 : 0),
+    matchValidationVersion: MATCH_VERSION,
+    matchMode,
     youtubeUrl: matchItem?.webpage_url || (youtubeId ? idsToMusicUrls([youtubeId])[0] : ""),
     thumbnail: matchItem?.thumbnail || null,
     matchedAt: nowIso(),
@@ -434,6 +436,7 @@ export async function mapMappedMusicWithCache(
     onLog = null,
     onStage = null,
     shouldCancel = null,
+    format,
     forceRefresh = false,
     // A missing match can be caused by a transient yt-dlp/network/configuration
     // failure. Do not make that negative result permanent across later jobs.
@@ -443,6 +446,7 @@ export async function mapMappedMusicWithCache(
   } = {}
 ) {
   const sourceProvider = String(source || sp?.provider || detectSource(url) || "spotify").toLowerCase();
+  const matchMode = mappedMusicMatchMode(format);
   const sourceKey = getMappedMusicSourceKey(url, sourceProvider);
   const sourceInfo = parseMappedMusicSourceKey(sourceKey);
   const manifest = readMappedMusicManifest(sourceKey);
@@ -459,17 +463,17 @@ export async function mapMappedMusicWithCache(
     try { onStage?.(localIndex, 'queued', sourceItem); } catch {}
     const sourceItemKey = getMappedMusicSourceItemKey(sourceItem, sourceProvider);
     const cached = existingByKey.get(sourceItemKey);
-    const requiredMatchValidationVersion = sourceProvider === "soundcloud"
-      ? 1
-      : (isCatalogMusicProvider(sourceProvider) ? 2 : 0);
-    const needsMatchRevalidation =
-      cached &&
-      requiredMatchValidationVersion > 0 &&
-      Number(cached.matchValidationVersion || 0) < requiredMatchValidationVersion;
+    const reportedDuration = toDurationMs(sourceItem?.duration_ms ?? sourceItem?.durationMs) ||
+      toDurationMs(Number(sourceItem?.duration) * 1000);
+    const fallbackExpired = matchMode === "song" && cached?.youtubeUrl?.startsWith("https://www.youtube.com/")
+      && Date.now() - Date.parse(cached.matchedAt) > 30 * 60 * 1000;
     const useCached =
       cached &&
       !forceRefresh &&
-      !needsMatchRevalidation &&
+      cached.matchValidationVersion === MATCH_VERSION &&
+      cached.matchMode === matchMode &&
+      (!reportedDuration || cached.duration_ms === reportedDuration) &&
+      !fallbackExpired &&
       !(refreshUnmatched && !cached.youtubeId);
 
     if (useCached) {
@@ -510,7 +514,8 @@ export async function mapMappedMusicWithCache(
           sourceItem,
           matchItem,
           source: sourceProvider,
-          index: indexOffset + localIndex + 1
+          index: indexOffset + localIndex + 1,
+          matchMode
         });
         const mapped = mappedItemFromManifestEntry(entry, indexOffset + localIndex);
         output[localIndex] = mapped;
@@ -523,6 +528,7 @@ export async function mapMappedMusicWithCache(
       },
       {
         concurrency,
+        format,
         onLog,
         onStage: (index, phase, item) => { try { onStage?.(missingIndexes[index], phase, item); } catch {} },
         shouldCancel

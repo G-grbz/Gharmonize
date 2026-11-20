@@ -190,7 +190,8 @@ export function createDownloadBridge({
       }
       // The same link was downloaded before and its songs are still there.
       if (!existingIds.length) existingIds = previousResult(info.url, user.id).concat(info.url !== rawUrl ? previousResult(rawUrl, user.id) : [])
-      if (existingIds.length) {
+      existingIds = [...new Set(existingIds)]
+      if (existingIds.length && (kind === 'track' || !base.$expected || existingIds.length >= base.$expected)) {
         const id = crypto.randomUUID()
         stmt.insert.run({ ...base, $id: id, $status: 'exists', $progress: 100, $phase: null, $ids: JSON.stringify(existingIds), $completed: ts })
         attachPlaylist(user.id, base.$playlist, existingIds)

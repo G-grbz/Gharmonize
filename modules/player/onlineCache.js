@@ -69,5 +69,10 @@ export function createOnlineCache(db, { now = () => Date.now(), logger = console
     closed = true
   }
 
-  return { wrap, peek, write, purge, clear, close, inflightCount: () => inflight.size }
+  // Entry with its timestamps (null when never stored), and a forced load
+  // that callers may run in the background.
+  const entry = (key) => read(key)
+  const refresh = (key, ttlMs, loader, { ttlFor = null } = {}) => load(key, ttlMs, loader, ttlFor)
+
+  return { wrap, peek, entry, refresh, write, purge, clear, close, inflightCount: () => inflight.size }
 }

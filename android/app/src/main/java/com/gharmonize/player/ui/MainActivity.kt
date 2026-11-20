@@ -44,6 +44,8 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
   private val pendingLink = mutableStateOf<PairLink?>(null)
   private val resumeTick = androidx.compose.runtime.mutableIntStateOf(0)
+  /** Online album to open (tapped "new release" notification). */
+  private val pendingOpen = mutableStateOf<String?>(null)
 
   override fun attachBaseContext(newBase: android.content.Context) {
     super.attachBaseContext(com.gharmonize.player.AppLocale.wrap(newBase))
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
   override fun onResume() {
     super.onResume()
     resumeTick.intValue += 1
+    com.gharmonize.player.playback.Offline.refreshArtwork()
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,16 +63,24 @@ class MainActivity : ComponentActivity() {
     // Reopened from recents (or recreated), the activity gets its original
     // intent again: that pairing link was used already.
     val fromHistory = ((intent?.flags ?: 0) and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
-    if (savedInstanceState == null && !fromHistory) pendingLink.value = linkFrom(intent)
+    if (savedInstanceState == null && !fromHistory) {
+      pendingLink.value = linkFrom(intent)
+      pendingOpen.value = intent?.getStringExtra(com.gharmonize.player.data.ReleaseNotifier.EXTRA_OPEN)
+    }
     if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
       requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
     }
-    setContent { Root(pendingLink.value, resumeTick.intValue) { pendingLink.value = null } }
+    // Unfinished "save on the phone" downloads continue.
+    com.gharmonize.player.playback.Offline.resume(this)
+    setContent {
+      Root(pendingLink.value, resumeTick.intValue, pendingOpen.value, onOpened = { pendingOpen.value = null }) { pendingLink.value = null }
+    }
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     linkFrom(intent)?.let { pendingLink.value = it }
+    intent.getStringExtra(com.gharmonize.player.data.ReleaseNotifier.EXTRA_OPEN)?.let { pendingOpen.value = it }
   }
 
   /** gharmonize://pair?link=<encoded pairing link> or a direct pairing http link. */
@@ -81,7 +92,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Root(link: PairLink?, resumeTick: Int, onLinkUsed: () -> Unit) {
+private fun Root(link: PairLink?, resumeTick: Int, open: String?, onOpened: () -> Unit, onLinkUsed: () -> Unit) {
   val app = App.instance
   var theme by remember { mutableStateOf(app.prefs.theme) }
   remember { Appearance.load(app.prefs); true }
@@ -97,7 +108,7 @@ private fun Root(link: PairLink?, resumeTick: Int, onLinkUsed: () -> Unit) {
           signedIn = true
         }
       } else {
-        MainUi(theme, resumeTick, onTheme = { theme = it; app.prefs.theme = it }) {
+        MainUi(theme, resumeTick, open, onOpened, onTheme = { theme = it; app.prefs.theme = it }) {
           app.prefs.signOut()
           signedIn = false
         }
@@ -107,7 +118,7 @@ private fun Root(link: PairLink?, resumeTick: Int, onLinkUsed: () -> Unit) {
 }
 
 @Composable
-private fun MainUi(theme: String, resumeTick: Int, onTheme: (String) -> Unit, onSignOut: () -> Unit) {
+private fun MainUi(theme: String, resumeTick: Int, open: String?, onOpened: () -> Unit, onTheme: (String) -> Unit, onSignOut: () -> Unit) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
   val player = remember { PlayerController(context.applicationContext) }
@@ -125,7 +136,16 @@ private fun MainUi(theme: String, resumeTick: Int, onTheme: (String) -> Unit, on
   }
   // Rights can change while the app is in the background (e.g. downloads
   // allowed by an admin): re-read them whenever the app comes back.
-  LaunchedEffect(resumeTick) { if (resumeTick > 1) state.loadMe() }
+  LaunchedEffect(resumeTick) {
+    if (resumeTick > 1) state.loadMe()
+    state.checkNotifications()
+  }
+  // A tapped "new release" notification opens that album.
+  LaunchedEffect(open) {
+    val raw = open ?: return@LaunchedEffect
+    runCatching { com.gharmonize.player.data.parseOnline(org.json.JSONObject(raw)) }.getOrNull()?.let { state.navigate(Route.OnlineAlbum(it)) }
+    onOpened()
+  }
   BackHandler(enabled = state.stack.size > 1) { state.back() }
 
   val top = state.top
@@ -185,6 +205,8 @@ private fun MainUi(theme: String, resumeTick: Int, onTheme: (String) -> Unit, on
         is Route.Mix -> MixScreen(state, r.id)
         Route.Stats -> StatsScreen(state)
         Route.Equalizer -> EqualizerScreen(state)
+        Route.Offline -> OfflineScreen(state)
+        Route.Notifications -> NotificationsScreen(state)
         is Route.Wrapped -> Unit
         Route.NowPlaying -> Unit
       }

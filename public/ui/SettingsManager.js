@@ -60,7 +60,7 @@ export class SettingsManager {
             { id: 'tab-access', icon: 'access', label: 'settings.access.title', fields: ['f_GHARMONIZE_HOST', 'f_GHARMONIZE_ACCESS_MODE', 'f_GHARMONIZE_TEMP_ACCESS_ENABLED', 'f_TRUST_PROXY'] },
             { id: 'tab-player', icon: 'player', label: 'settings.player.title', fields: ['f_GHARMONIZE_PLAYER_ENABLED', 'f_PLAYER_REMOTE_ALLOW', 'f_GHARMONIZE_PLAYER_LISTEN'] },
             { id: 'tab-spotify', icon: 'spotify', label: 'settings.tabs.spotify' },
-            { id: 'tab-youtube', icon: 'youtube', label: 'settings.tabs.youtube', fields: ['f_YT_USE_MUSIC', 'f_YT_SEARCH_RESULTS', 'f_YT_DEFAULT_REGION', 'f_YT_LANG'] },
+            { id: 'tab-youtube', icon: 'youtube', label: 'settings.tabs.youtube', fields: ['f_YT_SEARCH_RESULTS', 'f_YT_DEFAULT_REGION', 'f_YT_LANG'] },
             { id: 'tab-cookies', icon: 'cookies', label: 'settings.nav.cookies', note: 'settings.cookies.note', fields: ['f_YTDLP_COOKIES_FROM_BROWSER', 'f_YTDLP_COOKIES', 'f_YT_UI_FORCE_COOKIES', 'f_YT_STRIP_COOKIES', 'f_YTM_AUTH_USER'] },
             { id: 'tab-titles', icon: 'titles', label: 'settings.nav.titles', fields: ['f_TITLE_CLEAN_PIPE', 'f_CLEAN_SUFFIXES', 'f_CLEAN_PHRASES', 'f_CLEAN_PARENS'] },
             { id: 'tab-advanced', icon: 'advanced', label: 'settings.nav.advanced', fields: ['f_YTDLP_BIN', 'f_FFMPEG_BIN', 'f_GHARMONIZE_FFMPEG_CHANNEL', 'f_YTDLP_UA', 'f_YTDLP_EXTRA', 'f_YT_ACCEPT_LANGUAGE', 'f_YT_FORCE_IPV4', 'f_YT_403_WORKAROUNDS', 'f_YT_SEARCH_TIMEOUT_MS', 'f_YT_SEARCH_STAGGER_MS', 'f_AUTOMIX_ALL_TIMEOUT_MS', 'f_AUTOMIX_PAGE_TIMEOUT_MS', 'f_PLAYLIST_ALL_TIMEOUT_MS', 'f_PLAYLIST_PAGE_TIMEOUT_MS', 'f_PLAYLIST_META_TIMEOUT_MS', 'f_PLAYLIST_META_FALLBACK_TIMEOUT_MS'] },
@@ -644,15 +644,6 @@ export class SettingsManager {
                 </div>
 
                 <div class="form-group">
-                <label for="f_YT_USE_MUSIC" class="settings-field-label">YT_USE_MUSIC</label>
-                <div class="settings-field-hint muted" data-i18n="settings.ytUseMusic"></div>
-                <select id="f_YT_USE_MUSIC">
-                    <option value="1">1</option>
-                    <option value="0">0</option>
-                </select>
-                </div>
-
-                <div class="form-group">
                 <label for="f_YT_DEFAULT_REGION" class="settings-field-label">YT_DEFAULT_REGION</label>
                 <div class="settings-field-hint muted" data-i18n="settings.ytDefaultRegion"></div>
                 <input id="f_YT_DEFAULT_REGION" type="text" placeholder="ör: TR, US (boş = kapalı)" data-i18n-ph="ph.ytDefaultRegion">
@@ -1176,7 +1167,6 @@ export class SettingsManager {
             document.getElementById('f_SPOTIFY_DEBUG_MARKET').value = s.SPOTIFY_DEBUG_MARKET || '';
             document.getElementById('f_SPOTIFY_MARKET').value = s.SPOTIFY_MARKET || '';
             document.getElementById('f_SPOTIFY_FALLBACK_MARKETS').value = s.SPOTIFY_FALLBACK_MARKETS || '';
-            document.getElementById('f_YT_USE_MUSIC').value = s.YT_USE_MUSIC || '0';
             document.getElementById('f_PREFER_SPOTIFY_TAGS').value = s.PREFER_SPOTIFY_TAGS || '1';
             document.getElementById('f_TITLE_CLEAN_PIPE').value = s.TITLE_CLEAN_PIPE || '1';
             document.getElementById('f_YTDLP_UA').value = s.YTDLP_UA || '';
@@ -1263,7 +1253,6 @@ export class SettingsManager {
                 SPOTIFY_DEBUG_MARKET: document.getElementById('f_SPOTIFY_DEBUG_MARKET').value.trim(),
                 SPOTIFY_MARKET: document.getElementById('f_SPOTIFY_MARKET').value.trim(),
                 SPOTIFY_FALLBACK_MARKETS: document.getElementById('f_SPOTIFY_FALLBACK_MARKETS').value.trim(),
-                YT_USE_MUSIC: document.getElementById('f_YT_USE_MUSIC').value,
                 PREFER_SPOTIFY_TAGS: document.getElementById('f_PREFER_SPOTIFY_TAGS').value,
                 TITLE_CLEAN_PIPE: document.getElementById('f_TITLE_CLEAN_PIPE').value,
                 CLEAN_SUFFIXES: document.getElementById('f_CLEAN_SUFFIXES').value,

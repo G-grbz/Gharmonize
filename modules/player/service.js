@@ -5,6 +5,8 @@ import { createLibraryStore } from './libraries.js'
 import { createScanner } from './scanner.js'
 import { createCatalog } from './catalog.js'
 import { createArtworkService } from './artwork.js'
+import { createArtistPhotos } from './artistPhotos.js'
+import { createBiography } from './biography.js'
 import { createStreamService } from './stream.js'
 import { createWaveformService } from './waveform.js'
 import { createLyricsService } from './lyrics.js'
@@ -16,7 +18,10 @@ import { createAccess } from './access.js'
 import { createOnlineCache } from './onlineCache.js'
 import { createAnnotator } from './annotate.js'
 import { createDiscovery } from './discovery.js'
-import { createDeezerSource, createYouTubeSource, createSpotifySource } from './discoverySources.js'
+import { createDeezerSource, createYouTubeSource, createSpotifySource, createAppleSource } from './discoverySources.js'
+import { createFollows } from './follows.js'
+import { createReleaseWatch } from './releases.js'
+import { createLibraryHealth } from './health.js'
 import { createCoreAdapter, DOWNLOAD_FORMATS } from './coreAdapter.js'
 import { createPlayerListener } from './listener.js'
 import { createTailscaleProbe } from './tailscale.js'
@@ -27,7 +32,9 @@ import { createMixes } from './mixes.js'
 import { createStats } from './stats.js'
 import path from 'node:path'
 
-const ONLINE_PROVIDERS = ['deezer', 'youtube', 'spotify']
+const ONLINE_PROVIDERS = ['deezer', 'youtube', 'spotify', 'apple']
+// Bumped when a provider is added: saved settings get the new one switched on once.
+const PROVIDERS_REV = 2
 
 export const DEFAULT_CONFIG = Object.freeze({
   serverName: 'Gharmonize Player',
@@ -42,13 +49,22 @@ export const DEFAULT_CONFIG = Object.freeze({
   downloadLyrics: true,
   maxParallelDownloads: 2,
   maxQueuedPerUser: 50,
-  onlineProviders: ['deezer', 'youtube', 'spotify'],
+  onlineProviders: ['deezer', 'youtube', 'spotify', 'apple'],
+  providersRev: PROVIDERS_REV,
   // Online recommendation shelves
   discoveryEnabled: true,
   // Extra addresses (reverse proxy, tunnel, Tailscale on a Docker host…)
   // offered when pairing phones.
   publicUrls: []
 })
+
+// Saved settings from before Apple Music was a provider: switch it on once
+// (unchecking it later saves providersRev, so it stays off).
+export function migrateConfig(stored = {}) {
+  if (!stored || typeof stored !== 'object' || !Array.isArray(stored.onlineProviders)) return stored || {}
+  if (Number(stored.providersRev || 1) >= PROVIDERS_REV) return stored
+  return { ...stored, onlineProviders: [...new Set([...stored.onlineProviders, 'apple'])], providersRev: PROVIDERS_REV }
+}
 
 export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
   const out = { ...base }
@@ -98,7 +114,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const timers = new Set()
   let stopped = false
 
-  let config = normalizeConfig(getSetting(db, 'config', {}) || {})
+  let config = normalizeConfig(migrateConfig(getSetting(db, 'config', {}) || {}))
   const getConfig = () => config
   const updateConfig = (patch) => {
     config = normalizeConfig(patch, config)
@@ -112,7 +128,8 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const auth = createAuthStore(db)
   const access = createAccess(db)
   const catalog = createCatalog(db)
-  const artwork = createArtworkService({ cacheDir: resolvedCacheDir, db, libraries, logger })
+  const artistPhotos = createArtistPhotos({ cacheDir: resolvedCacheDir, db, logger })
+  const artwork = createArtworkService({ cacheDir: resolvedCacheDir, db, libraries, logger, artistPhotos })
   const mixes = createMixes(db)
   const scanner = createScanner(db, { logger, onTrackChanges: () => { artwork.invalidate(); mixes.invalidate() } })
   const stream = createStreamService({ cacheDir: resolvedCacheDir, libraries, getCacheLimitBytes: () => config.transcodeCacheMb * 1024 * 1024, logger })
@@ -123,16 +140,20 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const online = createOnlineSearch({ getEnabledProviders: () => config.onlineProviders, logger, ...onlineOptions })
   const bridge = createDownloadBridge({ db, core: core || createCoreAdapter({ logger }), scanner, matcher, catalog, getConfig, getDownloadTarget: () => libraries.downloadTarget(), logger, pollMs: bridgePollMs })
   const onlineCache = createOnlineCache(db, { logger })
-  const annotator = createAnnotator({ matcher, bridge })
+  const annotator = createAnnotator({ matcher, bridge, catalog })
+  const sources = discoverySources || { deezer: createDeezerSource(), youtube: createYouTubeSource(), spotify: createSpotifySource({ env }), apple: createAppleSource() }
   const discovery = createDiscovery({
     db,
     cache: onlineCache,
     annotator,
     getConfig,
     logger,
-    sources: discoverySources || { deezer: createDeezerSource(), youtube: createYouTubeSource(), spotify: createSpotifySource({ env }) },
+    sources,
+    artistPhotos,
     ...discoveryOptions
   })
+  artistPhotos.setResolver((name) => discovery.artistPhotoUrl(name))
+  const biography = createBiography({ cache: onlineCache, env, logger, ...(discoveryOptions.biographyFetch ? { fetchImpl: discoveryOptions.biographyFetch } : {}) })
 
   const later = (fn, ms) => {
     const timer = setTimeout(() => { timers.delete(timer); fn() }, ms)
@@ -150,6 +171,8 @@ export async function startPlayerService({ env = process.env, logger = console, 
   }
 
   const housekeeping = setInterval(() => {
+    // Followed playlists are checked once a day (only when online data is on).
+    if (config.discoveryEnabled) follows.syncDue().then(() => releases.checkDue()).catch(() => {})
     try { auth.purgeExpired() } catch {}
     try { bridge.purgeOld() } catch {}
     try { onlineCache.purge() } catch {}
@@ -209,7 +232,10 @@ export async function startPlayerService({ env = process.env, logger = console, 
     return buildConnectInfo({ req, main, listener: status, tailscale: ts, tunnel: tunnel.status(), remoteAccess: getRemoteAccessMode(env), publicUrls: config.publicUrls, docker: Boolean(ts.docker), serverName: config.serverName, ...networkOptions })
   }
 
-  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats }
+  const follows = createFollows({ db, discovery, bridge, catalog, getUser: (id) => auth.getUser(id), logger })
+  const health = createLibraryHealth({ db, libraries, artwork, scanner, sources, bridge, online, trashDir: path.join(resolvedDataDir, 'trash'), logger })
+  const releases = createReleaseWatch({ db, discovery, bridge, annotator, getUser: (id) => auth.getUser(id), logger })
+  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, biography, follows, releases, health, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats }
   router = createPlayerRouter(context, routerOptions)
   // Do not block start-up on a cloudflared download.
   await listener.apply()
@@ -226,6 +252,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
     await tunnelListener.stop()
     await listener.stop()
     await bridge.stop()
+    artistPhotos.stop()
     onlineCache.close()
     await scanner.stop()
     await stream.stop()

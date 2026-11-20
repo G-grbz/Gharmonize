@@ -15,7 +15,7 @@ function row(d) {
   if ((d.status === 'completed' || d.status === 'exists') && d.trackIds?.length) {
     actions.append(h('button', { type: 'button', class: 'btn btn--primary btn--sm', onclick: async () => {
       const res = await (await import('../api.js')).post('/tracks/batch', { ids: d.trackIds })
-      playTracks(res.items, 0, { label: d.title || '', route: '/downloads' })
+      playTracks(res.items, 0, { label: d.title || '', route: '/downloads', downloadsOnly: true })
     } }, icon('play', { size: 16 }), t('player.common.play')))
     if (d.playlistId) actions.append(h('a', { class: 'btn btn--ghost btn--sm', href: `#/playlist/${d.playlistId}`, text: t('player.downloads.openPlaylist') }))
   }

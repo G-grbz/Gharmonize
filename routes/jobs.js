@@ -28,6 +28,7 @@ import {
 import { isTidalUrl, resolveTidalUrl } from "../modules/tidal.js";
 import { isSoundCloudUrl, resolveSoundCloudUrl } from "../modules/soundcloud.js";
 import { mapMappedMusicWithCache } from "../modules/mappedMusicCache.js";
+import { mappedMusicMatchMode } from "../modules/mappedMusicMatcher.js";
 import { resolveMarket } from "../modules/market.js";
 import { requireAuth, requireLocalJobAuth } from "../modules/settings.js"
 import { rateLimit, concurrencyLimit } from "../modules/rateLimit.js";
@@ -851,6 +852,61 @@ router.get("/api/stream/:id", rateLimit(120, 60_000), (req, res) => {
   req.on("close", () => clearInterval(interval));
 });
 
+// ---- retry ------------------------------------------------------------------
+// A failed or canceled job can be started again with the settings it was
+// created with. The settings are kept in memory (lost on restart). Uploaded
+// files are removed after a job, so only URL and local-folder jobs qualify.
+const RETRY_MAX = 300;
+const retrySpecs = new Map();
+
+function rememberJobRetry(job, { inputPath, format, bitrate, initial }) {
+  const uploaded = typeof inputPath === "string" && isPathInsideRoot(UPLOAD_DIR, path.resolve(inputPath));
+  if (!job?.id || !initial || uploaded) {
+    if (job) job.retryable = false;
+    return;
+  }
+  retrySpecs.set(job.id, { inputPath: inputPath || null, format, bitrate, initial });
+  job.retryable = true;
+  while (retrySpecs.size > RETRY_MAX) retrySpecs.delete(retrySpecs.keys().next().value);
+}
+
+
+router.post("/api/jobs/:id/retry", rateLimit(20, 60_000), requireLocalJobAuth, (req, res) => {
+  const id = String(req.params.id || "");
+  const spec = retrySpecs.get(id);
+  if (!spec) return sendError(res, "RETRY_UNAVAILABLE", "This job cannot be retried", 404);
+  const old = jobs.get(id);
+  const status = String(old?.status || "").toLowerCase();
+  if (old && !["error", "canceled", "cancelled"].includes(status)) {
+    return sendError(res, "RETRY_NOT_FINISHED", "Only failed or canceled jobs can be retried", 409);
+  }
+  // Local-folder jobs need the admin, exactly like when they were created.
+  if (spec.inputPath && isPathInsideRoot(LOCAL_INPUT_DIR, path.resolve(spec.inputPath)) && !req.adminAuth) {
+    return sendError(res, "UNAUTHORIZED", "Unauthorized", 401);
+  }
+  if (spec.inputPath && !/^https?:\/\//i.test(spec.inputPath) && !fs.existsSync(spec.inputPath)) {
+    return sendError(res, "RETRY_SOURCE_GONE", "The source file is no longer available", 410);
+  }
+  let init;
+  try { init = JSON.parse(spec.initial); } catch {
+    return sendError(res, "RETRY_UNAVAILABLE", "This job cannot be retried", 404);
+  }
+  init.clientBatch = null;
+  init.metadata = { ...(init.metadata || {}), retryOf: id };
+  const job = createJob(init);
+  rememberJobRetry(job, spec);
+  enqueueJob(job.id, () => processJob(job.id, spec.inputPath, spec.format, spec.bitrate));
+  return sendOk(res, {
+    id: job.id,
+    retryOf: id,
+    status: job.status,
+    format: job.format,
+    bitrate: job.bitrate,
+    source: job.metadata?.source,
+    isPlaylist: !!job.metadata?.isPlaylist
+  });
+});
+
 // Custom Gharmonize rateLimit middleware is applied on this route.
 router.post("/api/jobs/:id/cancel", rateLimit(60, 60_000), (req, res) => {
   const id = req.params.id;
@@ -1375,21 +1431,20 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), requireLo
         metadata.isPlaylist = true;
         metadata.isAutomix = false;
 
-        if (spotifyMapId) {
-          const task = spotifyMapTasks.get(spotifyMapId);
-          if (task && task.status === "completed" && task.validItems?.length) {
-            metadata.spotifyKind = "playlist";
-            metadata.spotifyTitle = task.title;
-            metadata.spotifyMapId = spotifyMapId;
+        const task = spotifyMapId ? spotifyMapTasks.get(spotifyMapId) : null;
+        if (task?.url === url && task.matchMode === mappedMusicMatchMode(format) &&
+            task.status === "completed" && task.validItems?.length) {
+          metadata.spotifyKind = "playlist";
+          metadata.spotifyTitle = task.title;
+          metadata.spotifyMapId = spotifyMapId;
 
-            const validItems = task.validItems;
-            metadata.selectedIndices = selectedIndices || "all";
-            metadata.selectedIds = validItems.map(i => i.id);
-            metadata.frozenEntries = validItems;
-            metadata.frozenTitle = task.title || musicLabel;
-          } else {
-            return sendError(res, ERR.PREVIEW_FAILED, "Please complete music matching first", 400);
-        }
+          const selected = Array.isArray(selectedIndices) ? new Set(selectedIndices.map(Number)) : null;
+          const validItems = task.validItems.filter((item) => item?.id && (!selected || selected.has(item.index)));
+          if (!validItems.length) return sendError(res, ERR.PREVIEW_FAILED, "No music matches found", 400);
+          metadata.selectedIndices = selectedIndices || "all";
+          metadata.selectedIds = validItems.map(i => i.id);
+          metadata.frozenEntries = validItems;
+          metadata.frozenTitle = task.title || musicLabel;
         } else {
           let sp;
           try {
@@ -1433,6 +1488,7 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), requireLo
             {
               url,
               source: musicSource,
+              format,
               concurrency: mapConcurrency,
               replaceManifest: !(sel && sel !== "all"),
               onUpdate: (idx, item) => {
@@ -1595,7 +1651,7 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), requireLo
         : plTitle;
     }
 
-    const job = createJob({
+    const jobInit = {
       status: "queued",
       progress: 0,
       format,
@@ -1627,8 +1683,13 @@ router.post("/api/jobs", rateLimit(10, 60_000), upload.single("file"), requireLo
       resultPath: null,
       error: null,
       clientBatch: clientBatch || null,
-    });
+    };
+    // Snapshot before processing changes the job, for "retry" later.
+    let retryInitial = null;
+    try { retryInitial = JSON.stringify(jobInit); } catch {}
+    const job = createJob(jobInit);
     const jobId = job.id;
+    rememberJobRetry(job, { inputPath, format, bitrate, initial: retryInitial });
 
     let batchTotal = null;
     if (clientBatch && metadata.isPlaylist && metadata.selectedIndices && metadata.selectedIndices !== "all") {
@@ -1686,6 +1747,7 @@ router.get("/api/jobs", requireAuth, rateLimit(120, 60_000), (req, res) => {
       errorsCount: j.errorsCount || 0,
       lastLog: j.lastLog || null,
       canceledBy: j.canceledBy || null,
+      retryable: retrySpecs.has(j.id),
       metadata: {
         source: j.metadata?.source,
         mediaPlatform: resolveMediaPlatform(j.metadata),

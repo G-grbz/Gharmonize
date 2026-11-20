@@ -6,11 +6,13 @@
 
 import { app } from '../app.js'
 import { get, artworkUrl } from '../api.js'
-import { h, t, icon, clear, artwork, skeletonShelf, fmtNumber, fmtLong, emptyState } from '../dom.js'
+import { h, t, icon, iconButton, clear, artwork, skeletonShelf, fmtNumber, fmtLong, emptyState } from '../dom.js'
 import { shelf, trackCard, albumCard, artistCard, onlineCard, genreTile, moodTile, playCollection, playlistCard, mixCard } from '../components.js'
 import { saveButton } from '../playlistSave.js'
 
 const PERSONAL = /^(new-from-your-artists|missing-|fans-|radio-|genre-)/
+// Online mixes / lists around your artists: shown together under your mixes.
+const ONLINE_MIXES = /^mixes-/
 // Library shelves that are about discovering music you have but rarely play:
 // they also show under the "Discover" filter, mixed with online shelves.
 const LOCAL_DISCOVERY = /^(because-|never-played|forgotten|discover-albums|artists$)/
@@ -73,6 +75,8 @@ export async function render() {
   let loadedAt = 0
   let discoveryAt = 0
   let lastDiscovery = null
+  // Bumped by the refresh button: another pick of artists for today.
+  let round = 0
 
   // Builds the whole page into `root`. The first time it is awaited (the
   // router shows a spinner); later refreshes swap the content when ready.
@@ -92,6 +96,14 @@ export async function render() {
       })
       chips.append(chip)
     }
+    const refresh = iconButton('refresh', t('player.home.refresh'), () => {
+      round += 1
+      refresh.disabled = true
+      controller.abort()
+      controller = new AbortController()
+      build({ quiet: true }).catch(() => {}).finally(() => { refresh.disabled = false })
+    }, { cls: 'home__refresh', size: 20 })
+    chips.append(refresh)
     fresh.append(h('header', { class: 'home__head' },
       h('div', {},
         h('h1', { class: 'home__greeting', text: greeting() }),
@@ -119,7 +131,8 @@ export async function render() {
     const firstTwo = libraryShelves.filter((s) => !LOCAL_DISCOVERY.test(s.id)).slice(0, 2)
     firstTwo.forEach((s) => head.append(libraryShelf(s)))
     const mixesSlot = h('div', { class: 'shelf--both' })
-    head.firstChild ? head.firstChild.after(mixesSlot) : head.append(mixesSlot)
+    const onlineMixesSlot = h('div', { class: 'online-mixes' })
+    head.firstChild ? head.firstChild.after(mixesSlot, onlineMixesSlot) : head.append(mixesSlot, onlineMixesSlot)
     const rest = libraryShelves.filter((s) => !firstTwo.includes(s))
     const localDiscovery = rest.filter((s) => LOCAL_DISCOVERY.test(s.id))
     const plainLibrary = rest.filter((s) => !LOCAL_DISCOVERY.test(s.id))
@@ -135,7 +148,10 @@ export async function render() {
     }
     const paintFlow = (discovery = null) => {
       clear(flow)
-      const online = discovery?.shelves || []
+      clear(onlineMixesSlot)
+      const all = discovery?.shelves || []
+      for (const s of all.filter((x) => ONLINE_MIXES.test(x.id))) onlineMixesSlot.append(discoveryShelf(s))
+      const online = all.filter((s) => !ONLINE_MIXES.test(s.id))
       const personal = online.filter((s) => PERSONAL.test(s.id))
       const global = online.filter((s) => !PERSONAL.test(s.id))
       const lanes = [localDiscovery, personal, plainLibrary, global]
@@ -194,7 +210,7 @@ export async function render() {
 
     async function loadDiscovery(attempt = 0) {
       try {
-        const data = await get('/discover', { lang: document.documentElement.lang || 'en' }, { signal })
+        const data = await get('/discover', { lang: document.documentElement.lang || 'en', round }, { signal })
         if (!data.enabled) { loader?.remove(); return }
         lastDiscovery = data
         discoveryAt = Date.now()

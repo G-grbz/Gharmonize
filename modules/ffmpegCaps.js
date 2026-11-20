@@ -117,7 +117,7 @@ async function runFfprobeMaybe(ffmpegBin, inputPath, timeoutMs) {
     "-show_streams",
     "-show_format",
     "-show_entries",
-    "stream=index,codec_name,codec_type,width,height,pix_fmt,profile,level,r_frame_rate,avg_frame_rate,color_range,color_space,color_transfer,color_primaries,side_data_list,tags",
+    "stream=index,codec_name,codec_type,width,height,pix_fmt,profile,level,r_frame_rate,avg_frame_rate,color_range,color_space,color_transfer,color_primaries,side_data_list,tags,channels,channel_layout,sample_rate,bit_rate",
     inputPath
   ];
 
@@ -127,6 +127,21 @@ async function runFfprobeMaybe(ffmpegBin, inputPath, timeoutMs) {
   }
 
   return { ok: false, ffprobeBin, detail: (r.stderr || "").slice(-400) };
+}
+
+// Audio streams with what a conversion needs to keep them (codec, profile,
+// channels, sample rate, bitrate incl. the Matroska BPS tag).
+function pickAudioStreams(obj) {
+  const streams = Array.isArray(obj?.streams) ? obj.streams : [];
+  return streams.filter((s) => s?.codec_type === "audio").map((s) => ({
+    index: Number(s.index),
+    codec: s.codec_name || null,
+    profile: s.profile || null,
+    channels: Number(s.channels) || 0,
+    sample_rate: Number(s.sample_rate) || 0,
+    bit_rate: Number(s.bit_rate) || 0,
+    tags: { BPS: s.tags?.BPS || s.tags?.["BPS-eng"] || null }
+  }));
 }
 
 // Selects video stream payload for core application logic.
@@ -240,6 +255,8 @@ export async function probeVideoStreamInfo(ffmpegBin, inputPath, timeoutMs = 150
         is10bit,
         isHDR,
         isDV,
+
+        audioStreams: pickAudioStreams(obj),
 
         ffmpegCode: 0,
         rawTail: `ffprobe(${probe.ffprobeBin}) ok`

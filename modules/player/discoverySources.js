@@ -7,11 +7,38 @@ import {
   mapYouTubeItem,
   mapSpotifyAlbum,
   mapSpotifyTrack,
+  mapSpotifyPlaylist,
   cleanYouTubeArtist
 } from './online.js'
 import { normalizeKey } from './scanner.js'
 
 const list = (body, map) => (Array.isArray(body?.data) ? body.data.map(map).filter(Boolean) : [])
+const clip = (value, max = 300) => {
+  const s = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return s ? s.slice(0, max) : null
+}
+
+// Tracks of a playlist resolved by the core link resolvers (Spotify, Apple
+// Music, Deezer…): the same lists the classic interface previews.
+export function mapResolvedTrack(item, provider) {
+  const title = clip(item?.title || item?.track)
+  if (!title) return null
+  const url = [item.webpage_url, item.spUrl, item.amUrl, item.deezer_track_url, item.dzUrl, item.url]
+    .map((u) => String(u || '').trim()).find((u) => /^https:\/\//i.test(u)) || null
+  const ms = Number(item.duration_ms)
+  return {
+    provider,
+    kind: 'track',
+    id: url || `${provider}:${normalizeKey(`${item.artist || ''} ${title}`)}`,
+    title,
+    artist: clip(item.artist),
+    album: clip(item.album),
+    duration: ms > 0 ? Math.round(ms / 1000) : (Number(item.duration) || null),
+    artworkUrl: /^https:\/\//i.test(String(item.coverUrl || '')) ? item.coverUrl : null,
+    url,
+    isrc: clip(item.isrc, 32)
+  }
+}
 
 // ---- Deezer -----------------------------------------------------------------
 
@@ -84,16 +111,129 @@ export function createYouTubeSource({ yt = null } = {}) {
       const result = await discoverYouTubeContent({ preset, lang, limit })
       return (result?.items || []).map((item) => mapYouTubeItem(item)).filter(Boolean)
     },
-    // Album (browse/MPRE…) or playlist (?list=) track listing.
-    async playlist(url, { artist = null } = {}) {
-      const { extractPlaylistAllFlat } = await mod()
-      const result = await extractPlaylistAllFlat(url)
+    // Album (browse/MPRE…) or playlist (?list=) track listing. Mixes
+    // (list=RD…) are read like the download pipeline reads them.
+    async playlist(url, { artist = null, automix = false } = {}) {
+      const m = await mod()
+      const result = automix ? await m.extractAutomixAllFlat(url) : await m.extractPlaylistAllFlat(url)
       const tracks = (result?.items || []).map((entry) => {
         const mapped = mapYouTubeItem({ ...entry, type: 'track', uploader: entry.artist || entry.uploader || artist || '' }, 'track')
         if (!mapped) return null
         return { ...mapped, artist: mapped.artist || cleanYouTubeArtist(artist), album: entry.album || null, duration: Number(entry.duration) || null }
       }).filter(Boolean)
       return { title: result?.title || null, count: result?.count || tracks.length, tracks }
+    },
+    // An artist's "Mix" (artist radio) and the playlist shelves of the
+    // artist's YouTube Music page. null = no artist with exactly this name.
+    async artistMixes(name, { lang } = {}) {
+      const { getYouTubeMusicArtistMixes } = await mod()
+      const result = await getYouTubeMusicArtistMixes(name, { lang, limit: 12 })
+      if (!result) return null
+      const artistName = clip(result.artist?.title) || clip(name)
+      const mix = result.mix
+        ? {
+            provider: 'youtube',
+            kind: 'playlist',
+            id: String(result.mix.playlistId),
+            title: `${artistName} Mix`,
+            artist: 'YouTube Music',
+            // Search rows carry a small picture; ask Google's image server for a bigger one.
+            artworkUrl: result.mix.thumbnail ? String(result.mix.thumbnail).replace(/=w\d+-h\d+/, '=w544-h544') : null,
+            url: result.mix.url,
+            mix: 'youtube',
+            seed: artistName
+          }
+        : null
+      const shelves = (result.shelves || []).map((shelf) => ({
+        title: clip(shelf.title, 120),
+        items: (shelf.items || []).map((item) => mapYouTubeItem(item, 'playlist')).filter(Boolean)
+      })).filter((shelf) => shelf.items.length)
+      return { artist: artistName, mix, shelves }
+    }
+  }
+}
+
+// ---- Apple Music (public pages; no account or API key) ------------------------
+
+const APPLE_STOREFRONTS = { tr: 'tr', de: 'de', fr: 'fr', es: 'es', en: 'us' }
+const APPLE_TIMEOUT_MS = 10_000
+const APPLE_HEADERS = { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', accept: 'text/html,application/json' }
+
+export function isApplePlaylistUrl(value) {
+  try {
+    const u = new URL(String(value || ''))
+    return u.protocol === 'https:' && u.hostname === 'music.apple.com' && /^\/[a-z]{2}\/playlist\/[^/]+\/pl\.[A-Za-z0-9.-]+$/i.test(u.pathname)
+  } catch { return false }
+}
+
+function appleArtwork(url) {
+  const s = String(url || '')
+  if (!/^https:\/\/[a-z0-9.-]+\.mzstatic\.com\//i.test(s)) return null
+  return s.replace('{w}', '600').replace('{h}', '600').replace('{c}', 'cc').replace('{f}', 'jpg')
+}
+
+// Playlists on an Apple Music artist page ("Artist Playlists": Essentials,
+// Inspired by, Influences…), read from the page's embedded data.
+export function parseAppleArtistPlaylists(html, artistName = '') {
+  const m = /<script[^>]+id="serialized-server-data"[^>]*>([\s\S]*?)<\/script>/.exec(String(html || ''))
+  if (!m) return []
+  let data
+  try { data = JSON.parse(m[1]) } catch { return [] }
+  const out = new Map()
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 40 || out.size >= 30) return
+    const cd = node.contentDescriptor
+    if (cd?.kind === 'playlist' && Array.isArray(node.titleLinks) && node.titleLinks[0]?.title) {
+      const url = String(cd.url || '')
+      const id = String(cd.identifiers?.storeAdamID || '')
+      const title = clip(node.titleLinks[0].title)
+      if (isApplePlaylistUrl(url) && /^pl\./.test(id) && !out.has(id) && !/\bvideo/i.test(title)) {
+        out.set(id, {
+          provider: 'apple',
+          kind: 'playlist',
+          id,
+          title,
+          artist: clip(node.subtitleLinks?.[0]?.title) || 'Apple Music',
+          artworkUrl: appleArtwork(node.artwork?.dictionary?.url),
+          url,
+          seed: clip(artistName)
+        })
+      }
+      return
+    }
+    for (const child of Array.isArray(node) ? node : Object.values(node)) if (child && typeof child === 'object') walk(child, depth + 1)
+  }
+  walk(data)
+  return [...out.values()]
+}
+
+export function createAppleSource({ fetchImpl = fetch, core = null } = {}) {
+  const mod = async () => core || import('../apple.js')
+  const get = async (url, as) => {
+    const res = await fetchImpl(url, { headers: APPLE_HEADERS, signal: AbortSignal.timeout(APPLE_TIMEOUT_MS) })
+    if (!res.ok) throw new Error(`Apple Music answered HTTP ${res.status}.`)
+    return as === 'json' ? res.json() : res.text()
+  }
+  return {
+    name: 'apple',
+    available: () => true,
+    // Exact (diacritic-insensitive) artist name only.
+    async artistPlaylists(name, { lang = 'en' } = {}) {
+      const want = normalizeKey(name)
+      if (!want) return null
+      const country = APPLE_STOREFRONTS[lang] || 'us'
+      const body = await get(`https://itunes.apple.com/search?term=${encodeURIComponent(String(name).slice(0, 200))}&entity=musicArtist&limit=10&country=${country}`, 'json')
+      const artist = (body?.results || []).find((a) => normalizeKey(a.artistName) === want && Number(a.artistId) > 0)
+      if (!artist) return null
+      const html = await get(`https://music.apple.com/${country}/artist/${Number(artist.artistId)}`, 'text')
+      return { artist: clip(artist.artistName), items: parseAppleArtistPlaylists(html, artist.artistName) }
+    },
+    async playlist(url) {
+      if (!isApplePlaylistUrl(url)) return null
+      const { resolveAppleMusicUrlLite } = await mod()
+      const result = await resolveAppleMusicUrlLite(url, {})
+      const tracks = (result?.items || []).map((item) => mapResolvedTrack(item, 'apple')).filter(Boolean)
+      return { title: clip(result?.title) || 'Apple Music', count: tracks.length, tracks }
     }
   }
 }
@@ -110,6 +250,34 @@ export function createSpotifySource({ makeClient = null, env = process.env } = {
       const api = await client()
       const res = await api.getNewReleases({ limit, country: market() })
       return (res?.body?.albums?.items || []).map(mapSpotifyAlbum).filter(Boolean)
+    },
+    // Spotify's own lists for an artist ("This Is …", "… Radio"); needs API
+    // credentials for the search.
+    async artistPlaylists(name) {
+      const want = normalizeKey(name)
+      if (!want) return []
+      const api = await client()
+      const found = await Promise.all([`This Is ${name}`, `${name} Radio`].map(async (q) => {
+        try {
+          const res = await api.searchPlaylists(q, { limit: 10, market: market() })
+          return (res?.body?.playlists?.items || []).filter(Boolean).map(mapSpotifyPlaylist).filter(Boolean)
+        } catch { return [] }
+      }))
+      const seen = new Set()
+      return found.flat().filter((p) => {
+        if (!p.editorial || seen.has(p.id) || !normalizeKey(p.title).includes(want)) return false
+        seen.add(p.id)
+        return true
+      }).map((p) => ({ ...p, seed: clip(name) })).slice(0, 4)
+    },
+    // Any playlist link, read with the core resolver (works without API
+    // credentials too, through Spotify's public player data).
+    async playlist(id) {
+      if (!/^[A-Za-z0-9]{10,40}$/.test(String(id || ''))) return null
+      const { resolveSpotifyUrlLite } = await import('../spotify.js')
+      const result = await resolveSpotifyUrlLite(`https://open.spotify.com/playlist/${id}`, { market: market() })
+      const tracks = (result?.items || []).map((item) => mapResolvedTrack(item, 'spotify')).filter(Boolean)
+      return { title: clip(result?.title) || 'Spotify', count: tracks.length, tracks }
     },
     async album(id) {
       const api = await client()

@@ -6,7 +6,7 @@ import { get, post, patch, put, del } from '../api.js'
 import { h, t, icon, iconButton, clear, toggle, toast, toastError, modal, confirmDialog, promptDialog, fmtBytes, fmtRelative, fmtNumber, emptyState, errorText } from '../dom.js'
 import { refreshPlaylists } from '../components.js'
 
-const TABS = ['server', 'remote', 'libraries', 'users', 'downloads']
+const TABS = ['server', 'remote', 'libraries', 'users', 'downloads', 'health']
 const DOWNLOAD_FORMATS = {
   mp3: ['auto', '128k', '192k', '256k', '320k'],
   flac: ['lossless'],
@@ -14,7 +14,7 @@ const DOWNLOAD_FORMATS = {
   aac: ['128k', '192k', '256k', '320k']
 }
 const SCAN_INTERVALS = [0, 15, 30, 60, 180, 360, 720, 1440]
-const PROVIDERS = ['deezer', 'youtube', 'spotify']
+const PROVIDERS = ['deezer', 'youtube', 'spotify', 'apple']
 
 function card(title, hint, ...children) {
   return h('section', { class: 'panel-card' }, h('h2', { class: 'panel-card__title', text: title }), hint ? h('p', { class: 'muted', text: hint }) : null, ...children)
@@ -54,7 +54,7 @@ async function serverTab() {
       const saved = await saveConfig({ onlineProviders: list })
       if (saved) app.providers = saved.onlineProviders
     })
-    return h('label', { class: 'check-chip' }, input, h('span', { text: { deezer: 'Deezer', youtube: 'YouTube Music', spotify: 'Spotify' }[p] }))
+    return h('label', { class: 'check-chip' }, input, h('span', { text: { deezer: 'Deezer', youtube: 'YouTube Music', spotify: 'Spotify', apple: 'Apple Music' }[p] }))
   }))
 
   box.append(
@@ -505,6 +505,94 @@ async function usersTab() {
   return box
 }
 
+// ---- library health -------------------------------------------------------------------------
+
+const kbps = (b) => (b ? `${Math.round(b / 1000)} kbps` : '')
+
+async function healthTab() {
+  const box = h('div', { class: 'stack-lg' })
+  const head = h('div')
+  const body = h('div', { class: 'stack-lg' })
+  box.append(card(t('player.health.title'), t('player.health.hint'), head), body)
+  let timer = null
+
+  const run = h('button', { type: 'button', class: 'btn btn--primary', text: t('player.health.run') })
+  run.addEventListener('click', async () => {
+    run.disabled = true
+    try { paint(await post('/admin/health/check')) } catch (error) { toastError(error); run.disabled = false }
+  })
+
+  const songLine = (tr) => h('span', { class: 'health-row__text' },
+    h('b', { text: tr.title }),
+    h('small', { class: 'muted', text: [tr.artist, tr.album, tr.codec?.toUpperCase(), tr.lossless ? t('player.badge.lossless') : kbps(tr.bitrate), fmtBytes(tr.size)].filter(Boolean).join(' · ') }),
+    h('small', { class: 'muted health-row__path', text: `${tr.library} / ${tr.path}` }))
+
+  const trashBtn = (tr, onDone) => {
+    const b = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.trash') })
+    b.addEventListener('click', async () => {
+      if (!await confirmDialog({ title: t('player.health.trash'), message: t('player.health.trashConfirm', { name: tr.title }), confirmLabel: t('player.health.trash'), danger: true })) return
+      b.disabled = true
+      try { await post('/admin/health/trash', { trackId: tr.id }); toast(t('player.health.trashed')); onDone() } catch (error) { toastError(error); b.disabled = false }
+    })
+    return b
+  }
+
+  const section = (title, count, rows) => card(`${title} · ${fmtNumber(count)}`, null, count ? h('div', { class: 'health-list' }, rows) : h('p', { class: 'muted small', text: t('player.health.none') }))
+
+  function paintReport(report) {
+    clear(body)
+    if (!report) return
+    if (report.error) { body.append(h('p', { class: 'note', text: report.error })); return }
+    head.append(h('p', { class: 'muted small', text: t('player.health.checked', { when: fmtRelative(report.checkedAt), tracks: fmtNumber(report.totals.tracks), albums: fmtNumber(report.totals.albums) }) }))
+
+    body.append(section(t('player.health.duplicates'), report.duplicates.length, report.duplicates.map((group) => {
+      const el = h('div', { class: 'health-group' })
+      group.forEach((tr, i) => el.append(h('div', { class: 'health-row' }, songLine(tr),
+        i === 0 ? h('span', { class: 'pill pill--accent', text: t('player.health.best') }) : trashBtn(tr, () => { el.remove() }))))
+      return el
+    })))
+
+    body.append(section(t('player.health.covers'), report.missingCovers.length, report.missingCovers.map((a) => {
+      const fix = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.fixCover') })
+      const row = h('div', { class: 'health-row' },
+        h('span', { class: 'health-row__text' }, h('a', { href: `#/album/${a.id}`, text: a.title }), h('small', { class: 'muted', text: [a.artist, t('player.count.tracks', { n: a.trackCount })].filter(Boolean).join(' · ') })), fix)
+      fix.addEventListener('click', async () => {
+        fix.disabled = true
+        try { await post('/admin/health/cover', { albumId: a.id }); toast(t('player.health.coverSaved')); row.remove() } catch (error) { toastError(error); fix.disabled = false }
+      })
+      return row
+    })))
+
+    body.append(section(t('player.health.lowBitrate'), report.lowBitrate.length, report.lowBitrate.map((tr) => {
+      const again = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.redownload') })
+      again.addEventListener('click', async () => {
+        again.disabled = true
+        try { await post('/admin/health/redownload', { trackId: tr.id }); toast(t('player.health.redownloading')) } catch (error) { toastError(error); again.disabled = false }
+      })
+      return h('div', { class: 'health-row' }, songLine(tr), h('span', { class: 'row-actions' }, again, trashBtn(tr, () => {})))
+    })))
+
+    body.append(section(t('player.health.untagged'), report.untagged.length, report.untagged.map((tr) => h('div', { class: 'health-row' }, songLine(tr)))))
+  }
+
+  function paint(status) {
+    clearTimeout(timer)
+    clear(head)
+    if (status.running) {
+      const p = status.progress || {}
+      head.append(h('div', { class: 'row-actions' }, h('span', { class: 'spinner spinner--sm' }),
+        h('span', { class: 'muted', text: p.phase === 'covers' ? t('player.health.progressCovers', { done: fmtNumber(p.done || 0), total: fmtNumber(p.total || 0) }) : t('player.health.progress') })))
+      timer = setTimeout(async () => { if (box.isConnected) paint(await get('/admin/health').catch(() => status)) }, 1500)
+      return
+    }
+    run.disabled = false
+    head.append(h('div', { class: 'row-actions' }, run))
+    paintReport(status.report)
+  }
+  paint(await get('/admin/health'))
+  return box
+}
+
 // ---- page ---------------------------------------------------------------------------------
 
 export async function render(_name, params) {
@@ -513,7 +601,7 @@ export async function render(_name, params) {
   const root = h('div', { class: 'admin' },
     h('header', { class: 'page-head' }, h('h1', { class: 'page-title' }, icon('shield', { size: 30 }), t('player.nav.admin'))),
     h('div', { class: 'chips' }, TABS.map((key) => h('a', { class: ['chip', key === tab && 'is-active'], href: `#/admin/${key}`, text: t(`player.admin.tab.${key}`) }))))
-  const content = tab === 'libraries' ? await librariesTab() : tab === 'users' ? await usersTab() : tab === 'downloads' ? await downloadsTab() : tab === 'remote' ? await remoteTab() : await serverTab()
+  const content = tab === 'libraries' ? await librariesTab() : tab === 'users' ? await usersTab() : tab === 'downloads' ? await downloadsTab() : tab === 'remote' ? await remoteTab() : tab === 'health' ? await healthTab() : await serverTab()
   root.append(content)
   return { node: root }
 }

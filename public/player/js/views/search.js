@@ -81,7 +81,7 @@ function topResult(local, q) {
       h('h3', { class: 'top-result__title', text: track.title }),
       h('span', { class: 'muted' }, h('span', { class: 'pill', text: t('player.kind.track') }), ' ', track.artist),
       iconButton('play', t('player.common.play'), () => playTracks(local.tracks, 0, { label: q, route: `/search?q=${encodeURIComponent(q)}` }), { cls: 'play-fab top-result__play', size: 24 }))
-    el.addEventListener('dblclick', () => playTracks(local.tracks, 0))
+    el.addEventListener('dblclick', () => playTracks([track], 0))
     return el
   }
   return null
@@ -92,8 +92,8 @@ export async function render(_name, _params, query) {
   const body = h('div')
   const tabs = h('div', { class: 'chips' })
   let tab = 'all'
-  for (const key of ['all', 'tracks', 'albums', 'artists', 'online']) {
-    if (key === 'online' && !app.providers.length) continue
+  for (const key of ['all', 'tracks', 'albums', 'artists', 'playlists', 'online']) {
+    if ((key === 'online' || key === 'playlists') && !app.providers.length) continue
     const chip = h('button', { type: 'button', class: ['chip', key === tab && 'is-active'], text: t(`player.search.tab.${key}`) })
     chip.addEventListener('click', () => {
       tab = key
@@ -113,21 +113,50 @@ export async function render(_name, _params, query) {
   async function loadOnline(q, slot) {
     onlineController?.abort()
     onlineController = new AbortController()
+    const signal = onlineController.signal
     try {
-      const res = await get('/online/search', { q, kinds: 'track,album,artist', limit: 20 }, { signal: onlineController.signal })
+      // Songs, albums and artists first; playlists and the artist's mixes
+      // are asked afterwards so they never hold the main results back.
+      const res = await get('/online/search', { q, kinds: 'track,album,artist', limit: 20 }, { signal })
       if (!slot.isConnected) return
       clear(slot)
       const context = { label: q, route: `/search?q=${encodeURIComponent(q)}` }
       const used = [...new Set([...(res.tracks || []), ...(res.albums || [])].map((x) => x.provider))].map(providerName).join(' · ')
+      const mixSlot = h('div', { class: 'sec-mixes' })
+      const playlistSlot = h('div', { class: 'sec-playlists' })
+      let mixes = null
+      let found = null
+      const paintLists = () => {
+        clear(mixSlot)
+        clear(playlistSlot)
+        if (mixes?.mixes?.length) mixSlot.append(shelf({ title: t('player.search.mixes', { artist: mixes.artist }), items: mixes.mixes, render: (item, i) => onlineCard(item, mixes.mixes, i, context), cls: 'shelf--mixes-online' }))
+        const seen = new Set()
+        const lists = [...(mixes?.playlists || []), ...(found?.playlists || [])].filter((p) => {
+          const key = p.url || `${p.provider}:${p.id}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        if (lists.length) playlistSlot.append(shelf({ title: t('player.search.onlinePlaylists'), items: lists, render: (item, i) => onlineCard(item, lists, i, context) }))
+      }
+      const later = (promise, apply) => promise.then((value) => {
+        if (!value || signal.aborted || !slot.isConnected) return
+        apply(value)
+        paintLists()
+      }).catch(() => {})
+      later(get('/online/search', { q, kinds: 'playlist', limit: 20 }, { signal }), (value) => { found = value })
+      if (q.length >= 2) later(get('/online/artist-mixes', { name: q, lang: document.documentElement.lang || 'en' }, { signal }), (value) => { mixes = value })
       if (!res.tracks?.length && !res.albums?.length && !res.artists?.length) {
-        slot.append(h('p', { class: 'muted', text: t('player.search.onlineNone') }))
+        slot.append(h('p', { class: 'muted', text: t('player.search.onlineNone') }), mixSlot, playlistSlot)
         return
       }
       slot.append(h('div', { class: 'section-head' },
         h('h2', { class: 'section-title' }, icon('globe', { size: 22 }), t('player.search.online')),
         used ? h('span', { class: 'muted small', text: used }) : null))
       if (res.tracks?.length) slot.append(h('div', { class: 'section sec-tracks' }, onlineTrackList(res.tracks.slice(0, 12), { context })))
+      slot.append(mixSlot)
       if (res.albums?.length) slot.append(h('div', { class: 'sec-albums' }, shelf({ title: t('player.search.onlineAlbums'), items: res.albums, render: (item, i) => onlineCard(item, res.albums, i) })))
+      slot.append(playlistSlot)
       if (res.artists?.length) slot.append(h('div', { class: 'sec-artists' }, shelf({ title: t('player.search.onlineArtists'), items: res.artists, render: (item, i) => onlineCard(item, res.artists, i) })))
       if (res.errors?.length) slot.append(h('p', { class: 'muted small', text: t('player.search.partialProviders', { list: res.errors.map((e) => providerName(e.provider)).join(', ') }) }))
     } catch (error) {

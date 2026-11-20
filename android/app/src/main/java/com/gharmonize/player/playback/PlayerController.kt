@@ -28,6 +28,8 @@ class PlayerController(private val context: Context) {
   var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF); private set
   var queue by mutableStateOf<List<MediaItem>>(emptyList()); private set
   var index by mutableIntStateOf(0); private set
+  /** The playback service is connected (play / queue calls work). */
+  var connected by mutableStateOf(false); private set
 
   val position: Long get() = controller?.currentPosition ?: 0
   val duration: Long get() = controller?.duration?.takeIf { it > 0 }
@@ -40,6 +42,7 @@ class PlayerController(private val context: Context) {
     future.addListener({
       val c = runCatching { future.get() }.getOrNull() ?: return@addListener
       controller = c
+      connected = true
       c.addListener(object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) = sync()
       })
@@ -50,6 +53,7 @@ class PlayerController(private val context: Context) {
   fun release() {
     controller?.release()
     controller = null
+    connected = false
   }
 
   private fun sync() {
@@ -65,11 +69,11 @@ class PlayerController(private val context: Context) {
 
   // ---- commands -----------------------------------------------------------------------
 
-  fun play(tracks: List<Track>, start: Int = 0, shuffle: Boolean = false) {
+  fun play(tracks: List<Track>, start: Int = 0, shuffle: Boolean = false, downloadsOnly: Boolean = false) {
     val c = controller ?: return
     if (tracks.isEmpty()) return
     c.shuffleModeEnabled = shuffle
-    c.setMediaItems(tracks.map(::trackItem), if (shuffle) (tracks.indices).random() else start.coerceIn(0, tracks.lastIndex), 0)
+    c.setMediaItems(tracks.map { trackItem(it, downloadsOnly = downloadsOnly) }, if (shuffle) (tracks.indices).random() else start.coerceIn(0, tracks.lastIndex), 0)
     c.prepare()
     c.play()
   }
@@ -130,7 +134,7 @@ class PlayerController(private val context: Context) {
   }
 
   companion object {
-    fun trackItem(t: Track, auto: Boolean = false): MediaItem = MediaItem.Builder()
+    fun trackItem(t: Track, auto: Boolean = false, downloadsOnly: Boolean = false): MediaItem = MediaItem.Builder()
       .setMediaId("t:${t.id}")
       .setUri(App.streamUri(t.id))
       .setMediaMetadata(
@@ -140,7 +144,10 @@ class PlayerController(private val context: Context) {
           .setAlbumTitle(t.album)
           .setGenre(t.genre)
           .setRecordingYear(t.year)
-          .setArtworkUri(App.artworkUri(t.artwork ?: t.albumId?.let { "album/$it" } ?: "track/${t.id}", 512))
+          .setArtworkUri(App.artworkUri(
+            if (Offline.isOnPhone(t.id)) "track/${t.id}" else t.artwork ?: t.albumId?.let { "album/$it" } ?: "track/${t.id}",
+            512,
+          ))
           .setIsPlayable(true)
           .setIsBrowsable(false)
           .setExtras(Bundle().apply {
@@ -150,15 +157,16 @@ class PlayerController(private val context: Context) {
             putBoolean("favorite", t.favorite)
             putDouble("duration", t.duration)
             if (auto) putBoolean("auto", true)
+            if (downloadsOnly) putBoolean("downloadsOnly", true)
           })
           .build(),
       )
       .build()
 
-    fun onlineItem(o: OnlineItem): MediaItem? {
+    fun onlineItem(o: OnlineItem, auto: Boolean = false): MediaItem? {
       val owned = o.libraryTrackId
       if (owned != null) {
-        return trackItem(Track(owned, o.title, o.artist, null, o.album, null, null, o.duration, "track/$owned", false, false, null, null, null))
+        return trackItem(o.libraryTrack ?: Track(owned, o.title, o.artist, null, o.album, null, null, 0.0, "track/$owned", false, false, null, null, null), auto = auto)
       }
       val preview = o.previewUrl ?: return null
       // Deezer links expire within minutes; ghp://preview/… fetches a fresh one when loading.
@@ -171,10 +179,15 @@ class PlayerController(private val context: Context) {
             .setTitle(o.title)
             .setArtist(o.artist)
             .setAlbumTitle(o.album)
+            .setGenre(o.raw.optString("genre").takeIf { it.isNotBlank() })
             .setArtworkUri(o.artworkUrl?.let(android.net.Uri::parse))
             .setIsPlayable(true)
             .setIsBrowsable(false)
-            .setExtras(Bundle().apply { putBoolean("preview", true); putDouble("duration", 30.0) })
+            .setExtras(Bundle().apply {
+              putBoolean("preview", true)
+              putDouble("duration", 30.0)
+              if (auto) putBoolean("auto", true)
+            })
             .build(),
         )
         .build()

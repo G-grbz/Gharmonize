@@ -40,6 +40,7 @@ export class SpotifyManager {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     url,
+                    format: this.app.resolveCurrentOutputSettings().format,
                     spotifyConcurrency: this.getSpotifyConcurrency()
                 })
             });

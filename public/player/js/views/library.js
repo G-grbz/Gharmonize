@@ -16,6 +16,9 @@ const SORTS = {
 }
 
 function libraryView(tabParam) {
+  // #/library/followed = the artists tab showing only followed artists.
+  if (tabParam === 'followed') store.set('libraryArtistsFollowed', true)
+  if (tabParam === 'followed') tabParam = 'artists'
   const tab = TABS.includes(tabParam) ? tabParam : store.get('libraryTab', 'playlists')
   store.set('libraryTab', tab)
   const root = h('div', { class: 'library' })
@@ -73,12 +76,23 @@ function libraryView(tabParam) {
     return { node: root, cleanup: () => observer.disconnect() }
   }
 
+  // Artists: all, or only the ones you follow (their new releases are announced).
+  const followedOnly = tab === 'artists' && Boolean(store.get('libraryArtistsFollowed', false))
+  if (tab === 'artists') {
+    const chips = h('div', { class: 'chips' })
+    for (const [key, on] of [['all', false], ['followed', true]]) {
+      const chip = h('button', { type: 'button', class: ['chip', on === followedOnly && 'is-active'], text: t(`player.library.artistsFilter.${key}`) })
+      chip.addEventListener('click', () => { store.set('libraryArtistsFollowed', on); window.dispatchEvent(new HashChangeEvent('hashchange')) })
+      chips.append(chip)
+    }
+    content.append(chips)
+  }
   const gridEl = h('div', { class: 'card-grid' })
   content.append(gridEl)
   const path = tab === 'albums' ? '/albums' : '/artists'
   infinite(gridEl, async (offset, limit) => {
-    const res = await get(path, { sort, limit, offset })
-    if (!offset && !res.items.length) gridEl.replaceWith(emptyState(tab === 'albums' ? 'album' : 'user', t(`player.library.empty.${tab}`)))
+    const res = await get(path, { sort, limit, offset, favorites: followedOnly ? 1 : undefined })
+    if (!offset && !res.items.length) gridEl.replaceWith(followedOnly ? emptyState('user', t('player.library.followedEmpty'), t('player.library.followedEmptyText')) : emptyState(tab === 'albums' ? 'album' : 'user', t(`player.library.empty.${tab}`)))
     return res.items
   }, (item) => (tab === 'albums' ? albumCard(item) : artistCard(item)), { page: 60 })
   return { node: root }

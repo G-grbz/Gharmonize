@@ -1,7 +1,7 @@
 // Adds "already in your library" and "downloading now" badges to online items,
 // so every client can show play / download / progress consistently. Library
 // matches are per user: a song in a library you cannot see is not "yours".
-export function createAnnotator({ matcher, bridge }) {
+export function createAnnotator({ matcher, bridge, catalog }) {
   function libraryOf(item, userId) {
     if (item.kind === 'track') {
       const id = matcher.findTrack(item, userId)
@@ -22,7 +22,7 @@ export function createAnnotator({ matcher, bridge }) {
     const urls = list.filter((i) => i.kind !== 'artist').map((i) => i.url)
     const active = bridge.activeBySources(urls)
     const done = bridge.libraryBySources ? bridge.libraryBySources(urls, userId) : new Map()
-    return list.map((item) => {
+    const annotated = list.map((item) => {
       let library = libraryOf(item, userId)
       // Metadata can differ between the store and the downloaded files
       // ("Wake Up" vs "Wake Up - Single"); an earlier download of this exact
@@ -34,6 +34,15 @@ export function createAnnotator({ matcher, bridge }) {
       }
       return { ...item, library, download: active.get(item.url) || null }
     })
+    if (catalog) {
+      const ids = annotated.map((item) => item.library?.trackId).filter(Boolean)
+      const tracks = new Map(catalog.getTracksByIds(ids, userId).map((track) => [track.id, track]))
+      for (const item of annotated) {
+        const track = tracks.get(item.library?.trackId)
+        if (track) item.library.track = track
+      }
+    }
+    return annotated
   }
 
   function shelves(list = [], userId) {

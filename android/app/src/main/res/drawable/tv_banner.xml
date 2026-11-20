@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Google TV home row banner (320x180dp): the owl logo on the app colour. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+  <item>
+    <shape android:shape="rectangle">
+      <solid android:color="#0D1117" />
+      <size android:width="320dp" android:height="180dp" />
+    </shape>
+  </item>
+  <item android:width="132dp" android:height="132dp" android:gravity="center" android:drawable="@drawable/gharmonize_logo" />
+</layer-list>
