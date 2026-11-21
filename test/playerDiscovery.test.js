@@ -669,13 +669,16 @@ test('library health keeps every song\'s lyrics as one .lrc file and looks up mi
   const asked = []
   const fetchLyrics = async (artist, title) => {
     asked.push(`${artist} - ${title}`)
-    return title === 'Bulunur' ? { syncedLyrics: '[00:01.00]Online söz' } : null
+    if (title === 'Bulunur') return { syncedLyrics: '\uFEFF[00:01.00]Online söz\r\n[00:02.00]İkinci satır\r\n' }
+    if (title === 'Düz') return { syncedLyrics: { invalid: true }, plainLyrics: 'Düz söz\r\nİkinci satır' }
+    if (title === 'Bozuk') return { syncedLyrics: '[00:01.00]\0', plainLyrics: 'ş'.repeat(256 * 1024 + 1) }
+    return null
   }
   const { call, admin, service } = await setup(t, { healthOptions: { fetchLyrics } })
   const lib = service.context.libraries.list().find((l) => l.isDefault)
   const dir = path.join(lib.path, 'Sözler')
   const file = (name) => path.join(dir, name)
-  for (const title of ['Dönüşür', 'Çift', 'Sahiplenir', 'Kopyalı', 'Bulunur', 'Bulunmaz']) {
+  for (const title of ['Dönüşür', 'Çift', 'Sahiplenir', 'Kopyalı', 'Bulunur', 'Bulunmaz', 'Düz', 'Bozuk']) {
     await writeTrack(file(`${title}.mp3`), { title, artist: 'Sanatçı, Çeşitli Sanatçılar', album: 'Sözler' })
   }
   fs.writeFileSync(file('Dönüşür.lyrics'), '[00:01.00]Senkron')
@@ -705,7 +708,7 @@ test('library health keeps every song\'s lyrics as one .lrc file and looks up mi
   })
   assert.equal(lyrics.tidyCount, 5)
   const missing = lyrics.missing.filter((track) => track.path.startsWith('Sözler'))
-  assert.deepEqual(missing.map((track) => track.title).sort(), ['Bulunmaz', 'Bulunur'], 'an adopted copy is not missing')
+  assert.deepEqual(missing.map((track) => track.title).sort(), ['Bozuk', 'Bulunmaz', 'Bulunur', 'Düz'], 'an adopted copy is not missing')
 
   assert.equal((await call('POST', '/admin/health/batch', { token: admin, body: { action: 'lyrics-tidy' } })).status, 202)
   assert.equal((await finish()).succeeded, 5)
@@ -718,9 +721,12 @@ test('library health keeps every song\'s lyrics as one .lrc file and looks up mi
   const ids = missing.map((track) => track.id)
   assert.equal((await call('POST', '/admin/health/batch', { token: admin, body: { action: 'lyrics-fetch', ids } })).status, 202)
   const fetched = await finish()
-  assert.equal(fetched.succeeded, 1)
-  assert.deepEqual(fetched.errors.map((e) => [e.title, e.code]), [['Bulunmaz', 'LYRICS_NOT_FOUND']])
-  assert.equal(fs.readFileSync(file('Bulunur.lrc'), 'utf8'), '[00:01.00]Online söz')
+  assert.equal(fetched.succeeded, 2)
+  assert.deepEqual(fetched.errors.map((e) => e.title).sort(), ['Bozuk', 'Bulunmaz'])
+  assert.ok(fetched.errors.every((e) => e.code === 'LYRICS_NOT_FOUND'))
+  assert.equal(fs.readFileSync(file('Bulunur.lrc'), 'utf8'), '[00:01.00]Online söz\n[00:02.00]İkinci satır')
+  assert.equal(fs.readFileSync(file('Düz.lrc'), 'utf8'), 'Düz söz\nİkinci satır')
+  assert.equal(fs.existsSync(file('Bozuk.lrc')), false)
   assert.ok(asked.includes('Sanatçı - Bulunmaz'), 'the main artist is tried as well')
   const bulunur = missing.find((track) => track.title === 'Bulunur')
   const shown = (await call('GET', `/tracks/${bulunur.id}/lyrics`, { token: admin })).body

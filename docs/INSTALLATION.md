@@ -108,6 +108,8 @@ Native packages are updated by installing the next release's package. GitHub rel
 
 ## Build Commands
 
+Run `npm ci` after pulling changes to `package-lock.json` to sync your installed dependencies before building. Electron Builder uses the Electron version installed in `node_modules`.
+
 **All Linux formats (AppImage + DEB + RPM + Arch)**
 
 ```bash

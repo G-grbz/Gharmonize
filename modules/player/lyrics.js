@@ -4,6 +4,13 @@ import path from 'node:path'
 const MAX_LRC_BYTES = 512 * 1024
 const CACHE_MAX = 300
 
+export function normalizeSidecarLyrics(value) {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_LRC_BYTES) return null
+  // Lyrics may contain tabs and line breaks. Other control characters are invalid.
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/.test(value)) return null
+  return value.replace(/\r\n?/g, '\n').trim() || null
+}
+
 // Parses LRC text into [{ timeMs, text }]. Returns [] if it is not synced.
 export function parseLrc(text) {
   const lines = []

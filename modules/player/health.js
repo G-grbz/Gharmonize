@@ -18,6 +18,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { artistCredits, songKey } from './songKey.js'
 import { albumBaseKey, artistsMatch } from './matching.js'
 import { getSetting, setSetting, transaction } from './db.js'
+import { normalizeSidecarLyrics } from './lyrics.js'
 import { AUDIO_EXTENSIONS } from './scanner.js'
 import { youtubeSourceKey } from './sourceKey.js'
 
@@ -386,18 +387,21 @@ export function createLibraryHealth({ db, libraries, artwork, scanner, sources, 
       const { lyricsFetcher } = await import('../lyrics.js')
       return lyricsFetcher.searchLyrics(artist, title, duration)
     })
-    let found = null
+    let text = null
     for (const artist of new Set([row.artist_name, artistCredits(row.artist_name)[0]].filter(Boolean))) {
-      found = await fetcher(artist, row.title, row.duration)
+      const found = await fetcher(artist, row.title, row.duration)
       signal.throwIfAborted()
-      if (found?.syncedLyrics || found?.plainLyrics) break
+      const synced = normalizeSidecarLyrics(found?.syncedLyrics)
+      text = synced && SYNCED_RE.test(synced) ? synced : normalizeSidecarLyrics(found?.plainLyrics)
+      if (text) break
     }
     // LRCLIB is a free service: one song at a time, with a short pause.
     await delay(LYRICS_PAUSE_MS, undefined, { signal, ref: false })
-    const text = found?.syncedLyrics || found?.plainLyrics
     if (!text) throw new HealthError('LYRICS_NOT_FOUND', 'No lyrics were found online for this song.', 404)
     try {
-      await fs.promises.writeFile(path.join(dir, name + LYRICS_EXTENSION), text, { flag: 'wx' })
+      // Only validated text can create a non-executable sidecar beside the indexed track.
+      // codeql[js/http-to-file-access]
+      await fs.promises.writeFile(path.join(dir, name + LYRICS_EXTENSION), text, { flag: 'wx', mode: 0o644 })
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
     }
