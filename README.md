@@ -115,6 +115,8 @@ Full Docker setup, bind mounts, permissions, `MUSIC_DIR`, NVIDIA Container Toolk
 
 ## Gharmonize Player
 
+![Gharmonize Player demo](docs/assets/gharmonize-player.gif)
+
 - **Web Player** streams your library with playlists, queue management, favorites, synchronized lyrics and listening statistics.
 - **Android Client** supports offline listening, background playback, lock screen controls, an equalizer and separate Wi-Fi and mobile streaming quality. The `Gharmonize-Player-Client` APK is available on [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases/latest).
 - **Android TV and Google TV** offer a remote-friendly interface with QR pairing from the Android phone app.
