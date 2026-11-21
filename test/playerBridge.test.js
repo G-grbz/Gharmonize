@@ -8,6 +8,7 @@ import { writeTrack, tmpDir, waitFor, silentLogger } from './fixtures/playerAudi
 import { startPlayerService, normalizeConfig } from '../modules/player/service.js'
 import { createPlayerRouter } from '../modules/player/router.js'
 import { BridgeError, collectJobOutputs } from '../modules/player/coreAdapter.js'
+import { getSetting, setSetting } from '../modules/player/db.js'
 import { cleanTitleForMatch, primaryArtistKey, splitArtistFromTitle } from '../modules/player/matching.js'
 import { mapDeezerTrack, mapYouTubeItem, mapSpotifyTrack, mergeOnlineItems, cleanYouTubeArtist } from '../modules/player/online.js'
 
@@ -27,11 +28,11 @@ function createFakeCore({ outputDir }) {
       // Mimic URL normalisation by the real core.
       return { provider, url: url.replace('music.youtube.com', 'www.youtube.com'), isPlaylist: !url.includes('/watch') && !url.includes('/track/') }
     },
-    async createAndEnqueue({ url, preset, tag }) {
+    async createAndEnqueue({ url, preset, tag, only = null }) {
       if (core.failResolve) throw core.failResolve
       const id = `job-${++seq}`
       jobs.set(id, { status: 'queued', progress: 0, phase: 'queued', error: null, outputs: [], url, preset, tag })
-      calls.created.push({ id, url, preset, tag })
+      calls.created.push({ id, url, preset, tag, only })
       return { jobId: id, provider: 'youtube' }
     },
     async getJob(id) {
@@ -51,7 +52,7 @@ function createFakeCore({ outputDir }) {
     complete(id, files) { Object.assign(jobs.get(id), { status: 'completed', progress: 100, outputs: files }) },
     fail(id, error = 'yt-dlp error') { Object.assign(jobs.get(id), { status: 'error', error }) },
     vanish(id) { jobs.delete(id) },
-    async produce(name, tags) { return writeTrack(path.join(outputDir, name), tags) },
+    async produce(name, tags, options) { return writeTrack(path.join(outputDir, name), tags, options) },
     failResolve: null
   }
   return core
@@ -61,14 +62,14 @@ function fakeProvider(name, results) {
   return { name, available: () => true, async search(q, kind) { return (results[kind] || []).filter((i) => !q || true) } }
 }
 
-async function setup(t, { providers = [], config = {}, root = tmpDir('bridge'), core = null } = {}) {
+async function setup(t, { providers = [], config = {}, root = tmpDir('bridge'), core = null, env = null } = {}) {
   const downloads = path.join(root, 'outputs')
   fs.mkdirSync(downloads, { recursive: true })
   const fakeCore = core || createFakeCore({ outputDir: downloads })
   const service = await startPlayerService({
-    env: {},
+    env: env || {},
     logger: silentLogger,
-    dataDir: path.join(root, 'data'),
+    dataDir: env ? null : path.join(root, 'data'),
     cacheDir: path.join(root, 'cache'),
     defaultLibraryDir: downloads,
     initialScanDelayMs: -1,
@@ -220,6 +221,115 @@ test('download → core job → instant indexing → playlist', async (t) => {
   assert.equal(r.status, 202)
 })
 
+test('a playlist the library partly has downloads only its missing songs', async (t) => {
+  const { call, admin, core, service } = await setup(t)
+  const owned = await core.produce('Var Olan.mp3', { title: 'Var Olan', artist: 'Sanatçı', album: 'Albüm' })
+  await service.context.scanner.indexFiles([owned])
+  const playlist = { kind: 'playlist', url: 'https://www.deezer.com/playlist/77', title: 'Liste', trackCount: 3 }
+  const song = (title, isrc = null) => ({ title, artist: 'Sanatçı', isrc, duration: title === 'Var Olan' ? null : 200 })
+
+  // The client's list is stale: "Var Olan" arrived meanwhile and is skipped.
+  let r = await call('POST', '/downloads', { token: admin, body: { item: { ...playlist, only: [song('Var Olan'), song('Eksik Bir', 'trabc1234567'), song('Eksik İki')] } } })
+  assert.equal(r.status, 202)
+  assert.equal(r.body.kind, 'playlist')
+  await waitFor(() => core.calls.created.length === 1)
+  assert.deepEqual(core.calls.created[0].only.map((s) => [s.title, s.isrc]), [['Eksik Bir', 'TRABC1234567'], ['Eksik İki', null]])
+  const partial = await waitStatus(call, admin, r.body.id, 'downloading')
+
+  // A whole-playlist request does not join the partial download …
+  r = await call('POST', '/downloads', { token: admin, body: { item: playlist } })
+  assert.notEqual(r.body.id, partial.id)
+  await waitFor(() => core.calls.created.length === 2)
+  assert.equal(core.calls.created[1].only, null)
+  // … and every song already in the library: nothing is downloaded.
+  r = await call('POST', '/downloads', { token: admin, body: { item: { ...playlist, url: 'https://www.deezer.com/playlist/78', only: [song('Var Olan')] } } })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.status, 'exists')
+  assert.equal(core.calls.created.length, 2)
+
+  // A song an earlier download of this link brought, with another length in
+  // the store: the core's mapping cache links it to the downloaded video.
+  const mapped = await core.produce('Eşlenen.mp3', {
+    title: 'Eşlenen', artist: 'Sanatçı',
+    userDefinedUrl: [{ description: 'SOURCE_URL', url: 'https://music.youtube.com/watch?v=xLX10_p5Nnw' }]
+  })
+  const mappedId = (await service.context.scanner.indexFiles([mapped])).get(mapped)
+  core.mappedLinks = async (url) => url.endsWith('/79') ? [{ sourceItemId: '5', sourceTitle: 'Eşlenen', sourceArtist: 'Sanatçı', youtubeId: 'xLX10_p5Nnw' }] : []
+  r = await call('POST', '/downloads', { token: admin, body: { item: { ...playlist, url: 'https://www.deezer.com/playlist/79', only: [{ id: '5', title: 'Eşlenen', artist: 'Sanatçı', duration: 400 }] } } })
+  assert.equal(r.body.status, 'exists')
+  assert.deepEqual(r.body.trackIds, [mappedId])
+  assert.equal(core.calls.created.length, 2)
+})
+
+test('missing songs are picked from the source by ISRC or title and main artist', async () => {
+  const { pickWantedEntries } = await import('../modules/player/coreAdapter.js')
+  const entries = [
+    { title: 'Hırka', artist: 'Onur Can Özcan' },
+    { title: 'Kibrit', artist: 'Onur Can Özcan', isrc: 'TR1' },
+    { title: 'Yalnızlığın Ezgisi', artist: 'Ferhat Göçer, Onur Can Özcan' },
+    { title: 'Kış Ortasında (Official Video)', uploader: 'Onur Can Özcan' },
+    null,
+    { title: 'Dip (Live)', artist: 'Onur Can Özcan' }
+  ]
+  assert.deepEqual(pickWantedEntries(entries, [
+    { title: 'Başka Ad', artist: 'Kimse', isrc: 'tr1' },
+    { title: 'Yalnızlığın Ezgisi', artist: 'Ferhat Göçer' },
+    { title: 'Kış Ortasında', artist: 'Onur Can Özcan' },
+    { title: 'Dip', artist: 'Onur Can Özcan' }
+  ]), [1, 2, 3], 'a live version is another song')
+})
+
+test('refresh online replaces a song with the chosen version and keeps its places', async (t) => {
+  const { call, admin, core, service } = await setup(t, { config: { downloadBitrate: 'auto' } })
+  const { scanner, db } = service.context
+  const original = await core.produce('Sanatçı - Şarkı.mp3', { title: 'Şarkı', artist: 'Sanatçı', album: 'Albüm' })
+  fs.writeFileSync(original.replace(/\.mp3$/, '.lrc'), '[00:01.00]Eski')
+  const oldId = (await scanner.indexFiles([original])).get(original)
+  const added = Date.parse('2024-05-06T07:08:09Z')
+  db.prepare('UPDATE tracks SET added_at = ? WHERE id = ?').run(added, oldId)
+  const playlist = (await call('POST', '/playlists', { token: admin, body: { name: 'Liste' } })).body
+  await call('POST', `/playlists/${playlist.id}/tracks`, { token: admin, body: { trackIds: [oldId] } })
+  await call('PUT', `/favorites/track/${oldId}`, { token: admin })
+  await call('POST', '/history', { token: admin, body: { trackId: oldId, playedMs: 60000, completed: true } })
+  const replace = (body) => call('POST', '/admin/health/replace', { token: admin, body })
+
+  assert.equal((await replace({ trackId: oldId, source: { url: 'https://www.youtube.com/playlist?list=PL1' } })).status, 400, 'a playlist link is not one song')
+  assert.equal((await replace({ trackId: oldId, source: { url: 'http://music.youtube.com/watch?v=abcdefghijk' } })).status, 400)
+  const started = await replace({ trackId: oldId, source: { url: 'https://www.youtube.com/watch?v=abcdefghijk&list=RDabc', title: 'Şarkı (Canlı)', artist: 'Sanatçı' } })
+  assert.equal(started.status, 202, JSON.stringify(started.body))
+  await waitFor(() => core.calls.created.length === 1)
+  assert.equal(core.calls.created[0].url, 'https://www.youtube.com/watch?v=abcdefghijk', 'only the video, not its mix')
+  const progress = (await call('GET', '/admin/health/batch', { token: admin })).body.batch
+  assert.equal(progress.current.title, 'Şarkı')
+
+  // The chosen version: another title and a lower bitrate are fine.
+  const output = await core.produce('yeni.mp3', { title: 'Şarkı (Canlı)', artist: 'Sanatçı', album: 'Konser' })
+  fs.writeFileSync(output.replace(/\.mp3$/, '.lrc'), '[00:01.00]Yeni')
+  core.complete(core.calls.created[0].id, [output])
+  const done = await waitFor(async () => {
+    const { batch } = (await call('GET', '/admin/health/batch', { token: admin })).body
+    return batch && !batch.running ? batch : null
+  })
+  assert.equal(done.succeeded, 1, JSON.stringify(done.errors))
+  assert.ok(!fs.existsSync(output), 'the new file took the old name')
+  assert.equal(fs.readFileSync(original.replace(/\.mp3$/, '.lrc'), 'utf8'), '[00:01.00]Yeni')
+  const row = db.prepare('SELECT * FROM tracks WHERE rel_path = ?').get('Sanatçı - Şarkı.mp3')
+  assert.notEqual(row.id, oldId)
+  assert.equal(row.title, 'Şarkı (Canlı)')
+  assert.equal(row.added_at, added)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE id = ?').get(oldId).n, 0)
+  const pl = (await call('GET', `/playlists/${playlist.id}`, { token: admin })).body
+  assert.deepEqual(pl.tracks.map((x) => x.id), [row.id], 'the playlist keeps its song')
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM favorites WHERE item_type = 'track' AND item_id = ?").get(row.id).n, 1)
+  assert.equal(db.prepare('SELECT play_count FROM play_stats WHERE track_id = ?').get(row.id)?.play_count, 1)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM play_history WHERE track_id = ?').get(row.id).n, 1)
+
+  // Only admins.
+  await call('POST', '/admin/users', { token: admin, body: { username: 'dinleyici', password: 'dinleyici123' } })
+  const user = (await call('POST', '/auth/login', { body: { username: 'dinleyici', password: 'dinleyici123', client: 'device' } })).body.token
+  assert.equal((await call('POST', '/admin/health/replace', { token: user, body: { trackId: row.id, source: { url: 'https://music.youtube.com/watch?v=abcdefghijk' } } })).status, 403)
+})
+
 test('same link twice joins the running download', async (t) => {
   const { call, admin, core } = await setup(t)
   const a = await call('POST', '/downloads', { token: admin, body: { item: ytTrack('dup', 'Song', 'Artist') } })
@@ -228,6 +338,435 @@ test('same link twice joins the running download', async (t) => {
   assert.equal(a.body.id, b.body.id)
   await waitStatus(call, admin, a.body.id, 'downloading')
   assert.equal(core.calls.created.length, 1)
+})
+
+test('quality upgrade batches keep originals until a better recording is indexed', async (t) => {
+  const track = mapDeezerTrack({ id: 123, title: 'Parça', duration: 1, artist: { name: 'Sanatçı' } })
+  const { call, admin, core, service } = await setup(t, {
+    providers: [fakeProvider('deezer', { track: [track] })],
+    config: { downloadBitrate: 'auto', maxQueuedPerUser: 1 }
+  })
+  const { db, scanner } = service.context
+  const tags = { title: track.title, artist: track.artist, album: 'Albüm' }
+  const oldFiles = await Promise.all([core.produce('old-1.mp3', tags), core.produce('old-2.mp3', tags)])
+  const oldIds = [...(await scanner.indexFiles(oldFiles)).values()]
+  const addedLongAgo = Date.parse('2024-01-02T03:04:05Z')
+  db.prepare('UPDATE tracks SET added_at = ? WHERE id IN (?, ?)').run(addedLongAgo, ...oldIds)
+  await call('POST', '/admin/health/check', { token: admin })
+  const report = await waitFor(async () => (await call('GET', '/admin/health', { token: admin })).body.report)
+  assert.equal(report.lowBitrate.length, 2)
+  const runBatch = (action) => call('POST', '/admin/health/batch', { token: admin, body: { action, ids: oldIds } })
+  const finish = () => waitFor(async () => {
+    const { batch } = (await call('GET', '/admin/health', { token: admin })).body
+    return batch && !batch.running ? batch : null
+  })
+  async function completeUpgrade(name, bitrate) {
+    const file = await core.produce(name, tags)
+    const id = (await scanner.indexFiles([file])).get(file)
+    db.prepare('UPDATE tracks SET bitrate = ? WHERE id = ?').run(bitrate, id)
+    core.complete(core.calls.created.at(-1).id, [file])
+    return file
+  }
+
+  let result = await runBatch('replace-copies')
+  assert.equal(result.status, 202)
+  assert.equal(result.body.batch.total, 1, 'two low-quality copies share one download')
+  await waitFor(() => core.calls.created.length === 1)
+  assert.equal(core.calls.created[0].preset.bitrate, 'auto')
+  const current = await waitFor(async () => (await call('GET', '/admin/health', { token: admin })).body.batch.current?.download)
+  assert.ok(['queued', 'resolving', 'downloading'].includes(current.status), 'the batch shows its running download')
+  const { batch: running } = (await call('GET', '/admin/health', { token: admin })).body
+  assert.equal(running.current.title, track.title)
+  assert.equal(running.current.artist, track.artist)
+  assert.equal((await runBatch('download-better')).status, 409)
+  assert.equal((await call('POST', '/admin/health/trash', { token: admin, body: { trackId: oldIds[0] } })).status, 409)
+  assert.ok(oldFiles.every((file) => fs.existsSync(file)), 'both originals survive while the download runs')
+  await completeUpgrade('same-quality.mp3', 128000)
+  assert.equal((await finish()).errors[0].code, 'NO_BETTER_COPY')
+  assert.ok(oldFiles.every((file) => fs.existsSync(file)), 'unverified upgrades keep the originals')
+
+  service.context.updateConfig({ downloadBitrate: '192k' })
+  // "download-better" (the older action name) replaces the copies as well.
+  result = await runBatch('download-better')
+  assert.equal(result.status, 202)
+  await waitFor(() => core.calls.created.length === 2)
+  assert.equal(core.calls.created[1].preset.bitrate, '192k')
+  const best = await completeUpgrade('better-1.mp3', 192000)
+  const bestSize = fs.statSync(best).size
+  assert.equal((await finish()).succeeded, 1)
+  assert.ok(!fs.existsSync(best), 'the new copy takes over an old name')
+  const renamed = oldFiles.filter((file) => fs.existsSync(file))
+  assert.equal(renamed.length, 1, 'the other old copy is in the trash')
+  assert.equal(fs.statSync(renamed[0]).size, bestSize)
+  const row = db.prepare('SELECT bitrate, added_at FROM tracks WHERE rel_path = ?').get(path.relative(service.context.libraries.list().find((lib) => lib.isDefault).path, renamed[0]))
+  assert.equal(row?.bitrate, 192000, 'the library entry follows the rename')
+  assert.equal(row.added_at, addedLongAgo, 'a replacement is not "recently added"')
+})
+
+test('replacement reuses a download when provider seconds explain the duration difference', async (t) => {
+  const track = mapDeezerTrack({ id: 403, title: 'Parça', duration: 291, artist: { name: 'Sanatçı' } })
+  const { call, admin, core, service } = await setup(t, {
+    providers: [fakeProvider('deezer', { track: [track] })],
+    config: { downloadBitrate: 'auto' }
+  })
+  const { scanner, db } = service.context
+  const tags = { title: track.title, artist: track.artist, album: 'Albüm' }
+  const original = await core.produce('original.mp3', tags)
+  const originalId = (await scanner.indexFiles([original])).get(original)
+  const setDuration = db.prepare('UPDATE tracks SET duration = ? WHERE id = ?')
+  setDuration.run(272.3, originalId)
+
+  const status = async () => (await call('GET', '/admin/health', { token: admin })).body
+  await call('POST', '/admin/health/check', { token: admin })
+  await waitFor(async () => (await status()).report)
+  const start = () => call('POST', '/admin/health/batch', { token: admin, body: { action: 'replace-copies' } })
+  const finish = () => waitFor(async () => {
+    const { batch } = await status()
+    return batch && !batch.running ? batch : null
+  })
+
+  // The single-song button runs a batch of one.
+  const single = await call('POST', '/admin/health/redownload', { token: admin, body: { trackId: originalId } })
+  assert.equal(single.status, 200)
+  assert.equal(single.body.batch.total, 1)
+  await waitFor(() => core.calls.created.length === 1)
+  const output = await core.produce('already-downloaded.mp3', tags, { bitrate: 192 })
+  const outputId = (await scanner.indexFiles([output])).get(output)
+  setDuration.run(292.1, outputId)
+  core.complete(core.calls.created[0].id, [output])
+  assert.equal((await finish()).errors[0]?.code, 'NO_BETTER_COPY', 'a download of another length is not used')
+  assert.ok(fs.existsSync(original))
+
+  const batch = await start()
+  assert.equal(batch.status, 202)
+  await waitFor(() => core.calls.created.length === 2, { label: 'different provider second requires a fresh download' })
+  assert.ok(fs.existsSync(original))
+  await call('POST', `/admin/health/batch/${batch.body.batch.id}/control`, { token: admin, body: { command: 'cancel' } })
+  await finish()
+
+  setDuration.run(291.744, outputId)
+  const outputSize = fs.statSync(output).size
+  assert.equal((await start()).status, 202)
+  assert.equal((await finish()).succeeded, 1)
+  assert.equal(core.calls.created.length, 2, 'reuse the verified local file')
+  assert.ok(!fs.existsSync(output))
+  assert.equal(fs.statSync(original).size, outputSize, 'the upgrade takes the original name')
+})
+
+test('quality upgrades search the main artist and can take a different length when asked', async (t) => {
+  const tracks = [
+    mapDeezerTrack({ id: 404, title: 'Tavla', duration: 271, artist: { name: 'Sanatçı' } }),
+    mapDeezerTrack({ id: 405, title: 'Zor Mu', duration: 251, artist: { name: 'Sanatçı' } })
+  ]
+  const queries = []
+  const provider = { name: 'deezer', available: () => true, async search(q) { queries.push(q); return tracks } }
+  const { call, admin, core, service } = await setup(t, { providers: [provider], config: { downloadBitrate: 'auto' } })
+  const { scanner, db } = service.context
+  const files = await Promise.all(tracks.map((track) =>
+    core.produce(`${track.title}.mp3`, { title: track.title, artist: 'Sanatçı, Çeşitli Sanatçılar', album: 'Albüm' })))
+  const indexed = await scanner.indexFiles(files)
+  const ids = files.map((file) => indexed.get(file))
+  const setDuration = db.prepare('UPDATE tracks SET duration = ? WHERE id = ?')
+  setDuration.run(244.2, ids[0])
+  setDuration.run(233, ids[1])
+  const status = async () => (await call('GET', '/admin/health', { token: admin })).body
+  await call('POST', '/admin/health/check', { token: admin })
+  await waitFor(async () => (await status()).report)
+  const startBatch = (body) => call('POST', '/admin/health/batch', { token: admin, body: { action: 'replace-copies', ...body } })
+  const finish = () => waitFor(async () => {
+    const { batch } = await status()
+    return batch && !batch.running ? batch : null
+  })
+
+  assert.equal((await startBatch({})).status, 202)
+  const failed = await finish()
+  assert.deepEqual(failed.errors.map((e) => e.code), ['LENGTH_MISMATCH', 'LENGTH_MISMATCH'])
+  const tavla = failed.errors.find((e) => e.title === 'Tavla')
+  assert.equal(tavla.detail, '4:04 ↔ 4:31')
+  assert.deepEqual(tavla.trackIds, [ids[0]])
+  assert.ok(queries.includes('Sanatçı Tavla'), 'only the main artist is searched')
+  assert.equal(core.calls.created.length, 0)
+
+  assert.equal((await startBatch({ force: true })).status, 400, 'download anyway needs chosen songs')
+  const forced = await startBatch({ ids: tavla.trackIds, force: true })
+  assert.equal(forced.status, 202)
+  assert.equal(forced.body.batch.earlierErrors.length, 1, 'the other failure stays listed')
+  await waitFor(() => core.calls.created.length === 1)
+  assert.equal(core.calls.created[0].url, tracks[0].url)
+  const output = await core.produce('new/Tavla.mp3', { title: 'Tavla', artist: 'Sanatçı', album: 'Albüm' }, { bitrate: 192 })
+  const outputId = (await scanner.indexFiles([output])).get(output)
+  setDuration.run(271.2, outputId)
+  core.complete(core.calls.created[0].id, [output])
+  const done = await finish()
+  assert.equal(done.succeeded, 1, JSON.stringify(done.errors))
+  assert.deepEqual(done.earlierErrors.map((e) => e.title), ['Zor Mu'])
+  assert.equal(db.prepare('SELECT duration FROM tracks WHERE id = ?').get(outputId).duration, 271.2)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE id = ?').get(ids[0]).n, 0, 'the old copy left the library')
+})
+
+test('health upgrades use the original folder and empty only the player trash', async (t) => {
+  const track = mapDeezerTrack({ id: 403, title: 'Parça', duration: 1, artist: { name: 'Sanatçı' } })
+  const mount = process.env.GH_PLAYER_TEST_MUSIC_MOUNT
+  const { call, admin, core, service, root, downloads } = await setup(t, {
+    providers: [fakeProvider('deezer', { track: [track] })],
+    config: { downloadBitrate: 'auto' },
+    env: mount ? { DATA_DIR: '/usr/src/app' } : null
+  })
+  const music = mount ? fs.mkdtempSync(path.join(mount, 'gh-player-music-')) : path.join(root, 'music')
+  if (mount) {
+    t.after(() => fs.rmSync(music, { recursive: true, force: true }))
+    assert.notEqual(fs.statSync(music).dev, fs.statSync(service.dataDir).dev, 'exercise cross-device trash')
+    assert.equal(service.dataDir, '/usr/src/app/cache/player')
+  }
+  const { libraries, scanner } = service.context
+  const tags = { title: track.title, artist: track.artist, album: 'Albüm' }
+  const original = await writeTrack(path.join(music, 'album', 'original.mp3'), tags)
+  const previous = fs.readFileSync(original)
+  fs.writeFileSync(path.join(music, 'album', 'original.lrc'), '[00:01.00]Old')
+  fs.writeFileSync(path.join(music, 'album', 'original.lyrics'), '[00:01.00]Old tagger')
+  const library = libraries.add({ name: 'Music', path: music })
+  const oldId = (await scanner.indexFiles([original])).get(original)
+  const defaultLibrary = libraries.list().find((lib) => lib.isDefault)
+  libraries.update(defaultLibrary.id, { enabled: false })
+  const configured = path.join(root, 'configured')
+  fs.mkdirSync(configured)
+  libraries.setDownloadFolder(configured)
+
+  const status = async () => (await call('GET', '/admin/health', { token: admin })).body
+  const finish = () => waitFor(async () => {
+    const { batch } = await status()
+    return batch && !batch.running ? batch : null
+  })
+  await call('POST', '/admin/health/check', { token: admin })
+  await waitFor(async () => (await status()).report)
+
+  // One song: the upgrade lands in the original folder, the old copy goes to
+  // the trash and the new one takes its name (also for its lyrics).
+  const single = await call('POST', '/admin/health/redownload', { token: admin, body: { trackId: oldId } })
+  assert.equal(single.status, 200)
+  await waitFor(() => core.calls.created.length === 1)
+  const output = await writeTrack(path.join(downloads, 'staging', 'original.mp3'), tags, { bitrate: 192 })
+  fs.writeFileSync(path.join(path.dirname(output), 'original.lrc'), '[00:01.00]Fixture')
+  core.complete(core.calls.created[0].id, [output])
+  const first = await finish()
+  assert.equal(first.succeeded, 1, JSON.stringify(first.errors))
+  assert.notDeepEqual(fs.readFileSync(original), previous)
+  assert.ok(!fs.existsSync(path.join(path.dirname(original), 'original (2).mp3')))
+  assert.ok(!fs.existsSync(path.join(path.dirname(original), 'original (2).lrc')))
+  assert.equal(fs.readFileSync(path.join(path.dirname(original), 'original.lrc'), 'utf8'), '[00:01.00]Fixture')
+  assert.ok(!fs.existsSync(path.join(path.dirname(original), 'original.lyrics')), 'every old lyrics file goes with the old copy')
+  assert.ok(!fs.existsSync(output))
+  assert.deepEqual(fs.readdirSync(configured), [])
+
+  const other = await writeTrack(path.join(music, 'other-album', 'original.mp3'), tags)
+  const otherLyrics = path.join(music, 'other-album', 'original.lyrics')
+  fs.writeFileSync(otherLyrics, '[00:01.00]Kept')
+  await scanner.indexFiles([other])
+  await call('POST', '/admin/health/check', { token: admin })
+  await waitFor(async () => (await status()).report?.lowBitrate.length === 1)
+  const batch = await call('POST', '/admin/health/batch', { token: admin, body: { action: 'replace-copies' } })
+  assert.equal(batch.status, 202)
+  assert.equal(batch.body.batch.total, 1, 'the upgraded folder is done')
+  assert.equal((await call('POST', '/admin/health/trash/empty', { token: admin })).status, 409)
+  await waitFor(() => core.calls.created.length === 2)
+  const newest = await core.produce('staging/newest.mp3', tags, { bitrate: 192 })
+  core.complete(core.calls.created[1].id, [newest])
+  const finished = await finish()
+  assert.equal(finished.succeeded, 1, JSON.stringify(finished.errors))
+  assert.ok(!fs.existsSync(path.join(path.dirname(other), 'newest.mp3')))
+  assert.ok(fs.existsSync(other))
+  assert.ok(fs.existsSync(otherLyrics), 'old lyrics stay when the new copy has none')
+
+  const { trashPath } = await status()
+  assert.equal(trashPath, path.join(service.dataDir, 'trash'))
+  const [day] = fs.readdirSync(trashPath)
+  assert.deepEqual(fs.readFileSync(path.join(trashPath, day, String(library.id), 'album', 'original.mp3')), previous)
+  assert.equal(fs.readFileSync(path.join(trashPath, day, String(library.id), 'album', 'original.lrc'), 'utf8'), '[00:01.00]Old',
+    'old lyrics go to the trash when the new copy has its own')
+  assert.equal(fs.readFileSync(path.join(trashPath, day, String(library.id), 'album', 'original.lyrics'), 'utf8'), '[00:01.00]Old tagger')
+  if (process.platform !== 'win32') fs.symlinkSync(music, path.join(trashPath, 'outside'))
+  assert.equal((await call('POST', '/admin/health/trash/empty')).status, 401)
+  assert.equal((await call('POST', '/admin/health/trash/empty', { token: admin })).status, 200)
+  assert.deepEqual(fs.readdirSync(trashPath), [])
+  assert.ok(fs.existsSync(original))
+  assert.ok(fs.existsSync(other))
+})
+
+test('quality batches pause between tracks and cancel only their own active download', async (t) => {
+  const tracks = ['Birinci', 'İkinci'].map((title, i) =>
+    mapDeezerTrack({ id: i + 1, title, duration: 1, artist: { name: 'Sanatçı' } }))
+  const { call, admin, core, service } = await setup(t, { providers: [fakeProvider('deezer', { track: tracks })] })
+  const { db, scanner } = service.context
+  const tags = (track) => ({ title: track.title, artist: track.artist, album: 'Albüm' })
+  const originals = await Promise.all(tracks.map((track) => core.produce(`${track.title}.mp3`, tags(track))))
+  const originalIds = await scanner.indexFiles(originals)
+  const status = async () => (await call('GET', '/admin/health', { token: admin })).body
+  await call('POST', '/admin/health/check', { token: admin })
+  await waitFor(async () => (await status()).report)
+  const start = async (action, ids) => {
+    const res = await call('POST', '/admin/health/batch', { token: admin, body: { action, ids } })
+    assert.equal(res.status, 202)
+    return res.body.batch.id
+  }
+  const control = async (id, command) => {
+    const res = await call('POST', `/admin/health/batch/${id}/control`, { token: admin, body: { command } })
+    assert.equal(res.status, 200)
+    return res.body.batch
+  }
+  const finished = () => waitFor(async () => {
+    const { batch } = await status()
+    return batch && !batch.running ? batch : null
+  })
+
+  const id = await start('download-better')
+  await waitFor(() => core.calls.created.length === 1)
+  assert.equal((await control(id, 'pause')).paused, true)
+  const first = tracks.find((track) => track.url === core.calls.created[0].url)
+  const newFile = await core.produce('upgrade.mp3', tags(first))
+  const newId = (await scanner.indexFiles([newFile])).get(newFile)
+  db.prepare('UPDATE tracks SET bitrate = 192000 WHERE id = ?').run(newId)
+  core.complete(core.calls.created[0].id, [newFile])
+  await waitFor(async () => {
+    const { batch } = await status()
+    return batch.paused && batch.succeeded === 1 && !batch.currentTitle
+  })
+  assert.equal(core.calls.created.length, 1, 'pause leaves the next track waiting')
+  assert.equal((await control(id, 'resume')).paused, false)
+  await waitFor(() => core.calls.created.length === 2)
+  const active = core.calls.created[1]
+  assert.equal((await control(id, 'cancel')).canceled, true)
+  assert.equal((await finished()).done, 1)
+  assert.deepEqual(core.calls.canceled, [active.id])
+  await waitStatus(call, admin, active.tag, 'canceled')
+
+  const track = tracks.find((entry) => entry.url === active.url)
+  const regular = await call('POST', '/downloads', { token: admin, body: { item: track, force: true } })
+  await waitStatus(call, admin, regular.body.id, 'downloading')
+  const replacement = await start('replace-copies', [originalIds.get(originals[tracks.indexOf(track)])])
+  await waitFor(() => core.calls.created.length === 4)
+  const upgrade = core.calls.created[3]
+  await control(replacement, 'pause')
+  await control(replacement, 'cancel')
+  assert.equal((await finished()).canceled, true)
+  assert.deepEqual(core.calls.canceled, [active.id, upgrade.id], 'regular downloads survive batch cancellation')
+  await waitStatus(call, admin, regular.body.id, 'downloading')
+  assert.ok(originals.every((file) => fs.existsSync(file)))
+})
+
+test('a replacement batch resumes an existing download and interrupted trash move after restart', async (t) => {
+  const track = mapDeezerTrack({ id: 123, title: 'Parça', duration: 1, artist: { name: 'Sanatçı' } })
+  const first = await setup(t, { providers: [fakeProvider('deezer', { track: [track] })] })
+  const { call, admin, core } = first
+  const { db, scanner } = first.service.context
+  const tags = { title: track.title, artist: track.artist, album: 'Albüm' }
+  const oldFiles = await Promise.all(['same-song/a.mp3', 'same-song/b.mp3'].map((file) => core.produce(file, tags)))
+  const oldIds = [...(await scanner.indexFiles(oldFiles)).values()]
+  await call('POST', '/admin/health/check', { token: admin })
+  await waitFor(async () => (await call('GET', '/admin/health', { token: admin })).body.report)
+  const started = await call('POST', '/admin/health/batch', { token: admin, body: { action: 'replace-copies' } })
+  assert.equal(started.status, 202)
+  assert.equal(started.body.batch.total, 1)
+  await waitFor(() => core.calls.created.length === 1)
+  const job = core.calls.created[0]
+  await waitStatus(call, admin, job.tag, 'downloading')
+  const betterFile = await core.produce('new-version.mp3', tags, { bitrate: 192 })
+  const saved = getSetting(db, 'health_download_batch')
+  assert.deepEqual(saved.download, { id: job.tag, owned: true })
+
+  // Simulate a stop after the first file moved and before its library entry was dropped.
+  const archived = path.join(first.service.dataDir, 'trash', 'original.mp3')
+  fs.mkdirSync(path.dirname(archived), { recursive: true })
+  saved.moves[oldIds[0]] = archived
+  setSetting(db, 'health_download_batch', saved)
+  fs.renameSync(oldFiles[0], archived)
+  const source = path.dirname(oldFiles[1])
+  const placed = path.join(source, 'new-version.mp3')
+  const plan = { source: betterFile, file: placed, size: fs.statSync(betterFile).size }
+  db.prepare("UPDATE downloads SET status = 'indexing', upgrade_output = ? WHERE id = ?").run(JSON.stringify(plan), job.tag)
+  await first.stop()
+  assert.deepEqual(core.calls.canceled, [])
+  fs.renameSync(betterFile, placed)
+  core.vanish(job.id)
+
+  // Simulate an unplugged source drive at startup.
+  fs.renameSync(source, `${source}-unplugged`)
+  const restarted = await startPlayerService({
+    env: {}, logger: silentLogger, dataDir: first.service.dataDir, cacheDir: first.service.cacheDir,
+    defaultLibraryDir: first.downloads, initialScanDelayMs: -1, core, bridgePollMs: 40,
+    onlineOptions: { providers: [] }
+  })
+  t.after(() => restarted.stop())
+  const { health } = restarted.context
+  const paused = await waitFor(() => {
+    const { batch } = health.status()
+    return batch?.blocked ? batch : null
+  })
+  assert.equal(paused.id, started.body.batch.id)
+  assert.equal(paused.paused, true)
+  assert.equal(paused.done, 0)
+  fs.renameSync(`${source}-unplugged`, source)
+  health.controlBatch(paused.id, 'resume')
+  const done = await waitFor(() => !health.status().batch.running && health.status().batch)
+  assert.equal(done.succeeded, 1)
+  assert.deepEqual(done.errors, [])
+  assert.equal(core.calls.created.length, 1, 'reuse the persisted download without searching or creating it again')
+  assert.ok(fs.existsSync(archived))
+  assert.ok(!fs.existsSync(path.join(source, 'new-version.mp3')))
+  assert.deepEqual(oldFiles.filter((file) => fs.existsSync(file)).length, 1, 'the new copy takes an old name')
+  assert.ok(!fs.existsSync(betterFile))
+  assert.equal(restarted.context.db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE id IN (?,?)').get(...oldIds).n, 0)
+})
+
+test('removing a downloaded track invalidates online ownership even with a reused legacy ID', async (t) => {
+  const item = mapDeezerTrack({
+    id: 66133873, title: 'Gül Tükendi, Ben Tükendim', duration: 347,
+    link: 'https://www.deezer.com/track/66133873', artist: { name: 'Kıvırcık Ali' }
+  })
+  const { call, base, admin, core, service } = await setup(t, {
+    providers: [fakeProvider('deezer', { track: [item] })]
+  })
+  const { db, scanner } = service.context
+  const response = await call('POST', '/downloads', { token: admin, body: { item } })
+  const job = await waitStatus(call, admin, response.body.id, 'downloading')
+  const file = await core.produce('original.mp3', { title: 'Different provider tags', artist: 'Kıvırcık Ali' })
+  core.complete(core.calls.created[0].id, [file])
+  const done = await waitStatus(call, admin, job.id, 'completed')
+  const [originalId] = done.trackIds
+  assert.ok(originalId)
+  const onlineItem = async () => (await call('GET', '/online/search?q=Kivircik&kinds=track', { token: admin })).body.tracks[0]
+  assert.equal((await onlineItem()).library.trackId, originalId)
+
+  const updates = await fetch(base + '/downloads/events', {
+    headers: { authorization: `Bearer ${admin}` }, signal: AbortSignal.timeout(5000)
+  })
+  const reader = updates.body.getReader()
+  const decoder = new TextDecoder()
+  try {
+    let received = decoder.decode((await reader.read()).value)
+    assert.match(received, /event: ready/)
+    assert.equal((await call('POST', '/admin/health/trash', { token: admin, body: { trackId: originalId } })).status, 200)
+    while (!received.includes('event: library-removed')) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      received += decoder.decode(chunk.value)
+    }
+    assert.match(received, /event: library-removed/)
+  } finally {
+    await reader.cancel()
+  }
+  assert.equal((await onlineItem()).library, null)
+  assert.equal((await call('GET', `/tracks/${originalId}`, { token: admin })).status, 404)
+
+  const replacement = await core.produce('replacement.mp3', { title: 'Vay', artist: 'Hande Yener' })
+  const replacementId = (await scanner.indexFiles([replacement])).get(replacement)
+  assert.ok(replacementId > originalId, 'the scanner never recycles IDs')
+  // Represent a completed row that still points to an ID already reused by an older version.
+  db.prepare('UPDATE downloads SET result_track_ids = ? WHERE id = ?').run(JSON.stringify([replacementId]), done.id)
+  db.prepare('UPDATE tracks SET added_at = ? WHERE id = ?').run(done.completedAt + 1, replacementId)
+  assert.equal((await onlineItem()).library, null)
+  assert.deepEqual((await call('GET', `/downloads/${done.id}`, { token: admin })).body.trackIds, [])
+  const again = await call('POST', '/downloads', { token: admin, body: { item } })
+  assert.equal(again.status, 202)
 })
 
 test('transient failures retry with backoff, then fail; permanent ones fail fast', async (t) => {

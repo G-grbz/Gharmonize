@@ -194,7 +194,7 @@ test('artwork URLs differ between installs and change when the cover changes', a
   assert.equal(await pickedCover(docker.service, 'track', retagged.id), sha1(GREEN))
 })
 
-test('a reused track id does not inherit the deleted song\'s artwork URL', async (t) => {
+test('a deleted song\'s id is never given to a new song, so its artwork URL cannot be inherited', async (t) => {
   const inst = await startInstance(t, async (lib) => {
     await writeSong(path.join(lib, 'A - Eski.mp3'), { title: 'Eski', artist: 'A', album: 'Eski Albüm' }, RED)
   })
@@ -205,7 +205,8 @@ test('a reused track id does not inherit the deleted song\'s artwork URL', async
   await inst.service.context.scanner.requestScan('all')
   const after = Object.values(await tracksByTitle(inst.call))[0]
   assert.equal(after.title, 'Yeni')
-  assert.equal(after.id, before.id, 'precondition: SQLite reuses the freed id')
+  assert.ok(after.id > before.id, 'the freed id stays retired')
+  assert.equal((await inst.call('GET', `/tracks/${before.id}`)).status, 404, 'the old id points to nothing')
   assert.notEqual(after.artwork, before.artwork)
   assert.equal(await pickedCover(inst.service, 'track', after.id), sha1(BLUE))
 })
@@ -255,14 +256,15 @@ test('waveforms are revalidated by file identity, never cached by track id', { s
   assert.equal((await docker.revalidate(`/waveform/${dockerTrack.id}`, dockerTag)).status, 304)
   assert.equal((await desktop.revalidate(`/waveform/${desktopTrack.id}`, dockerTag)).status, 200)
 
-  // A song that takes over a freed id gets a new ETag.
+  // A song added after a deletion gets a new id and a new ETag.
   fs.rmSync(path.join(docker.library, 'Gülşen - Bangır Bangır.mp3'))
   await docker.service.context.scanner.requestScan('all')
   await writeSong(path.join(docker.library, 'Candan Erçetin - Gamsız Hayat.mp3'), { title: 'Gamsız Hayat', artist: 'Candan Erçetin', album: 'Neden' })
   await docker.service.context.scanner.requestScan('all')
-  const reused = Object.values(await tracksByTitle(docker.call))[0]
-  assert.equal(reused.id, dockerTrack.id, 'precondition: SQLite reuses the freed id')
-  const after = await docker.revalidate(`/waveform/${reused.id}`, dockerTag)
+  const added = Object.values(await tracksByTitle(docker.call))[0]
+  assert.ok(added.id > dockerTrack.id, 'the freed id stays retired')
+  assert.equal((await docker.revalidate(`/waveform/${dockerTrack.id}`, dockerTag)).status, 404, 'the old id has no waveform')
+  const after = await docker.revalidate(`/waveform/${added.id}`, dockerTag)
   assert.equal(after.status, 200)
   assert.notEqual(after.etag, dockerTag)
 })

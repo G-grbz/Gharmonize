@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { AUDIO_EXTENSIONS, normalizeKey } from './scanner.js'
 import { toFrozenEntries } from './ytTitles.js'
-import { cleanTitleForMatch, primaryArtistKey } from './songKey.js'
+import { cleanTitleForMatch, primaryArtistKey, songKey } from './songKey.js'
 
 export class BridgeError extends Error {
   constructor(code, message, { status = 400, permanent = false } = {}) {
@@ -89,6 +89,25 @@ export async function prepareYouTubePlaylist(m, url, { isAutomix = false } = {})
   return out
 }
 
+// Positions (0-based) of the source entries that are one of the `wanted`
+// songs ({ title, artist, isrc }): same ISRC, or same title and main artist.
+export function pickWantedEntries(entries, wanted) {
+  const isrcs = new Set(wanted.map((song) => String(song.isrc || '').toUpperCase()).filter(Boolean))
+  const keys = wanted.map((song) => ({ title: fold(cleanTitleForMatch(song.title) || song.title), artist: fold(primaryArtistKey(song.artist)) }))
+  const exact = new Set(wanted.map((song) => songKey(song.title, song.artist)).filter(Boolean))
+  const picked = []
+  ;(Array.isArray(entries) ? entries : []).forEach((entry, index) => {
+    if (!entry) return
+    const artist = entry.artist || entry.uploader || entry.channel || ''
+    const isrc = String(entry.isrc || '').toUpperCase()
+    const title = fold(cleanTitleForMatch(entry.title || entry.track) || entry.title || '')
+    const artistKey = fold(primaryArtistKey(artist))
+    if ((isrc && isrcs.has(isrc)) || exact.has(songKey(entry.title || entry.track, artist)) ||
+      keys.some((key) => key.title && key.title === title && (!key.artist || !artistKey || key.artist === artistKey))) picked.push(index)
+  })
+  return picked
+}
+
 // Collects absolute output files from a finished core job.
 export function collectJobOutputs(job, resolveDownloadPathToAbs) {
   const raw = job?.resultPath
@@ -167,9 +186,15 @@ export function createCoreAdapter({ logger = console } = {}) {
     throw new BridgeError('UNSUPPORTED_SOURCE', 'This link cannot be downloaded into the library.', { permanent: true })
   }
 
-  async function createAndEnqueue({ url, preset, tag }) {
+  // `only`: download just these songs of an album or playlist (the ones the
+  // library lacks), the way the classic UI downloads selected tracks.
+  async function createAndEnqueue({ url, preset, tag, isCanceled, only = null }) {
     const m = await loadCore()
     const info = await inspect(url)
+    const checkCanceled = () => {
+      if (isCanceled?.()) throw new BridgeError('DOWNLOAD_CANCELED', 'The download was canceled.')
+    }
+    checkCanceled()
     const format = DOWNLOAD_FORMATS[preset.format] ? preset.format : 'mp3'
     const bitrate = DOWNLOAD_FORMATS[format].bitrates.includes(preset.bitrate) ? preset.bitrate : DOWNLOAD_FORMATS[format].defaultBitrate
     const common = {
@@ -212,6 +237,13 @@ export function createCoreAdapter({ logger = console } = {}) {
         if (!prepared) throw new BridgeError('SOURCE_EMPTY', 'The playlist is empty or could not be read.', { permanent: true })
         metadata.frozenEntries = prepared.frozenEntries
         if (prepared.selectedIds) metadata.selectedIds = prepared.selectedIds
+        if (only?.length) {
+          const picked = pickWantedEntries(prepared.frozenEntries, only)
+          if (!picked.length) throw new BridgeError('NOTHING_TO_DOWNLOAD', 'None of the missing songs were found in this source.', { permanent: true })
+          metadata.frozenEntries = picked.map((i) => prepared.frozenEntries[i])
+          metadata.selectedIndices = picked.map((i) => i + 1)
+          if (prepared.selectedIds) metadata.selectedIds = picked.map((i) => prepared.selectedIds[i])
+        }
         if (prepared.frozenTitle) metadata.frozenTitle = prepared.frozenTitle
         if (prepared.albumArtist) {
           metadata.albumArtist = prepared.albumArtist
@@ -226,8 +258,14 @@ export function createCoreAdapter({ logger = console } = {}) {
         const permanent = /404|not found|SPOTIFY_MIX_UNSUPPORTED|required/i.test(msg)
         throw new BridgeError('SOURCE_RESOLVE_FAILED', msg.slice(0, 300), { permanent })
       }
-      const items = resolved?.items || []
-      if (!items.length) throw new BridgeError('SOURCE_EMPTY', 'The source has no tracks.', { permanent: true })
+      checkCanceled()
+      const all = resolved?.items || []
+      if (!all.length) throw new BridgeError('SOURCE_EMPTY', 'The source has no tracks.', { permanent: true })
+      // Positions in the source (1-based), kept as track numbers when only
+      // some songs are downloaded, like the classic track selection.
+      const positions = only?.length ? pickWantedEntries(all, only).map((i) => i + 1) : null
+      if (positions && !positions.length) throw new BridgeError('NOTHING_TO_DOWNLOAD', 'None of the missing songs were found in this source.', { permanent: true })
+      const items = positions ? positions.map((n) => all[n - 1]) : all
       const ids = []
       const frozen = []
       await m.mappedCache.mapMappedMusicWithCache({ ...resolved, items }, {
@@ -235,13 +273,13 @@ export function createCoreAdapter({ logger = console } = {}) {
         source: mapped.source,
         format,
         concurrency: common.spotifyConcurrency,
-        replaceManifest: true,
+        replaceManifest: !positions,
         onUpdate: (idx, item) => {
           if (!item?.id) return
           ids[idx] = item.id
           // Same entry shape as the classic matching flow (keeps the source
           // album and cover so the file gets the right artwork).
-          frozen[idx] = { ...item, index: idx + 1, thumbnails: [] }
+          frozen[idx] = { ...item, index: positions ? positions[idx] : idx + 1, thumbnails: [] }
         }
       })
       const selectedIds = ids.filter(Boolean)
@@ -252,13 +290,14 @@ export function createCoreAdapter({ logger = console } = {}) {
         isAutomix: false,
         spotifyKind: resolved.kind,
         spotifyTitle: resolved.title,
-        selectedIndices: 'all',
+        selectedIndices: positions || 'all',
         selectedIds,
         frozenEntries: frozen.filter(Boolean),
         frozenTitle: resolved.title || mapped.label
       }
     }
 
+    checkCanceled()
     const job = m.store.createJob({
       status: 'queued',
       progress: 0,
@@ -276,6 +315,16 @@ export function createCoreAdapter({ logger = console } = {}) {
     m.queue.enqueueJob(job.id, () => m.processor.processJob(job.id, null, format, bitrate))
     logger.log?.(`🎧 [player] download queued as job ${job.id} (${info.provider})`)
     return { jobId: job.id, provider: info.provider }
+  }
+
+  // Which YouTube video the core matched each song of an album or playlist
+  // link to (its mapping cache): [{ sourceItemId, sourceItemUrl, sourceTitle,
+  // sourceArtist, youtubeId }]. Empty for links that were never mapped.
+  async function mappedLinks(url) {
+    if (!url) return []
+    const cache = await import('../mappedMusicCache.js')
+    const manifest = cache.readMappedMusicManifest(cache.getMappedMusicSourceKey(url))
+    return (manifest?.tracks || []).filter((entry) => entry.youtubeId)
   }
 
   async function getJob(jobId) {
@@ -327,5 +376,5 @@ export function createCoreAdapter({ logger = console } = {}) {
     return `https://www.youtube.com/watch?v=${pick.id}`
   }
 
-  return { inspect, createAndEnqueue, getJob, cancel, cleanupJob, findAlternative }
+  return { inspect, createAndEnqueue, getJob, cancel, cleanupJob, findAlternative, mappedLinks }
 }

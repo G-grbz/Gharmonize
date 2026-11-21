@@ -287,10 +287,11 @@ export class SettingsManager {
 
                 <div class="form-group">
                 <label for="f_FRONTEND_UI" class="settings-field-label">FRONTEND_UI</label>
-                <div class="settings-field-hint muted" data-i18n="settings.frontendUi">Açılışta kullanılacak ön uç: classic = mevcut UI, YTLive = yeni müzik arayüzü.</div>
+                <div class="settings-field-hint muted" data-i18n="settings.frontendUi">Açılışta kullanılacak ön uç: classic = mevcut UI, YTLive = müzik arayüzü, Player = Gharmonize Player (açık değilse classic açılır).</div>
                 <select id="f_FRONTEND_UI">
                     <option value="classic">classic</option>
                     <option value="ytlive">YTLive</option>
+                    <option value="player">Player</option>
                 </select>
                 </div>
 
@@ -1193,7 +1194,7 @@ export class SettingsManager {
             document.getElementById('f_TRUST_PROXY').value = s.TRUST_PROXY || '0';
             document.getElementById('f_YTDLP_BIN').value = s.YTDLP_BIN || '';
             document.getElementById('f_UPLOAD_MAX_BYTES').value = s.UPLOAD_MAX_BYTES || '';
-            document.getElementById('f_FRONTEND_UI').value = s.FRONTEND_UI === 'ytlive' ? 'ytlive' : 'classic';
+            document.getElementById('f_FRONTEND_UI').value = ['ytlive', 'player'].includes(s.FRONTEND_UI) ? s.FRONTEND_UI : 'classic';
             this.applyServerHost(s.GHARMONIZE_HOST, data.serverHost);
             document.getElementById('f_GHARMONIZE_ACCESS_MODE').value = s.GHARMONIZE_ACCESS_MODE === 'admin' ? 'admin' : 'none';
             document.getElementById('f_GHARMONIZE_TEMP_ACCESS_ENABLED').checked = String(s.GHARMONIZE_TEMP_ACCESS_ENABLED || '0') === '1';

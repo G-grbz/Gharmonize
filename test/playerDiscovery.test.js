@@ -96,7 +96,7 @@ function createFakeSources() {
   return { sources: { deezer, youtube, spotify, apple }, calls }
 }
 
-async function setup(t, { shelfTimeoutMs = 2000, core = null } = {}) {
+async function setup(t, { shelfTimeoutMs = 2000, core = null, healthOptions = {} } = {}) {
   const root = tmpDir('discover')
   const downloads = path.join(root, 'outputs')
   await writeTrack(path.join(downloads, 'Sezen Aksu', 'Gülümse', '01.mp3'), { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Gülümse', trackNumber: '1', genre: 'Pop' })
@@ -107,7 +107,7 @@ async function setup(t, { shelfTimeoutMs = 2000, core = null } = {}) {
   const service = await startPlayerService({
     env: {}, logger: silentLogger, dataDir: path.join(root, 'data'), cacheDir: path.join(root, 'cache'),
     defaultLibraryDir: downloads, initialScanDelayMs: -1, core: core || { inspect: async () => ({}) }, bridgePollMs: 1000,
-    discoverySources: fake.sources, discoveryOptions: { shelfTimeoutMs }
+    discoverySources: fake.sources, discoveryOptions: { shelfTimeoutMs }, healthOptions
   })
   const router = createPlayerRouter(service.context, {
     adminBridge: () => ({ getSession: () => false, verifyPassword: (pw) => pw === 'GharmonizeAdmin1' }),
@@ -644,10 +644,15 @@ test('library health: duplicates (best copy first), trash moves the file, covers
   assert.ok(Array.isArray(report.lowBitrate) && Array.isArray(report.untagged))
 
   const copy = report.duplicates[0].find((x) => x.path.startsWith('Kopya'))
+  fs.writeFileSync(path.join(lib.path, 'Kopya', 'Hadi Bakalım.lrc'), '[00:01.00]Söz')
+  fs.writeFileSync(path.join(lib.path, 'Kopya', 'Hadi Bakalım.lyrics'), '[00:01.00]Söz')
   r = await call('POST', '/admin/health/trash', { token: admin, body: { trackId: copy.id } })
   assert.equal(r.status, 200)
   assert.ok(!fs.existsSync(path.join(lib.path, 'Kopya', 'Hadi Bakalım.mp3')), 'moved away')
   assert.ok(fs.existsSync(path.join(service.dataDir, 'trash', r.body.trashedTo)), 'kept in the player trash')
+  assert.deepEqual(fs.readdirSync(path.join(lib.path, 'Kopya')), [], 'its lyrics files went too')
+  const trashed = path.join(service.dataDir, 'trash', r.body.trashedTo).replace(/\.mp3$/, '')
+  assert.ok(fs.existsSync(`${trashed}.lrc`) && fs.existsSync(`${trashed}.lyrics`))
   assert.equal((await call('GET', '/search?q=hadi', { token: admin })).body.tracks.length, 1)
   assert.equal((await call('GET', '/admin/health', { token: admin })).body.report.duplicates.length, 0)
 
@@ -660,6 +665,68 @@ test('library health: duplicates (best copy first), trash moves the file, covers
   assert.equal((await call('GET', '/admin/health', { token: user })).status, 403)
 })
 
+test('library health keeps every song\'s lyrics as one .lrc file and looks up missing lyrics', async (t) => {
+  const asked = []
+  const fetchLyrics = async (artist, title) => {
+    asked.push(`${artist} - ${title}`)
+    return title === 'Bulunur' ? { syncedLyrics: '[00:01.00]Online söz' } : null
+  }
+  const { call, admin, service } = await setup(t, { healthOptions: { fetchLyrics } })
+  const lib = service.context.libraries.list().find((l) => l.isDefault)
+  const dir = path.join(lib.path, 'Sözler')
+  const file = (name) => path.join(dir, name)
+  for (const title of ['Dönüşür', 'Çift', 'Sahiplenir', 'Kopyalı', 'Bulunur', 'Bulunmaz']) {
+    await writeTrack(file(`${title}.mp3`), { title, artist: 'Sanatçı, Çeşitli Sanatçılar', album: 'Sözler' })
+  }
+  fs.writeFileSync(file('Dönüşür.lyrics'), '[00:01.00]Senkron')
+  fs.writeFileSync(file('Çift.lrc'), 'Düz metin')
+  fs.writeFileSync(file('Çift.lyrics'), '[00:01.00]Senkron olan')
+  fs.writeFileSync(file('Sahiplenir (2).lrc'), '[00:01.00]Kopyanın sözü')
+  fs.writeFileSync(file('Kopyalı.lrc'), '[00:01.00]Asıl')
+  fs.writeFileSync(file('Kopyalı (3).lyrics'), '[00:01.00]Fazla')
+  fs.writeFileSync(file('Silinmiş Şarkı.lrc'), '[00:01.00]Sahipsiz')
+  fs.writeFileSync(file('notlar.txt'), 'bir söz dosyası değil')
+  await service.context.scanner.requestScan('all')
+
+  const status = async () => (await call('GET', '/admin/health', { token: admin })).body
+  const finish = () => waitFor(async () => {
+    const { batch } = await status()
+    return batch && !batch.running ? batch : null
+  })
+  await call('POST', '/admin/health/check', { token: admin })
+  const { lyrics } = await waitFor(async () => (await status()).report, { label: 'health report' })
+  const plans = Object.fromEntries(lyrics.tidy.map((item) => [item.files.join('+'), item.kind]))
+  assert.deepEqual(plans, {
+    'Dönüşür.lyrics': 'convert',
+    'Çift.lyrics+Çift.lrc': 'duplicates',
+    'Sahiplenir (2).lrc': 'adopt',
+    'Kopyalı (3).lyrics': 'copy',
+    'Silinmiş Şarkı.lrc': 'orphan'
+  })
+  assert.equal(lyrics.tidyCount, 5)
+  const missing = lyrics.missing.filter((track) => track.path.startsWith('Sözler'))
+  assert.deepEqual(missing.map((track) => track.title).sort(), ['Bulunmaz', 'Bulunur'], 'an adopted copy is not missing')
+
+  assert.equal((await call('POST', '/admin/health/batch', { token: admin, body: { action: 'lyrics-tidy' } })).status, 202)
+  assert.equal((await finish()).succeeded, 5)
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => !name.endsWith('.mp3')).sort(),
+    ['Dönüşür.lrc', 'Kopyalı.lrc', 'Sahiplenir.lrc', 'notlar.txt', 'Çift.lrc'].sort())
+  assert.equal(fs.readFileSync(file('Çift.lrc'), 'utf8'), '[00:01.00]Senkron olan', 'the synced copy is kept')
+  assert.equal(fs.readFileSync(file('Kopyalı.lrc'), 'utf8'), '[00:01.00]Asıl')
+  assert.equal((await status()).report.lyrics.tidyCount, 0)
+
+  const ids = missing.map((track) => track.id)
+  assert.equal((await call('POST', '/admin/health/batch', { token: admin, body: { action: 'lyrics-fetch', ids } })).status, 202)
+  const fetched = await finish()
+  assert.equal(fetched.succeeded, 1)
+  assert.deepEqual(fetched.errors.map((e) => [e.title, e.code]), [['Bulunmaz', 'LYRICS_NOT_FOUND']])
+  assert.equal(fs.readFileSync(file('Bulunur.lrc'), 'utf8'), '[00:01.00]Online söz')
+  assert.ok(asked.includes('Sanatçı - Bulunmaz'), 'the main artist is tried as well')
+  const bulunur = missing.find((track) => track.title === 'Bulunur')
+  const shown = (await call('GET', `/tracks/${bulunur.id}/lyrics`, { token: admin })).body
+  assert.equal(shown.lines?.[0]?.text, 'Online söz', 'the player shows the saved lyrics')
+})
+
 test('units: duplicate grouping keeps different versions apart', async () => {
   const { findDuplicates } = await import('../modules/player/health.js')
   const row = (id, title, duration, extra = {}) => ({ id, title, artist_name: 'Tarkan', duration, bitrate: 128000, lossless: 0, size: 1, ...extra })
@@ -668,4 +735,77 @@ test('units: duplicate grouping keeps different versions apart', async () => {
     row(4, 'Kuzu Kuzu', 230, { lossless: 1 }), row(5, 'Kuzu Kuzu', 231)
   ])
   assert.deepEqual(groups.map((g) => g.map((x) => x.id)), [[2, 1], [4, 5]], 'best copy first; a much longer version is not a duplicate')
+})
+
+test('library health batches keep the best file and move only selected duplicates', async (t) => {
+  const { call, admin, service } = await setup(t)
+  const lib = service.context.libraries.list().find((l) => l.isDefault)
+  const tags = { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Gülümse' }
+  const first = await writeTrack(path.join(lib.path, 'Kopya A.mp3'), tags)
+  const second = await writeTrack(path.join(lib.path, 'Kopya B.mp3'), tags)
+  await service.context.scanner.requestScan('all')
+  service.context.db.prepare("UPDATE tracks SET bitrate = 320000 WHERE rel_path LIKE 'Sezen Aksu/%/01.mp3'").run()
+  const lyricsA = path.join(lib.path, 'Kopya A.lyrics')
+  const lyricsB = path.join(lib.path, 'Kopya B.lrc')
+  fs.writeFileSync(lyricsA, 'A')
+  fs.writeFileSync(lyricsB, 'B')
+  // Another audio file named "Kopya B" still uses its lyrics.
+  fs.writeFileSync(path.join(lib.path, 'Kopya B.flac'), '')
+  const status = async () => (await call('GET', '/admin/health', { token: admin })).body
+  const run = (action, ids) => call('POST', '/admin/health/batch', { token: admin, body: { action, ids } })
+  const finish = () => waitFor(async () => {
+    const { batch } = await status()
+    return batch && !batch.running ? batch : null
+  })
+  await call('POST', '/admin/health/check', { token: admin })
+  const report = await waitFor(async () => (await status()).report)
+  const [best, ...copies] = report.duplicates[0]
+  const chosen = copies.find((track) => track.path === 'Kopya A.mp3').id
+  assert.equal(best.bitrate, 320000)
+  assert.equal((await run('trash-selected', [chosen])).status, 202)
+  assert.equal((await finish()).succeeded, 1)
+  assert.equal(fs.existsSync(first), false)
+  assert.equal(fs.existsSync(lyricsA), false)
+  assert.equal(fs.existsSync(second), true)
+  assert.equal((await run('keep-best')).status, 202)
+  assert.equal((await finish()).succeeded, 1)
+  assert.equal(fs.existsSync(second), false)
+  assert.equal(fs.existsSync(lyricsB), true, 'lyrics shared with another audio file stay')
+  assert.equal(fs.existsSync(path.join(lib.path, best.path)), true)
+  assert.equal((await status()).report.duplicates.length, 0)
+})
+
+test('library health cover batches support selected and remaining albums', async (t) => {
+  const { service } = await setup(t)
+  const { db, libraries, artwork, scanner, bridge, online } = service.context
+  const lib = libraries.list().find((l) => l.isDefault)
+  const other = await writeTrack(path.join(lib.path, 'Başka Albüm', 'song.mp3'), {
+    title: 'Başka Parça', artist: 'Sezen Aksu', album: 'Başka Albüm'
+  })
+  await scanner.requestScan('all')
+  const { createLibraryHealth } = await import('../modules/player/health.js')
+  const covers = Buffer.alloc(1200)
+  covers.set([0xff, 0xd8, 0xff])
+  const health = createLibraryHealth({
+    db, libraries, artwork, scanner, bridge, online, trashDir: path.join(service.dataDir, 'trash'),
+    sources: { deezer: { searchAlbums: async () => ['Gülümse', 'Başka Albüm'].map((title) =>
+      ({ title, artist: 'Sezen Aksu', artworkUrl: 'https://cover.dzcdn.net/fixture.jpg' })) } },
+    fetchImpl: async () => new Response(covers)
+  })
+  const user = { id: 1, role: 'admin' }
+  health.start(user.id)
+  const report = await waitFor(() => health.status().report)
+  const first = report.missingCovers.find((album) => album.title === 'Gülümse')
+  const coverPath = path.join(lib.path, 'Sezen Aksu', 'Gülümse', 'cover.jpg')
+  const otherCover = path.join(path.dirname(other), 'cover.jpg')
+  const finish = () => waitFor(() => !health.status().batch.running && health.status().batch)
+  health.startBatch(user, { action: 'add-covers', ids: [first.id] })
+  assert.equal((await finish()).succeeded, 1)
+  assert.deepEqual(fs.readFileSync(coverPath), covers)
+  assert.equal(fs.existsSync(otherCover), false)
+  health.startBatch(user, { action: 'add-covers' })
+  assert.equal((await finish()).succeeded, 1)
+  assert.deepEqual(fs.readFileSync(otherCover), covers)
+  assert.equal(health.status().report.missingCovers.length, 0)
+  await health.stop()
 })

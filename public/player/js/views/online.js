@@ -30,6 +30,18 @@ function downloadEachButton(tracks) {
   return btn
 }
 
+// "Download" on an album or playlist the library partly has: only the
+// missing songs are requested (and the button says so).
+function downloadMissingButton(item, kind, tracks) {
+  const missing = tracks.filter((tr) => !tr.library)
+  const partial = missing.length > 0 && missing.length < tracks.length
+  const only = partial ? missing.map((tr) => ({ id: tr.id, url: tr.url, title: tr.title, artist: tr.artist, isrc: tr.isrc, duration: tr.duration })) : undefined
+  return downloadButton({ ...item, kind, trackCount: tracks.length || item.trackCount, only }, {
+    compact: false,
+    idleLabel: partial ? t('player.online.downloadMissingCount', { n: missing.length }) : null
+  })
+}
+
 function ownedChip(owned, total) {
   if (!total) return null
   const complete = owned >= total
@@ -64,7 +76,7 @@ async function albumView(query) {
   const extra = []
   const complete = album.library?.complete
   if (album.library?.albumId) extra.push(h('a', { class: 'btn btn--outline btn--pill', href: `#/album/${album.library.albumId}` }, icon('library', { size: 18 }), t('player.online.openInLibrary')))
-  if (!complete && app.canDownload) extra.push(downloadButton({ ...album, kind: 'album', trackCount: tracks.length || album.trackCount }, { compact: false }))
+  if (!complete && app.canDownload) extra.push(downloadMissingButton(album, 'album', tracks))
   if (complete || app.canDownload) extra.push(onlineSave(album, 'album', tracks))
   extra.push(sourceMenu(album))
   root.append(playable(tracks)
@@ -128,7 +140,7 @@ async function playlistView(query) {
     }))
   const extra = []
   if (app.canDownload && owned < tracks.length) {
-    extra.push(pl.downloadable === false ? downloadEachButton(tracks) : downloadButton({ ...pl, kind: 'playlist', trackCount: tracks.length }, { compact: false }))
+    extra.push(pl.downloadable === false ? downloadEachButton(tracks) : downloadMissingButton(pl, 'playlist', tracks))
   }
   if (owned || app.canDownload) extra.push(onlineSave(pl, 'playlist', tracks))
   if (pl.downloadable !== false) extra.push(followButton(pl, data.follow))

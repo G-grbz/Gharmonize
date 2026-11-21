@@ -105,6 +105,15 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
     val o = get("/online/search?q=${enc(q)}&kinds=track,album,artist&limit=20")
     return OnlineSearchResult(o.optJSONArray("tracks").mapObjects(::parseOnline), o.optJSONArray("albums").mapObjects(::parseOnline), o.optJSONArray("artists").mapObjects(::parseOnline))
   }
+  /** YouTube Music songs, for "refresh online" (replace a library song). */
+  suspend fun youtubeSongs(q: String): List<OnlineItem> =
+    get("/online/search?q=${enc(q)}&kinds=track&providers=youtube&limit=10").optJSONArray("tracks").mapObjects(::parseOnline)
+  /** Admin: replaces a library song with [source] (url, title, artist, duration). Returns the batch id. */
+  suspend fun replaceTrack(trackId: Long, source: JSONObject): String? =
+    post("/admin/health/replace", JSONObject().put("trackId", trackId).put("source", source))
+      .optJSONObject("batch")?.optString("id")?.takeIf { it.isNotBlank() }
+  /** Admin: the library health batch (a replacement runs as one). */
+  suspend fun healthBatch(): JSONObject? = get("/admin/health/batch").optJSONObject("batch")
   /** Asked after the main results so playlists never hold them back. */
   suspend fun onlinePlaylists(q: String): List<OnlineItem> =
     get("/online/search?q=${enc(q)}&kinds=playlist&limit=20").optJSONArray("playlists").mapObjects(::parseOnline)
@@ -222,7 +231,8 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
   suspend fun autoplayOnlineTracks(artist: String): List<OnlineItem> =
     get("/online/search?q=${enc(artist)}&kinds=track&limit=20").optJSONArray("tracks").mapObjects(::parseOnline)
 
-  suspend fun requestDownload(item: OnlineItem, playlistId: Long? = null): DownloadRow {
+  /** [only]: for an album or playlist the library partly has, just these (missing) songs. */
+  suspend fun requestDownload(item: OnlineItem, playlistId: Long? = null, only: List<OnlineItem>? = null): DownloadRow {
     val payload = JSONObject()
       .put("kind", if (item.kind == "album" || item.kind == "playlist") item.kind else "track")
       .put("url", item.url).put("title", item.title).put("artist", item.artist).put("album", item.album)
@@ -230,6 +240,12 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
       .put("isrc", item.raw.optString("isrc", ""))
       .put("duration", item.duration)
       .put("trackCount", item.trackCount ?: JSONObject.NULL)
+    if (!only.isNullOrEmpty()) {
+      payload.put("only", JSONArray(only.map { song ->
+        JSONObject().put("id", song.id).put("url", song.url).put("title", song.title).put("artist", song.artist)
+          .put("isrc", song.raw.optString("isrc", "")).put("duration", song.duration)
+      }))
+    }
     val body = JSONObject().put("item", payload)
     if (playlistId != null) body.put("playlistId", playlistId)
     return parseDownload(post("/downloads", body))

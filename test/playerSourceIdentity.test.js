@@ -5,6 +5,7 @@ import path from 'node:path'
 import { openPlayerDatabase } from '../modules/player/db.js'
 import { createScanner } from '../modules/player/scanner.js'
 import { createLibraryMatcher } from '../modules/player/matching.js'
+import { linkedTrack } from '../modules/player/annotate.js'
 import { metadataSourceKey, youtubeSourceKey } from '../modules/player/sourceKey.js'
 import { writeTrack, tmpDir } from './fixtures/playerAudio.mjs'
 import { pickTrackArtist, pickTrackTitle, toFrozenEntries } from '../modules/youtubeIdentity.js'
@@ -47,4 +48,34 @@ test('downloaded track matches by source despite bad old tags, with library visi
     assert.equal(matcher.findTrack(item,1),id)
     assert.equal(matcher.findTrack(item,2),null)
   } finally {db.close();fs.rmSync(dir,{recursive:true,force:true})}
+})
+
+test('a short, common title still finds its song, and mapped songs are found through their YouTube link', async () => {
+  const dir = tmpDir('common-title'); const db = await openPlayerDatabase(dir, { fileName: ':memory:' })
+  try {
+    const audio = path.join(dir, 'music'); fs.mkdirSync(audio)
+    db.prepare('INSERT INTO libraries (name,path,enabled,is_default,created_at) VALUES (?, ?, 1, 1, 0)').run('Test', audio)
+    db.prepare("INSERT INTO users (username,display_name,password_hash,role,created_at,updated_at) VALUES ('admin','Admin','test','admin',0,0)").run()
+    // More than a candidate list's worth of songs that share the word.
+    const others = []
+    for (let i = 0; i < 45; i += 1) {
+      others.push(await writeTrack(path.join(audio, `other-${i}.mp3`), { title: `Aşkım ${i}`, artist: 'Aşk Grubu', album: 'Aşk Albümü' }))
+    }
+    const target = await writeTrack(path.join(audio, 'target.mp3'), {
+      title: 'AŞK', artist: 'Dedublüman & Cem Adrian',
+      userDefinedUrl: [{ description: 'SOURCE_URL', url: 'https://music.youtube.com/watch?v=xLX10_p5Nnw' }]
+    })
+    const indexed = await createScanner(db).indexFiles([...others, target])
+    const id = indexed.get(target)
+    const matcher = createLibraryMatcher(db)
+    assert.equal(matcher.findTrack({ title: 'Aşk', artist: 'Dedublüman' }, 1), id)
+
+    // The store lists another length than the downloaded recording has; the
+    // core's mapping cache links the store song to the downloaded video.
+    const links = [{ sourceItemId: '1512736231', sourceItemUrl: 'https://music.apple.com/tr/album/x/1?i=1512736231', sourceTitle: 'Öyle Ki', sourceArtist: 'Dedublüman', youtubeId: 'xLX10_p5Nnw' }]
+    assert.equal(linkedTrack(matcher, links, { id: '1512736231', title: 'Başka Ad' }, 1), id, 'by store id')
+    assert.equal(linkedTrack(matcher, links, { title: 'Öyle Ki', artist: 'Dedublüman' }, 1), id, 'by title and artist')
+    assert.equal(linkedTrack(matcher, links, { title: 'Başka', artist: 'Dedublüman' }, 1), null)
+    assert.equal(linkedTrack(matcher, [], { id: '1512736231' }, 1), null)
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }) }
 })

@@ -45,9 +45,12 @@ export function createLibraryMatcher(db) {
   const VIS = visibleSql('t', '$uid')
   const bySource = db.prepare(`SELECT t.id FROM tracks t WHERE t.source_key = $key AND ${VIS} LIMIT 1`)
   const byIsrc = db.prepare(`SELECT t.id FROM tracks t WHERE t.isrc = $isrc AND ${VIS} LIMIT 1`)
+  // Songs whose title has every word: shortest titles first, so the song with
+  // exactly this title is among the candidates even for a word as common as
+  // "Aşk" (searching every column with prefixes filled the list with others).
   const ftsCandidates = db.prepare(`SELECT t.id, t.title, t.artist_name, t.album_artist, t.duration
     FROM tracks_fts JOIN tracks t ON t.id = tracks_fts.rowid
-    WHERE tracks_fts MATCH $match AND ${VIS} LIMIT 40`)
+    WHERE tracks_fts MATCH $match AND ${VIS} ORDER BY length(tracks_fts.title), t.id LIMIT 40`)
   const albumCandidates = db.prepare(`SELECT a.id, a.title, ar.name AS artist_name,
       (SELECT COUNT(*) FROM tracks t WHERE t.album_id = a.id AND ${VIS}) AS track_count
     FROM albums a JOIN artists ar ON ar.id = a.artist_id WHERE a.title_key = $key OR a.title_key LIKE $prefix ESCAPE '\\'`)
@@ -75,7 +78,8 @@ export function createLibraryMatcher(db) {
     const split = splitArtistFromTitle(title, artist)
     const wantTitle = cleanTitleForMatch(split.title)
     if (!wantTitle) return null
-    const match = buildFtsQuery(wantTitle)
+    const words = buildFtsQuery(wantTitle)?.replace(/\*/g, '')
+    const match = words && `title : (${words})`
     if (!match) return null
     let rows
     try { rows = ftsCandidates.all({ $match: match, $uid }) } catch { return null }

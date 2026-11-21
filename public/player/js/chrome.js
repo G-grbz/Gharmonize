@@ -46,9 +46,15 @@ function notificationsButton() {
   const outside = (e) => { if (panel && !panel.contains(e.target) && !btn.contains(e.target)) close() }
   const close = () => { panel?.remove(); panel = null; document.removeEventListener('pointerdown', outside, true) }
   const row = (n) => {
-    const kind = n.data?.recordKind === 'single' ? t('player.notif.newSingle') : t('player.notif.newAlbum')
-    const el = h('button', { type: 'button', class: ['notif-row', !n.read && 'is-unread'] },
-      artwork(n.artworkUrl, { cls: 'notif-row__art', placeholder: 'album', seed: n.title }),
+    // A new Gharmonize release (administrators only) opens its GitHub page.
+    const update = n.kind === 'app-update'
+    const kind = update ? t('player.notif.update')
+      : n.data?.recordKind === 'single' ? t('player.notif.newSingle') : t('player.notif.newAlbum')
+    const art = update
+      ? h('img', { src: '/src/logo.png', alt: '', class: 'notif-row__art notif-row__art--app', width: 40, height: 40, decoding: 'async' })
+      : artwork(n.artworkUrl, { cls: 'notif-row__art', placeholder: 'album', seed: n.title })
+    const el = h('button', { type: 'button', class: ['notif-row', !n.read && 'is-unread', update && 'notif-row--update'] },
+      art,
       h('span', { class: 'notif-row__text' },
         h('b', { text: n.title }),
         h('small', { text: [n.body, kind, fmtRelative(n.createdAt)].filter(Boolean).join(' · ') })))
@@ -56,7 +62,9 @@ function notificationsButton() {
       close()
       try { await post('/notifications/read', { ids: [n.id] }) } catch {}
       refresh()
-      if (n.link) app.nav(n.link)
+      if (update) {
+        if (/^https:\/\/github\.com\//.test(String(n.link || ''))) window.open(n.link, '_blank', 'noopener')
+      } else if (n.link) app.nav(n.link)
     })
     return el
   }
@@ -309,7 +317,13 @@ function buildTopbar() {
     h('span', { text: t('player.nav.gharmonize') }))
   let gharmonizeReachable = false
   fetch('/api/ui-config', { credentials: 'same-origin', cache: 'no-store' })
-    .then((res) => { gharmonizeReachable = res.status !== 404; homeLink.hidden = !gharmonizeReachable })
+    .then(async (res) => {
+      gharmonizeReachable = res.status !== 404
+      homeLink.hidden = !gharmonizeReachable
+      // "/" may open the player itself: link the downloader page directly.
+      const config = res.ok ? await res.json().catch(() => ({})) : {}
+      homeLink.href = config.frontendUi === 'ytlive' ? '/ytlive.html' : '/index.html'
+    })
     .catch(() => {})
   const avatar = h('button', { type: 'button', class: 'avatar', title: app.user?.displayName || '', 'aria-label': t('player.nav.account') }, (app.user?.displayName || app.user?.username || '?').slice(0, 1).toUpperCase())
   avatar.addEventListener('click', (e) => {

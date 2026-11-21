@@ -535,10 +535,16 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
       if (!row || (row.userId !== user.id && user.role !== 'admin')) return
       res.write(`event: download\ndata: ${JSON.stringify(row)}\n\n`)
     }
+    const libraryRemoved = () => res.write('event: library-removed\ndata: {}\n\n')
     const ping = setInterval(() => res.write(': ping\n\n'), 25_000)
     bridge.events.on('update', send)
+    scanner.events?.on('removed', libraryRemoved)
     res.write(`event: ready\ndata: {}\n\n`)
-    req.on('close', () => { clearInterval(ping); bridge.events.off('update', send) })
+    req.on('close', () => {
+      clearInterval(ping)
+      bridge.events.off('update', send)
+      scanner.events?.off('removed', libraryRemoved)
+    })
   })
   router.get('/downloads/:id', requireUser, (req, res) => res.json(bridge.get(req.params.id, req.playerUser)))
   router.post('/downloads/:id/cancel', requireUser, async (req, res) => res.json(await bridge.cancel(req.params.id, req.playerUser)))
@@ -584,7 +590,15 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   // ---- library health (admin) ---------------------------------------------------------
   router.get('/admin/health', requireAdmin, (_req, res) => res.json(health.status()))
   router.post('/admin/health/check', requireAdmin, (req, res) => res.json(health.start(uid(req))))
+  router.post('/admin/health/batch', requireAdmin, (req, res) => res.status(202).json(health.startBatch(req.playerUser, req.body || {})))
+  // Light status for clients following one batch (no report).
+  router.get('/admin/health/batch', requireAdmin, (_req, res) => res.json({ batch: health.status().batch }))
+  // "Refresh online": one song replaced by a version the admin picked.
+  router.post('/admin/health/replace', requireAdmin, rateLimit(30, 60_000), (req, res) =>
+    res.status(202).json(health.replaceWith(req.playerUser, intParam(req.body?.trackId), req.body?.source || {})))
+  router.post('/admin/health/batch/:id/control', requireAdmin, (req, res) => res.json(health.controlBatch(req.params.id, req.body?.command)))
   router.post('/admin/health/trash', requireAdmin, async (req, res) => res.json(await health.trash(intParam(req.body?.trackId))))
+  router.post('/admin/health/trash/empty', requireAdmin, async (_req, res) => res.json(await health.emptyTrash()))
   router.post('/admin/health/cover', requireAdmin, rateLimit(60, 60_000), async (req, res) => res.json(await health.fixCover(intParam(req.body?.albumId))))
   router.post('/admin/health/redownload', requireAdmin, rateLimit(60, 60_000), async (req, res) => res.json(await health.redownload(req.playerUser, intParam(req.body?.trackId))))
 
@@ -612,7 +626,12 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     res.json(info)
   })
   router.delete('/admin/download-folder', requireAdmin, (_req, res) => res.json(libraries.clearDownloadFolder()))
-  router.delete('/admin/libraries/:id', requireAdmin, (req, res) => { libraries.remove(intParam(req.params.id)); artwork.invalidate(); res.json({ ok: true }) })
+  router.delete('/admin/libraries/:id', requireAdmin, (req, res) => {
+    libraries.remove(intParam(req.params.id))
+    artwork.invalidate()
+    scanner.events?.emit('removed')
+    res.json({ ok: true })
+  })
   router.post('/admin/scan', requireAdmin, (req, res) => {
     const id = intParam(req.body?.libraryId)
     scanner.requestScan(id || 'all').catch(() => {})

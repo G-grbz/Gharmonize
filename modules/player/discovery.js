@@ -443,13 +443,15 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     if (provider === 'deezer') {
       const data = await dz.album(requireId(id))
       if (!data) throw new DiscoveryError('NOT_FOUND', 'Album not found.', 404)
-      return withCompleteness(annotator.items([data.album], user.id)[0], annotator.items(data.tracks, user.id))
+      const links = await annotator.links(data.album.url)
+      return withCompleteness(annotator.items([data.album], user.id)[0], annotator.items(data.tracks, user.id, { links }))
     }
     if (provider === 'spotify') {
       if (!enabled('spotify')) throw new DiscoveryError('PROVIDER_DISABLED', 'Spotify is not configured.', 409)
       const data = await sp.album(requireId(id))
       if (!data) throw new DiscoveryError('NOT_FOUND', 'Album not found.', 404)
-      return withCompleteness(annotator.items([data.album], user.id)[0], annotator.items(data.tracks, user.id))
+      const links = await annotator.links(data.album.url)
+      return withCompleteness(annotator.items([data.album], user.id)[0], annotator.items(data.tracks, user.id, { links }))
     }
     if (provider === 'youtube') {
       const link = requireYouTubeUrl(url)
@@ -498,8 +500,9 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     return { available: true, found: true, album: annotator.items([data.album], user.id)[0], total: tracks.length, missing }
   }
 
-  function playlistAnswer(user, playlist, tracks) {
-    return { playlist: annotator.items([playlist], user.id)[0], tracks: annotator.items(tracks, user.id) }
+  async function playlistAnswer(user, playlist, tracks) {
+    const links = playlist.url ? await annotator.links(playlist.url) : []
+    return { playlist: annotator.items([playlist], user.id)[0], tracks: annotator.items(tracks, user.id, { links }) }
   }
 
   async function onlinePlaylist(user, { provider, id, url, mix } = {}) {

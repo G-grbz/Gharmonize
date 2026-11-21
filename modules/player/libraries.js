@@ -202,5 +202,27 @@ export function createLibraryStore(db, { defaultLibraryDir, now = () => Date.now
     return { dir: info.path, sourceRoot: def.path }
   }
 
-  return { ensureDefaultLibrary, list, get, add, update, remove, resolveTrackFile, downloadFolder, setDownloadFolder, clearDownloadFolder, downloadTarget }
+  function upgradeTarget({ libraryId, folder }, { checkWritable = false } = {}) {
+    const lib = stmt.byId.get(Number(libraryId))
+    const def = stmt.defaultLib.get()
+    if (!lib?.enabled || !def || typeof folder !== 'string') {
+      throw new LibraryError('UPGRADE_LIBRARY_UNAVAILABLE', 'The original library is unavailable.', 409)
+    }
+    const dir = path.resolve(lib.path, folder)
+    try {
+      if (!isSameOrInside(dir, lib.path) || fs.realpathSync(dir) !== dir || !fs.statSync(dir).isDirectory()) {
+        throw new Error('Invalid upgrade folder.')
+      }
+    } catch {
+      throw new LibraryError('UPGRADE_FOLDER_UNAVAILABLE', 'The original folder is unavailable.', 409)
+    }
+    if (checkWritable) {
+      try { assertWritableFolder(dir) } catch (error) {
+        throw new LibraryError('LIBRARY_PATH_NOT_WRITABLE', error.message, error.status)
+      }
+    }
+    return { dir, sourceRoot: def.path }
+  }
+
+  return { ensureDefaultLibrary, list, get, add, update, remove, resolveTrackFile, downloadFolder, setDownloadFolder, clearDownloadFolder, downloadTarget, upgradeTarget }
 }

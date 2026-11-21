@@ -28,6 +28,7 @@ import { createTailscaleProbe } from './tailscale.js'
 import { buildConnectInfo, normalizePublicUrl } from './connect.js'
 import { getRemoteAccessMode, getPlayerListenConfig, getTunnelConfig } from './gate.js'
 import { createTunnel } from './cloudflared.js'
+import { createAppUpdateWatch } from './appUpdate.js'
 import { createMixes } from './mixes.js'
 import { createStats } from './stats.js'
 import path from 'node:path'
@@ -107,7 +108,7 @@ export function normalizeConfig(input = {}, base = DEFAULT_CONFIG) {
   return out
 }
 
-export async function startPlayerService({ env = process.env, logger = console, dataDir = null, cacheDir = null, defaultLibraryDir = null, initialScanDelayMs = 5000, core = null, onlineOptions = {}, bridgePollMs = 2000, discoverySources = null, discoveryOptions = {}, listenerOptions = {}, tailscaleProbe = null, networkOptions = {}, routerOptions = {}, tunnelOptions = {} } = {}) {
+export async function startPlayerService({ env = process.env, logger = console, dataDir = null, cacheDir = null, defaultLibraryDir = null, initialScanDelayMs = 5000, core = null, onlineOptions = {}, bridgePollMs = 2000, discoverySources = null, discoveryOptions = {}, listenerOptions = {}, tailscaleProbe = null, networkOptions = {}, routerOptions = {}, tunnelOptions = {}, appUpdateOptions = {}, healthOptions = {} } = {}) {
   const resolvedDataDir = dataDir || resolvePlayerDataDir(env)
   const resolvedCacheDir = ensurePrivateDir(cacheDir || resolvePlayerCacheDir(env))
   const db = await openPlayerDatabase(resolvedDataDir)
@@ -138,9 +139,11 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const lyrics = createLyricsService({ libraries, getOnlineAllowed: () => config.onlineLyrics, logger })
   const matcher = createLibraryMatcher(db)
   const online = createOnlineSearch({ getEnabledProviders: () => config.onlineProviders, logger, ...onlineOptions })
-  const bridge = createDownloadBridge({ db, core: core || createCoreAdapter({ logger }), scanner, matcher, catalog, getConfig, getDownloadTarget: () => libraries.downloadTarget(), logger, pollMs: bridgePollMs })
+  const downloadCore = core || createCoreAdapter({ logger })
+  const mappedLinks = async (url) => (await downloadCore.mappedLinks?.(url)) || []
+  const bridge = createDownloadBridge({ db, core: downloadCore, scanner, matcher, catalog, getConfig, getDownloadTarget: libraries.downloadTarget, getUpgradeTarget: libraries.upgradeTarget, mappedLinks, logger, pollMs: bridgePollMs })
   const onlineCache = createOnlineCache(db, { logger })
-  const annotator = createAnnotator({ matcher, bridge, catalog })
+  const annotator = createAnnotator({ matcher, bridge, catalog, mappedLinks })
   const sources = discoverySources || { deezer: createDeezerSource(), youtube: createYouTubeSource(), spotify: createSpotifySource({ env }), apple: createAppleSource() }
   const discovery = createDiscovery({
     db,
@@ -233,9 +236,20 @@ export async function startPlayerService({ env = process.env, logger = console, 
   }
 
   const follows = createFollows({ db, discovery, bridge, catalog, getUser: (id) => auth.getUser(id), logger })
-  const health = createLibraryHealth({ db, libraries, artwork, scanner, sources, bridge, online, trashDir: path.join(resolvedDataDir, 'trash'), logger })
+  const health = createLibraryHealth({ db, libraries, artwork, scanner, sources, bridge, online, trashDir: path.join(resolvedDataDir, 'trash'), getUser: auth.getUser, getConfig, onLyricsChanged: () => lyrics.forget(), logger, ...healthOptions })
+  health.restoreBatch()
   const releases = createReleaseWatch({ db, discovery, bridge, annotator, getUser: (id) => auth.getUser(id), logger })
-  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, biography, follows, releases, health, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats }
+  // New Gharmonize releases (GitHub) for the administrators' notifications:
+  // first look two minutes after start, then at most once a day.
+  const appUpdate = createAppUpdateWatch({ db, logger, ...appUpdateOptions })
+  const updateChecks = appUpdateOptions.enabled !== false && String(env.GHARMONIZE_UPDATE_CHECK ?? '1').trim() !== '0'
+  if (updateChecks) {
+    later(() => appUpdate.check().catch(() => {}), appUpdateOptions.initialDelayMs ?? 120_000)
+    const updateTimer = setInterval(() => appUpdate.check().catch(() => {}), 60 * 60 * 1000)
+    updateTimer.unref?.()
+    timers.add(updateTimer)
+  }
+  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, biography, follows, releases, health, appUpdate, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats }
   router = createPlayerRouter(context, routerOptions)
   // Do not block start-up on a cloudflared download.
   await listener.apply()
@@ -251,6 +265,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
     await tunnel.stop()
     await tunnelListener.stop()
     await listener.stop()
+    await health.stop()
     await bridge.stop()
     artistPhotos.stop()
     onlineCache.close()

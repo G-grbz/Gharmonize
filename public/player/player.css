@@ -1,4 +1,4 @@
-/* Ggrbz css editor | player.css | 2026-11-20 02:08:22 (Europe/Istanbul) */
+/* Ggrbz css editor | player.css | 2026-11-20 18:34:34 (Europe/Istanbul) */
 
 @font-face {
   font-display: swap;
@@ -2279,6 +2279,10 @@ kbd {
 .pairing__choice input {
   accent-color: var(--accent);
   margin-top: 4px;
+}
+
+section.panel-card div {
+  padding: .5rem;
 }
 
 .progress span {
@@ -6240,6 +6244,25 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   font-weight: 600;
 }
 
+.health-gauge__ring.is-waiting:before {
+  animation: health-gauge-spin 1.1s linear infinite;
+  background: conic-gradient(var(--accent) 0 25%,var(--surface-4) 0);
+}
+
+.health-gauge__ring:before {
+  background: conic-gradient(var(--accent) calc(var(--p)*1%),var(--surface-4) 0);
+  border-radius: 50%;
+  content: "";
+  inset: 0;
+  -webkit-mask: radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 5px));
+  mask: radial-gradient(farthest-side,transparent calc(100% - 6px),#000 calc(100% - 5px));
+  position: absolute;
+}
+
+.health-row:has(>.health-row__check) {
+  grid-template-columns: auto minmax(0,1fr) auto;
+}
+
 .home__refresh {
   align-self: center;
 }
@@ -6310,6 +6333,10 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 .np-full__volume .range {
   flex: 1;
   min-width: 0;
+}
+
+.health-failure>.btn {
+  flex: none;
 }
 
 [data-tab=playlists] .online-results {
@@ -6492,15 +6519,161 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 
 .health-row {
   align-items: center;
-  display: flex;
+  display: grid;
   gap: 12px;
-  justify-content: space-between;
+  grid-template-columns: minmax(0,1fr) auto;
   padding: 6px;
+}
+
+.health-row__check {
+  accent-color: var(--accent);
+  block-size: 16px;
+  inline-size: 16px;
+  margin: 0;
 }
 
 .health-row__text {
   display: grid;
   min-width: 0;
+}
+
+.health-failure__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.refresh-current,.refresh-result {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0,1fr);
+}
+
+.refresh-result {
+  border-bottom: 1px solid var(--border);
+  grid-template-columns: auto minmax(0,1fr) auto auto;
+  padding: 6px 0;
+}
+
+.refresh-current__art {
+  block-size: 56px;
+  border-radius: 8px;
+  inline-size: 56px;
+}
+
+.refresh-result__art {
+  block-size: 44px;
+  border-radius: 6px;
+  inline-size: 44px;
+}
+
+.refresh-current__text,.refresh-result__text {
+  display: grid;
+  min-width: 0;
+}
+
+.refresh-current__text b,.refresh-result__text b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refresh-results {
+  display: grid;
+  max-block-size: min(46vh,420px);
+  overflow: auto;
+}
+
+.refresh-search {
+  display: flex;
+  gap: 8px;
+}
+
+.refresh-search>.input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width:600px) {
+  .refresh-result {
+    grid-template-columns: auto minmax(0,1fr) auto;
+  }
+
+  .refresh-result>a {
+    display: none;
+  }
+}
+
+.health-failures {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.health-failure {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.health-gauge {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(0,1fr);
+  margin-top: 8px;
+  padding: 12px;
+}
+
+.health-gauge__ring {
+  --p: 0;
+  block-size: 64px;
+  display: grid;
+  inline-size: 64px;
+  place-items: center;
+  position: relative;
+}
+
+@keyframes health-gauge-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.health-gauge__main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.health-gauge__overall {
+  margin-top: 6px;
+}
+
+.health-gauge__path,.health-gauge__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-gauge__value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  position: relative;
+}
+
+.health-gauge__stage {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .hero__bio {
@@ -6619,13 +6792,25 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   --on-accent: #0b1220;
 }
 
+.is-playing .q-row.is-current .tl-eq i,.is-playing .tl-row.is-current .tl-eq i {
+  animation: eq 1.1s ease-in-out infinite;
+}
+
+.is-playing .q-row.is-current .tl-eq i:nth-child(2),.is-playing .tl-row.is-current .tl-eq i:nth-child(2) {
+  animation-duration: .85s;
+}
+
+.is-playing .q-row.is-current .tl-eq i:nth-child(3),.is-playing .tl-row.is-current .tl-eq i:nth-child(3) {
+  animation-duration: 1.35s;
+}
+
 .np-full.is-ring .np-full__art {
   background: rgba(225,241,255,.08);
   border-color: transparent;
   height: min(400px,90cqw,90cqh);
+  height: min(420px,92cqw,90cqh);
   padding: 12px;
   width: min(400px,90cqw,90cqh);
-  height: min(420px,92cqw,90cqh);
   width: min(420px,92cqw,90cqh);
 }
 
@@ -6676,8 +6861,8 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 }
 
 .np-sheet__head .ctl {
-  color: var(--text-2);
   border-radius: 50%;
+  color: var(--text-2);
 }
 
 .swatch--indigo {
@@ -6938,6 +7123,32 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   --text-2: #5a5370;
   --text-3: #847c9a;
   --bg-glow: rgba(139,92,246,.12);
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .is-playing .q-row.is-current .tl-eq i,.is-playing .tl-row.is-current .tl-eq i {
+    animation: none;
+  }
+}
+
+.notif-row--update small {
+  color: var(--accent);
+}
+
+.notif-row__art--app {
+  background: var(--surface-2,hsla(0,0%,100%,.06));
+  object-fit: contain;
+  padding: 4px;
+}
+
+.sidebar {
+  scrollbar-width: none;
+}
+
+.sidebar::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
 }
 
 @media (max-width:1280px) {
@@ -7496,24 +7707,13 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   }
 }
 
-/* Equalizer bars of the playing song: only the current row, only while
-   music plays, three transform animations (composited: no layout, no
-   repaint). Different lengths keep the bars out of step. */
-.is-playing .tl-row.is-current .tl-eq i,.is-playing .q-row.is-current .tl-eq i {
-  animation: eq 1.1s ease-in-out infinite;
-}
+@media (max-width:600px) {
+  .health-row>.health-row__check~.row-actions {
+    grid-column: 2/-1;
+  }
 
-.is-playing .tl-row.is-current .tl-eq i:nth-child(2),.is-playing .q-row.is-current .tl-eq i:nth-child(2) {
-  animation-duration: .85s;
-}
-
-.is-playing .tl-row.is-current .tl-eq i:nth-child(3),.is-playing .q-row.is-current .tl-eq i:nth-child(3) {
-  animation-duration: 1.35s;
-}
-
-@media (prefers-reduced-motion:reduce) {
-  .is-playing .tl-row.is-current .tl-eq i,.is-playing .q-row.is-current .tl-eq i {
-    animation: none;
+  .health-row>.row-actions {
+    grid-column: 1/-1;
   }
 }
 

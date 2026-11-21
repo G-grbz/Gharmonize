@@ -19,9 +19,9 @@ function row(d) {
     } }, icon('play', { size: 16 }), t('player.common.play')))
     if (d.playlistId) actions.append(h('a', { class: 'btn btn--ghost btn--sm', href: `#/playlist/${d.playlistId}`, text: t('player.downloads.openPlaylist') }))
   }
-  const statusText = d.status === 'queued' && d.phase === 'retry-wait'
-    ? t('player.downloads.retryWait', { n: d.attempts })
-    : t(`player.downloads.status.${d.status}`)
+  const statusText = d.phase === 'waiting-folder' ? t('player.health.waitingFolder')
+    : d.status === 'queued' && d.phase === 'retry-wait' ? t('player.downloads.retryWait', { n: d.attempts })
+      : t(`player.downloads.status.${d.status}`)
   const owner = app.isAdmin() && d.userId !== app.user?.id ? h('span', { class: 'pill', text: t('player.downloads.otherUser') }) : null
   return h('div', { class: ['dl-row', `is-${d.status}`], dataset: { id: d.id, active: active ? '1' : '0' } },
     artwork(d.artworkUrl, { cls: 'dl-row__art', placeholder: d.kind === 'album' ? 'album' : d.kind === 'playlist' ? 'list' : 'music', seed: d.title || d.sourceUrl }),

@@ -237,10 +237,12 @@ Controls which interface is served from `/`.
 
 - `classic` — existing Gharmonize web UI (default)
 - `ytlive` — YouTube / YouTube Music focused YTLive UI (see [YTLIVE.md](YTLIVE.md))
+- `player` — Gharmonize Player (see [PLAYER.md](PLAYER.md)); `/` redirects to `/player/`. While the Player is disabled, the classic UI opens instead
 
 Direct routes remain available either way:
 - `/index.html`
 - `/ytlive.html`
+- `/player/`
 
 ```dotenv
 FRONTEND_UI=ytlive

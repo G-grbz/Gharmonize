@@ -34,7 +34,11 @@ export class DownloadTracker {
     if (typeof EventSource === 'undefined') return
     const es = new EventSource('/api/player/downloads/events')
     this.source = es
-    es.addEventListener('ready', () => { this.retryDelay = 2000 })
+    es.addEventListener('ready', () => {
+      if (this.retryDelay > 2000) this.invalidateOwned()
+      this.retryDelay = 2000
+    })
+    es.addEventListener('library-removed', () => this.invalidateOwned())
     es.addEventListener('download', (e) => {
       try { this.ingest(JSON.parse(e.data)) } catch {}
     })
@@ -54,6 +58,14 @@ export class DownloadTracker {
       for (const row of res.items || []) this.ingest(row, { silent: true })
       this.emitCount()
     } catch {}
+  }
+
+  invalidateOwned() {
+    for (const [id, row] of this.byId) {
+      if (row.status === 'completed' || row.status === 'exists') this.byId.delete(id)
+    }
+    for (const [url, id] of this.urlToId) if (!this.byId.has(id)) this.urlToId.delete(url)
+    bus.emit('library:changed')
   }
 
   get activeCount() {
@@ -83,7 +95,8 @@ export class DownloadTracker {
 
   stateFor(item) {
     const id = item?.download?.id || this.urlToId.get(item?.url)
-    return id ? this.byId.get(id) || item.download || null : item?.download || null
+    const row = id ? this.byId.get(id) || item.download || null : item?.download || null
+    return (row?.status === 'completed' || row?.status === 'exists') && !row.trackIds?.length ? null : row
   }
 
   // Starts (or joins) a download for an online item.
@@ -98,7 +111,9 @@ export class DownloadTracker {
       artworkUrl: item.artworkUrl,
       isrc: item.isrc,
       duration: item.duration,
-      trackCount: item.trackCount
+      trackCount: item.trackCount,
+      // Albums / playlists partly in the library: only the missing songs.
+      only: Array.isArray(item.only) && item.only.length ? item.only : undefined
     }
     try {
       const row = await post('/downloads', { item: payload, playlistId, force })
@@ -157,8 +172,8 @@ export function renderDownloadBadge(el, row) {
   }
   if (!row) {
     swapIcon('download')
-    setLabel(t('player.downloads.download'))
-    el.title = t('player.downloads.download')
+    setLabel(el.dataset.idleLabel || t('player.downloads.download'))
+    el.title = el.dataset.idleLabel || t('player.downloads.download')
     return
   }
   if (ACTIVE.has(row.status)) {
@@ -168,7 +183,7 @@ export function renderDownloadBadge(el, row) {
     const pct = `${Math.round(row.progress || 0)}%`
     setLabel(row.status === 'queued' ? t('player.downloads.status.queued') : pct)
     el.title = `${t(`player.downloads.status.${row.status}`)} · ${pct}`
-  } else if (row.status === 'completed' || row.status === 'exists') {
+  } else if ((row.status === 'completed' || row.status === 'exists') && row.trackIds?.length) {
     el.classList.add('is-done')
     swapIcon('check')
     setLabel(t('player.downloads.inLibrary'))
@@ -186,11 +201,11 @@ export function renderDownloadBadge(el, row) {
 }
 
 // A download control for an online item: click starts / cancels / retries.
-export function downloadButton(item, { compact = true, onDone = null } = {}) {
+export function downloadButton(item, { compact = true, onDone = null, idleLabel = null } = {}) {
   const el = h('button', {
     type: 'button',
     class: ['dl', compact ? 'dl--compact' : 'btn btn--outline'],
-    dataset: { dlUrl: item.url || '', iconSize: compact ? '18' : '18' }
+    dataset: { dlUrl: item.url || '', iconSize: compact ? '18' : '18', ...(idleLabel ? { idleLabel } : {}) }
   }, h('span', { class: compact ? 'sr-only dl__label' : 'dl__label' }))
   const state = app.downloads.stateFor(item)
   if (state?.id) el.dataset.dlId = state.id

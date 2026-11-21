@@ -62,6 +62,38 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
     }
   }
   val canDownload: Boolean get() = me?.canDownload == true
+  /** Admins can replace library files ("refresh online"). */
+  val canRefreshOnline: Boolean get() = me?.role == "admin" && canDownload
+
+  /** Replaces a library song with the chosen version and reports when it is done. */
+  fun replaceTrack(trackId: Long, title: String, source: org.json.JSONObject, onStarted: () -> Unit = {}, onFailed: () -> Unit = {}) {
+    scope.launch {
+      val batchId = try {
+        api.replaceTrack(trackId, source)
+      } catch (e: Exception) {
+        message(if (e is ApiException && e.code == "INVALID_REPLACEMENT_URL") context.getString(R.string.refresh_invalid_link) else errorText(e))
+        onFailed()
+        return@launch
+      }
+      onStarted()
+      messageRes(R.string.refresh_started, title)
+      startPolling()
+      if (batchId == null) return@launch
+      while (isActive) {
+        delay(2000)
+        val batch = runCatching { api.healthBatch() }.getOrNull() ?: continue
+        if (batch.optString("id") != batchId) return@launch
+        if (batch.optBoolean("running")) continue
+        val error = batch.optJSONArray("errors")?.optJSONObject(0)
+        when {
+          batch.optInt("succeeded") > 0 -> messageRes(R.string.refresh_done, title)
+          error != null -> message(context.getString(R.string.refresh_failed, title) + " " + error.optString("message"))
+          batch.optBoolean("canceled") -> messageRes(R.string.refresh_canceled, title)
+        }
+        return@launch
+      }
+    }
+  }
 
   /** Live download state by source URL, for the badges on online items. */
   val downloadsByUrl = mutableStateMapOf<String, DownloadRow>()
@@ -166,10 +198,10 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
 
   // ---- downloads ----------------------------------------------------------------------------
 
-  fun download(item: OnlineItem) {
+  fun download(item: OnlineItem, only: List<OnlineItem>? = null) {
     scope.launch {
       try {
-        val row = api.requestDownload(item)
+        val row = api.requestDownload(item, only = only)
         downloadsByUrl[item.url] = row
         if (row.status == "exists") messageRes(R.string.download_exists, item.title)
         else messageRes(R.string.download_queued, item.title)

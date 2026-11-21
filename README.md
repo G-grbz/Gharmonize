@@ -26,7 +26,7 @@ Next-generation media processing, powered by **yt-dlp**, **FFmpeg** and **deno**
 
 Seamlessly download content from YouTube, YouTube Music, and major platforms like X, Facebook, Instagram, Vimeo, Dailymotion, and TikTok. Leverage Spotify, Apple Music, Deezer, TIDAL, and SoundCloud for intelligent metadata matching and track discovery — then fetch high-quality media via yt-dlp. Includes DRM-free disc ripping, iPhone / Android ringtone output, and blazing-fast GPU-accelerated transcoding, all powered by a robust and reliable processing engine.
 
-**[Gharmonize Player](#gharmonize-player)** adds a personal music server, browser playback and a native Android client for listening to your library at home or remotely.
+**[Gharmonize Player](#gharmonize-player)** adds a personal music server for listening to your library in a browser, on an Android phone, or on Android TV and Google TV.
 
 > **Mapped-music note:** Spotify, Apple Music, Deezer, TIDAL, and SoundCloud are used as **metadata/catalog sources for matching and discovery**. Gharmonize matches supported catalog items to YouTube / YouTube Music for media retrieval and does **not** claim DRM bypass of subscription services.
 
@@ -50,7 +50,7 @@ For guidance on unofficial downloads, impersonation, and reporting suspicious di
 
 ## Code signing policy
 
-**Windows signing status (v2.0.1): Windows downloads do not yet carry a trusted Authenticode signature.** Test certificates are not used for public releases. Windows may show publisher/SmartScreen warnings or block execution under managed security policies. The GPG-signed checksum manifest is not a substitute for Authenticode signing.
+**Windows signing status (v2.1.0): Windows builds do not yet carry a trusted Authenticode signature.** Test certificates are not used for public releases. Windows may show publisher/SmartScreen warnings or block execution under managed security policies. The GPG-signed checksum manifest is not a substitute for Authenticode signing.
 
 The signing roles, trusted-build requirements, artifact coverage, and verification process are documented in the [Gharmonize Code Signing Policy](CODE_SIGNING_POLICY.md). Runtime data handling and external network connections are documented in the [Privacy Policy](PRIVACY.md).
 
@@ -115,10 +115,12 @@ Full Docker setup, bind mounts, permissions, `MUSIC_DIR`, NVIDIA Container Toolk
 
 ## Gharmonize Player
 
-- **Web Player:** stream your music library in the browser, with playlists, queue management, favorites, synchronized lyrics and listening statistics.
-- **Android Client:** background playback, lock screen controls, an equalizer and separate Wi-Fi/mobile streaming quality. Download the `Gharmonize-Player-Client` APK from [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases/latest).
+- **Web Player** streams your library with playlists, queue management, favorites, synchronized lyrics and listening statistics.
+- **Android Client** supports offline listening, background playback, lock screen controls, an equalizer and separate Wi-Fi and mobile streaming quality. The `Gharmonize-Player-Client` APK is available on [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases/latest).
+- **Android TV and Google TV** offer a remote-friendly interface with QR pairing from the Android phone app.
+- **Online discovery** lets you follow artists for release notifications, sync supported online playlists to your library and download supported tracks when your account has permission.
 
-Enable Player in **Settings → System → Gharmonize Player**, open `/player/` on your server, and complete the first account setup. Pair the Android client from **Account → Devices → Pair a phone**. Gharmonize remains the music server for both clients.
+Enable Player in **Settings → System → Gharmonize Player**, open `/player/` on your server, and complete the first account setup. Pair the Android client from **Account → Devices → Pair a phone** in the Web Player. To pair a TV, open **Settings → Connect a TV** in the Android phone app and scan the code shown on the TV.
 
 See the **[Player installation and connection guide](docs/PLAYER.md)** for server setup, Android installation, library configuration and remote access.
 
@@ -128,7 +130,7 @@ See the **[Player installation and connection guide](docs/PLAYER.md)** for serve
 
 - **YouTube / YouTube Music** downloads for single items, playlists, and mixes
 - **YTLive** — a dedicated music-first UI for YouTube discovery, playback, and queueing
-- **Gharmonize Player** — a personal music server with web playback and a native Android client
+- **[Gharmonize Player](#gharmonize-player)** — personal music streaming for web, Android and Android TV, with offline listening on Android and online music discovery
 - **X (Twitter) / Facebook / Instagram / Vimeo / Dailymotion / TikTok** download and conversion flows
 - **Spotify, Apple Music, Deezer, TIDAL, and SoundCloud** mapped-music workflows with safer YouTube candidate ranking and duration-aware validation
 - **TIDAL** track / playlist / album mapping, including album-track URLs and paginated collections
@@ -152,7 +154,7 @@ Full details in [docs/FEATURES.md](docs/FEATURES.md).
 | [docs/DOCKER.md](docs/DOCKER.md) | Docker Compose, Docker run, NVIDIA/NVENC |
 | [docs/FEATURES.md](docs/FEATURES.md) | Full feature list and supported sources |
 | [docs/YTLIVE.md](docs/YTLIVE.md) | YTLive music UI guide |
-| [docs/PLAYER.md](docs/PLAYER.md) | Web Player and Android Client installation, pairing, libraries and remote access |
+| [docs/PLAYER.md](docs/PLAYER.md) | Player setup, Android installation and pairing, libraries and remote access |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Full `.env` variable reference |
 | [docs/BINARY_MANAGEMENT.md](docs/BINARY_MANAGEMENT.md) | ffmpeg / yt-dlp / deno binary handling |
 | [docs/COOKIES.md](docs/COOKIES.md) | Cookies, age-restricted content, environment comparison |

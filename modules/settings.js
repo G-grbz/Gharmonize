@@ -9,7 +9,7 @@ import { getBinariesInfo, clearBinariesInfoCache } from './binariesInfo.js'
 import { writeEnvFileSync } from './envFile.js'
 import { getRuntimeEnvironmentInfo } from './runtimeEnvironment.js'
 import { normalizeServerHostChoice, describeServerHost, SERVER_HOST_ALL, SERVER_HOST_LOOPBACK } from './serverHost.js'
-import { normalizePlayerEnabled, normalizeRemoteAccessMode, normalizePlayerListen, normalizePlayerPort, normalizeTunnelMode, normalizeTunnelUrl } from './player/gate.js'
+import { isPlayerEnabled, normalizePlayerEnabled, normalizeRemoteAccessMode, normalizePlayerListen, normalizePlayerPort, normalizeTunnelMode, normalizeTunnelUrl } from './player/gate.js'
 import {
   decryptSecret,
   deriveSessionSecret,
@@ -932,7 +932,8 @@ router.post('/auth/login', rateLimit(10, 60_000), express.json(), (req, res) => 
 router.post('/auth/logout', rateLimit(30, 60_000), (_req, res) => { clearSessionCookie(res); res.json({ ok: true }) })
 
 router.get('/ui-config', (_req, res) => {
-  const frontendUi = getEnv('FRONTEND_UI') === 'ytlive' ? 'ytlive' : 'classic'
+  const chosenUi = String(getEnv('FRONTEND_UI') || '').trim().toLowerCase()
+  const frontendUi = chosenUi === 'ytlive' ? 'ytlive' : (chosenUi === 'player' && isPlayerEnabled(process.env) ? 'player' : 'classic')
   const quickAddRaw = Number(getEnv('YOUTUBE_QUICK_ADD_LIMIT') || 25)
   const quickAddLimit = Number.isFinite(quickAddRaw) && quickAddRaw > 0 ? Math.min(100, Math.max(1, Math.round(quickAddRaw))) : 25
   res.json({ frontendUi, quickAddLimit, musicTitle: getEnv('YTLIVE_MUSIC_TITLE') || 'Gharmonize Music', musicSubtitle: getEnv('YTLIVE_MUSIC_SUBTITLE') })

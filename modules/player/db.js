@@ -306,6 +306,38 @@ const MIGRATIONS = [
     read_at INTEGER
   );
   CREATE INDEX notifications_user_idx ON notifications(user_id, created_at);
+  `,
+  // v10: keep track IDs stable across deletion, including IDs retained in
+  // download history and queues outside the database.
+  `
+  CREATE TABLE track_id_sequence (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    last_id INTEGER NOT NULL
+  );
+  INSERT INTO track_id_sequence VALUES (1, MAX(
+    COALESCE((SELECT MAX(id) FROM tracks), 0),
+    COALESCE((SELECT MAX(result.value) FROM downloads AS job,
+      json_each(CASE WHEN json_valid(job.result_track_ids) THEN job.result_track_ids ELSE '[]' END) AS result
+      WHERE result.type = 'integer'), 0)
+  ));
+  CREATE TRIGGER track_id_sequence_advance AFTER INSERT ON tracks
+  BEGIN
+    UPDATE track_id_sequence SET last_id = NEW.id WHERE singleton = 1 AND last_id < NEW.id;
+  END;
+  `,
+  // v11: legacy quality override. Downloads now use the configured preset.
+  `
+  ALTER TABLE downloads ADD COLUMN quality_upgrade INTEGER NOT NULL DEFAULT 0;
+  `,
+  // v12: library health downloads have a folder and a recoverable output path.
+  `
+  ALTER TABLE downloads ADD COLUMN upgrade_target TEXT;
+  ALTER TABLE downloads ADD COLUMN upgrade_output TEXT;
+  `,
+  // v13: an album or playlist download can ask for only some of its songs
+  // (the ones missing from the library).
+  `
+  ALTER TABLE downloads ADD COLUMN only_tracks TEXT;
   `
 ]
 
@@ -331,7 +363,15 @@ function migrate(db) {
   }
 }
 
-export function transaction(db, fn) {
+export function transaction(db, fn, { durable = false } = {}) {
+  const synchronous = durable ? db.prepare('PRAGMA synchronous').get().synchronous : null
+  if (durable) db.exec('PRAGMA synchronous = FULL')
+  try { return runTransaction(db, fn) } finally {
+    if (durable) db.exec(`PRAGMA synchronous = ${synchronous}`)
+  }
+}
+
+function runTransaction(db, fn) {
   db.exec('BEGIN IMMEDIATE')
   try {
     const result = fn()

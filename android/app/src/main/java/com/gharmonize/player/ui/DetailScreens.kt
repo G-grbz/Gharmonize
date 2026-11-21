@@ -262,9 +262,16 @@ fun OnlineAlbumScreen(state: AppState, item: OnlineItem) {
           }) { Text(stringResource(if (playlistId != null) R.string.follow_following else R.string.follow_follow)) }
         }
         if (state.canDownload && owned < tracks.size) {
+          // Partly in the library: only the missing songs are downloaded.
           // Mixes without a downloadable link: each missing song on its own.
-          Button(onClick = { if (header.downloadable) state.download(header.copy(kind = item.kind, trackCount = tracks.size)) else state.downloadAll(tracks) }) {
-            Icon(FluentIcons.Download, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.download))
+          val missing = tracks.filter { it.libraryTrackId == null }
+          val partial = owned > 0
+          Button(onClick = {
+            if (header.downloadable) state.download(header.copy(kind = item.kind, trackCount = tracks.size), only = if (partial) missing else null)
+            else state.downloadAll(tracks)
+          }) {
+            Icon(FluentIcons.Download, null); Spacer(Modifier.width(6.dp))
+            Text(if (partial) stringResource(R.string.download_missing, missing.size) else stringResource(R.string.download))
           }
         }
       }

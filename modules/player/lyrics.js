@@ -123,5 +123,10 @@ export function createLyricsService({ libraries, getOnlineAllowed = () => true, 
     return remember(key, found)
   }
 
-  return { getLyrics }
+  // Lyrics files were added, renamed or removed (library health).
+  function forget() {
+    cache.clear()
+  }
+
+  return { getLyrics, forget }
 }

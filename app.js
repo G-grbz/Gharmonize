@@ -429,15 +429,19 @@ app.use('/api', async (req, res, next) => {
   }
 })
 
+// classic | ytlive | player. The player is only chosen while it is enabled;
+// otherwise the classic interface opens.
 function getSelectedFrontendUi() {
-  return String(process.env.FRONTEND_UI || '').trim().toLowerCase() === 'ytlive'
-    ? 'ytlive'
-    : 'classic'
+  const value = String(process.env.FRONTEND_UI || '').trim().toLowerCase()
+  if (value === 'ytlive') return 'ytlive'
+  if (value === 'player' && isPlayerEnabled(process.env)) return 'player'
+  return 'classic'
 }
 
 // Custom Gharmonize rateLimit middleware is applied on this route.
 app.get('/', rateLimit(120, 60_000), (_req, res, next) => {
   const selectedUi = getSelectedFrontendUi()
+  if (selectedUi === 'player') return res.redirect(302, '/player/')
   const fileName = selectedUi === 'ytlive' ? 'ytlive.html' : 'index.html'
 
   res.sendFile(fileName, { root: PUBLIC_DIR }, (err) => {

@@ -248,7 +248,9 @@ fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean 
 @Composable
 fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Unit) {
   var save by remember { mutableStateOf(false) }
+  var refresh by remember { mutableStateOf(false) }
   if (save) SavePlaylistDialog(state, listOf(t.id), onDismiss = { save = false })
+  if (refresh) RefreshOnlineDialog(state, RefreshTarget(t.id, t.title, t.artist, t.duration, t.artwork), onDismiss = { refresh = false })
   DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
     DropdownMenuItem(text = { Text(stringResource(R.string.play_next)) }, onClick = { state.player.playNext(t); state.messageRes(R.string.queued_next, t.title); onDismiss() })
     DropdownMenuItem(text = { Text(stringResource(R.string.add_to_queue)) }, onClick = { state.player.addToQueue(t); state.messageRes(R.string.queued, t.title); onDismiss() })
@@ -264,6 +266,8 @@ fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Uni
     }
     t.albumId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_album)) }, onClick = { state.navigate(Route.Album(id)); onDismiss() }) }
     t.artistId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_artist)) }, onClick = { state.navigate(Route.Artist(id)); onDismiss() }) }
+    // Admins: replace the file with a version picked online.
+    if (state.canRefreshOnline) DropdownMenuItem(text = { Text(stringResource(R.string.refresh_online)) }, onClick = { refresh = true; onDismiss() })
   }
 }
 
@@ -292,6 +296,19 @@ fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSin
     when {
       owned -> OwnedBadge()
       state.canDownload -> DownloadButton(state, item)
+    }
+    // Admins: the library copy of an owned song can be replaced with another version.
+    val trackId = item.libraryTrackId
+    if (trackId != null && state.canRefreshOnline) {
+      var menu by remember { mutableStateOf(false) }
+      var refresh by remember { mutableStateOf(false) }
+      if (refresh) RefreshOnlineDialog(state, RefreshTarget(trackId, item.title, item.artist, item.duration, item.artworkUrl), onDismiss = { refresh = false })
+      Box {
+        IconButton(onClick = { menu = true }) { Icon(FluentIcons.MoreVert, stringResource(R.string.more)) }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+          DropdownMenuItem(text = { Text(stringResource(R.string.refresh_online)) }, onClick = { refresh = true; menu = false })
+        }
+      }
     }
   }
 }

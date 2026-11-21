@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -23,9 +24,16 @@ object ReleaseNotifier {
   const val CHANNEL = "releases"
   const val EXTRA_OPEN = "open_online"
 
-  data class Item(val id: Long, val title: String, val body: String, val artworkUrl: String?, val read: Boolean, val single: Boolean, val data: JSONObject?, val createdAt: Long)
+  data class Item(val id: Long, val title: String, val body: String, val artworkUrl: String?, val read: Boolean, val single: Boolean, val data: JSONObject?, val createdAt: Long, val kind: String = "release", val link: String? = null) {
+    /** A new Gharmonize release (only administrators get these). */
+    val isAppUpdate get() = kind == "app-update"
+    /** The GitHub release page of an update notice. */
+    val releaseUrl get() = link?.takeIf { isAppUpdate && it.startsWith("https://github.com/") }
+  }
 
   fun parse(o: JSONObject) = Item(
+    kind = o.optString("kind", "release"),
+    link = o.optString("link").takeIf { it.isNotBlank() },
     id = o.optLong("id"),
     title = o.optString("title"),
     body = o.optString("body"),
@@ -56,14 +64,25 @@ object ReleaseNotifier {
     if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL) == null) {
       nm.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.notif_channel), NotificationManager.IMPORTANCE_DEFAULT))
     }
-    val open = Intent(context, MainActivity::class.java)
-      .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-      .putExtra(EXTRA_OPEN, item.data?.toString())
+    val release = item.releaseUrl
+    val open = if (release != null) {
+      Intent(Intent.ACTION_VIEW, Uri.parse(release)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    } else {
+      Intent(context, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        .putExtra(EXTRA_OPEN, item.data?.toString())
+    }
     val pending = PendingIntent.getActivity(context, item.id.toInt(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    val kind = context.getString(if (item.single) R.string.notif_new_single else R.string.notif_new_album)
+    val kind = context.getString(
+      when {
+        item.isAppUpdate -> R.string.notif_update
+        item.single -> R.string.notif_new_single
+        else -> R.string.notif_new_album
+      }
+    )
     val n = NotificationCompat.Builder(context, CHANNEL)
       .setSmallIcon(R.drawable.media3_notification_small_icon)
-      .setContentTitle("${item.body}: ${item.title}")
+      .setContentTitle(if (item.isAppUpdate) item.title else "${item.body}: ${item.title}")
       .setContentText(kind)
       .setContentIntent(pending)
       .setAutoCancel(true)

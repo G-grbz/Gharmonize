@@ -1,6 +1,6 @@
 # Features
 
-**Gharmonize** is a media automation toolkit running as a Node.js server with an optional Electron desktop shell. It combines downloading, mapping, conversion, tagging, disc processing, and batch job management behind a single Web UI.
+**Gharmonize** is a media automation toolkit running as a Node.js server with an optional Electron desktop shell. It combines downloading, mapping, conversion, tagging, disc processing, and batch job management. Gharmonize Player adds a personal music server for browsers, Android phones, and TVs.
 
 On current builds, runtime tools such as **ffmpeg**, **ffprobe**, **mkvmerge**, **yt-dlp**, and **deno** are checked, downloaded, and refreshed automatically at application startup — manual setup is no longer required in the common case (see [BINARY_MANAGEMENT.md](BINARY_MANAGEMENT.md)).
 
@@ -35,6 +35,18 @@ On current builds, runtime tools such as **ffmpeg**, **ffprobe**, **mkvmerge**, 
 A music-first interface for YouTube and YouTube Music workflows, including search tabs, discovery presets, embedded playback, and a shared job queue with the classic UI.
 
 Full guide: [YTLIVE.md](YTLIVE.md)
+
+---
+
+## Gharmonize Player
+
+* Stream your personal music library in a browser with playlists, queue management, favorites, synchronized lyrics, and listening statistics.
+* Listen offline on Android by saving albums, playlists, and mixes to your phone. The Android client also supports background playback, lock screen controls, an equalizer, and separate Wi-Fi and mobile streaming quality.
+* Play music on Android TV and Google TV with a remote-friendly interface. Use the Android phone app to scan the TV's pairing QR code.
+* Discover music through enabled providers, follow artists to receive new-release notifications, and sync supported online playlists to your library. Accounts with download permission can add supported tracks through Gharmonize's download engine.
+* Administrators can configure music libraries, scan folders, manage access, and use library health tools to find and repair issues. Player supports home network access and can connect remotely through Tailscale or Cloudflare Tunnel.
+
+See the [Player setup guide](PLAYER.md) for installation, device pairing, library configuration, and remote access.
 
 ---
 

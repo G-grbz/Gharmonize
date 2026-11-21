@@ -1,12 +1,4 @@
-/* Ggrbz css editor | access.css | 2026-09-30 14:57:25 (Europe/Istanbul) */
-
-body.gharmonize-access-locked {
-  overflow: hidden !important;
-}
-
-.access-gate[hidden],.access-gate__request-block[hidden],.access-gate__waiting[hidden] {
-  display: none !important;
-}
+/* Ggrbz css editor | access.css | 2026-11-20 18:34:34 (Europe/Istanbul) */
 
 .access-gate {
   --access-bg: var(--bg,#f7f7fb);
@@ -34,18 +26,18 @@ body.gharmonize-access-locked {
   z-index: 100000;
 }
 
+.access-gate:after,.access-gate:before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+}
+
 .access-gate:before {
   background-image: linear-gradient(color-mix(in oklab,var(--access-border) 30%,transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in oklab,var(--access-border) 30%,transparent) 1px,transparent 1px);
   background-size: 38px 38px;
   inset: 0;
   mask-image: linear-gradient(180deg,rgba(0,0,0,.24),transparent 75%);
   opacity: .35;
-}
-
-.access-gate:after,.access-gate:before {
-  content: "";
-  pointer-events: none;
-  position: absolute;
 }
 
 .access-gate:after {
@@ -57,6 +49,93 @@ body.gharmonize-access-locked {
   right: 7%;
   top: 8%;
   width: 190px;
+}
+
+.access-gate[hidden],.access-gate__request-block[hidden],.access-gate__waiting[hidden] {
+  display: none !important;
+}
+
+.access-gate__brand:after,.access-gate__brand:before {
+  border: 1px solid color-mix(in oklab,var(--access-accent) 24%,transparent);
+  border-radius: 999px;
+  content: "";
+  pointer-events: none;
+  position: absolute;
+}
+
+.access-gate__brand:before {
+  height: 340px;
+  left: 50%;
+  opacity: .52;
+  top: 50%;
+  transform: translate(-50%,-50%);
+  width: 340px;
+}
+
+.access-gate__brand:after {
+  height: 250px;
+  left: 50%;
+  opacity: .6;
+  top: 50%;
+  transform: translate(-50%,-50%);
+  width: 250px;
+}
+
+.access-gate__brand-lines span {
+  background: linear-gradient(to top,color-mix(in oklab,var(--access-accent) 84%,var(--access-text)),var(--access-accent));
+  border-radius: 99px;
+  display: block;
+  width: 4px;
+}
+
+.access-gate__brand-dots span {
+  background: color-mix(in oklab,var(--access-accent) 58%,var(--access-border));
+  border-radius: 50%;
+  height: 6px;
+  opacity: .58;
+  width: 6px;
+}
+
+.access-gate__brand-lines span:first-child,.access-gate__brand-lines span:nth-child(7) {
+  height: 12px;
+}
+
+.access-gate__brand-lines span:nth-child(2),.access-gate__brand-lines span:nth-child(6) {
+  height: 24px;
+}
+
+.access-gate__brand-lines span:nth-child(3),.access-gate__brand-lines span:nth-child(5) {
+  height: 34px;
+}
+
+.access-gate__brand-lines span:nth-child(4) {
+  height: 44px;
+}
+
+.access-gate__button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.access-gate__button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.access-gate__button:not(:disabled):active {
+  transform: translateY(0);
+}
+
+.access-gate__button--primary:not(:disabled):hover {
+  box-shadow: 0 12px 24px color-mix(in oklab,var(--access-accent) 28%,transparent);
+}
+
+.access-gate__button--primary:not(:disabled):hover svg {
+  transform: translateX(2px);
+}
+
+.access-gate__button--secondary:not(:disabled):hover {
+  background: var(--access-accent-soft);
+  border-color: color-mix(in oklab,var(--access-accent) 32%,var(--access-border));
 }
 
 .access-gate__card {
@@ -87,32 +166,6 @@ body.gharmonize-access-locked {
   position: relative;
 }
 
-.access-gate__brand:after,.access-gate__brand:before {
-  border: 1px solid color-mix(in oklab,var(--access-accent) 24%,transparent);
-  border-radius: 999px;
-  content: "";
-  pointer-events: none;
-  position: absolute;
-}
-
-.access-gate__brand:before {
-  height: 340px;
-  left: 50%;
-  opacity: .52;
-  top: 50%;
-  transform: translate(-50%,-50%);
-  width: 340px;
-}
-
-.access-gate__brand:after {
-  height: 250px;
-  left: 50%;
-  opacity: .6;
-  top: 50%;
-  transform: translate(-50%,-50%);
-  width: 250px;
-}
-
 .access-gate__brand-glow {
   background: radial-gradient(circle,color-mix(in oklab,var(--access-accent) 20%,transparent),transparent 69%);
   height: 360px;
@@ -140,6 +193,56 @@ body.gharmonize-access-locked {
   z-index: 2;
 }
 
+.access-gate__divider em {
+  font-style: normal;
+  opacity: .82;
+}
+
+.access-gate__error:before {
+  content: "!";
+  flex: 0 0 auto;
+  font-weight: 850;
+  margin-right: 8px;
+}
+
+.access-gate__form[hidden] {
+  display: none !important;
+}
+
+.access-gate__error[hidden] {
+  display: none !important;
+}
+
+.access-gate__input:hover {
+  border-color: color-mix(in oklab,var(--access-accent) 38%,var(--access-border));
+}
+
+.access-gate__input:focus {
+  background: var(--access-surface);
+  border-color: var(--access-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab,var(--access-accent) 14%,transparent);
+}
+
+.access-gate__input-wrap:focus-within .access-gate__input-icon {
+  color: var(--access-accent-strong);
+}
+
+.access-gate__lock-badge svg {
+  height: 20px;
+  width: 20px;
+}
+
+.access-gate__button svg {
+  height: 17px;
+  transition: transform .16s ease;
+  width: 17px;
+}
+
+.access-gate__divider span {
+  background: var(--access-border);
+  height: 1px;
+}
+
 .access-gate__logo {
   display: block;
   filter: drop-shadow(0 12px 20px color-mix(in oklab,#000 16%,transparent));
@@ -161,43 +264,12 @@ body.gharmonize-access-locked {
   z-index: 2;
 }
 
-.access-gate__brand-lines span {
-  background: linear-gradient(to top,color-mix(in oklab,var(--access-accent) 84%,var(--access-text)),var(--access-accent));
-  border-radius: 99px;
-  display: block;
-  width: 4px;
-}
-
-.access-gate__brand-lines span:first-child,.access-gate__brand-lines span:nth-child(7) {
-  height: 12px;
-}
-
-.access-gate__brand-lines span:nth-child(2),.access-gate__brand-lines span:nth-child(6) {
-  height: 24px;
-}
-
-.access-gate__brand-lines span:nth-child(3),.access-gate__brand-lines span:nth-child(5) {
-  height: 34px;
-}
-
-.access-gate__brand-lines span:nth-child(4) {
-  height: 44px;
-}
-
 .access-gate__brand-dots {
   display: flex;
   gap: 8px;
   left: 24px;
   position: absolute;
   top: 24px;
-}
-
-.access-gate__brand-dots span {
-  background: color-mix(in oklab,var(--access-accent) 58%,var(--access-border));
-  border-radius: 50%;
-  height: 6px;
-  opacity: .58;
-  width: 6px;
 }
 
 .access-gate__content {
@@ -217,6 +289,10 @@ body.gharmonize-access-locked {
   margin-bottom: 30px;
 }
 
+.access-gate__input-wrap {
+  position: relative;
+}
+
 .access-gate__lock-badge {
   align-items: center;
   background: var(--access-accent-soft);
@@ -229,9 +305,9 @@ body.gharmonize-access-locked {
   width: 42px;
 }
 
-.access-gate__lock-badge svg {
-  height: 20px;
-  width: 20px;
+.access-gate__form {
+  display: grid;
+  gap: 11px;
 }
 
 .access-gate__title {
@@ -254,15 +330,6 @@ body.gharmonize-access-locked {
   text-align: left;
 }
 
-.access-gate__form {
-  display: grid;
-  gap: 11px;
-}
-
-.access-gate__form[hidden] {
-  display: none !important;
-}
-
 .access-gate__label {
   color: var(--access-text);
   font-size: .82rem;
@@ -271,8 +338,11 @@ body.gharmonize-access-locked {
   margin-bottom: 1px;
 }
 
-.access-gate__input-wrap {
-  position: relative;
+.access-gate__actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 4px;
 }
 
 .access-gate__input-icon {
@@ -302,27 +372,6 @@ body.gharmonize-access-locked {
   width: 100%;
 }
 
-.access-gate__input:hover {
-  border-color: color-mix(in oklab,var(--access-accent) 38%,var(--access-border));
-}
-
-.access-gate__input:focus {
-  background: var(--access-surface);
-  border-color: var(--access-accent);
-  box-shadow: 0 0 0 3px color-mix(in oklab,var(--access-accent) 14%,transparent);
-}
-
-.access-gate__input-wrap:focus-within .access-gate__input-icon {
-  color: var(--access-accent-strong);
-}
-
-.access-gate__actions {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: 1fr 1fr;
-  margin-top: 4px;
-}
-
 .access-gate__button {
   align-items: center;
   border: 1px solid transparent;
@@ -340,25 +389,6 @@ body.gharmonize-access-locked {
   width: 100%;
 }
 
-.access-gate__button svg {
-  height: 17px;
-  transition: transform .16s ease;
-  width: 17px;
-}
-
-.access-gate__button:not(:disabled):hover {
-  transform: translateY(-1px);
-}
-
-.access-gate__button:not(:disabled):active {
-  transform: translateY(0);
-}
-
-.access-gate__button:disabled {
-  cursor: wait;
-  opacity: .55;
-}
-
 .access-gate__button--primary {
   background: linear-gradient(135deg,color-mix(in oklab,var(--access-accent-strong) 78%,#111827),color-mix(in oklab,var(--access-accent) 68%,#111827));
   box-shadow: 0 9px 20px color-mix(in oklab,var(--access-accent) 20%,transparent);
@@ -366,23 +396,10 @@ body.gharmonize-access-locked {
   margin-top: 5px;
 }
 
-.access-gate__button--primary:not(:disabled):hover {
-  box-shadow: 0 12px 24px color-mix(in oklab,var(--access-accent) 28%,transparent);
-}
-
-.access-gate__button--primary:not(:disabled):hover svg {
-  transform: translateX(2px);
-}
-
 .access-gate__button--secondary {
   background: transparent;
   border-color: var(--access-border);
   color: var(--access-text);
-}
-
-.access-gate__button--secondary:not(:disabled):hover {
-  background: var(--access-accent-soft);
-  border-color: color-mix(in oklab,var(--access-accent) 32%,var(--access-border));
 }
 
 .access-gate__request-block {
@@ -400,16 +417,6 @@ body.gharmonize-access-locked {
   grid-template-columns: 1fr auto 1fr;
 }
 
-.access-gate__divider span {
-  background: var(--access-border);
-  height: 1px;
-}
-
-.access-gate__divider em {
-  font-style: normal;
-  opacity: .82;
-}
-
 .access-gate__error {
   align-items: flex-start;
   background: var(--access-danger-soft);
@@ -422,17 +429,6 @@ body.gharmonize-access-locked {
   padding: 10px 12px;
 }
 
-.access-gate__error:before {
-  content: "!";
-  flex: 0 0 auto;
-  font-weight: 850;
-  margin-right: 8px;
-}
-
-.access-gate__error[hidden] {
-  display: none !important;
-}
-
 .access-gate__waiting {
   align-items: center;
   color: var(--access-muted);
@@ -441,6 +437,25 @@ body.gharmonize-access-locked {
   justify-content: center;
   min-height: 230px;
   text-align: center;
+}
+
+.access-gate__spinner-wrap {
+  align-items: center;
+  display: flex;
+  height: 58px;
+  justify-content: center;
+  position: relative;
+  width: 58px;
+}
+
+.access-gate__spinner {
+  animation: gharmonize-access-spin .9s linear infinite;
+  border: 2px solid color-mix(in oklab,var(--access-accent) 14%,var(--access-border));
+  border-radius: 50%;
+  border-top-color: var(--access-accent);
+  height: 58px;
+  position: absolute;
+  width: 58px;
 }
 
 .access-gate__waiting strong {
@@ -456,30 +471,11 @@ body.gharmonize-access-locked {
   max-width: 360px;
 }
 
-.access-gate__spinner-wrap {
-  align-items: center;
-  display: flex;
-  height: 58px;
-  justify-content: center;
-  position: relative;
-  width: 58px;
-}
-
 .access-gate__spinner-wrap>svg {
   color: var(--access-accent-strong);
   height: 19px;
   position: absolute;
   width: 19px;
-}
-
-.access-gate__spinner {
-  animation: gharmonize-access-spin .9s linear infinite;
-  border: 2px solid color-mix(in oklab,var(--access-accent) 14%,var(--access-border));
-  border-radius: 50%;
-  border-top-color: var(--access-accent);
-  height: 58px;
-  position: absolute;
-  width: 58px;
 }
 
 .access-settings-duration {
@@ -489,15 +485,19 @@ body.gharmonize-access-locked {
   margin-top: 10px;
 }
 
+.access-settings-duration input {
+  box-sizing: border-box;
+  width: 100%;
+}
+
 .access-settings-duration label {
   display: grid;
   font-size: .78rem;
   gap: 5px;
 }
 
-.access-settings-duration input {
-  box-sizing: border-box;
-  width: 100%;
+body.gharmonize-access-locked {
+  overflow: hidden !important;
 }
 
 .settings-checkbox-row {
@@ -524,9 +524,46 @@ body.gharmonize-access-locked #binaryStartupOverlay,body.gharmonize-access-locke
   display: none !important;
 }
 
+@media (prefers-reduced-motion:reduce) {
+  .access-gate *,.access-gate :after,.access-gate :before {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+
+  .access-gate__spinner {
+    animation-duration: 1.6s;
+  }
+}
+
 @media (max-width:760px) {
   .access-gate {
     padding: 18px;
+  }
+
+  .access-gate__brand:before {
+    height: 250px;
+    width: 250px;
+  }
+
+  .access-gate__brand:after {
+    height: 185px;
+    width: 185px;
+  }
+
+  .access-gate__brand-lines span:first-child,.access-gate__brand-lines span:nth-child(7) {
+    height: 8px;
+  }
+
+  .access-gate__brand-lines span:nth-child(2),.access-gate__brand-lines span:nth-child(6) {
+    height: 14px;
+  }
+
+  .access-gate__brand-lines span:nth-child(3),.access-gate__brand-lines span:nth-child(5) {
+    height: 21px;
+  }
+
+  .access-gate__brand-lines span:nth-child(4) {
+    height: 28px;
   }
 
   .access-gate__card {
@@ -540,16 +577,6 @@ body.gharmonize-access-locked #binaryStartupOverlay,body.gharmonize-access-locke
     border-right: 0;
     min-height: 160px;
     padding: 22px;
-  }
-
-  .access-gate__brand:before {
-    height: 250px;
-    width: 250px;
-  }
-
-  .access-gate__brand:after {
-    height: 185px;
-    width: 185px;
   }
 
   .access-gate__brand-glow {
@@ -571,22 +598,6 @@ body.gharmonize-access-locked #binaryStartupOverlay,body.gharmonize-access-locke
     left: calc(50% + 102px);
   }
 
-  .access-gate__brand-lines span:first-child,.access-gate__brand-lines span:nth-child(7) {
-    height: 8px;
-  }
-
-  .access-gate__brand-lines span:nth-child(2),.access-gate__brand-lines span:nth-child(6) {
-    height: 14px;
-  }
-
-  .access-gate__brand-lines span:nth-child(3),.access-gate__brand-lines span:nth-child(5) {
-    height: 21px;
-  }
-
-  .access-gate__brand-lines span:nth-child(4) {
-    height: 28px;
-  }
-
   .access-gate__content {
     padding: 30px 26px 28px;
   }
@@ -598,14 +609,13 @@ body.gharmonize-access-locked #binaryStartupOverlay,body.gharmonize-access-locke
     padding: 10px;
   }
 
-  .access-gate__card {
-    border-radius: 18px;
-    margin: auto 0;
-  }
-
   .access-gate__brand {
     min-height: 132px;
     padding: 16px;
+  }
+
+  .access-gate__brand-dots,.access-gate__brand-lines {
+    display: none;
   }
 
   .access-gate__brand-logo-wrap {
@@ -613,8 +623,9 @@ body.gharmonize-access-locked #binaryStartupOverlay,body.gharmonize-access-locke
     width: 96px;
   }
 
-  .access-gate__brand-dots,.access-gate__brand-lines {
-    display: none;
+  .access-gate__card {
+    border-radius: 18px;
+    margin: auto 0;
   }
 
   .access-gate__content {
@@ -647,17 +658,6 @@ body.gharmonize-access-locked #binaryStartupOverlay,body.gharmonize-access-locke
 
   .access-settings-duration {
     grid-template-columns: repeat(2,minmax(0,1fr));
-  }
-}
-
-@media (prefers-reduced-motion:reduce) {
-  .access-gate *,.access-gate :after,.access-gate :before {
-    scroll-behavior: auto !important;
-    transition-duration: .01ms !important;
-  }
-
-  .access-gate__spinner {
-    animation-duration: 1.6s;
   }
 }
 

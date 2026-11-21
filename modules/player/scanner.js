@@ -1,6 +1,7 @@
 import { metadataSourceKey } from './sourceKey.js'
 import fs from 'node:fs'
 import path from 'node:path'
+import { EventEmitter } from 'node:events'
 import { transaction } from './db.js'
 
 export const AUDIO_EXTENSIONS = new Set([
@@ -134,6 +135,7 @@ async function defaultParseFile(filePath) {
 }
 
 export function createScanner(db, { parseFile = defaultParseFile, now = () => Date.now(), logger = console, onTrackChanges = null } = {}) {
+  const events = new EventEmitter().setMaxListeners(100)
   let status = idleStatus()
   let running = null
   let abort = null
@@ -154,16 +156,18 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     insertAlbum: db.prepare('INSERT INTO albums (title, title_key, artist_id, year, genre, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
     fillAlbum: db.prepare('UPDATE albums SET year = COALESCE(year, ?), genre = COALESCE(genre, ?) WHERE id = ?'),
     insertTrack: db.prepare(`
-      INSERT INTO tracks (library_id, rel_path, size, mtime_ms, title, artist_id, artist_name, album_id, album_title, album_artist,
+      INSERT INTO tracks (id, library_id, rel_path, size, mtime_ms, title, artist_id, artist_name, album_id, album_title, album_artist,
         track_no, disc_no, year, genre, duration, bitrate, sample_rate, bit_depth, channels, codec, container, lossless,
         has_lyrics, isrc, rg_track_gain, rg_album_gain, bpm, added_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+      VALUES ((SELECT last_id + 1 FROM track_id_sequence WHERE singleton = 1),
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     updateTrack: db.prepare(`
       UPDATE tracks SET size = ?, mtime_ms = ?, title = ?, artist_id = ?, artist_name = ?, album_id = ?, album_title = ?, album_artist = ?,
         track_no = ?, disc_no = ?, year = ?, genre = ?, duration = ?, bitrate = ?, sample_rate = ?, bit_depth = ?, channels = ?,
         codec = ?, container = ?, lossless = ?, has_lyrics = ?, isrc = ?, rg_track_gain = ?, rg_album_gain = ?, bpm = ?, updated_at = ?
       WHERE id = ?`),
     updateSource: db.prepare('UPDATE tracks SET source_key = ? WHERE id = ?'),
+    renameTrack: db.prepare('UPDATE tracks SET rel_path = ?, updated_at = ? WHERE id = ?'),
     deleteTrack: db.prepare('DELETE FROM tracks WHERE id = ?'),
     deleteFts: db.prepare('DELETE FROM tracks_fts WHERE rowid = ?'),
     insertFts: db.prepare('INSERT INTO tracks_fts (rowid, title, artist, album, album_artist, genre) VALUES (?, ?, ?, ?, ?, ?)'),
@@ -196,7 +200,10 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     return Number(stmt.insertAlbum.run(record.albumTitle, key, artistId, record.year, record.genre, now()).lastInsertRowid)
   }
 
-  function writeTrack(libraryId, item, existingId) {
+  function writeTrack(libraryId, item) {
+    // The row may have been added or removed while the scanner was reading tags.
+    const existingId = stmt.byPath.get(libraryId, item.rel)?.id || null
+    if (item.existingId && existingId !== item.existingId) return null
     const r = item.record
     const artistId = ensureArtist(r.primaryArtist)
     const albumArtistId = r.albumArtist ? ensureArtist(r.albumArtist) : artistId
@@ -207,9 +214,6 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
       r.duration, r.bitrate, r.sampleRate, r.bitDepth, r.channels, r.codec, r.container, r.lossless, r.hasLyrics,
       r.isrc, r.rgTrackGain, r.rgAlbumGain, r.bpm
     ]
-    // A file may have been indexed meanwhile by indexFiles() (download bridge)
-    // while a full scan was reading tags: never insert a duplicate row.
-    if (!existingId) existingId = stmt.byPath.get(libraryId, item.rel)?.id || null
     let id = existingId
     if (existingId) {
       stmt.updateTrack.run(item.size, item.mtimeMs, ...values, ts, existingId)
@@ -272,7 +276,9 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
       batch = []
       transaction(db, () => {
         for (const item of items) {
-          changedIds.push(writeTrack(library.id, item, item.existingId))
+          const id = writeTrack(library.id, item)
+          if (!id) continue
+          changedIds.push(id)
           if (item.existingId) status.updated += 1
           else status.added += 1
         }
@@ -319,6 +325,7 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     if ((changedIds.length || removedIds.length) && onTrackChanges) {
       try { onTrackChanges({ libraryId: library.id, changedIds, removedIds }) } catch {}
     }
+    if (removedIds.length) events.emit('removed')
     return { ok: true }
   }
 
@@ -386,7 +393,8 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
       const changedIds = []
       transaction(db, () => {
         for (const item of items) {
-          const id = writeTrack(item.libraryId, item, item.existingId)
+          const id = writeTrack(item.libraryId, item)
+          if (!id) continue
           result.set(item.abs, id)
           changedIds.push(id)
         }
@@ -429,13 +437,44 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     if (onTrackChanges) {
       try { onTrackChanges({ libraryId: null, changedIds: [], removedIds: list }) } catch {}
     }
+    events.emit('removed')
     return list.length
   }
 
+  // A song replaced by another file: its places in playlists, favorites, play
+  // history and counts move to the new track before the old one is dropped.
+  function transferTrack(fromId, toId) {
+    const from = Number(fromId)
+    const to = Number(toId)
+    if (!(from > 0) || !(to > 0) || from === to) return
+    transaction(db, () => {
+      db.prepare('UPDATE playlist_tracks SET track_id = ? WHERE track_id = ?').run(to, from)
+      db.prepare('UPDATE play_history SET track_id = ? WHERE track_id = ?').run(to, from)
+      db.prepare(`INSERT INTO play_stats (user_id, track_id, play_count, skip_count, last_played_at)
+        SELECT user_id, ?, play_count, skip_count, last_played_at FROM play_stats WHERE track_id = ?
+        ON CONFLICT (user_id, track_id) DO UPDATE SET play_count = play_count + excluded.play_count,
+          skip_count = skip_count + excluded.skip_count,
+          last_played_at = MAX(COALESCE(last_played_at, 0), COALESCE(excluded.last_played_at, 0))`).run(to, from)
+      db.prepare('DELETE FROM play_stats WHERE track_id = ?').run(from)
+      db.prepare("UPDATE OR IGNORE favorites SET item_id = ? WHERE item_type = 'track' AND item_id = ?").run(to, from)
+    })
+  }
+
+  // A file renamed inside its library keeps its track (history, playlists).
+  function renameTrack(id, relPath) {
+    stmt.renameTrack.run(relPath, now(), Number(id))
+    if (onTrackChanges) {
+      try { onTrackChanges({ libraryId: null, changedIds: [Number(id)], removedIds: [] }) } catch {}
+    }
+  }
+
   return {
+    events,
     requestScan,
     indexFiles,
     forgetTracks,
+    renameTrack,
+    transferTrack,
     stop,
     getStatus: () => ({ ...status, queue: [...pending] }),
     isRunning: () => Boolean(running)

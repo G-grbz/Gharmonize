@@ -80,8 +80,13 @@ async function serverTab() {
 
 // ---- remote access ---------------------------------------------------------------
 
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); toast(t('player.pair.copied'), { type: 'success', timeout: 1500 }) } catch { toast(text) }
+async function copyText(text, field) {
+  try { await navigator.clipboard.writeText(text) } catch {
+    field?.focus()
+    field?.select()
+    if (!field || !document.execCommand?.('copy')) { toast(text); return }
+  }
+  toast(t('player.pair.copied'), { type: 'success', timeout: 1500 })
 }
 
 function copyButton(text) {
@@ -513,8 +518,34 @@ async function healthTab() {
   const box = h('div', { class: 'stack-lg' })
   const head = h('div')
   const body = h('div', { class: 'stack-lg' })
-  box.append(card(t('player.health.title'), t('player.health.hint'), head), body)
+  const trashPath = h('input', { class: 'input', type: 'text', readOnly: true, 'aria-label': t('player.health.trashPath') })
+  const emptyTrash = h('button', { type: 'button', class: 'btn btn--danger btn--sm', text: t('player.health.emptyTrash') })
+  const copyTrashPath = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.copyTrashPath'),
+    onclick: () => copyText(trashPath.value, trashPath)
+  })
+  box.append(card(t('player.health.title'), t('player.health.hint'), head),
+    card(t('player.health.trashPath'), null, h('div', { class: 'stack' }, trashPath,
+      h('div', { class: 'row-actions' }, copyTrashPath, emptyTrash))), body)
   let timer = null
+  let pollVersion = 0
+  let emptying = false
+  let lastStatus
+
+  emptyTrash.addEventListener('click', async () => {
+    if (!await confirmDialog({
+      title: t('player.health.emptyTrash'), message: t('player.health.emptyTrashConfirm'),
+      confirmLabel: t('player.health.emptyTrash'), danger: true
+    })) return
+    emptying = true
+    emptyTrash.disabled = true
+    try {
+      await post('/admin/health/trash/empty')
+      toast(t('player.health.trashEmptied'), { type: 'success' })
+    } catch (error) { toastError(error) } finally {
+      emptying = false
+      paint(await get('/admin/health').catch((error) => { toastError(error); return lastStatus }))
+    }
+  })
 
   const run = h('button', { type: 'button', class: 'btn btn--primary', text: t('player.health.run') })
   run.addEventListener('click', async () => {
@@ -527,67 +558,302 @@ async function healthTab() {
     h('small', { class: 'muted', text: [tr.artist, tr.album, tr.codec?.toUpperCase(), tr.lossless ? t('player.badge.lossless') : kbps(tr.bitrate), fmtBytes(tr.size)].filter(Boolean).join(' · ') }),
     h('small', { class: 'muted health-row__path', text: `${tr.library} / ${tr.path}` }))
 
-  const trashBtn = (tr, onDone) => {
+  const trashBtn = (tr) => {
     const b = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.trash') })
     b.addEventListener('click', async () => {
       if (!await confirmDialog({ title: t('player.health.trash'), message: t('player.health.trashConfirm', { name: tr.title }), confirmLabel: t('player.health.trash'), danger: true })) return
       b.disabled = true
-      try { await post('/admin/health/trash', { trackId: tr.id }); toast(t('player.health.trashed')); onDone() } catch (error) { toastError(error); b.disabled = false }
+      try { await post('/admin/health/trash', { trackId: tr.id }); toast(t('player.health.trashed')); paint(await get('/admin/health')) } catch (error) { toastError(error); b.disabled = false }
     })
     return b
   }
 
-  const section = (title, count, rows) => card(`${title} · ${fmtNumber(count)}`, null, count ? h('div', { class: 'health-list' }, rows) : h('p', { class: 'muted small', text: t('player.health.none') }))
+  const selections = new Map()
+  const button = (key, onclick, cls = 'btn--outline') =>
+    h('button', { type: 'button', class: ['btn', cls, 'btn--sm'], text: t(key), onclick })
+
+  async function beginBatch({ action, label, confirm }, ids, count, section) {
+    if (confirm && !await confirmDialog({
+      title: t(label), message: t(confirm, { n: fmtNumber(count) }), confirmLabel: t(label), danger: true
+    })) return
+    body.inert = true
+    try {
+      const status = await post('/admin/health/batch', { action, ids })
+      selections.get(section)?.clear()
+      paint(status)
+    } catch (error) {
+      body.inert = false
+      toastError(error)
+    }
+  }
+
+  function bulkSection(report, { key, title, count, items, automatic, manual, render }) {
+    const heading = `${t(title)} · ${fmtNumber(count)}`
+    if (!count) return card(heading, null, h('p', { class: 'muted small', text: t('player.health.none') }))
+    const selected = selections.get(key)
+    const itemIds = new Set(items.map((item) => item.id))
+    if (selected) for (const id of selected) if (!itemIds.has(id)) selected.delete(id)
+    const controls = h('div', { class: 'row-actions' })
+    const inputs = []
+    let updateSelection = () => {}
+    const actionButton = (action, ids, size) => button(action.label, () => beginBatch(action, ids(), size(), key))
+    if (!selected) {
+      automatic.forEach((action) => controls.append(actionButton(action, () => undefined, () => count)))
+      controls.append(button('player.health.choose', () => { selections.set(key, new Set()); paintReport(report) }))
+    } else {
+      const sizeLabel = h('span', { class: 'muted small', 'aria-live': 'polite' })
+      const selectAll = button('player.select.all', () => {
+        if (selected.size === itemIds.size) selected.clear()
+        else for (const id of itemIds) selected.add(id)
+        for (const { item, input } of inputs) input.checked = selected.has(item.id)
+        updateSelection()
+      }, 'btn--ghost')
+      const actions = manual.map((action) => actionButton(action, () => [...selected], () => selected.size))
+      updateSelection = () => {
+        sizeLabel.textContent = t('player.health.selectedCount', { n: fmtNumber(selected.size) })
+        selectAll.textContent = t(selected.size === itemIds.size ? 'player.select.none' : 'player.select.all')
+        for (const action of actions) action.disabled = !selected.size
+      }
+      controls.append(selectAll, sizeLabel, ...actions,
+        button('player.common.cancel', () => { selections.delete(key); paintReport(report) }, 'btn--ghost'))
+      updateSelection()
+    }
+    const checkbox = (item) => {
+      if (!selected) return null
+      const input = h('input', {
+        type: 'checkbox', class: 'health-row__check', checked: selected.has(item.id),
+        'aria-label': t('player.health.selectItem', { name: [item.title, item.path].filter(Boolean).join(' · ') }),
+        onchange: () => {
+          if (input.checked) selected.add(item.id)
+          else selected.delete(item.id)
+          updateSelection()
+        }
+      })
+      inputs.push({ item, input })
+      return input
+    }
+    return card(heading, null, h('div', { class: 'stack' }, controls,
+      h('div', { class: 'health-list' }, render(checkbox))))
+  }
+
+  const replace = { action: 'replace-copies', label: 'player.health.replaceCopies', confirm: 'player.health.replaceConfirm' }
 
   function paintReport(report) {
     clear(body)
     if (!report) return
     if (report.error) { body.append(h('p', { class: 'note', text: report.error })); return }
-    head.append(h('p', { class: 'muted small', text: t('player.health.checked', { when: fmtRelative(report.checkedAt), tracks: fmtNumber(report.totals.tracks), albums: fmtNumber(report.totals.albums) }) }))
 
-    body.append(section(t('player.health.duplicates'), report.duplicates.length, report.duplicates.map((group) => {
-      const el = h('div', { class: 'health-group' })
-      group.forEach((tr, i) => el.append(h('div', { class: 'health-row' }, songLine(tr),
-        i === 0 ? h('span', { class: 'pill pill--accent', text: t('player.health.best') }) : trashBtn(tr, () => { el.remove() }))))
-      return el
-    })))
+    body.append(bulkSection(report, {
+      key: 'duplicates', title: 'player.health.duplicates', count: report.duplicates.length, items: report.duplicates.flat(),
+      automatic: [{ action: 'keep-best', label: 'player.health.keepBest', confirm: 'player.health.keepBestConfirm' }],
+      manual: [{ action: 'trash-selected', label: 'player.health.trashSelected', confirm: 'player.health.trashSelectedConfirm' }],
+      render: (checkbox) => report.duplicates.map((group) =>
+        h('div', { class: 'health-group' }, group.map((tr, i) =>
+          h('div', { class: 'health-row' }, checkbox(tr), songLine(tr),
+            i === 0 ? h('span', { class: 'pill pill--accent', text: t('player.health.best') }) : trashBtn(tr)))))
+    }))
 
-    body.append(section(t('player.health.covers'), report.missingCovers.length, report.missingCovers.map((a) => {
-      const fix = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.fixCover') })
-      const row = h('div', { class: 'health-row' },
-        h('span', { class: 'health-row__text' }, h('a', { href: `#/album/${a.id}`, text: a.title }), h('small', { class: 'muted', text: [a.artist, t('player.count.tracks', { n: a.trackCount })].filter(Boolean).join(' · ') })), fix)
-      fix.addEventListener('click', async () => {
-        fix.disabled = true
-        try { await post('/admin/health/cover', { albumId: a.id }); toast(t('player.health.coverSaved')); row.remove() } catch (error) { toastError(error); fix.disabled = false }
+    body.append(bulkSection(report, {
+      key: 'covers', title: 'player.health.covers', count: report.missingCovers.length, items: report.missingCovers,
+      automatic: [{ action: 'add-covers', label: 'player.health.coverAll' }],
+      manual: [{ action: 'add-covers', label: 'player.health.coverSelected' }],
+      render: (checkbox) => report.missingCovers.map((a) => {
+        const fix = button('player.health.fixCover', async () => {
+          fix.disabled = true
+          try {
+            await post('/admin/health/cover', { albumId: a.id })
+            toast(t('player.health.coverSaved'))
+            paint(await get('/admin/health'))
+          } catch (error) { toastError(error); fix.disabled = false }
+        })
+        return h('div', { class: 'health-row' }, checkbox(a),
+          h('span', { class: 'health-row__text' }, h('a', { href: `#/album/${a.id}`, text: a.title }),
+            h('small', { class: 'muted', text: [a.artist, t('player.count.tracks', { n: a.trackCount })].filter(Boolean).join(' · ') })), fix)
       })
-      return row
-    })))
+    }))
 
-    body.append(section(t('player.health.lowBitrate'), report.lowBitrate.length, report.lowBitrate.map((tr) => {
-      const again = h('button', { type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.redownload') })
-      again.addEventListener('click', async () => {
-        again.disabled = true
-        try { await post('/admin/health/redownload', { trackId: tr.id }); toast(t('player.health.redownloading')) } catch (error) { toastError(error); again.disabled = false }
+    body.append(bulkSection(report, {
+      key: 'quality', title: 'player.health.lowBitrate', count: report.lowBitrate.length, items: report.lowBitrate,
+      automatic: [replace],
+      manual: [{ ...replace, label: 'player.health.replaceSelected' }],
+      render: (checkbox) => report.lowBitrate.map((tr) => {
+        const again = button('player.health.redownload', async () => {
+          again.disabled = true
+          try { paint(await post('/admin/health/redownload', { trackId: tr.id })) }
+          catch (error) { toastError(error); again.disabled = false }
+        })
+        return h('div', { class: 'health-row' }, checkbox(tr), songLine(tr), h('span', { class: 'row-actions' }, again, trashBtn(tr)))
       })
-      return h('div', { class: 'health-row' }, songLine(tr), h('span', { class: 'row-actions' }, again, trashBtn(tr, () => {})))
-    })))
+    }))
 
-    body.append(section(t('player.health.untagged'), report.untagged.length, report.untagged.map((tr) => h('div', { class: 'health-row' }, songLine(tr)))))
+    const lyrics = report.lyrics || { missing: [], missingCount: 0, tidy: [], tidyCount: 0 }
+    body.append(bulkSection(report, {
+      key: 'lyricsMissing', title: 'player.health.lyricsMissing', count: lyrics.missingCount, items: lyrics.missing,
+      automatic: [{ action: 'lyrics-fetch', label: 'player.health.lyricsFetchAll' }],
+      manual: [{ action: 'lyrics-fetch', label: 'player.health.lyricsFetchSelected' }],
+      render: (checkbox) => lyrics.missing.map((tr) => h('div', { class: 'health-row' }, checkbox(tr), songLine(tr)))
+    }))
+
+    body.append(bulkSection(report, {
+      key: 'lyricsTidy', title: 'player.health.lyricsTidy', count: lyrics.tidyCount, items: lyrics.tidy,
+      automatic: [{ action: 'lyrics-tidy', label: 'player.health.lyricsTidyAll', confirm: 'player.health.lyricsTidyConfirm' }],
+      manual: [{ action: 'lyrics-tidy', label: 'player.health.lyricsTidySelected', confirm: 'player.health.lyricsTidyConfirm' }],
+      render: (checkbox) => lyrics.tidy.map((item) => {
+        const [keep, ...extra] = item.files
+        const plan = item.kind === 'duplicates'
+          ? t('player.health.lyricsPlan.duplicates', { keep: item.target, n: fmtNumber(extra.length) })
+          : t(`player.health.lyricsPlan.${item.kind}`, { target: item.target || '' })
+        return h('div', { class: 'health-row' }, checkbox(item),
+          h('span', { class: 'health-row__text' },
+            h('b', { text: item.title }),
+            h('small', { class: 'muted', text: plan }),
+            h('small', { class: 'muted health-row__path', text: `${item.library} / ${item.kind === 'duplicates' ? [keep, ...extra].join(' · ') : item.path}` })))
+      })
+    }))
+
+    body.append(card(`${t('player.health.untagged')} · ${fmtNumber(report.untagged.length)}`, null,
+      report.untagged.length ? h('div', { class: 'health-list' }, report.untagged.map((tr) => h('div', { class: 'health-row' }, songLine(tr))))
+        : h('p', { class: 'muted small', text: t('player.health.none') })))
+  }
+
+  // Failed songs of the last batch. A song whose online length differs can be
+  // downloaded anyway (one by one or all together): the old copy is replaced.
+  let failuresOpen = false
+  async function forceDownload(ids, count) {
+    if (count > 1 && !await confirmDialog({
+      title: t('player.health.forceDownloadAllTitle'), message: t('player.health.forceConfirm', { n: fmtNumber(count) }),
+      confirmLabel: t('player.health.forceDownload'), danger: true
+    })) return
+    failuresOpen = true
+    body.inert = true
+    try {
+      paint(await post('/admin/health/batch', { action: 'replace-copies', ids, force: true }))
+    } catch (error) {
+      body.inert = false
+      toastError(error)
+    }
+  }
+
+  function failureList(batch) {
+    const entries = [...(batch.earlierErrors || []), ...batch.errors]
+    if (!entries.length) return null
+    const forceable = batch.canControl ? entries.filter((entry) => entry.code === 'LENGTH_MISMATCH' && entry.trackIds?.length) : []
+    const rows = entries.map((entry) => {
+      const text = h('span', { class: 'health-failure__text', text: [entry.title, errorText(entry), entry.detail].filter(Boolean).join(' · ') })
+      const retry = forceable.includes(entry)
+        ? button('player.health.forceDownload', () => forceDownload(entry.trackIds, 1), 'btn--ghost')
+        : null
+      return h('li', { class: 'health-failure' }, text, retry)
+    })
+    const all = forceable.length > 1
+      ? h('div', { class: 'row-actions' }, h('button', {
+        type: 'button', class: 'btn btn--outline btn--sm', text: t('player.health.forceDownloadAll', { n: fmtNumber(forceable.length) }),
+        onclick: () => forceDownload(forceable.flatMap((entry) => entry.trackIds), forceable.length)
+      }))
+      : null
+    const details = h('details', { open: failuresOpen, ontoggle: () => { failuresOpen = details.open } },
+      h('summary', { text: `${t('player.health.batchErrors')} · ${fmtNumber(entries.length)}` }),
+      h('ul', { class: 'health-failures' }, rows), all)
+    return details
+  }
+
+  // The song a download batch is on: a ring for its download, a bar for the batch.
+  function batchGauge(batch, progress) {
+    const { current } = batch
+    const d = current.download
+    let stage = 'searching'
+    if (batch.action === 'lyrics-fetch') stage = 'lyricsSearching'
+    else if (batch.action === 'lyrics-tidy') stage = 'lyricsTidying'
+    else if (d?.phase === 'waiting-folder') stage = 'waitingFolder'
+    else if (d?.status === 'completed') stage = 'replacing'
+    else if (d?.status === 'downloading' || d?.status === 'indexing' || d?.status === 'queued' || d?.status === 'resolving') stage = d.status
+    const measured = stage === 'downloading' || stage === 'indexing' || stage === 'replacing'
+    const percent = stage === 'downloading' ? Math.round(d.progress || 0) : measured ? 100 : 0
+    const stageText = stage === 'waitingFolder' ? t('player.health.waitingFolder') : t(`player.health.stage.${stage}`)
+    const overall = batch.total ? Math.round((batch.done / batch.total) * 100) : 0
+    return h('div', { class: 'health-gauge', role: 'status' },
+      h('div', {
+        class: ['health-gauge__ring', !measured && 'is-waiting'],
+        style: `--p:${percent}`,
+        role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': measured ? String(percent) : null,
+        'aria-label': stageText
+      }, h('span', { class: 'health-gauge__value', text: measured ? `${percent}%` : '' })),
+      h('div', { class: 'health-gauge__main' },
+        h('div', { class: 'health-gauge__title' }, h('b', { text: current.title }), current.artist ? h('span', { class: 'muted', text: ` · ${current.artist}` }) : null),
+        current.path ? h('div', { class: 'health-gauge__path muted small', text: current.path, title: current.path }) : null,
+        h('div', { class: 'health-gauge__stage', text: stage === 'downloading' ? `${stageText} · ${percent}%` : stageText }),
+        h('div', { class: 'progress health-gauge__overall', title: `${batch.done}/${batch.total}` }, h('span', { style: { width: `${overall}%` } })),
+        h('div', { class: 'muted small', text: progress })))
   }
 
   function paint(status) {
+    lastStatus = status
     clearTimeout(timer)
+    const version = ++pollVersion
     clear(head)
+    const batch = status.batch
+    const busy = status.running || batch?.running
+    if (trashPath.value !== status.trashPath) trashPath.value = status.trashPath || ''
+    emptyTrash.disabled = emptying || Boolean(busy) || !trashPath.value
+    copyTrashPath.disabled = !trashPath.value
+    body.inert = Boolean(busy)
+    run.disabled = Boolean(busy)
     if (status.running) {
       const p = status.progress || {}
       head.append(h('div', { class: 'row-actions' }, h('span', { class: 'spinner spinner--sm' }),
-        h('span', { class: 'muted', text: p.phase === 'covers' ? t('player.health.progressCovers', { done: fmtNumber(p.done || 0), total: fmtNumber(p.total || 0) }) : t('player.health.progress') })))
-      timer = setTimeout(async () => { if (box.isConnected) paint(await get('/admin/health').catch(() => status)) }, 1500)
-      return
+        h('span', { class: 'muted', text: p.phase === 'covers' || p.phase === 'lyrics'
+          ? t(p.phase === 'covers' ? 'player.health.progressCovers' : 'player.health.progressLyrics', { done: fmtNumber(p.done || 0), total: fmtNumber(p.total || 0) })
+          : t('player.health.progress') })))
+    } else {
+      head.append(h('div', { class: 'row-actions' }, run))
+      if (status.report?.totals) {
+        const { checkedAt, totals } = status.report
+        head.append(h('p', { class: 'muted small', text: t('player.health.checked', {
+          when: fmtRelative(checkedAt), tracks: fmtNumber(totals.tracks), albums: fmtNumber(totals.albums)
+        }) }))
+      }
     }
-    run.disabled = false
-    head.append(h('div', { class: 'row-actions' }, run))
-    paintReport(status.report)
+    if (batch) {
+      const counts = { done: fmtNumber(batch.done), total: fmtNumber(batch.total), succeeded: fmtNumber(batch.succeeded), failed: fmtNumber(batch.errors.length) }
+      let progressKey = 'batchResult'
+      if (batch.canceled) progressKey = batch.running ? 'batchCanceling' : 'batchCanceled'
+      else if (batch.paused) progressKey = batch.currentTitle ? 'batchPausing' : 'batchPaused'
+      else if (batch.running) progressKey = 'batchProgress'
+      const progress = t(`player.health.${progressKey}`, counts)
+      if (batch.running && batch.current) head.append(batchGauge(batch, progress))
+      else head.append(h('p', { class: 'muted', role: 'status', text: batch.running && batch.currentTitle ? `${progress} · ${batch.currentTitle}` : progress }))
+      if (batch.blocked === 'SOURCE_FOLDER_UNAVAILABLE') {
+        head.append(h('p', { class: 'muted small', text: t('player.health.batchDiskUnavailable') }))
+      }
+      if (batch.canControl && batch.running && !batch.canceled) {
+        const controls = h('div', { class: 'row-actions' })
+        const control = async (command) => {
+          controls.inert = true
+          clearTimeout(timer)
+          pollVersion += 1
+          try {
+            paint(await post(`/admin/health/batch/${encodeURIComponent(batch.id)}/control`, { command }))
+          } catch (error) {
+            toastError(error)
+            paint(status)
+          }
+        }
+        controls.append(
+          batch.paused ? button('player.health.batchResume', () => control('resume')) : button('player.common.pause', () => control('pause')),
+          button('player.common.cancel', () => control('cancel'), 'btn--ghost'))
+        head.append(controls)
+      }
+      if (!batch.running) {
+        const failures = failureList(batch)
+        if (failures) head.append(failures)
+      }
+    }
+    if (!busy || !body.hasChildNodes()) paintReport(status.report)
+    if (busy) timer = setTimeout(async () => {
+      if (!box.isConnected) return
+      const updated = await get('/admin/health').catch(() => status)
+      if (version === pollVersion) paint(updated)
+    }, 1500)
   }
   paint(await get('/admin/health'))
   return box

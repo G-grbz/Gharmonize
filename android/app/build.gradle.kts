@@ -26,10 +26,8 @@ android {
     applicationId = "com.gharmonize.player"
     minSdk = 26
     targetSdk = 35
-    // The app shares Gharmonize's version (package.json): v2.0.1 -> versionName
-    // 2.0.1, versionCode 2000001 (major*1e6 + minor*1e3 + patch, so every
-    // release installs over the previous one). ghVersionName/ghVersionCode can
-    // still override them.
+    // The app shares the version from package.json. The numeric code increases
+    // with each release. ghVersionName and ghVersionCode can override the defaults.
     versionName = (findProperty("ghVersionName") as String?) ?: gharmonizeVersion
     versionCode = (findProperty("ghVersionCode") as String?)?.toInt() ?: versionCodeOf(versionName!!)
   }

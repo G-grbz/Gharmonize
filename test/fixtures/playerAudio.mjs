@@ -6,10 +6,10 @@ import { updateBuffer } from 'music-metadata'
 export const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', 'base64')
 export const silentLogger = { log() {}, warn() {}, error() {}, debug() {} }
 
-// ~1 s of silent MPEG-1 Layer III frames (128 kbps, 44.1 kHz).
-export function silentMp3(frames = 40) {
-  const frame = Buffer.alloc(417)
-  frame[0] = 0xff; frame[1] = 0xfb; frame[2] = 0x90; frame[3] = 0x00
+// ~1 s of silent MPEG-1 Layer III frames at 44.1 kHz.
+export function silentMp3(frames = 40, bitrate = 128) {
+  const frame = Buffer.alloc(Math.floor(144000 * bitrate / 44100))
+  frame[0] = 0xff; frame[1] = 0xfb; frame[2] = { 128: 0x90, 192: 0xb0 }[bitrate]; frame[3] = 0x00
   return Buffer.concat(Array.from({ length: frames }, () => frame))
 }
 
@@ -46,7 +46,7 @@ function fixturePatch(tags) {
   return patch
 }
 
-export async function writeTrack(file, tags, { cover = false, fresh = false } = {}) {
+export async function writeTrack(file, tags, { cover = false, fresh = false, bitrate = 128 } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const patch = fixturePatch(tags)
   if (cover) {
@@ -57,7 +57,7 @@ export async function writeTrack(file, tags, { cover = false, fresh = false } = 
       data: cover === true ? PNG_1PX : cover
     }]
   }
-  fs.writeFileSync(file, await updateBuffer(silentMp3(), patch))
+  fs.writeFileSync(file, await updateBuffer(silentMp3(40, bitrate), patch))
   if (!fresh) age(file)
   return file
 }

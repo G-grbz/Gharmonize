@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,16 +44,37 @@ fun NotificationsScreen(state: AppState) {
     if (list == null) { if (data.loading) item { Loading() }; return@LazyColumn }
     if (list.isEmpty()) item { EmptyText(stringResource(R.string.notif_empty)) }
     items(list, key = { it.id }) { n ->
+      val uri = LocalUriHandler.current
       Row(
-        Modifier.fillMaxWidth().clickable { n.data?.let { state.navigate(Route.OnlineAlbum(parseOnline(it))) } }.padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clickable {
+          val release = n.releaseUrl
+          if (release != null) runCatching { uri.openUri(release) }
+          else n.data?.let { state.navigate(Route.OnlineAlbum(parseOnline(it))) }
+        }.padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Artwork(n.artworkUrl, Modifier.size(56.dp), size = 128, placeholder = FluentIcons.Album)
+        if (n.isAppUpdate) {
+          androidx.compose.foundation.Image(
+            androidx.compose.ui.res.painterResource(R.drawable.gharmonize_logo),
+            contentDescription = null,
+            modifier = Modifier.size(56.dp),
+          )
+        } else {
+          Artwork(n.artworkUrl, Modifier.size(56.dp), size = 128, placeholder = FluentIcons.Album)
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
           Text(n.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (n.read) FontWeight.Normal else FontWeight.Bold)
-          Text("${n.body} · ${stringResource(if (n.single) R.string.notif_new_single else R.string.notif_new_album)}",
-            maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          val kind = stringResource(
+            when {
+              n.isAppUpdate -> R.string.notif_update
+              n.single -> R.string.notif_new_single
+              else -> R.string.notif_new_album
+            }
+          )
+          Text(if (n.isAppUpdate) kind else "${n.body} · $kind",
+            maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+            color = if (n.isAppUpdate) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
         }
       }
     }

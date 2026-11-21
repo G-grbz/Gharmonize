@@ -387,6 +387,7 @@
   <string name="notif_channel">New releases</string>
   <string name="notif_new_album">New album</string>
   <string name="notif_new_single">New single</string>
+  <string name="notif_update">New version available — tap for the release notes</string>
   <string name="notif_empty">No notifications yet. New releases of artists you follow show up here.</string>
   <string name="notif_auto">Download new releases automatically</string>
   <string name="notif_auto_hint">Albums and singles of artists you follow</string>
@@ -468,4 +469,20 @@
   <string name="tv_row_down">Move down</string>
   <string name="tv_channel_for_you">For you</string>
   <string name="tv_channel_recent">Recently played</string>
+  <!-- Refresh online (admin): replace a library song -->
+  <string name="refresh_online">Refresh online</string>
+  <string name="refresh_hint">Pick the version that replaces this song. The old file moves to the trash; the new one takes its name, folder and places in playlists.</string>
+  <string name="refresh_search">Search YouTube Music</string>
+  <string name="refresh_no_results">No results. Change the search or paste a link.</string>
+  <string name="refresh_pick">Pick</string>
+  <string name="refresh_link">Or paste a link to a song</string>
+  <string name="refresh_use_link">Use</string>
+  <string name="refresh_replace">Replace</string>
+  <string name="refresh_back">Back</string>
+  <string name="refresh_confirm">“%1$s” will be replaced with “%2$s”. The old file will move to the trash.</string>
+  <string name="refresh_started">Refreshing “%1$s”…</string>
+  <string name="refresh_done">“%1$s” was refreshed.</string>
+  <string name="refresh_failed">“%1$s” could not be refreshed.</string>
+  <string name="refresh_canceled">Refreshing “%1$s” was canceled.</string>
+  <string name="refresh_invalid_link">Use a link to one song (YouTube, YouTube Music, Deezer, Spotify or Apple Music).</string>
 </resources>

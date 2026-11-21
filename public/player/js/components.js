@@ -163,6 +163,8 @@ export function trackMenu(track, at, { playlist = null, entryId = null, onRemove
     track.albumId && { label: t('player.menu.goToAlbum'), icon: 'album', run: () => app.nav(`/album/${track.albumId}`) },
     track.artistId && { label: t('player.menu.goToArtist'), icon: 'user', run: () => app.nav(`/artist/${track.artistId}`) },
     { label: track.favorite ? t('player.favorite.remove') : t('player.favorite.add'), icon: track.favorite ? 'heartFill' : 'heart', run: async () => { track.favorite = await toggleFavorite('track', track.id, !track.favorite) } },
+    // Admins: replace the file with a version picked online (YouTube Music or a link).
+    app.isAdmin() && app.canDownload && { label: t('player.menu.refreshOnline'), icon: 'refresh', run: () => import('./refreshOnline.js').then((m) => m.refreshOnline(track)) },
     track.artist && app.providers.includes('deezer') && { label: t('player.menu.moreOnline'), icon: 'globe', run: () => app.nav(`/online/artist?name=${encodeURIComponent(primaryArtist(track.artist))}`) },
     playlist?.editable && entryId && 'sep',
     playlist?.editable && entryId && { label: t('player.playlist.removeTrack'), icon: 'trash', danger: true, run: async () => {
@@ -183,6 +185,9 @@ export function onlineMenu(item, at) {
     !owned && app.canDownload && item.downloadable !== false && ['track', 'album', 'playlist'].includes(item.kind) && { label: t('player.downloads.download'), icon: 'download', run: () => app.downloads.request(item) },
     !owned && app.canDownload && item.kind === 'playlist' && { label: t('player.save.title'), icon: 'playlistAdd', run: () => saveToPlaylistDialog({ name: item.title, onlineItem: item, count: item.trackCount ?? null }) },
     item.kind === 'track' && (owned || app.canDownload) && { label: owned ? t('player.menu.addToPlaylist') : t('player.menu.downloadToPlaylist'), icon: 'playlistAdd', submenu: owned ? playlistSubmenu(async () => [owned]) : playlistSubmenu(null, { onlineItem: item }) },
+    // Admins: the library copy of this song can be replaced with another version.
+    owned && item.kind === 'track' && app.isAdmin() && app.canDownload && { label: t('player.menu.refreshOnline'), icon: 'refresh', run: () => import('./refreshOnline.js').then((m) =>
+      m.refreshOnline(item.library?.track?.id === owned ? item.library.track : { id: owned, title: item.title, artist: item.artist, album: item.album, duration: item.duration })) },
     'sep',
     item.providerIds?.deezerAlbum && { label: t('player.menu.goToAlbum'), icon: 'album', run: () => app.nav(`/online/album?provider=deezer&id=${item.providerIds.deezerAlbum}`) },
     item.library?.albumId && { label: t('player.menu.openInLibrary'), icon: 'library', run: () => app.nav(`/album/${item.library.albumId}`) },

@@ -387,6 +387,7 @@
   <string name="notif_channel">Yeni çıkanlar</string>
   <string name="notif_new_album">Yeni albüm</string>
   <string name="notif_new_single">Yeni single</string>
+  <string name="notif_update">Yeni sürüm mevcut — güncelleme notları için dokun</string>
   <string name="notif_empty">Henüz bildirim yok. Takip ettiğin sanatçıların yeni çıkanları burada görünür.</string>
   <string name="notif_auto">Yeni çıkanları otomatik indir</string>
   <string name="notif_auto_hint">Takip ettiğin sanatçıların albüm ve single’ları</string>
@@ -468,4 +469,20 @@
   <string name="tv_row_down">Aşağı taşı</string>
   <string name="tv_channel_for_you">Senin için</string>
   <string name="tv_channel_recent">Son çalınanlar</string>
+  <!-- Refresh online (admin): replace a library song -->
+  <string name="refresh_online">Çevrimiçi yenile</string>
+  <string name="refresh_hint">Bu parçanın yerine geçecek sürümü seç. Eski dosya çöpe taşınır; yenisi adını, klasörünü ve çalma listelerindeki yerini alır.</string>
+  <string name="refresh_search">YouTube Music’te ara</string>
+  <string name="refresh_no_results">Sonuç yok. Aramayı değiştir ya da bir bağlantı yapıştır.</string>
+  <string name="refresh_pick">Seç</string>
+  <string name="refresh_link">Ya da bir şarkı bağlantısı yapıştır</string>
+  <string name="refresh_use_link">Kullan</string>
+  <string name="refresh_replace">Değiştir</string>
+  <string name="refresh_back">Geri</string>
+  <string name="refresh_confirm">“%1$s”, “%2$s” ile değiştirilecek. Eski dosya çöpe taşınacak.</string>
+  <string name="refresh_started">“%1$s” yenileniyor…</string>
+  <string name="refresh_done">“%1$s” yenilendi.</string>
+  <string name="refresh_failed">“%1$s” yenilenemedi.</string>
+  <string name="refresh_canceled">“%1$s” yenilemesi iptal edildi.</string>
+  <string name="refresh_invalid_link">Tek bir şarkının bağlantısını kullan (YouTube, YouTube Music, Deezer, Spotify veya Apple Music).</string>
 </resources>
