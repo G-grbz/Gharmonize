@@ -18,7 +18,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { artistCredits, songKey } from './songKey.js'
 import { albumBaseKey, artistsMatch } from './matching.js'
 import { getSetting, setSetting, transaction } from './db.js'
-import { normalizeSidecarLyrics } from './lyrics.js'
+import { encodeSidecarLyrics, hasLyricsTimestamps } from './lyrics.js'
 import { AUDIO_EXTENSIONS } from './scanner.js'
 import { youtubeSourceKey } from './sourceKey.js'
 
@@ -38,7 +38,6 @@ const UPGRADE_RATIO = 0.07
 const SIDECAR_EXTENSIONS = ['.lrc', '.LRC', '.txt', '.lyrics']
 const LYRICS_EXTENSION = '.lrc'
 const LYRICS_PAUSE_MS = 250
-const SYNCED_RE = /\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/
 
 function stemOf(name) {
   return path.parse(name).name
@@ -263,7 +262,7 @@ export function createLibraryHealth({ db, libraries, artwork, scanner, sources, 
           text = buffer.toString('utf8', 0, bytesRead)
         } finally { await handle.close() }
       } catch {}
-      return { name, score: (SYNCED_RE.test(text) ? 4 : 0) + (path.extname(name) === LYRICS_EXTENSION ? 2 : 0), size: text.length }
+      return { name, score: (hasLyricsTimestamps(text) ? 4 : 0) + (path.extname(name) === LYRICS_EXTENSION ? 2 : 0), size: text.length }
     }))
     return scored.sort((a, b) => b.score - a.score || b.size - a.size).map((entry) => entry.name)
   }
@@ -387,21 +386,18 @@ export function createLibraryHealth({ db, libraries, artwork, scanner, sources, 
       const { lyricsFetcher } = await import('../lyrics.js')
       return lyricsFetcher.searchLyrics(artist, title, duration)
     })
-    let text = null
+    let sidecar = null
     for (const artist of new Set([row.artist_name, artistCredits(row.artist_name)[0]].filter(Boolean))) {
       const found = await fetcher(artist, row.title, row.duration)
       signal.throwIfAborted()
-      const synced = normalizeSidecarLyrics(found?.syncedLyrics)
-      text = synced && SYNCED_RE.test(synced) ? synced : normalizeSidecarLyrics(found?.plainLyrics)
-      if (text) break
+      sidecar = encodeSidecarLyrics(found?.syncedLyrics, { synced: true }) || encodeSidecarLyrics(found?.plainLyrics)
+      if (sidecar) break
     }
     // LRCLIB is a free service: one song at a time, with a short pause.
     await delay(LYRICS_PAUSE_MS, undefined, { signal, ref: false })
-    if (!text) throw new HealthError('LYRICS_NOT_FOUND', 'No lyrics were found online for this song.', 404)
+    if (!sidecar) throw new HealthError('LYRICS_NOT_FOUND', 'No lyrics were found online for this song.', 404)
     try {
-      // Only validated text can create a non-executable sidecar beside the indexed track.
-      // codeql[js/http-to-file-access]
-      await fs.promises.writeFile(path.join(dir, name + LYRICS_EXTENSION), text, { flag: 'wx', mode: 0o644 })
+      await fs.promises.writeFile(path.join(dir, name + LYRICS_EXTENSION), sidecar, { flag: 'wx', mode: 0o644 })
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
     }

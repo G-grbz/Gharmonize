@@ -3,12 +3,20 @@ import path from 'node:path'
 
 const MAX_LRC_BYTES = 512 * 1024
 const CACHE_MAX = 300
+const SYNCED_RE = /\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/
 
-export function normalizeSidecarLyrics(value) {
-  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > MAX_LRC_BYTES) return null
+export function hasLyricsTimestamps(text) {
+  return SYNCED_RE.test(text)
+}
+
+export function encodeSidecarLyrics(value, { synced = false } = {}) {
+  if (typeof value !== 'string' || value.length > MAX_LRC_BYTES || !value.isWellFormed()) return null
   // Lyrics may contain tabs and line breaks. Other control characters are invalid.
   if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/.test(value)) return null
-  return value.replace(/\r\n?/g, '\n').trim() || null
+  const text = value.replace(/\r\n?/g, '\n').trim()
+  if (!text || (synced && !hasLyricsTimestamps(text))) return null
+  const bytes = new TextEncoder().encode(text)
+  return bytes.byteLength <= MAX_LRC_BYTES ? bytes : null
 }
 
 // Parses LRC text into [{ timeMs, text }]. Returns [] if it is not synced.
