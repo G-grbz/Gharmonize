@@ -88,6 +88,7 @@ fun mixTitle(mix: Mix): String = when (mix.kind) {
   "discover" -> stringResource(R.string.mix_discover)
   "liked" -> stringResource(R.string.mix_liked)
   "decade" -> stringResource(R.string.mix_decade, decadeLabel(mix.decade))
+  "genre" -> stringResource(R.string.mix_genre, mix.genre.orEmpty())
   else -> mix.id
 }
 
@@ -97,12 +98,14 @@ fun mixDescription(mix: Mix): String = when {
   mix.kind == "discover" -> stringResource(R.string.mix_discover_desc)
   mix.kind == "liked" -> stringResource(R.string.mix_liked_desc)
   mix.kind == "decade" -> stringResource(R.string.mix_decade_desc, decadeLabel(mix.decade))
+  mix.kind == "genre" -> stringResource(R.string.mix_genre_desc, mix.genre.orEmpty())
   else -> ""
 }
 
 private fun mixColor(mix: Mix): Color {
-  val hues = mapOf("daily" to listOf(96f, 28f, 160f, 200f, 330f), "discover" to listOf(265f), "liked" to listOf(345f), "decade" to listOf(38f))
-  val list = hues[mix.kind] ?: listOf(120f)
+  val hues = mapOf("daily" to listOf(96f, 28f, 160f, 200f, 330f, 52f, 290f, 182f), "discover" to listOf(265f), "liked" to listOf(345f), "decade" to listOf(38f))
+  // Genre mixes: a steady hue per genre name.
+  val list = hues[mix.kind] ?: listOf(((mix.genre ?: mix.id).fold(0) { h, c -> (h * 31 + c.code) and 0x7fffffff } % 360).toFloat())
   return Color.hsl(list[(mix.number - 1).coerceAtLeast(0) % list.size], 0.55f, 0.32f)
 }
 
@@ -140,11 +143,14 @@ fun MixCard(state: AppState, mix: Mix) {
   }
 }
 
-/** Home: "Mixes for you" row plus the weekly listening teaser. */
+/** Home: "Mixes for you" and "Mixes by genre" rows. */
 @Composable
 fun HomeInsights(state: AppState, mixes: List<Mix>?) {
-  mixes?.let { list ->
-    ShelfRow(stringResource(R.string.home_mixes), list, subtitle = stringResource(R.string.home_mixes_sub)) { _, m -> MixCard(state, m) }
+  mixes ?: return
+  val (byGenre, personal) = mixes.partition { it.kind == "genre" }
+  Column {
+    if (personal.isNotEmpty()) ShelfRow(stringResource(R.string.home_mixes), personal, subtitle = stringResource(R.string.home_mixes_sub)) { _, m -> MixCard(state, m) }
+    if (byGenre.isNotEmpty()) ShelfRow(stringResource(R.string.home_genre_mixes), byGenre, subtitle = stringResource(R.string.home_genre_mixes_sub)) { _, m -> MixCard(state, m) }
   }
 }
 

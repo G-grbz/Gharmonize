@@ -30,6 +30,8 @@ import { getRemoteAccessMode, getPlayerListenConfig, getTunnelConfig } from './g
 import { createTunnel } from './cloudflared.js'
 import { createAppUpdateWatch } from './appUpdate.js'
 import { createMixes } from './mixes.js'
+import { createSearchHistory } from './searchHistory.js'
+import { createArtistCredits } from './artistCredits.js'
 import { createStats } from './stats.js'
 import path from 'node:path'
 
@@ -124,6 +126,12 @@ export async function startPlayerService({ env = process.env, logger = console, 
     return config
   }
 
+  // Songs by several artists ("A, B"): once, link them to each artist.
+  try {
+    if (createArtistCredits(db).migrate().changed) logger.info?.('🎤 [player] songs by several artists are now listed under each of them')
+  } catch (error) {
+    logger.warn?.(`⚠️ [player] artist credits update failed: ${error?.message || error}`)
+  }
   const libraries = createLibraryStore(db, { defaultLibraryDir: defaultLibraryDir || resolveDefaultLibraryDir(env) })
   libraries.ensureDefaultLibrary()
   const auth = createAuthStore(db)
@@ -144,6 +152,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const bridge = createDownloadBridge({ db, core: downloadCore, scanner, matcher, catalog, getConfig, getDownloadTarget: libraries.downloadTarget, getUpgradeTarget: libraries.upgradeTarget, mappedLinks, logger, pollMs: bridgePollMs })
   const onlineCache = createOnlineCache(db, { logger })
   const annotator = createAnnotator({ matcher, bridge, catalog, mappedLinks })
+  const searchHistory = createSearchHistory(db, { catalog, annotator })
   const sources = discoverySources || { deezer: createDeezerSource(), youtube: createYouTubeSource(), spotify: createSpotifySource({ env }), apple: createAppleSource() }
   const discovery = createDiscovery({
     db,
@@ -249,7 +258,7 @@ export async function startPlayerService({ env = process.env, logger = console, 
     updateTimer.unref?.()
     timers.add(updateTimer)
   }
-  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, biography, follows, releases, health, appUpdate, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats }
+  const context = { db, auth, access, libraries, catalog, scanner, artwork, stream, waveform, lyrics, matcher, online, bridge, onlineCache, annotator, discovery, biography, follows, releases, health, appUpdate, getConfig, updateConfig, logger, connectInfo, listener, tunnel, tunnelOrigin: tunnelListener, mixes, stats, searchHistory }
   router = createPlayerRouter(context, routerOptions)
   // Do not block start-up on a cloudflared download.
   await listener.apply()

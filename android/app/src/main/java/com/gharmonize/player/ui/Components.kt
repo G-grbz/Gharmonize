@@ -131,26 +131,28 @@ fun <T> ShelfRow(title: String, items: List<T>, subtitle: String? = null, card: 
 }
 
 @Composable
-fun AlbumCard(state: AppState, album: Album) =
+fun AlbumCard(state: AppState, album: Album, onPick: (() -> Unit)? = null) =
   Card(album.title, listOfNotNull(album.year?.toString(), album.artist.ifBlank { null }).joinToString(" · "), album.artwork) {
+    onPick?.invoke()
     state.navigate(Route.Album(album.id))
   }
 
 @Composable
-fun ArtistCard(state: AppState, artist: Artist) =
+fun ArtistCard(state: AppState, artist: Artist, onPick: (() -> Unit)? = null) =
   // Followed from an online page, no songs here yet: open the online page.
   Card(artist.name, stringResource(R.string.kind_artist), artist.artwork, round = true) {
+    onPick?.invoke()
     state.navigate(if (artist.onlineOnly) Route.OnlineArtist(null, artist.name) else Route.Artist(artist.id))
   }
 
 @Composable
-fun TrackCard(state: AppState, tracks: List<Track>, index: Int) {
+fun TrackCard(state: AppState, tracks: List<Track>, index: Int, onPick: (() -> Unit)? = null) {
   val t = tracks[index]
-  Card(t.title, t.artist, t.artwork) { state.player.play(tracks, index) }
+  Card(t.title, t.artist, t.artwork) { onPick?.invoke(); state.player.play(tracks, index) }
 }
 
 @Composable
-fun OnlineCard(state: AppState, items: List<OnlineItem>, index: Int) {
+fun OnlineCard(state: AppState, items: List<OnlineItem>, index: Int, onPick: (() -> Unit)? = null) {
   val item = items[index]
   val owned = item.libraryTrackId != null || (item.kind == "album" && item.libraryComplete)
   val badge: (@Composable () -> Unit)? = when {
@@ -159,6 +161,7 @@ fun OnlineCard(state: AppState, items: List<OnlineItem>, index: Int) {
     else -> null
   }
   Card(item.title, item.artist, item.artworkUrl, round = item.kind == "artist", badge = badge) {
+    onPick?.invoke()
     when (item.kind) {
       "album", "playlist" -> state.navigate(Route.OnlineAlbum(item))
       "artist" -> if (item.libraryArtistId != null) state.navigate(Route.Artist(item.libraryArtistId))
@@ -198,7 +201,7 @@ fun DownloadButton(state: AppState, item: OnlineItem, small: Boolean = false) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean = true, number: Int? = null, selection: SongSelection? = null, playSingle: Boolean = false) {
+fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean = true, number: Int? = null, selection: SongSelection? = null, playSingle: Boolean = false, onPick: (() -> Unit)? = null) {
   val t = tracks[index]
   val playingId = state.player.current?.mediaId
   val isCurrent = playingId == "t:${t.id}"
@@ -209,7 +212,13 @@ fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean 
     Modifier.fillMaxWidth()
       .combinedClickable(
         // With a selection: long press starts selecting, taps then toggle.
-        onClick = { if (selecting) selection?.toggle(t.id) else if (playSingle) state.player.play(listOf(t)) else state.player.play(tracks, index) },
+        onClick = {
+          if (selecting) selection?.toggle(t.id)
+          else {
+            onPick?.invoke()
+            if (playSingle) state.player.play(listOf(t)) else state.player.play(tracks, index)
+          }
+        },
         onLongClick = { when { selecting -> selection?.toggle(t.id); selection != null -> selection.start(t.id); else -> menu = true } },
       )
       .padding(start = if (selecting) 4.dp else 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
@@ -265,7 +274,10 @@ fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Uni
       })
     }
     t.albumId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_album)) }, onClick = { state.navigate(Route.Album(id)); onDismiss() }) }
-    t.artistId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_artist)) }, onClick = { state.navigate(Route.Artist(id)); onDismiss() }) }
+    // "A, B": one entry per artist.
+    if (t.artists.size > 1) t.artists.forEach { a ->
+      DropdownMenuItem(text = { Text(stringResource(R.string.go_to_artist_named, a.name)) }, onClick = { state.navigate(Route.Artist(a.id)); onDismiss() })
+    } else t.artistId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.go_to_artist)) }, onClick = { state.navigate(Route.Artist(id)); onDismiss() }) }
     // Admins: replace the file with a version picked online.
     if (state.canRefreshOnline) DropdownMenuItem(text = { Text(stringResource(R.string.refresh_online)) }, onClick = { refresh = true; onDismiss() })
   }
@@ -273,11 +285,11 @@ fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Uni
 
 /** Online track row: owned → play, preview → 30 s clip, otherwise download. */
 @Composable
-fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSingle: Boolean = false) {
+fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSingle: Boolean = false, onPick: (() -> Unit)? = null) {
   val item = state.withDownload(items[index])
   val owned = item.libraryTrackId != null
   Row(
-    Modifier.fillMaxWidth().clickable { if (playSingle) state.playOnline(listOf(item), 0) else state.playOnline(items, index) }.padding(horizontal = 16.dp, vertical = 6.dp),
+    Modifier.fillMaxWidth().clickable { onPick?.invoke(); if (playSingle) state.playOnline(listOf(item), 0) else state.playOnline(items, index) }.padding(horizontal = 16.dp, vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Artwork(item.artworkUrl, Modifier.size(48.dp), size = 128)

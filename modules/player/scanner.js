@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { transaction } from './db.js'
+import { createArtistCredits, NOT_LINKED_ARTIST_SQL } from './artistCredits.js'
 
 export const AUDIO_EXTENSIONS = new Set([
   '.mp3', '.flac', '.m4a', '.m4b', '.aac', '.ogg', '.oga', '.opus', '.wav', '.wave',
@@ -71,6 +72,8 @@ export function metadataToRecord(meta, relPath) {
     sourceKey: metadataSourceKey(meta),
     title: cleanText(common.title, 512) || fallback.title,
     artistName,
+    // Separate artist values of the tag (ID3 / Vorbis multi-value), if any.
+    artistNames: artists.length > 1 ? artists : null,
     primaryArtist,
     albumTitle,
     albumArtist,
@@ -145,13 +148,12 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     return { running: false, libraryId: null, libraryName: null, phase: 'idle', scanned: 0, added: 0, updated: 0, removed: 0, unchanged: 0, errors: 0, startedAt: null, finishedAt: null, queue: [] }
   }
 
+  const credits = createArtistCredits(db, { now })
   const stmt = {
     libraries: db.prepare('SELECT * FROM libraries WHERE enabled = 1 ORDER BY id'),
     library: db.prepare('SELECT * FROM libraries WHERE id = ?'),
     existing: db.prepare('SELECT id, rel_path, size, mtime_ms FROM tracks WHERE library_id = ?'),
     byPath: db.prepare('SELECT id, size, mtime_ms FROM tracks WHERE library_id = ? AND rel_path = ?'),
-    artistByKey: db.prepare('SELECT id FROM artists WHERE name_key = ?'),
-    insertArtist: db.prepare('INSERT INTO artists (name, name_key, created_at) VALUES (?, ?, ?)'),
     albumByKey: db.prepare('SELECT id, year, genre FROM albums WHERE title_key = ? AND artist_id = ?'),
     insertAlbum: db.prepare('INSERT INTO albums (title, title_key, artist_id, year, genre, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
     fillAlbum: db.prepare('UPDATE albums SET year = COALESCE(year, ?), genre = COALESCE(genre, ?) WHERE id = ?'),
@@ -172,21 +174,12 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     deleteFts: db.prepare('DELETE FROM tracks_fts WHERE rowid = ?'),
     insertFts: db.prepare('INSERT INTO tracks_fts (rowid, title, artist, album, album_artist, genre) VALUES (?, ?, ?, ?, ?, ?)'),
     orphanAlbums: db.prepare('DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)'),
-    orphanArtists: db.prepare(`DELETE FROM artists WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)
-      AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
-      AND NOT EXISTS (SELECT 1 FROM favorites WHERE favorites.item_type = 'artist' AND favorites.item_id = artists.id)`),
+    orphanArtists: db.prepare(`DELETE FROM artists WHERE ${NOT_LINKED_ARTIST_SQL()}`),
     orphanFavorites: db.prepare(`DELETE FROM favorites WHERE
       (item_type = 'track' AND NOT EXISTS (SELECT 1 FROM tracks WHERE id = favorites.item_id)) OR
       (item_type = 'album' AND NOT EXISTS (SELECT 1 FROM albums WHERE id = favorites.item_id)) OR
       (item_type = 'artist' AND NOT EXISTS (SELECT 1 FROM artists WHERE id = favorites.item_id))`),
     libraryResult: db.prepare('UPDATE libraries SET last_scan_at = ?, last_scan_status = ?, last_scan_error = ?, track_count = (SELECT COUNT(*) FROM tracks WHERE library_id = ?) WHERE id = ?')
-  }
-
-  function ensureArtist(name) {
-    const key = normalizeKey(name) || normalizeKey(UNKNOWN_ARTIST)
-    const row = stmt.artistByKey.get(key)
-    if (row) return row.id
-    return Number(stmt.insertArtist.run(name, key, now()).lastInsertRowid)
   }
 
   function ensureAlbum(record, artistId) {
@@ -205,8 +198,11 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
     const existingId = stmt.byPath.get(libraryId, item.rel)?.id || null
     if (item.existingId && existingId !== item.existingId) return null
     const r = item.record
-    const artistId = ensureArtist(r.primaryArtist)
-    const albumArtistId = r.albumArtist ? ensureArtist(r.albumArtist) : artistId
+    // Each artist of "A, B" is an artist of their own; the song and its
+    // album belong to the first one.
+    const credit = credits.resolve(r.artistNames ? r.artistNames.join(', ') : r.artistName, r.albumArtist)
+    const artistId = credit.artistId
+    const albumArtistId = r.albumArtist ? credit.albumArtistId : artistId
     const albumId = ensureAlbum(r, albumArtistId)
     const ts = now()
     const values = [
@@ -222,6 +218,7 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
       id = Number(stmt.insertTrack.run(libraryId, item.rel, item.size, item.mtimeMs, ...values, ts, ts).lastInsertRowid)
     }
     stmt.updateSource.run(r.sourceKey, id)
+    credits.link(id, credit.ids)
     // Index folded text (diacritics removed, Turkish dotless ı → i) so that
     // "kirmizi" finds "Kırmızı"; queries are folded the same way.
     stmt.insertFts.run(id, normalizeKey(r.title), normalizeKey(r.artistName), normalizeKey(r.albumTitle), normalizeKey(r.albumArtist), normalizeKey(r.genre))

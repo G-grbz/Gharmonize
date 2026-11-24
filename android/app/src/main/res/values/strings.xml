@@ -52,6 +52,7 @@
   <string name="favorite_removed">Removed from Liked Tracks</string>
   <string name="go_to_album">Go to album</string>
   <string name="go_to_artist">Go to artist</string>
+  <string name="go_to_artist_named">Go to %1$s</string>
   <string name="greeting_morning">Good morning, %1$s</string>
   <string name="greeting_afternoon">Good afternoon, %1$s</string>
   <string name="greeting_evening">Good evening, %1$s</string>
@@ -102,6 +103,10 @@
   <string name="repeat">Repeat</string>
   <string name="retry">Try again</string>
   <string name="search_hint">Tracks, albums, artists, links</string>
+  <string name="search_recent">Recent searches</string>
+  <string name="search_clear">Clear</string>
+  <string name="search_use_text">Edit this search</string>
+  <string name="search_remove">Remove from history</string>
   <string name="search_no_local">Nothing in your library for this search.</string>
   <string name="search_online">From the internet</string>
   <string name="settings_account">Account</string>
@@ -161,6 +166,8 @@
   <!-- mixes & stats -->
   <string name="home_mixes">Mixes for you</string>
   <string name="home_mixes_sub">Refreshed daily from what you listen to</string>
+  <string name="home_genre_mixes">Mixes by genre</string>
+  <string name="home_genre_mixes_sub">One per genre, refreshed daily</string>
   <string name="stats_teaser">%1$s minutes of music this week</string>
   <string name="stats_teaser_top">Mostly %1$s · see your stats</string>
   <string name="mix_kind">Mix</string>
@@ -168,10 +175,12 @@
   <string name="mix_discover">Weekly Discovery</string>
   <string name="mix_liked">Liked Tracks Mix</string>
   <string name="mix_decade">%1$ss Mix</string>
+  <string name="mix_genre">%1$s Mix</string>
   <string name="mix_daily_desc">%1$s and more</string>
   <string name="mix_discover_desc">Tracks in your library you have not played yet</string>
   <string name="mix_liked_desc">Your liked tracks, shuffled fresh every day</string>
   <string name="mix_decade_desc">Your favourites from the %1$ss and more</string>
+  <string name="mix_genre_desc">%1$s: your favourites and more to discover, from many artists</string>
   <string name="mix_refresh_daily">Refreshed every day</string>
   <string name="mix_refresh_weekly">Refreshed every Monday</string>
   <string name="stats_title">Your listening stats</string>
@@ -347,6 +356,14 @@
   <string name="disc_appleLists">Apple Music: lists of your artists</string>
   <string name="disc_spLists">Spotify: lists of your artists</string>
   <string name="all_songs">All songs</string>
+  <string name="artist_songs_library">In library</string>
+  <string name="artist_songs_online">Online</string>
+  <string name="artist_online_failed">Could not load the artist\'s songs online</string>
+  <string name="artist_online_none">No songs of this artist found online</string>
+  <string name="artist_online_count">%1$d songs · %2$d not in your library</string>
+  <string name="artist_select_missing">Select missing</string>
+  <string name="artist_clear_picked">Clear selection</string>
+  <string name="artist_download_picked">Download selected (%1$d)</string>
   <string name="sort_album">Album order</string>
   <string name="sort_alpha">A–Z</string>
   <string name="sort_recent">Recently added</string>

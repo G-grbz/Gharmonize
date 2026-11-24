@@ -50,6 +50,36 @@ export function artistCredits(artist) {
   return text.split(CREDIT_SPLIT_RE).map((name) => name.trim()).filter(Boolean)
 }
 
+// The separate artists of a credit, for the library's artist list: split
+// only where a name never contains the separator (",", ";", " / ", feat.,
+// ft., featuring, " x ", and "&" in "A, B & C"). "A & B" is split only when
+// `isKnown` says both are artists of their own ("Dedublüman & Cem Adrian"),
+// so "Simon & Garfunkel", "Oya & Bora" or "Mor ve Ötesi" stay one artist.
+const IDENTITY_SPLIT_RE = /\s*(?:,|;|\s\/\s|\sx\s|\s(?:feat|ft)\.?\s|\sfeaturing\s)\s*/i
+export function artistCreditNames(artist, { isKnown = null } = {}) {
+  const text = String(artist || '').trim()
+  if (!text) return []
+  const parts = text.split(IDENTITY_SPLIT_RE)
+  const out = []
+  parts.forEach((part, i) => {
+    const pieces = part.split(/\s+&\s+/)
+    // "A, B & C": the last two of a list are joined with "&".
+    const listEnd = parts.length > 1 && i === parts.length - 1
+    if (pieces.length > 1 && (listEnd || (isKnown && pieces.every((p) => p.trim() && isKnown(p.trim()))))) out.push(...pieces)
+    else out.push(part)
+  })
+  const seen = new Set()
+  const names = []
+  for (const part of out) {
+    const name = part.trim()
+    const key = name.toLocaleLowerCase('tr')
+    if (!name || seen.has(key)) continue
+    seen.add(key)
+    names.push(name)
+  }
+  return names.length ? names : [text]
+}
+
 /** "title|artist" key that is equal for copies of the same recording. */
 export function songKey(title, artist) {
   const t = cleanTitleForMatch(title)

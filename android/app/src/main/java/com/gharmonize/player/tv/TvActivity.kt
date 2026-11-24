@@ -664,7 +664,18 @@ private fun TvSearch(nav: TvNav) {
   var mixes by remember { mutableStateOf<com.gharmonize.player.data.ArtistMixes?>(null) }
   var lists by remember { mutableStateOf<List<OnlineItem>>(emptyList()) }
   var onlineLoading by remember { mutableStateOf(false) }
+  var history by remember { mutableStateOf<com.gharmonize.player.data.SearchHistory?>(null) }
+  val scope = rememberCoroutineScope()
   val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+  val typed = query.trim()
+  // Nothing typed yet: the user's search history (shared with the phone and the web).
+  LaunchedEffect(typed.length < 2) {
+    if (typed.length < 2) history = runCatching { api.searchHistory() }.getOrNull() ?: history
+  }
+  // A result picked from this search is remembered together with the text.
+  fun keepSearch(item: org.json.JSONObject?, text: String? = typed) { scope.launch { runCatching { api.rememberSearch(text, item) } } }
+  fun libraryPick(kind: String, id: Long) = { keepSearch(org.json.JSONObject().put("source", "library").put("kind", kind).put("id", id)) }
+  fun onlinePick(item: OnlineItem) = { keepSearch(org.json.JSONObject().put("source", "online").put("online", item.raw)) }
   LaunchedEffect(query) {
     val q = query.trim()
     if (q.length < 2) { result = null; online = null; mixes = null; lists = emptyList(); return@LaunchedEffect }
@@ -689,28 +700,68 @@ private fun TvSearch(nav: TvNav) {
       OutlinedTextField(query, { query = it }, singleLine = true, placeholder = { Text(stringResource(R.string.search_hint)) },
         leadingIcon = { Icon(FluentIcons.Search, null) },
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
-        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) }),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { keepSearch(null); focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) }),
         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).onPreviewKeyEvent { e ->
           if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown) focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) else false
         },
         textStyle = MaterialTheme.typography.titleLarge)
     }
+    val h = history
+    if (typed.length < 2 && h != null && (h.items.isNotEmpty() || h.queries.isNotEmpty())) {
+      if (h.items.isNotEmpty()) item(key = "tv-sh-items") {
+        TvRow(stringResource(R.string.search_recent), h.items) { _, pick ->
+          // Picking it again moves it to the front.
+          val again: (org.json.JSONObject) -> Unit = { keepSearch(it, null) }
+          when {
+            pick.track != null -> TvCard(pick.track.title, pick.track.artist, pick.track.artwork) {
+              again(org.json.JSONObject().put("source", "library").put("kind", "track").put("id", pick.track.id)); nav.play(listOf(pick.track), 0)
+            }
+            pick.album != null -> TvCard(pick.album.title, pick.album.artist, pick.album.artwork) {
+              again(org.json.JSONObject().put("source", "library").put("kind", "album").put("id", pick.album.id)); nav.go(TvRoute.Album(pick.album.id))
+            }
+            pick.artist != null -> TvCard(pick.artist.name, "", pick.artist.artwork, round = true, placeholder = FluentIcons.Person) {
+              again(org.json.JSONObject().put("source", "library").put("kind", "artist").put("id", pick.artist.id)); nav.go(TvRoute.Artist(pick.artist.id))
+            }
+            pick.online != null -> TvOnlineCard(nav, listOf(pick.online), 0, onPick = { again(org.json.JSONObject().put("source", "online").put("online", pick.online.raw)) })
+          }
+        }
+      }
+      // OK searches the text again.
+      itemsIndexed(h.queries.take(8), key = { _, text -> "tv-sh-q-$text" }) { _, text ->
+        TvFocusable({ query = text }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), scaleOnFocus = 1.01f) {
+          Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(FluentIcons.History, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(20.dp))
+            Text(text, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(FluentIcons.ArrowUpLeft, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+        }
+      }
+      item(key = "tv-sh-clear") {
+        Box(Modifier.padding(start = 8.dp, top = 12.dp)) {
+          TvButton(stringResource(R.string.search_clear), FluentIcons.Close) {
+            history = com.gharmonize.player.data.SearchHistory(emptyList(), emptyList())
+            scope.launch { runCatching { api.clearSearchHistory() } }
+          }
+        }
+      }
+    }
     if (r != null) {
-      if (r.artists.isNotEmpty()) item { TvRow(stringResource(R.string.artists), r.artists) { _, a -> TvCard(a.name, "", a.artwork, round = true, placeholder = FluentIcons.Person) { nav.go(TvRoute.Artist(a.id)) } } }
-      if (r.albums.isNotEmpty()) item { TvRow(stringResource(R.string.albums), r.albums) { _, a -> TvCard(a.title, a.artist, a.artwork) { nav.go(TvRoute.Album(a.id)) } } }
+      if (r.artists.isNotEmpty()) item { TvRow(stringResource(R.string.artists), r.artists) { _, a -> TvCard(a.name, "", a.artwork, round = true, placeholder = FluentIcons.Person) { libraryPick("artist", a.id)(); nav.go(TvRoute.Artist(a.id)) } } }
+      if (r.albums.isNotEmpty()) item { TvRow(stringResource(R.string.albums), r.albums) { _, a -> TvCard(a.title, a.artist, a.artwork) { libraryPick("album", a.id)(); nav.go(TvRoute.Album(a.id)) } } }
       if (r.tracks.isNotEmpty()) item { Text(stringResource(R.string.songs), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 6.dp)) }
-      itemsIndexed(r.tracks.take(12), key = { i, t -> "$i-${t.id}" }) { i, t -> TvTrackRow(t, null, playingId == "t:${t.id}") { nav.play(r.tracks, i) } }
+      itemsIndexed(r.tracks.take(12), key = { i, t -> "$i-${t.id}" }) { i, t -> TvTrackRow(t, null, playingId == "t:${t.id}") { libraryPick("track", t.id)(); nav.play(r.tracks, i) } }
     }
     if (onlineLoading) item { Loading() }
     online?.let { o ->
       val playingTitle = nav.player.current?.mediaMetadata?.title?.toString()
       if (o.tracks.isNotEmpty()) item { TvSectionTitle(stringResource(R.string.search_online)) }
-      itemsIndexed(o.tracks.take(10), key = { i, t -> "o-$i-${t.id}" }) { i, t -> TvOnlineTrackRow(t, null, playingTitle == t.title, nav) { nav.playOnline(o.tracks, i) } }
-      mixes?.mixes?.takeIf { it.isNotEmpty() }?.let { m -> item { TvRow(stringResource(R.string.search_mixes, mixes?.artist ?: query), m) { i, _ -> TvOnlineCard(nav, m, i) } } }
-      if (o.albums.isNotEmpty()) item { TvRow(stringResource(R.string.albums_online), o.albums) { i, _ -> TvOnlineCard(nav, o.albums, i) } }
+      itemsIndexed(o.tracks.take(10), key = { i, t -> "o-$i-${t.id}" }) { i, t -> TvOnlineTrackRow(t, null, playingTitle == t.title, nav) { onlinePick(t)(); nav.playOnline(o.tracks, i) } }
+      mixes?.mixes?.takeIf { it.isNotEmpty() }?.let { m -> item { TvRow(stringResource(R.string.search_mixes, mixes?.artist ?: query), m) { i, x -> TvOnlineCard(nav, m, i, onPick = onlinePick(x)) } } }
+      if (o.albums.isNotEmpty()) item { TvRow(stringResource(R.string.albums_online), o.albums) { i, x -> TvOnlineCard(nav, o.albums, i, onPick = onlinePick(x)) } }
       val pls = ((mixes?.playlists ?: emptyList()) + lists).distinctBy { it.key }
-      if (pls.isNotEmpty()) item { TvRow(stringResource(R.string.playlists_online), pls) { i, _ -> TvOnlineCard(nav, pls, i) } }
-      if (o.artists.isNotEmpty()) item { TvRow(stringResource(R.string.artists_online), o.artists) { i, _ -> TvOnlineCard(nav, o.artists, i) } }
+      if (pls.isNotEmpty()) item { TvRow(stringResource(R.string.playlists_online), pls) { i, x -> TvOnlineCard(nav, pls, i, onPick = onlinePick(x)) } }
+      if (o.artists.isNotEmpty()) item { TvRow(stringResource(R.string.artists_online), o.artists) { i, x -> TvOnlineCard(nav, o.artists, i, onPick = onlinePick(x)) } }
     }
   }
 }

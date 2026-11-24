@@ -1,17 +1,17 @@
 // Search: library results instantly, online results (Deezer / YouTube /
 // Spotify) a moment later, a "download this link" shortcut, and browsing.
 
-import { app, store } from '../app.js'
+import { app } from '../app.js'
 import { get, artworkUrl } from '../api.js'
 import { h, t, icon, clear, artwork, skeletonShelf, emptyState, debounce, toastError, iconButton } from '../dom.js'
-import { shelf, trackList, onlineTrackList, albumCard, artistCard, onlineCard, genreTile, moodTile, playTracks, playCollection, providerName } from '../components.js'
+import { shelf, trackList, onlineTrackList, albumCard, artistCard, onlineCard, genreTile, moodTile, playTracks, playCollection, providerName, trackCard } from '../components.js'
+import { loadSearchHistory, rememberQuery, rememberPick, forgetQuery, clearSearchHistory } from '../searchHistory.js'
 
-const RECENT_KEY = 'recentSearches'
-
-function rememberSearch(q) {
-  const list = (store.get(RECENT_KEY, []) || []).filter((x) => x.toLowerCase() !== q.toLowerCase())
-  list.unshift(q)
-  store.set(RECENT_KEY, list.slice(0, 12))
+// Picking a result (opening an album / artist / list) remembers it with the
+// search text; songs are remembered when they start playing.
+function picked(el, item, q) {
+  el.addEventListener('click', () => rememberPick(item, q))
+  return el
 }
 
 function linkKind(url) {
@@ -34,15 +34,16 @@ function linkCard(url) {
       : h('span', { class: 'muted small', text: t('player.downloads.notAllowed') }))
 }
 
-function browse(root) {
-  const recent = store.get(RECENT_KEY, []) || []
-  if (recent.length) {
-    root.append(h('section', { class: 'section' },
-      h('div', { class: 'section-head' },
-        h('h2', { class: 'section-title', text: t('player.search.recent') }),
-        h('button', { type: 'button', class: 'link-btn', text: t('player.search.clearRecent'), onclick: (e) => { store.remove(RECENT_KEY); e.currentTarget.closest('section').remove() } })),
-      h('div', { class: 'chips chips--wrap' }, recent.map((q) => h('a', { class: 'chip', href: `#/search?q=${encodeURIComponent(q)}`, text: q })))))
-  }
+// Nothing typed: what you picked from earlier searches (covers, like
+// YouTube Music's "Recent searches"), the texts you searched for, then
+// moods and genres to browse.
+function browse(root, fillInput) {
+  const recent = h('div', { class: 'search-recent' })
+  root.append(recent)
+  loadSearchHistory().then((history) => {
+    if (!recent.isConnected) return
+    paintHistory(recent, history, fillInput)
+  }).catch(() => {})
   const moods = h('div')
   const genres = h('div')
   root.append(moods, genres)
@@ -56,24 +57,72 @@ function browse(root) {
   }).catch(() => {})
 }
 
+function historyCard(entry) {
+  if (entry.source === 'online') return onlineCard(entry.item, [entry.item], 0)
+  if (entry.kind === 'track') return trackCard(entry.track, [entry.track], 0, null)
+  if (entry.kind === 'album') return albumCard(entry.album)
+  return artistCard(entry.artist)
+}
+
+function paintHistory(root, history, fillInput) {
+  clear(root)
+  const items = history.items || []
+  const queries = history.queries || []
+  if (!items.length && !queries.length) return
+  const clearBtn = h('button', {
+    type: 'button',
+    class: 'link-btn',
+    text: t('player.search.clearRecent'),
+    onclick: () => clearSearchHistory().then(() => clear(root)).catch(toastError)
+  })
+  const row = shelf({
+    title: t('player.search.recent'),
+    items,
+    cls: 'shelf--search-recent',
+    tools: [clearBtn],
+    render: (entry) => {
+      const card = historyCard(entry)
+      // Picking it again moves it to the front.
+      card.addEventListener('click', () => rememberPick(entry.source === 'online'
+        ? { source: 'online', online: entry.item }
+        : { source: 'library', kind: entry.kind, id: (entry.track || entry.album || entry.artist).id }))
+      return card
+    }
+  })
+  root.append(row || h('div', { class: 'section-head' }, h('h2', { class: 'section-title', text: t('player.search.recent') }), clearBtn))
+  if (!queries.length) return
+  const list = h('ul', { class: 'search-history' })
+  for (const { q } of queries.slice(0, 10)) {
+    const line = h('li', { class: 'search-history__row' },
+      h('a', { class: 'search-history__text', href: `#/search?q=${encodeURIComponent(q)}` },
+        icon('history', { size: 22 }), h('span', { text: q })),
+      iconButton('arrowUpLeft', t('player.search.useText'), () => fillInput(q), { cls: 'search-history__btn' }),
+      iconButton('close', t('player.search.removeRecent'), () => forgetQuery(q).then(() => line.remove()).catch(toastError), { cls: 'search-history__btn search-history__remove' }))
+    list.append(line)
+  }
+  root.append(list)
+}
+
 function topResult(local, q) {
   const needle = q.trim().toLowerCase()
   const artist = local.artists.find((a) => a.name.toLowerCase() === needle) || null
   const album = !artist && local.albums.find((a) => a.title.toLowerCase() === needle)
   const track = local.tracks[0]
   if (artist) {
-    return h('a', { class: 'top-result', href: `#/artist/${artist.id}` },
+    return picked(h('a', { class: 'top-result', href: `#/artist/${artist.id}` },
       artwork(artworkUrl(artist.artwork, 256), { round: true, cls: 'top-result__art', placeholder: 'user', seed: artist.name }),
       h('h3', { class: 'top-result__title', text: artist.name }),
       h('span', { class: 'pill', text: t('player.kind.artist') }),
-      iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); playCollection('artist', artist.id) }, { cls: 'play-fab top-result__play', size: 24 }))
+      iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); playCollection('artist', artist.id) }, { cls: 'play-fab top-result__play', size: 24 })),
+    { source: 'library', kind: 'artist', id: artist.id }, q)
   }
   if (album) {
-    return h('a', { class: 'top-result', href: `#/album/${album.id}` },
+    return picked(h('a', { class: 'top-result', href: `#/album/${album.id}` },
       artwork(artworkUrl(album.artwork, 256), { cls: 'top-result__art', placeholder: 'album', seed: album.title }),
       h('h3', { class: 'top-result__title', text: album.title }),
       h('span', { class: 'muted' }, h('span', { class: 'pill', text: t('player.kind.album') }), ' ', album.artist),
-      iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); playCollection('album', album.id) }, { cls: 'play-fab top-result__play', size: 24 }))
+      iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); playCollection('album', album.id) }, { cls: 'play-fab top-result__play', size: 24 })),
+    { source: 'library', kind: 'album', id: album.id }, q)
   }
   if (track) {
     const el = h('div', { class: 'top-result', tabindex: '0' },
@@ -81,7 +130,7 @@ function topResult(local, q) {
       h('h3', { class: 'top-result__title', text: track.title }),
       h('span', { class: 'muted' }, h('span', { class: 'pill', text: t('player.kind.track') }), ' ', track.artist),
       iconButton('play', t('player.common.play'), () => playTracks(local.tracks, 0, { label: q, route: `/search?q=${encodeURIComponent(q)}` }), { cls: 'play-fab top-result__play', size: 24 }))
-    el.addEventListener('dblclick', () => playTracks([track], 0))
+    el.addEventListener('dblclick', () => playTracks([track], 0, { label: q, route: `/search?q=${encodeURIComponent(q)}` }))
     return el
   }
   return null
@@ -129,7 +178,7 @@ export async function render(_name, _params, query) {
       const paintLists = () => {
         clear(mixSlot)
         clear(playlistSlot)
-        if (mixes?.mixes?.length) mixSlot.append(shelf({ title: t('player.search.mixes', { artist: mixes.artist }), items: mixes.mixes, render: (item, i) => onlineCard(item, mixes.mixes, i, context), cls: 'shelf--mixes-online' }))
+        if (mixes?.mixes?.length) mixSlot.append(shelf({ title: t('player.search.mixes', { artist: mixes.artist }), items: mixes.mixes, render: (item, i) => picked(onlineCard(item, mixes.mixes, i, context), { source: 'online', online: item }, q), cls: 'shelf--mixes-online' }))
         const seen = new Set()
         const lists = [...(mixes?.playlists || []), ...(found?.playlists || [])].filter((p) => {
           const key = p.url || `${p.provider}:${p.id}`
@@ -137,7 +186,7 @@ export async function render(_name, _params, query) {
           seen.add(key)
           return true
         })
-        if (lists.length) playlistSlot.append(shelf({ title: t('player.search.onlinePlaylists'), items: lists, render: (item, i) => onlineCard(item, lists, i, context) }))
+        if (lists.length) playlistSlot.append(shelf({ title: t('player.search.onlinePlaylists'), items: lists, render: (item, i) => picked(onlineCard(item, lists, i, context), { source: 'online', online: item }, q) }))
       }
       const later = (promise, apply) => promise.then((value) => {
         if (!value || signal.aborted || !slot.isConnected) return
@@ -155,9 +204,9 @@ export async function render(_name, _params, query) {
         used ? h('span', { class: 'muted small', text: used }) : null))
       if (res.tracks?.length) slot.append(h('div', { class: 'section sec-tracks' }, onlineTrackList(res.tracks.slice(0, 12), { context })))
       slot.append(mixSlot)
-      if (res.albums?.length) slot.append(h('div', { class: 'sec-albums' }, shelf({ title: t('player.search.onlineAlbums'), items: res.albums, render: (item, i) => onlineCard(item, res.albums, i) })))
+      if (res.albums?.length) slot.append(h('div', { class: 'sec-albums' }, shelf({ title: t('player.search.onlineAlbums'), items: res.albums, render: (item, i) => picked(onlineCard(item, res.albums, i), { source: 'online', online: item }, q) })))
       slot.append(playlistSlot)
-      if (res.artists?.length) slot.append(h('div', { class: 'sec-artists' }, shelf({ title: t('player.search.onlineArtists'), items: res.artists, render: (item, i) => onlineCard(item, res.artists, i) })))
+      if (res.artists?.length) slot.append(h('div', { class: 'sec-artists' }, shelf({ title: t('player.search.onlineArtists'), items: res.artists, render: (item, i) => picked(onlineCard(item, res.artists, i), { source: 'online', online: item }, q) })))
       if (res.errors?.length) slot.append(h('p', { class: 'muted small', text: t('player.search.partialProviders', { list: res.errors.map((e) => providerName(e.provider)).join(', ') }) }))
     } catch (error) {
       if (error?.name === 'AbortError') return
@@ -176,7 +225,7 @@ export async function render(_name, _params, query) {
     clear(body)
     if (!q) {
       tabs.remove()
-      browse(body)
+      browse(body, fillInput)
       return
     }
     root.insertBefore(tabs, body)
@@ -187,7 +236,6 @@ export async function render(_name, _params, query) {
     let local
     try { local = await get('/search', { q, limit: 50 }) } catch (error) { toastError(error); return }
     if (mine !== seq) return
-    rememberSearchLater(q)
     const context = { label: q, route: `/search?q=${encodeURIComponent(q)}` }
     const hasLocal = local.tracks.length || local.albums.length || local.artists.length
     if (hasLocal) {
@@ -196,8 +244,8 @@ export async function render(_name, _params, query) {
         top ? h('section', {}, h('h2', { class: 'section-title', text: t('player.search.top') }), top) : null,
         local.tracks.length ? h('section', { class: 'search-top__songs' }, h('h2', { class: 'section-title', text: t('player.search.songs') }), trackList(local.tracks.slice(0, 5), { context, showAlbum: false })) : null))
       if (local.tracks.length) body.append(h('section', { class: 'section sec-tracks-only' }, trackList(local.tracks, { context })))
-      if (local.artists.length) body.append(h('div', { class: 'sec-artists' }, shelf({ title: t('player.library.artists'), items: local.artists, render: artistCard })))
-      if (local.albums.length) body.append(h('div', { class: 'sec-albums' }, shelf({ title: t('player.library.albums'), items: local.albums, render: albumCard })))
+      if (local.artists.length) body.append(h('div', { class: 'sec-artists' }, shelf({ title: t('player.library.artists'), items: local.artists, render: (a) => picked(artistCard(a), { source: 'library', kind: 'artist', id: a.id }, q) })))
+      if (local.albums.length) body.append(h('div', { class: 'sec-albums' }, shelf({ title: t('player.library.albums'), items: local.albums, render: (a) => picked(albumCard(a), { source: 'library', kind: 'album', id: a.id }, q) })))
     } else {
       body.append(h('div', { class: 'sec-local-empty' }, emptyState('search', t('player.search.noLocal', { q }), app.providers.length ? t('player.search.noLocalOnline') : '')))
     }
@@ -208,8 +256,18 @@ export async function render(_name, _params, query) {
     }
   }
 
-  const rememberSearchLater = debounce((q) => rememberSearch(q), 1500)
+  // The arrow next to a past search puts its text in the box to edit it.
+  function fillInput(q) {
+    const input = window.matchMedia?.('(max-width: 760px)').matches || !document.getElementById('globalSearch')?.offsetParent
+      ? mobileInput
+      : document.getElementById('globalSearch')
+    input.value = `${q} `
+    input.focus()
+    input.setSelectionRange?.(input.value.length, input.value.length)
+  }
+  // Enter = this is what I was looking for.
+  mobileInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') rememberQuery(mobileInput.value) })
   run((query.get('q') || '').trim())
   const unsub = (await import('../app.js')).bus.on('route:query', ({ query: qs }) => run((qs.get('q') || '').trim()))
-  return { node: root, cleanup: () => { unsub(); onlineController?.abort(); onlineDebounced.cancel(); rememberSearchLater.cancel() } }
+  return { node: root, cleanup: () => { unsub(); onlineController?.abort(); onlineDebounced.cancel() } }
 }

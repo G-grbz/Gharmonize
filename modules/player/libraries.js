@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { NOT_LINKED_ARTIST_SQL } from './artistCredits.js'
 import path from 'node:path'
 import { transaction, getSetting, setSetting } from './db.js'
 import { canonicalExistingFolder, assertReadableFolder, assertWritableFolder, FolderPathError } from './folderPath.js'
@@ -132,9 +133,7 @@ export function createLibraryStore(db, { defaultLibraryDir, now = () => Date.now
       db.prepare('DELETE FROM tracks_fts WHERE rowid IN (SELECT id FROM tracks WHERE library_id = ?)').run(row.id)
       db.prepare('DELETE FROM libraries WHERE id = ?').run(row.id)
       db.prepare('DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)').run()
-      db.prepare(`DELETE FROM artists WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)
-        AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
-      AND NOT EXISTS (SELECT 1 FROM favorites WHERE favorites.item_type = 'artist' AND favorites.item_id = artists.id)`).run()
+      db.prepare(`DELETE FROM artists WHERE ${NOT_LINKED_ARTIST_SQL()}`).run()
     })
   }
 

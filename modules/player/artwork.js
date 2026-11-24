@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { syncFile, writeFileDurable, usableCacheFile } from './cacheFile.js'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import * as binaries from '../binaries.js'
@@ -17,6 +18,10 @@ const MEMO_LIMIT = 50_000
 const ARTWORK_KINDS = ['track', 'album', 'artist', 'playlist']
 const VERSION_COLS = 't.id, t.library_id, t.rel_path, t.size, t.mtime_ms'
 const BARE_REF = /^(track|album|artist|playlist)\/(\d+)$/
+// Part of every artwork URL. Raised when browsers may hold a bad copy under
+// the current URLs (cached for a year): 2 = empty covers that a crash left
+// in the server cache were sent as immutable.
+const URL_GENERATION = 2
 
 const sha1 = (value) => crypto.createHash('sha1').update(value).digest('hex')
 
@@ -133,7 +138,7 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
     const fileKey = sha1(`${abs}\0${st.size}\0${Math.floor(st.mtimeMs)}`)
     for (const ext of IMAGE_EXTS) {
       const cached = path.join(srcDir, fileKey + ext)
-      if (!fs.existsSync(cached)) continue
+      if (!usableCacheFile(cached)) continue
       try {
         return { file: cached, contentType: mimeForExt(ext), key: await contentKeyOf(cached, fileKey), stable: true }
       } catch {}
@@ -147,8 +152,7 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
         const file = path.join(srcDir, fileKey + ext)
         const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`
         const data = Buffer.from(cover.data)
-        await fs.promises.writeFile(tmp, data)
-        await fs.promises.rename(tmp, file)
+        await writeFileDurable(file, tmp, data)
         const key = sha1(data)
         contentKeys.set(fileKey, key)
         return { file, contentType: mimeForExt(ext), key, stable: true }
@@ -192,8 +196,9 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
       case 'album': return albumTracks(n)
       // Indexed id lookup: an OR across the join would walk the whole library.
       case 'artist': return prepare(`SELECT ${cols} FROM tracks t LEFT JOIN albums a ON a.id = t.album_id
-        WHERE t.id IN (SELECT id FROM tracks WHERE artist_id = ? UNION SELECT t2.id FROM albums a2 JOIN tracks t2 ON t2.album_id = a2.id WHERE a2.artist_id = ?) AND ${vis}
-        ORDER BY (t.album_id IS NULL), a.year DESC, t.added_at DESC LIMIT 6`).all(n, n)
+        WHERE t.id IN (SELECT id FROM tracks WHERE artist_id = ? UNION SELECT t2.id FROM albums a2 JOIN tracks t2 ON t2.album_id = a2.id WHERE a2.artist_id = ?
+          UNION SELECT track_id FROM track_artists WHERE artist_id = ?) AND ${vis}
+        ORDER BY (t.album_id IS NULL), a.year DESC, t.added_at DESC LIMIT 6`).all(n, n, n)
       default: return []
     }
   }
@@ -223,7 +228,7 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
     if (kind !== 'playlist' && versions.has(memoKey)) return versions.get(memoKey)
     let rows = []
     try { rows = kind === 'playlist' ? playlistRows(id, userId, VERSION_COLS) : candidateTracks(kind, id, userId, VERSION_COLS) } catch {}
-    const hash = crypto.createHash('sha1').update(`${installId}\0${kind}\0${id}`)
+    const hash = crypto.createHash('sha1').update(`${installId}\0${kind}\0${id}\0${URL_GENERATION}`)
     for (const r of rows) hash.update(`\0${r.id}\0${libraryPath(r.library_id)}\0${r.rel_path}\0${r.size}\0${r.mtime_ms}`)
     // An artist's online photo (when one is stored) changes the URL too.
     if (kind === 'artist' && artistPhotos) hash.update(`\0photo\0${artistPhotos.token(id)}`)
@@ -257,7 +262,7 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
   async function resize(src, size) {
     const meta = { stable: src.stable !== false, sourceKey: src.key }
     const out = path.join(outDir, `${src.key}-${size}.jpg`)
-    if (fs.existsSync(out)) return { file: out, contentType: 'image/jpeg', ...meta }
+    if (usableCacheFile(out)) return { file: out, contentType: 'image/jpeg', ...meta }
     const tmp = path.join(outDir, `${src.key}-${size}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp.jpg`)
     try {
       await runFfmpeg([
@@ -266,6 +271,8 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
         '-vf', `scale=${size}:${size}:force_original_aspect_ratio=increase:flags=lanczos,crop=${size}:${size}`,
         '-frames:v', '1', '-q:v', '3', tmp
       ])
+      if (!usableCacheFile(tmp)) throw new Error('ffmpeg wrote no image')
+      await syncFile(tmp)
       await fs.promises.rename(tmp, out)
       return { file: out, contentType: 'image/jpeg', ...meta }
     } catch (error) {
@@ -293,7 +300,7 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
     const key = sha1(sources.map((s) => s.key).join('|'))
     const meta = { stable: sources.every((s) => s.stable !== false), sourceKey: key }
     const out = path.join(outDir, `mosaic-${key}-${size}.jpg`)
-    if (fs.existsSync(out)) return { file: out, contentType: 'image/jpeg', ...meta }
+    if (usableCacheFile(out)) return { file: out, contentType: 'image/jpeg', ...meta }
     const half = Math.max(32, Math.floor(size / 2))
     const tmp = `${out}.${process.pid}.tmp.jpg`
     try {
@@ -304,6 +311,8 @@ export function createArtworkService({ cacheDir, db, libraries, parseFile = null
         '-filter_complex', `${scale};[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0[out]`,
         '-map', '[out]', '-frames:v', '1', '-q:v', '3', tmp
       ])
+      if (!usableCacheFile(tmp)) throw new Error('ffmpeg wrote no image')
+      await syncFile(tmp)
       await fs.promises.rename(tmp, out)
       return { file: out, contentType: 'image/jpeg', ...meta }
     } catch (error) {

@@ -165,11 +165,13 @@ export function cardArtworkUrl(src) {
   return src
 }
 
-// `src` may be null; a tinted placeholder with an icon is shown instead.
+// `src` may be null. While a cover loads a tinted box shows; with no cover
+// at all (or one that fails) the Gharmonize default image does: the owl
+// record for songs, albums and lists, the empty profile for artists.
 export function artwork(src, { alt = '', round = false, cls = '', placeholder = 'music', seed = alt, lazy = true } = {}) {
-  const box = h('div', { class: ['art', round && 'art--round', cls] })
+  const box = h('div', { class: ['art', round && 'art--round', !src && 'art--empty', cls] })
   box.style.setProperty('--art-hue', hueOf(seed || alt || 'x'))
-  const ph = h('div', { class: 'art__ph' }, icon(placeholder, { size: 28 }))
+  const ph = h('div', { class: ['art__ph', (placeholder === 'user' || round) && 'art__ph--photo'] }, icon(placeholder, { size: 28 }))
   box.append(ph)
   // Deezer serves 1000 px covers by default; cards only need 500 px.
   if (src && lazy) src = cardArtworkUrl(src)
@@ -178,13 +180,47 @@ export function artwork(src, { alt = '', round = false, cls = '', placeholder = 
     // before a lazy image loads (CSS still sizes it to fill .art).
     const px = String(Number(/[?&]size=(\d+)/.exec(src)?.[1] || /\/(\d{2,4})x\1[-.]/.exec(src)?.[1]) || 256)
     const img = h('img', { alt, width: px, height: px, decoding: 'async', draggable: 'false', referrerpolicy: 'no-referrer' })
-    if (lazy) img.loading = 'lazy'
     img.addEventListener('load', () => box.classList.add('art--loaded'))
-    img.addEventListener('error', () => img.remove())
-    img.src = src
+    img.addEventListener('error', () => { img.remove(); box.classList.add('art--empty') })
+    if (lazy) lazyLoad(img, src)
+    else img.src = src
     box.append(img)
   }
   return box
+}
+
+// Covers load when they come near the screen. One shared observer instead of
+// loading="lazy": Chrome reports every lazy <img> whose box is still 0×0 at
+// its first layout (shelves skipped by content-visibility, closed panels) as
+// "Lazy-loaded images should have explicit dimensions", although .art keeps
+// its square size either way.
+let lazyObserver = null
+function lazyLoad(img, src) {
+  if (typeof IntersectionObserver !== 'function') { img.src = src; return }
+  if (!lazyObserver) {
+    const start = (target) => {
+      lazyObserver.unobserve(target)
+      const next = target.dataset.src
+      delete target.dataset.src
+      if (next) target.src = next
+    }
+    lazyObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        // Already started as a neighbour's preload: nothing more to do.
+        if (!entry.isIntersecting || !entry.target.dataset.src) continue
+        start(entry.target)
+        // rootMargin does not reach past a horizontal shelf's edge: load the
+        // next few covers of the row too, so they are ready when it scrolls.
+        const row = entry.target.closest('.shelf__row')
+        if (!row) continue
+        const pending = [...row.querySelectorAll('img[data-src]')]
+        const card = entry.target.closest('.card')
+        pending.filter((img) => card && (card.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING)).slice(0, 4).forEach(start)
+      }
+    }, { rootMargin: '600px 0px' })
+  }
+  img.dataset.src = src
+  lazyObserver.observe(img)
 }
 
 // ---- toasts ------------------------------------------------------------------

@@ -45,6 +45,11 @@ sealed interface Route {
 
 /** UI state shared by all screens: navigation, player, downloads, messages. */
 class AppState(private val context: Context, val scope: CoroutineScope, val player: PlayerController) {
+  /** Keeps a search text and / or the result picked from it in the user's search history. */
+  fun rememberSearch(q: String?, item: org.json.JSONObject? = null) {
+    scope.launch { runCatching { api.rememberSearch(q, item) } }
+  }
+
   val app get() = App.instance
   val api get() = app.api
   val snackbar = SnackbarHostState()

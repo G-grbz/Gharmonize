@@ -1,5 +1,20 @@
 package com.gharmonize.player.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import com.gharmonize.player.data.SearchHistory
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -247,15 +262,24 @@ private fun DiscoverShelf(state: AppState, s: JSONObject) {
 
 @Composable
 fun SearchScreen(state: AppState) {
-  var query by rememberSaveable { mutableStateOf("") }
+  var field by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
+  val query = field.text
   var local by remember { mutableStateOf<SearchResult?>(null) }
   var online by remember { mutableStateOf<OnlineSearchResult?>(null) }
   var mixes by remember { mutableStateOf<ArtistMixes?>(null) }
   var playlists by remember { mutableStateOf<List<OnlineItem>>(emptyList()) }
   var onlineLoading by remember { mutableStateOf(false) }
+  var history by remember { mutableStateOf<SearchHistory?>(null) }
+  val focus = remember { FocusRequester() }
+  val keyboard = LocalSoftwareKeyboardController.current
   val lang = java.util.Locale.getDefault().language
+  val q = query.trim()
+  // Nothing typed: the user's search history (read again each time, so a
+  // pick from the results shows up first).
+  LaunchedEffect(q.isEmpty()) {
+    if (q.isEmpty()) history = runCatching { state.api.searchHistory() }.getOrNull() ?: history
+  }
   LaunchedEffect(query) {
-    val q = query.trim()
     if (q.isEmpty()) { local = null; online = null; mixes = null; playlists = emptyList(); return@LaunchedEffect }
     delay(300)
     local = runCatching { state.api.search(q) }.getOrNull()
@@ -271,38 +295,122 @@ fun SearchScreen(state: AppState) {
       if (q.length >= 2) launch { mixes = runCatching { state.api.artistMixes(q, lang) }.getOrNull() }
     }
   }
+  // A result picked from this search is remembered together with the text.
+  fun libraryPick(kind: String, id: Long) = { state.rememberSearch(q, org.json.JSONObject().put("source", "library").put("kind", kind).put("id", id)) }
+  fun onlinePick(item: OnlineItem) = { state.rememberSearch(q, org.json.JSONObject().put("source", "online").put("online", item.raw)) }
+  fun fill(text: String) {
+    val value = "$text "
+    field = TextFieldValue(value, selection = TextRange(value.length))
+    runCatching { focus.requestFocus() }
+    keyboard?.show()
+  }
   val selection = rememberSongSelection("search")
-  SelectionScaffold(state, local?.tracks.orEmpty().take(10), selection, query.trim()) { pad ->
+  SelectionScaffold(state, local?.tracks.orEmpty().take(10), selection, q) { pad ->
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = pad)) {
     item {
       OutlinedTextField(
-        value = query, onValueChange = { query = it }, singleLine = true,
+        value = field, onValueChange = { field = it }, singleLine = true,
         leadingIcon = { Icon(FluentIcons.Search, null) },
+        trailingIcon = if (query.isNotEmpty()) { { IconButton(onClick = { field = TextFieldValue("") }) { Icon(FluentIcons.Close, stringResource(R.string.search_clear)) } } } else null,
         placeholder = { Text(stringResource(R.string.search_hint)) },
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { state.rememberSearch(q); keyboard?.hide() }),
+        modifier = Modifier.fillMaxWidth().padding(16.dp).focusRequester(focus),
       )
+    }
+    if (q.isEmpty()) {
+      history?.let { h -> searchHistorySection(state, h, onChange = { history = it }, onOpen = { field = TextFieldValue(it, selection = TextRange(it.length)); keyboard?.hide() }, onFill = ::fill) }
     }
     local?.let { r ->
       if (r.tracks.isEmpty() && r.albums.isEmpty() && r.artists.isEmpty()) item { EmptyText(stringResource(R.string.search_no_local)) }
-      if (r.artists.isNotEmpty()) item { ShelfRow(stringResource(R.string.artists), r.artists) { _, a -> ArtistCard(state, a) } }
+      if (r.artists.isNotEmpty()) item { ShelfRow(stringResource(R.string.artists), r.artists) { _, a -> ArtistCard(state, a, onPick = libraryPick("artist", a.id)) } }
       if (r.tracks.isNotEmpty()) {
         item { SectionTitle(stringResource(R.string.songs)) }
-        itemsIndexed(r.tracks.take(10), key = { _, t -> "lt-${t.id}" }) { i, _ -> TrackRow(state, r.tracks, i, selection = selection, playSingle = true) }
+        itemsIndexed(r.tracks.take(10), key = { _, t -> "lt-${t.id}" }) { i, t -> TrackRow(state, r.tracks, i, selection = selection, playSingle = true, onPick = libraryPick("track", t.id)) }
       }
-      if (r.albums.isNotEmpty()) item { ShelfRow(stringResource(R.string.albums), r.albums) { _, a -> AlbumCard(state, a) } }
+      if (r.albums.isNotEmpty()) item { ShelfRow(stringResource(R.string.albums), r.albums) { _, a -> AlbumCard(state, a, onPick = libraryPick("album", a.id)) } }
     }
     if (onlineLoading) item { Loading() }
     online?.let { r ->
       if (r.tracks.isNotEmpty() || r.albums.isNotEmpty()) item { SectionTitle(stringResource(R.string.search_online)) }
-      itemsIndexed(r.tracks.take(12), key = { i, t -> "ot-$i-${t.id}" }) { i, _ -> OnlineTrackRow(state, r.tracks, i, playSingle = true) }
-      mixes?.mixes?.takeIf { it.isNotEmpty() }?.let { list -> item { ShelfRow(stringResource(R.string.search_mixes, mixes?.artist ?: query), list) { i, _ -> OnlineCard(state, list, i) } } }
-      if (r.albums.isNotEmpty()) item { ShelfRow(stringResource(R.string.albums_online), r.albums) { i, _ -> OnlineCard(state, r.albums, i) } }
+      itemsIndexed(r.tracks.take(12), key = { i, t -> "ot-$i-${t.id}" }) { i, t -> OnlineTrackRow(state, r.tracks, i, playSingle = true, onPick = onlinePick(t)) }
+      mixes?.mixes?.takeIf { it.isNotEmpty() }?.let { list -> item { ShelfRow(stringResource(R.string.search_mixes, mixes?.artist ?: query), list) { i, m -> OnlineCard(state, list, i, onPick = onlinePick(m)) } } }
+      if (r.albums.isNotEmpty()) item { ShelfRow(stringResource(R.string.albums_online), r.albums) { i, a -> OnlineCard(state, r.albums, i, onPick = onlinePick(a)) } }
       val lists = ((mixes?.playlists ?: emptyList()) + playlists).distinctBy { it.key }
-      if (lists.isNotEmpty()) item { ShelfRow(stringResource(R.string.playlists_online), lists) { i, _ -> OnlineCard(state, lists, i) } }
-      if (r.artists.isNotEmpty()) item { ShelfRow(stringResource(R.string.artists_online), r.artists) { i, _ -> OnlineCard(state, r.artists, i) } }
+      if (lists.isNotEmpty()) item { ShelfRow(stringResource(R.string.playlists_online), lists) { i, p -> OnlineCard(state, lists, i, onPick = onlinePick(p)) } }
+      if (r.artists.isNotEmpty()) item { ShelfRow(stringResource(R.string.artists_online), r.artists) { i, a -> OnlineCard(state, r.artists, i, onPick = onlinePick(a)) } }
     }
   }
 }
+}
+
+/**
+ * Like YouTube Music: results picked from earlier searches as covers, then
+ * the search texts (tap = search again, arrow = edit the text, long press =
+ * remove it).
+ */
+private fun LazyListScope.searchHistorySection(
+  state: AppState,
+  history: SearchHistory,
+  onChange: (SearchHistory) -> Unit,
+  onOpen: (String) -> Unit,
+  onFill: (String) -> Unit,
+) {
+  if (history.items.isEmpty() && history.queries.isEmpty()) return
+  item(key = "sh-head") {
+    Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+      Box(Modifier.weight(1f)) { SectionTitle(stringResource(R.string.search_recent)) }
+      androidx.compose.material3.TextButton(onClick = {
+        onChange(SearchHistory(emptyList(), emptyList()))
+        state.scope.launch { runCatching { state.api.clearSearchHistory() } }
+      }) { Text(stringResource(R.string.search_clear)) }
+    }
+  }
+  if (history.items.isNotEmpty()) item(key = "sh-items") {
+    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+      itemsIndexed(history.items, key = { _, p -> p.key }) { _, pick ->
+        // Picking it again moves it to the front next time.
+        val again = {
+          state.rememberSearch(null, pick.track?.let { org.json.JSONObject().put("source", "library").put("kind", "track").put("id", it.id) }
+            ?: pick.album?.let { org.json.JSONObject().put("source", "library").put("kind", "album").put("id", it.id) }
+            ?: pick.artist?.let { org.json.JSONObject().put("source", "library").put("kind", "artist").put("id", it.id) }
+            ?: pick.online?.let { org.json.JSONObject().put("source", "online").put("online", it.raw) })
+        }
+        when {
+          pick.track != null -> TrackCard(state, listOf(pick.track), 0, onPick = again)
+          pick.album != null -> AlbumCard(state, pick.album, onPick = again)
+          pick.artist != null -> ArtistCard(state, pick.artist, onPick = again)
+          pick.online != null -> OnlineCard(state, listOf(pick.online), 0, onPick = again)
+        }
+      }
+    }
+  }
+  items(history.queries.take(10), key = { "sh-q-$it" }) { text ->
+    SearchHistoryRow(text, onOpen = { onOpen(text) }, onFill = { onFill(text) }, onRemove = {
+      onChange(history.copy(queries = history.queries - text))
+      state.scope.launch { runCatching { state.api.forgetSearch(text) } }
+    })
+  }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SearchHistoryRow(text: String, onOpen: () -> Unit, onFill: () -> Unit, onRemove: () -> Unit) {
+  var menu by remember { mutableStateOf(false) }
+  Box {
+    Row(
+      Modifier.fillMaxWidth().combinedClickable(onClick = onOpen, onLongClick = { menu = true }).padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Icon(FluentIcons.History, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+      Spacer(Modifier.width(24.dp))
+      Text(text, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      IconButton(onClick = onFill) { Icon(FluentIcons.ArrowUpLeft, stringResource(R.string.search_use_text), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+      DropdownMenuItem(text = { Text(stringResource(R.string.search_remove)) }, onClick = { menu = false; onRemove() })
+    }
+  }
 }
 
 // ---- Library ---------------------------------------------------------------------------

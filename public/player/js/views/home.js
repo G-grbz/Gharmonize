@@ -174,8 +174,11 @@ export async function render() {
 
     if (stats.tracks) {
       get('/mixes', null, { signal }).then((res) => {
-        const el = shelf({ id: 'mixes', title: t('player.home.mixes'), subtitle: t('player.home.mixesSub'), items: res.items, render: mixCard, cls: 'shelf--mixes' })
+        const items = res.items || []
+        const el = shelf({ id: 'mixes', title: t('player.home.mixes'), subtitle: t('player.home.mixesSub'), items: items.filter((m) => m.kind !== 'genre'), render: mixCard, cls: 'shelf--mixes' })
         if (el) mixesSlot.append(el)
+        const byGenre = shelf({ id: 'genre-mixes', title: t('player.home.genreMixes'), subtitle: t('player.home.genreMixesSub'), items: items.filter((m) => m.kind === 'genre'), render: mixCard, cls: 'shelf--mixes' })
+        if (byGenre) mixesSlot.append(byGenre)
       }).catch(() => {})
       get('/stats/listening', { range: 'week' }, { signal }).then((s) => {
         if (!s.plays) return

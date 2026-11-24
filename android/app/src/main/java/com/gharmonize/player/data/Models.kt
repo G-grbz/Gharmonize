@@ -20,7 +20,15 @@ data class Track(
   val playCount: Int?,
   val genre: String? = null,
   val year: Int? = null,
+  /** Every artist of "A, B" (only when there are several). */
+  val artists: List<ArtistRef> = emptyList(),
 )
+
+/** An artist of a song or album by several artists. */
+data class ArtistRef(val id: Long, val name: String)
+
+fun parseArtistRefs(o: JSONObject): List<ArtistRef> =
+  o.optJSONArray("artists").mapObjects { a -> a.longOrNull("id")?.let { id -> ArtistRef(id, a.optString("name")) } }
 
 data class Album(
   val id: Long,
@@ -33,6 +41,7 @@ data class Album(
   val artwork: String?,
   val favorite: Boolean,
   val tracks: List<Track> = emptyList(),
+  val artists: List<ArtistRef> = emptyList(),
 )
 
 data class Artist(
@@ -126,6 +135,26 @@ data class DownloadRow(
 data class AlbumMissing(val found: Boolean, val total: Int, val missing: List<OnlineItem>, val onlineAlbum: OnlineItem?)
 
 data class SearchResult(val tracks: List<Track>, val albums: List<Album>, val artists: List<Artist>)
+
+/** A result picked from an earlier search: exactly one of the four is set. */
+data class SearchPick(val key: String, val track: Track? = null, val album: Album? = null, val artist: Artist? = null, val online: OnlineItem? = null)
+
+/** The user's own search history (same on every device). */
+data class SearchHistory(val queries: List<String>, val items: List<SearchPick>)
+
+fun parseSearchHistory(o: JSONObject): SearchHistory = SearchHistory(
+  queries = o.optJSONArray("queries").mapObjects { it.optString("q").takeIf { q -> q.isNotBlank() } },
+  items = o.optJSONArray("items").mapObjects { i ->
+    val key = i.optString("key")
+    when {
+      i.optString("source") == "online" -> i.optJSONObject("item")?.let { SearchPick(key, online = parseOnline(it)) }
+      i.optString("kind") == "track" -> i.optJSONObject("track")?.let { SearchPick(key, track = parseTrack(it)) }
+      i.optString("kind") == "album" -> i.optJSONObject("album")?.let { SearchPick(key, album = parseAlbum(it)) }
+      i.optString("kind") == "artist" -> i.optJSONObject("artist")?.let { SearchPick(key, artist = parseArtist(it)) }
+      else -> null
+    }
+  },
+)
 data class OnlineSearchResult(val tracks: List<OnlineItem>, val albums: List<OnlineItem>, val artists: List<OnlineItem>, val playlists: List<OnlineItem> = emptyList())
 
 /** Mixes (artist radios) and playlists made around one artist. */
@@ -164,6 +193,7 @@ fun parseTrack(o: JSONObject): Track = Track(
   playCount = o.intOrNull("playCount"),
   genre = o.strOrNull("genre"),
   year = o.intOrNull("year")?.takeIf { it > 0 },
+  artists = parseArtistRefs(o),
 )
 
 fun parseAlbum(o: JSONObject): Album = Album(
@@ -177,6 +207,7 @@ fun parseAlbum(o: JSONObject): Album = Album(
   artwork = o.strOrNull("artwork"),
   favorite = o.optBoolean("favorite"),
   tracks = o.optJSONArray("tracks").mapObjects(::parseTrack),
+  artists = parseArtistRefs(o),
 )
 
 fun parseArtist(o: JSONObject): Artist = Artist(

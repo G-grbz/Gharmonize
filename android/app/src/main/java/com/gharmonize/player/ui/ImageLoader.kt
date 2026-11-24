@@ -193,15 +193,25 @@ fun Artwork(
   val key = "$uri@$size"
   val offlineReady = offlineArtworkTrackId(uri)?.let { Offline.artworkReady[it] } == true
   var bitmap by remember(key) { mutableStateOf(App.instance.images.cached(key)) }
+  // No picture at all (none set, or the server has none): the default image.
+  var missing by remember(key) { mutableStateOf(uri == null) }
   LaunchedEffect(key, offlineReady) {
-    if ((bitmap == null || offlineReady) && uri != null) bitmap = App.instance.images.load(uri, size) ?: bitmap
+    if ((bitmap == null || offlineReady) && uri != null) {
+      val loaded = App.instance.images.load(uri, size)
+      bitmap = loaded ?: bitmap
+      missing = bitmap == null
+    }
   }
   Box(modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
     val bmp = bitmap
-    if (bmp != null) {
-      Image(bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-    } else {
-      Icon(placeholder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    when {
+      bmp != null -> Image(bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+      // Artists: the empty profile; songs, albums and lists: the owl record.
+      missing -> Image(
+        androidx.compose.ui.res.painterResource(if (placeholder == FluentIcons.Person) com.gharmonize.player.R.drawable.no_photo else com.gharmonize.player.R.drawable.no_cover),
+        contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+      )
+      else -> Icon(placeholder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
   }
 }

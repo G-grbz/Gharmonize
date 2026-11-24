@@ -186,6 +186,8 @@ class PlayerController(private val context: Context) {
             .setExtras(Bundle().apply {
               putBoolean("preview", true)
               putDouble("duration", 30.0)
+              // The online song itself, so the player can offer to download it.
+              putString("online", o.raw.toString())
               if (auto) putBoolean("auto", true)
             })
             .build(),

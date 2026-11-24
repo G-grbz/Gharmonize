@@ -5,9 +5,10 @@ import { app, bus, store } from './app.js'
 import { get, post, artworkUrl } from './api.js'
 import { h, append, t, icon, iconButton, setIcon, artwork, fmtTime, fmtRelative, clear, contextMenu, toast, toastError, plural } from './dom.js'
 import { itemArtwork } from './engine.js'
-import { heartButton, createPlaylistFlow, trackMenu, onlineMenu, trackInfo, markCurrent, providerName, primaryArtist, mixArt, mixTitle, mixDescription, averageColor, playCollection } from './components.js'
+import { heartButton, createPlaylistFlow, trackMenu, onlineMenu, trackInfo, markCurrent, providerName, primaryArtist, artistLinks, mixArt, mixTitle, mixDescription, averageColor, playCollection } from './components.js'
 import { applyTheme, currentTheme } from './theme.js'
 import { saveButton } from './playlistSave.js'
+import { rememberQuery } from './searchHistory.js'
 import { seekBar, coverRing, progressStyle } from './seekbar.js'
 
 const QUALITY_OPTIONS = ['original', 'high', 'normal', 'low', 'saver']
@@ -142,7 +143,8 @@ export class LyricsView {
     this.el.append(h('p', { class: 'lyrics__empty', text: t('player.common.loading') }))
     let data = lyricsCache.get(item.id)
     if (data === undefined) {
-      try { data = await get(`/tracks/${item.id}/lyrics`) } catch { data = null }
+      try { data = await get(`/tracks/${item.id}/lyrics`, { soft: 1 }) } catch { data = null }
+      if (data?.none) data = null
       lyricsCache.set(item.id, data)
     }
     if (this.item !== item) return
@@ -300,6 +302,8 @@ function buildTopbar() {
     }, 220)
   })
   search.addEventListener('focus', () => { if (!window.location.hash.startsWith('#/search')) app.nav('/search') })
+  // Enter = this is what I was looking for: keep it in the search history.
+  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') rememberQuery(search.value) })
   bus.on('route', ({ path, query }) => {
     if (path !== '/search') search.value = ''
     else if (document.activeElement !== search) search.value = query.get('q') || ''
@@ -316,13 +320,20 @@ function buildTopbar() {
     h('img', { src: '/src/logo.png', alt: '', width: 22, height: 22, decoding: 'async' }),
     h('span', { text: t('player.nav.gharmonize') }))
   let gharmonizeReachable = false
-  fetch('/api/ui-config', { credentials: 'same-origin', cache: 'no-store' })
+  // The access status is open to everyone; ui-config only after Gharmonize's
+  // own access check, so asking it first would log a 401 for player users
+  // who are not signed in to Gharmonize.
+  const opts = { credentials: 'same-origin', cache: 'no-store' }
+  fetch('/api/access/status', opts)
     .then(async (res) => {
       gharmonizeReachable = res.status !== 404
       homeLink.hidden = !gharmonizeReachable
+      homeLink.href = '/index.html'
+      const access = res.ok ? await res.json().catch(() => ({})) : {}
+      if (!res.ok || (access.mode !== 'none' && !access.authorized)) return
       // "/" may open the player itself: link the downloader page directly.
-      const config = res.ok ? await res.json().catch(() => ({})) : {}
-      homeLink.href = config.frontendUi === 'ytlive' ? '/ytlive.html' : '/index.html'
+      const config = await fetch('/api/ui-config', opts).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
+      if (config.frontendUi === 'ytlive') homeLink.href = '/ytlive.html'
     })
     .catch(() => {})
   const avatar = h('button', { type: 'button', class: 'avatar', title: app.user?.displayName || '', 'aria-label': t('player.nav.account') }, (app.user?.displayName || app.user?.username || '?').slice(0, 1).toUpperCase())
@@ -354,7 +365,7 @@ function buildPlayerBar() {
   const art = h('button', { type: 'button', class: 'pb-art', 'aria-label': t('player.np.open') })
   art.addEventListener('click', () => openFull())
   const title = h('a', { class: 'pb-title', href: '#' })
-  const artist = h('a', { class: 'pb-artist', href: '#' })
+  const artist = h('span', { class: 'pb-artist' })
   const heartSlot = h('span', { class: 'pb-heart' })
   const shuffle = iconButton('shuffle', t('player.controls.shuffle'), () => p.toggleShuffle(), { cls: 'ctl ctl--toggle', size: 18 })
   const prev = iconButton('prev', t('player.controls.previous'), () => p.prev(), { cls: 'ctl', size: 20 })
@@ -418,8 +429,8 @@ function buildPlayerBar() {
     title.textContent = item.title
     title.title = item.title
     title.href = item.albumId ? `#/album/${item.albumId}` : item.online?.providerIds?.deezerAlbum ? `#/online/album?provider=deezer&id=${item.online.providerIds.deezerAlbum}` : '#/home'
-    artist.textContent = item.artist
-    artist.href = item.artistId ? `#/artist/${item.artistId}` : `#/online/artist?name=${encodeURIComponent(primaryArtist(item.artist))}`
+    clear(artist)
+    append(artist, artistLinks(item))
     if (item.type === 'library') heartSlot.append(heartButton('track', item.id, item.favorite, { size: 18 }))
     else heartSlot.append(h('span', { class: 'badge badge--preview', text: t('player.badge.preview') }))
     quality.textContent = qualityLabel(item)
@@ -640,7 +651,7 @@ function buildPanel() {
       h('div', { class: 'np-card' },
         artwork(itemArtwork(item, 512), { alt: item.title, cls: 'np-card__art', seed: item.album || item.title }),
         h('h3', { class: 'np-card__title', text: item.title }),
-        h('p', { class: 'np-card__artist' }, item.artistId ? h('a', { href: `#/artist/${item.artistId}`, text: item.artist }) : item.artist),
+        h('p', { class: 'np-card__artist' }, ...artistLinks(item)),
         item.album ? h('p', { class: 'np-card__album' }, item.albumId ? h('a', { href: `#/album/${item.albumId}`, text: item.album }) : item.album) : null),
       item.type === 'library'
         ? h('dl', { class: 'info-grid info-grid--compact' },
@@ -686,7 +697,7 @@ function buildFullPlayer() {
   const artBox = h('div', { class: 'np-full__art' })
   const details = h('div', { class: 'np-full__details', hidden: true })
   const title = h('h2', { class: 'np-full__title' })
-  const artist = h('a', { class: 'np-full__artist', href: '#' })
+  const artist = h('span', { class: 'np-full__artist' })
   const heartSlot = h('span')
   const lyrics = new LyricsView({ big: true })
   const stage = h('div', { class: 'np-full__stage' })
@@ -718,8 +729,8 @@ function buildFullPlayer() {
   const repeat = iconButton('repeat', t('player.controls.repeat'), () => p.cycleRepeat(), { cls: 'ctl ctl--toggle', size: 22 })
   const playBtn = iconButton('play', t('player.common.play'), () => p.toggle(), { cls: 'ctl-play ctl-play--xl', size: 30 })
   let mode = 'art'
-  const lyricsToggle = h('button', { type: 'button', class: 'np-full__tab', text: t('player.panel.lyrics'), onclick: () => setMode(mode === 'lyrics' ? 'art' : 'lyrics') })
-  const lyricsTop = h('button', { type: 'button', class: 'np-full__tab np-full__tab--top', text: t('player.panel.lyrics'), onclick: () => setMode('art') })
+  const lyricsToggle = h('button', { type: 'button', class: 'np-full__tab', onclick: () => setMode(mode === 'lyrics' ? 'art' : 'lyrics') }, icon('lyrics', { size: 20 }), h('span', { text: t('player.panel.lyrics') }))
+  const lyricsTop = h('button', { type: 'button', class: 'np-full__tab np-full__tab--top', onclick: () => setMode('art') }, icon('lyrics', { size: 20 }), h('span', { text: t('player.panel.lyrics') }))
   const queueBtn = iconButton('queue', t('player.panel.queue'), () => toggleSheet('queue'), { cls: 'ctl', size: 22 })
   const playlistBtn = iconButton('playlist', t('player.panel.playlists'), () => toggleSheet('playlists'), { cls: 'ctl', size: 22 })
   // Queue / playlists sheet: slides up over the player (swipe or scroll up).
@@ -825,8 +836,8 @@ function buildFullPlayer() {
         if (request === detailRequest && p.current?.uid === item.uid) paintDetails(track)
       }).catch(() => {})
     }
-    artist.textContent = item.artist
-    artist.href = item.artistId ? `#/artist/${item.artistId}` : `#/online/artist?name=${encodeURIComponent(primaryArtist(item.artist))}`
+    clear(artist)
+    append(artist, artistLinks(item))
     root.querySelector('.np-full__context').textContent = p.context?.label || ''
     clear(heartSlot)
     if (item.type === 'library') heartSlot.append(heartButton('track', item.id, item.favorite, { size: 26 }))

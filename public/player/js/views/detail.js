@@ -5,7 +5,8 @@ import { get, post, patch, del, artworkUrl } from '../api.js'
 import { h, t, icon, iconButton, clear, artwork, fmtLong, fmtNumber, plural, contextMenu, modal, toast, toastError, confirmDialog, skeletonShelf, debounce, emptyState, fmtRelative, spinner } from '../dom.js'
 import {
   hero, actionBar, trackList, onlineTrackList, shelf, albumCard, onlineCard, heartButton, playTracks, playCollection, queueCollection,
-  playlistSubmenu, refreshPlaylists, primaryArtist, selectButton, providerName, artistBio
+  playlistSubmenu, refreshPlaylists, primaryArtist, selectButton, providerName, artistBio,
+  artistLinks
 } from '../components.js'
 import { saveButton } from '../playlistSave.js'
 import { downloadButton } from '../downloads.js'
@@ -25,7 +26,9 @@ async function albumView(id) {
       kind: album.trackCount <= 3 ? t('player.kind.single') : t('player.kind.album'),
       title: album.title,
       meta: [
-        album.artistId ? h('a', { class: 'hero__artist', href: `#/artist/${album.artistId}` }, artwork(artworkUrl(`artist/${album.artistId}`, 64), { round: true, cls: 'hero__avatar', placeholder: 'user', seed: album.artist }), album.artist) : album.artist,
+        album.artists?.length > 1
+          ? h('span', { class: 'hero__artist' }, artwork(artworkUrl(`artist/${album.artists[0].id}`, 64), { round: true, cls: 'hero__avatar', placeholder: 'user', seed: album.artists[0].name }), h('span', {}, ...artistLinks(album)))
+          : album.artistId ? h('a', { class: 'hero__artist', href: `#/artist/${album.artistId}` }, artwork(artworkUrl(`artist/${album.artistId}`, 64), { round: true, cls: 'hero__avatar', placeholder: 'user', seed: album.artist }), album.artist) : album.artist,
         album.year,
         plural(album.trackCount, 'player.count.track', 'player.count.tracks'),
         album.duration ? fmtLong(album.duration) : null,
@@ -186,11 +189,19 @@ function artistAllSongs(artist, context) {
   const sort = h('select', { class: 'select select--sm', 'aria-label': t('player.library.sort') },
     ARTIST_SORTS.map((key) => h('option', { value: key, text: t(`player.artist.sort.${key}`), selected: key === (app.prefs.artistSongsSort || 'album') })))
   const listSlot = h('div', { class: 'artist-all__list' }, spinner(24))
+  const libraryTools = h('div', { class: 'artist-all__tools' }, sort, selectButton(() => listSlot.querySelector('.tracklist')))
+  // Library | Online: every song of the artist on Deezer, missing ones
+  // can be picked and downloaded.
+  const withOnline = app.providers.includes('deezer')
+  const onlineSlot = h('div', { class: 'artist-all__list', hidden: true })
+  const onlineTools = h('div', { class: 'artist-all__tools', hidden: true })
+  const tabs = withOnline ? h('div', { class: 'chips artist-all__tabs' }) : null
   const section = h('section', { class: 'section artist-all' },
     h('div', { class: 'section-head' },
       h('h2', { class: 'section-title' }, t('player.artist.allSongs'), h('span', { class: 'muted artist-all__count', text: ` · ${artist.trackCount}` })),
-      h('div', { class: 'artist-all__tools' }, sort, selectButton(() => listSlot.querySelector('.tracklist')))),
-    listSlot)
+      libraryTools, onlineTools),
+    tabs,
+    listSlot, onlineSlot)
   let seq = 0
   const load = async () => {
     const mine = ++seq
@@ -206,7 +217,89 @@ function artistAllSongs(artist, context) {
   }
   sort.addEventListener('change', () => { app.setPref('artistSongsSort', sort.value); load() })
   load()
+  if (tabs) {
+    let onlineLoaded = false
+    const show = (online) => {
+      tabs.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-active', (c.dataset.tab === 'online') === online))
+      listSlot.hidden = online
+      libraryTools.hidden = online
+      onlineSlot.hidden = !online
+      onlineTools.hidden = !online
+      if (online && !onlineLoaded) { onlineLoaded = true; loadArtistOnlineSongs(artist.name, onlineSlot, onlineTools) }
+    }
+    for (const [key, label] of [['library', t('player.artist.tabLibrary')], ['online', t('player.artist.tabOnline')]]) {
+      tabs.append(h('button', { type: 'button', class: ['chip', key === 'library' && 'is-active'], dataset: { tab: key }, text: label, onclick: () => show(key === 'online') }))
+    }
+  }
   return section
+}
+
+// The artist's songs on Deezer, newest release first; songs not in the
+// library get a checkbox, "select missing" ticks them all and one button
+// downloads the picked ones.
+async function loadArtistOnlineSongs(name, slot, tools) {
+  slot.replaceChildren(spinner(24))
+  let data
+  try {
+    data = await get('/online/artist/tracks', { name })
+  } catch (error) {
+    slot.replaceChildren(emptyState('globe', t('player.artist.onlineSongsFailed')))
+    if (error?.status && error.status !== 404) toastError(error)
+    return
+  }
+  if (!slot.isConnected) return
+  const tracks = data.tracks || []
+  if (!tracks.length) { slot.replaceChildren(emptyState('globe', t('player.artist.onlineSongsNone'))); return }
+  const picked = new Set()
+  const boxes = new Map()
+  const summary = h('span', { class: 'muted small', text: t('player.artist.onlineSongsCount', { n: tracks.length, missing: data.missing || 0 }) })
+  const downloadBtn = h('button', { type: 'button', class: 'btn btn--primary btn--sm', disabled: true })
+  const selectMissing = h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: t('player.artist.selectMissing') })
+  const canPick = (item) => app.canDownload && !item.library && !(app.downloads.stateFor(item) && !['failed', 'canceled'].includes(app.downloads.stateFor(item).status))
+  const refresh = () => {
+    downloadBtn.textContent = t('player.artist.downloadPicked', { n: picked.size })
+    downloadBtn.disabled = !picked.size
+    selectMissing.textContent = picked.size ? t('player.artist.clearPicked') : t('player.artist.selectMissing')
+  }
+  selectMissing.addEventListener('click', () => {
+    const clearing = picked.size > 0
+    picked.clear()
+    for (const [item, box] of boxes) {
+      box.checked = !clearing && canPick(item)
+      if (box.checked) picked.add(item)
+    }
+    refresh()
+  })
+  downloadBtn.addEventListener('click', async () => {
+    downloadBtn.disabled = true
+    let queued = 0
+    for (const item of [...picked]) {
+      if (!canPick(item)) continue
+      try { if (await app.downloads.request(item, { quiet: true })) queued += 1 } catch (error) { toastError(error); break }
+      const box = boxes.get(item)
+      if (box) { box.checked = false; box.disabled = true }
+    }
+    picked.clear()
+    refresh()
+    if (queued) toast(t('player.album.missingQueued', { n: queued }), { type: 'success' })
+  })
+  tools.replaceChildren(summary, app.canDownload ? selectMissing : null, app.canDownload ? downloadBtn : null)
+  refresh()
+  const context = { label: name, route: `/online/artist?name=${encodeURIComponent(name)}` }
+  slot.replaceChildren(onlineTrackList(tracks, {
+    context,
+    showAlbum: true,
+    action: app.canDownload
+      ? (item) => {
+          if (item.library) return null
+          const box = h('input', { type: 'checkbox', class: 'artist-all__pick', 'aria-label': t('player.artist.pickSong'), disabled: !canPick(item) })
+          box.addEventListener('click', (e) => e.stopPropagation())
+          box.addEventListener('change', () => { if (box.checked) picked.add(item); else picked.delete(item); refresh() })
+          boxes.set(item, box)
+          return h('span', { class: 'artist-all__pickwrap' }, box, downloadButton(item))
+        }
+      : null
+  }))
 }
 
 async function loadOnlineArtist(name, slot, relatedSlot, heroMeta, bioSlot) {

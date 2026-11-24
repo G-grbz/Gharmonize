@@ -338,6 +338,33 @@ const MIGRATIONS = [
   // (the ones missing from the library).
   `
   ALTER TABLE downloads ADD COLUMN only_tracks TEXT;
+  `,
+  // v14: each user's search history (search texts and picked results),
+  // shared by all their devices.
+  `
+  CREATE TABLE search_history (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('query', 'item')),
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (user_id, type, key)
+  );
+  CREATE INDEX search_history_user_idx ON search_history(user_id, type, updated_at);
+  `,
+  // v15: every artist of a song ("A, B" → A and B), so each has their own
+  // page, photo and online data; tracks.artist_id is the first of them.
+  `
+  -- role 0: the song's artists, role 1: its album's artists.
+  CREATE TABLE track_artists (
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    role INTEGER NOT NULL DEFAULT 0,
+    artist_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (track_id, role, artist_id)
+  );
+  CREATE INDEX track_artists_artist_idx ON track_artists(artist_id);
   `
 ]
 

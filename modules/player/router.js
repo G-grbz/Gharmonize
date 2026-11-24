@@ -13,6 +13,7 @@ import { OnlineError, freshDeezerPreview } from './online.js'
 import { DiscoveryError } from './discovery.js'
 import { FollowError } from './follows.js'
 import { HealthError } from './health.js'
+import { SearchHistoryError } from './searchHistory.js'
 import { getInstallId } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -30,7 +31,7 @@ async function defaultAdminBridge() {
   return { getSession: mod.getAdminSessionFromRequest, verifyPassword: mod.verifyAdminPassword }
 }
 
-const KNOWN_ERRORS = [PlayerAuthError, LibraryError, CatalogError, BridgeError, OnlineError, DiscoveryError, FollowError, HealthError]
+const KNOWN_ERRORS = [PlayerAuthError, LibraryError, CatalogError, BridgeError, OnlineError, DiscoveryError, FollowError, HealthError, SearchHistoryError]
 
 function sendError(res, status, code, message) {
   res.set('Cache-Control', 'no-store')
@@ -220,6 +221,12 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
       res.set('Cache-Control', pinned ? 'private, max-age=600' : 'private, no-cache')
       return sendError(res, 404, 'NO_ARTWORK', 'No artwork available.')
     }
+    // An empty file is never sent, least of all as cacheable for a year.
+    const size = await fs.promises.stat(art.file).then((st) => st.size).catch(() => 0)
+    if (!size) {
+      res.set('Cache-Control', 'no-store')
+      return sendError(res, 404, 'NO_ARTWORK', 'No artwork available.')
+    }
     res.set('Cache-Control', pinned && art.stable !== false ? 'private, max-age=31536000, immutable' : 'private, no-cache')
     res.type(art.contentType)
     res.sendFile(art.file, { dotfiles: 'allow', lastModified: true, cacheControl: false }, (err) => {
@@ -232,6 +239,25 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   router.get('/home', requireUser, (req, res) => res.json(catalog.home(uid(req))))
   router.get('/stats', requireUser, (req, res) => res.json(catalog.getStats(uid(req))))
   router.get('/search', requireUser, (req, res) => res.json(catalog.search(req.query.q, { limit: req.query.limit, userId: uid(req) })))
+  // The user's own search history (every device shows the same one):
+  // { queries: [{ q, at }], items: [{ key, at, source, kind, track|album|artist|item }] }.
+  router.get('/search/history', requireUser, (req, res) => {
+    res.set('Cache-Control', 'no-store')
+    res.json(ctx.searchHistory.list(uid(req)))
+  })
+  // { q } and / or { item: { source: 'library', kind, id } | { source: 'online', online } }.
+  router.post('/search/history', requireUser, rateLimit(120, 60_000), (req, res) => {
+    const body = req.body || {}
+    if (body.q == null && body.item == null) throw new SearchHistoryError('BAD_REQUEST', 'Nothing to remember.')
+    if (body.q != null) ctx.searchHistory.addQuery(uid(req), body.q)
+    if (body.item != null) ctx.searchHistory.addItem(uid(req), body.item)
+    res.json({ ok: true })
+  })
+  // ?q= removes one search text, ?key= one picked result, neither: all.
+  router.delete('/search/history', requireUser, (req, res) => {
+    ctx.searchHistory.remove(uid(req), { query: req.query.q ?? null, key: req.query.key ?? null })
+    res.json({ ok: true })
+  })
   router.get('/genres', requireUser, (req, res) => res.json({ items: catalog.listGenres({ limit: req.query.limit, userId: uid(req) }) }))
 
   router.get('/tracks', requireUser, (req, res) => {
@@ -257,7 +283,10 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     const track = catalog.getTrackRow(intParam(req.params.id), uid(req))
     if (!track) return sendError(res, 404, 'NOT_FOUND', 'Track not found.')
     const found = await lyrics.getLyrics(track)
-    if (!found) return sendError(res, 404, 'NO_LYRICS', 'No lyrics found.')
+    // ?soft=1 (current apps): "no lyrics" is an answer, not an error, so
+    // browsers do not log a failed request for every song without lyrics.
+    // Older apps still get the 404 they expect.
+    if (!found) return req.query.soft ? res.json({ none: true }) : sendError(res, 404, 'NO_LYRICS', 'No lyrics found.')
     res.json(found)
   })
 
@@ -373,9 +402,10 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
     res.json(await suggestionsFor(req, { seedIds: pl.tracks.map((tr) => tr.id), artists, seedKey: `playlist:${pl.id}:${round}` }))
   })
   // More songs like the ones just played, for "keep playing" at the end of the
-  // queue: the same artist (also inside collaborations), related artists and
-  // songs their radio plays (Deezer, when enabled), the same genre; listened
-  // songs first within each tier, topped up from the library so it never ends.
+  // queue: a few by the same artist (also inside collaborations, spread out,
+  // never first), related artists and songs their radio plays (Deezer, when
+  // enabled), the same genre; listened songs first within each tier, topped
+  // up from the library so it never ends.
   router.get('/autoplay', requireUser, rateLimit(120, 60_000), async (req, res) => {
     const ids = (value) => String(value || '').split(',').map((v) => Number.parseInt(v, 10)).filter((n) => n > 0).slice(0, 300)
     const userId = uid(req)
@@ -392,7 +422,11 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
       relatedArtists: related.artists,
       boostIds: related.trackIds,
       limit: Math.min(30, Number(req.query.limit) || 15),
-      perArtist: 5,
+      // A radio, not the artist's discography: a few songs by the artist,
+      // the rest by related artists and others in the same genre.
+      perArtist: 2,
+      seedArtistMax: 3,
+      spread: true,
       preferHistory: true,
       fill: true
     }) })
@@ -516,6 +550,10 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   })
   router.get('/online/artist', requireUser, rateLimit(60, 60_000), async (req, res) => {
     res.json(await discovery.onlineArtist(req.playerUser, { id: req.query.id, name: req.query.name }))
+  })
+  // All of an artist's songs online (to pick and download the missing ones).
+  router.get('/online/artist/tracks', requireUser, rateLimit(20, 60_000), async (req, res) => {
+    res.json(await discovery.onlineArtistTracks(req.playerUser, { id: req.query.id, name: req.query.name }))
   })
 
   router.post('/downloads', requireUser, rateLimit(120, 60_000), async (req, res) => {

@@ -374,7 +374,8 @@ test('suggestions: library songs + new songs for playlists and mixes, autoplay',
   assert.ok(!auto.body.items.some((tr) => tr.id === hadi.id))
   await call('POST', '/history', { token: admin, body: { trackId: gulumse.id, playedMs: 60_000 } })
   const fromPreview = await call('GET', `/autoplay?artist=${encodeURIComponent(gulumse.artist)}&exclude=${hadi.id}`, { token: admin })
-  assert.equal(fromPreview.body.items[0]?.id, gulumse.id)
+  assert.ok(fromPreview.body.items.some((tr) => tr.id === gulumse.id), 'a listened song by the artist is in it')
+  assert.notEqual(fromPreview.body.items[0]?.artist, gulumse.artist, 'but another artist plays first')
   const mixes = (await call('GET', '/mixes', { token: admin })).body
   const mix = (mixes.items || mixes.mixes || [])[0]
   if (mix) assert.equal((await call('GET', `/mixes/${encodeURIComponent(mix.id)}/online`, { token: admin })).status, 200)
@@ -398,11 +399,13 @@ test('autoplay: collaborations, related artists, listened first, never empty', a
   const found = (await call('GET', `/search?q=${encodeURIComponent('şaşkın')}`, { token: admin })).body.tracks
   assert.ok(found.some((tr) => tr.id === saskin.id))
 
-  // A collaboration continues with each collaborator's own songs, then the
-  // rest of the library (no genre, no other match: still not empty).
+  // A collaboration continues with each collaborator's own songs (spread
+  // between other artists', not first), then the rest of the library (no
+  // genre, no other match: still not empty).
   let r = await call('GET', `/autoplay?seed=${saskin.id}&artist=${encodeURIComponent(saskin.artist)}&exclude=${saskin.id}`, { token: admin })
   assert.equal(r.status, 200)
-  assert.equal(r.body.items[0]?.id, byTitle('Feel').id)
+  assert.ok(r.body.items.some((tr) => tr.id === byTitle('Feel').id))
+  assert.notEqual(r.body.items[0]?.id, byTitle('Feel').id)
   assert.ok(r.body.items.length >= 4, 'topped up from the library')
   assert.ok(!r.body.items.some((tr) => tr.id === saskin.id))
 
@@ -814,4 +817,84 @@ test('library health cover batches support selected and remaining albums', async
   assert.deepEqual(fs.readFileSync(otherCover), covers)
   assert.equal(health.status().report.missingCovers.length, 0)
   await health.stop()
+})
+
+test('search history: texts and picked results per user, library ones read fresh', async (t) => {
+  const { call, admin, service } = await setup(t)
+  const tracks = (await call('GET', '/tracks?limit=50', { token: admin })).body.items
+  const hadi = tracks.find((tr) => tr.title === 'Hadi Bakalım')
+  let r = await call('GET', '/search/history', { token: admin })
+  assert.deepEqual(r.body, { queries: [], items: [] })
+
+  await call('POST', '/search/history', { token: admin, body: { q: '  sezen   aksu ' } })
+  await call('POST', '/search/history', { token: admin, body: { q: 'tarkan', item: { source: 'library', kind: 'track', id: hadi.id } } })
+  await call('POST', '/search/history', { token: admin, body: { item: { source: 'library', kind: 'album', id: hadi.albumId } } })
+  await call('POST', '/search/history', { token: admin, body: { item: { source: 'library', kind: 'artist', id: hadi.artistId } } })
+  const online = { provider: 'deezer', kind: 'track', id: '42', title: 'Yeni Şarkı', artist: 'Biri', artworkUrl: 'https://cdn/x.jpg', library: { trackId: 999 }, huge: ['x'], providerIds: { deezerArtist: '7' } }
+  await call('POST', '/search/history', { token: admin, body: { item: { source: 'online', online } } })
+  // The same text again (other case) moves to the top instead of repeating.
+  await call('POST', '/search/history', { token: admin, body: { q: 'SEZEN aksu' } })
+  r = await call('GET', '/search/history', { token: admin })
+  assert.deepEqual(r.body.queries.map((x) => x.q), ['SEZEN aksu', 'tarkan'])
+  assert.deepEqual(r.body.items.map((i) => `${i.source}:${i.kind}`), ['online:track', 'library:artist', 'library:album', 'library:track'])
+  const [o, artist, album, track] = r.body.items
+  assert.equal(o.item.title, 'Yeni Şarkı')
+  assert.equal(o.item.huge, undefined, 'only plain values are kept')
+  assert.equal(o.item.providerIds.deezerArtist, '7')
+  assert.notEqual(o.item.library?.trackId, 999, 'library badge is worked out again, not stored')
+  assert.equal(track.track.id, hadi.id)
+  assert.equal(album.album.id, hadi.albumId)
+  assert.equal(artist.artist.name, 'Sezen Aksu')
+
+  // Bad input is refused.
+  assert.equal((await call('POST', '/search/history', { token: admin, body: {} })).status, 400)
+  assert.equal((await call('POST', '/search/history', { token: admin, body: { q: '   ' } })).status, 400)
+  assert.equal((await call('POST', '/search/history', { token: admin, body: { item: { source: 'online', online: { kind: 'track' } } } })).status, 400)
+  assert.equal((await call('POST', '/search/history', { token: admin, body: { item: { source: 'library', kind: 'playlist', id: 1 } } })).status, 400)
+
+  // Another user has a history of their own.
+  await call('POST', '/admin/users', { token: admin, body: { username: 'ikinci', password: 'secondsecret' } })
+  const other = (await call('POST', '/auth/login', { body: { username: 'ikinci', password: 'secondsecret', client: 'device' } })).body.token
+  assert.deepEqual((await call('GET', '/search/history', { token: other })).body, { queries: [], items: [] })
+  await call('POST', '/search/history', { token: other, body: { q: 'başka' } })
+  assert.deepEqual((await call('GET', '/search/history', { token: admin })).body.queries.map((x) => x.q), ['SEZEN aksu', 'tarkan'])
+
+  // A song that is gone drops out; at most 20 texts are kept.
+  service.context.db.prepare('DELETE FROM tracks WHERE id = ?').run(hadi.id)
+  r = await call('GET', '/search/history', { token: admin })
+  assert.ok(!r.body.items.some((i) => i.source === 'library' && i.kind === 'track'), 'missing song is not shown')
+  for (let i = 0; i < 25; i++) await call('POST', '/search/history', { token: admin, body: { q: `arama ${i}` } })
+  r = await call('GET', '/search/history', { token: admin })
+  assert.equal(r.body.queries.length, 20)
+  assert.equal(r.body.queries[0].q, 'arama 24')
+
+  // Remove one text, one result, then everything.
+  await call('DELETE', `/search/history?q=${encodeURIComponent('ARAMA 24')}`, { token: admin })
+  await call('DELETE', `/search/history?key=${encodeURIComponent(o.key)}`, { token: admin })
+  r = await call('GET', '/search/history', { token: admin })
+  assert.equal(r.body.queries[0].q, 'arama 23')
+  assert.ok(!r.body.items.some((i) => i.source === 'online'))
+  await call('DELETE', '/search/history', { token: admin })
+  assert.deepEqual((await call('GET', '/search/history', { token: admin })).body, { queries: [], items: [] })
+  assert.deepEqual((await call('GET', '/search/history', { token: other })).body.queries.map((x) => x.q), ['başka'], 'other user untouched')
+})
+
+test('all of an artist\'s songs online: one per song, owned ones marked', async (t) => {
+  const { call, admin, fake } = await setup(t)
+  // Album 22 has "Hadi Bakalım" (in the library) and "Yeni Parça" (not).
+  fake.sources.deezer.extraAlbums = [dzAlbum(24, 'Derleme', 'Çeşitli', isoDaysAgo(40))]
+  const r = await call('GET', `/online/artist/tracks?name=${encodeURIComponent('Sezen Aksu')}`, { token: admin })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.artist.title, 'Sezen Aksu')
+  const titles = r.body.tracks.map((tr) => tr.title)
+  assert.deepEqual(titles.sort(), ['Hadi Bakalım', 'Yeni Parça'])
+  const hadi = r.body.tracks.find((tr) => tr.title === 'Hadi Bakalım')
+  assert.ok(hadi.library?.trackId, 'owned song is marked')
+  assert.equal(r.body.tracks.find((tr) => tr.title === 'Yeni Parça').library, null)
+  assert.equal(r.body.missing, 1)
+  assert.ok(r.body.tracks.every((tr) => tr.year), 'release year from the album')
+  // "A, B" is looked up by its first artist.
+  const duo = await call('GET', `/online/artist/tracks?name=${encodeURIComponent('Sezen Aksu, Tarkan')}`, { token: admin })
+  assert.equal(duo.status, 200)
+  assert.equal((await call('GET', '/online/artist/tracks?name=Kimse', { token: admin })).status, 404)
 })

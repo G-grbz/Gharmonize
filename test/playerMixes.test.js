@@ -5,7 +5,7 @@ import { tmpDir } from './fixtures/playerAudio.mjs'
 
 import { openPlayerDatabase } from '../modules/player/db.js'
 import { createCatalog } from '../modules/player/catalog.js'
-import { createMixes, seededRandom, seededShuffle, spreadArtists, isRealGenre } from '../modules/player/mixes.js'
+import { createMixes, seededRandom, seededShuffle, spreadArtists, isRealGenre, genreFamilyKey } from '../modules/player/mixes.js'
 import { createStats, streaks, rangeBounds, listenerTraits } from '../modules/player/stats.js'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -81,6 +81,67 @@ test('mixes follow taste, respect library access and stay fixed for the day', as
   now = NOW + DAY
   assert.notDeepEqual(mixes.get(2, rock.id)?.trackIds, full.trackIds)
   assert.equal(mixes.get(2, 'nope'), null)
+})
+
+test('autoplay radio: a few songs by the artist (also saved under another spelling), the rest by others', async (t) => {
+  const { db, run } = await seed(t)
+  // The same artist saved twice ("Rocky" / "ROCKY"), 20 songs in all.
+  run(`INSERT INTO artists (id, name, name_key, created_at) VALUES (5, 'ROCKY', 'rocky-2', 0), (6, 'Pebble', 'pebble', 0), (7, 'Gravel', 'gravel', 0)`)
+  for (let i = 0; i < 10; i++) {
+    run(`INSERT INTO tracks (id, library_id, rel_path, size, mtime_ms, title, artist_id, artist_name, genre, duration, added_at, updated_at)
+      VALUES (?, 1, ?, 1, 0, ?, 5, 'ROCKY', 'Rock', 200, 0, 0)`, 100 + i, `ROCKY/${i}.mp3`, `Rocky B ${i}`)
+  }
+  for (const [artistId, name] of [[6, 'Pebble'], [7, 'Gravel']]) {
+    for (let i = 0; i < 3; i++) {
+      run(`INSERT INTO tracks (id, library_id, rel_path, size, mtime_ms, title, artist_id, artist_name, genre, duration, added_at, updated_at)
+        VALUES (?, 1, ?, 1, 0, ?, ?, ?, 'Rock', 200, 0, 0)`, 200 + artistId * 10 + i, `${name}/${i}.mp3`, `${name} ${i}`, artistId, name)
+    }
+  }
+  const catalog = createCatalog(db)
+  const items = catalog.similarTracks(1, {
+    seedIds: [1], excludeIds: [1], artist: 'Rocky', limit: 15,
+    perArtist: 2, seedArtistMax: 3, spread: true, preferHistory: true, fill: true
+  })
+  const key = (tr) => tr.artist.toLowerCase()
+  const rocky = items.filter((tr) => key(tr) === 'rocky')
+  assert.ok(rocky.length >= 1 && rocky.length <= 2, `seed artist kept to a few songs: ${items.map((tr) => tr.artist).join(', ')}`)
+  assert.notEqual(key(items[0]), 'rocky', 'another artist plays first')
+  for (const name of ['stone', 'pebble', 'gravel']) assert.ok(items.some((tr) => key(tr) === name), `${name} (same genre) joins`)
+  for (let i = 1; i < items.length; i++) assert.notEqual(key(items[i]), key(items[i - 1]), `no artist twice in a row: ${items.map(key).join(', ')}`)
+  const counts = new Map()
+  for (const tr of items) counts.set(key(tr), (counts.get(key(tr)) || 0) + 1)
+  assert.ok([...counts.values()].every((n) => n <= 2), 'at most two songs per artist')
+})
+
+test('genre mixes: one per genre (spellings merged), many artists, daily', async (t) => {
+  const { db, run, play } = await seed(t)
+  assert.equal(genreFamilyKey('Rap/Hip Hop'), genreFamilyKey('Hip-Hop/Rap'))
+  assert.notEqual(genreFamilyKey('Turkish Pop'), genreFamilyKey('Pop'))
+  // A third rock artist; rap spread over two spellings by five artists.
+  run(`INSERT INTO artists (id, name, name_key, created_at) VALUES (5, 'Pebble', 'pebble', 0)`)
+  let id = 300
+  const add = (artistId, artist, genre, n) => {
+    for (let i = 0; i < n; i++) {
+      id += 1
+      run(`INSERT INTO tracks (id, library_id, rel_path, size, mtime_ms, title, artist_id, artist_name, genre, duration, added_at, updated_at)
+        VALUES (?, 1, ?, 1, 0, ?, ?, ?, ?, 200, 0, 0)`, id, `${artist}/${id}.mp3`, `${artist} ${id}`, artistId, artist, genre)
+    }
+  }
+  add(5, 'Pebble', 'rock', 10)
+  for (const [i, name] of ['Emcee', 'Flow', 'Verse', 'Bars', 'Cypher'].entries()) add(null, name, i % 2 ? 'Hip-Hop/Rap' : 'Rap/Hip Hop', 6)
+  play(1, 21, NOW - DAY)
+  const mixes = createMixes(db, { now: () => NOW })
+  const genres = mixes.list(1).filter((m) => m.kind === 'genre')
+  assert.deepEqual(genres.map((m) => m.genre).sort(), ['Rap/Hip Hop', 'Rock'], 'Electronic/Jazz: too few artists; rap spellings merged')
+  const rap = mixes.get(1, genres.find((m) => m.genre === 'Rap/Hip Hop').id)
+  const names = db.prepare(`SELECT DISTINCT artist_name FROM tracks WHERE id IN (${rap.trackIds.join(',')})`).all().map((r) => r.artist_name)
+  assert.equal(names.length, 5, 'both spellings feed one mix')
+  const rock = mixes.get(1, 'genre-rock')
+  const perArtist = new Map()
+  for (const r of db.prepare(`SELECT artist_id FROM tracks WHERE id IN (${rock.trackIds.join(',')})`).all()) perArtist.set(r.artist_id, (perArtist.get(r.artist_id) || 0) + 1)
+  assert.equal(perArtist.size, 3)
+  assert.ok([...perArtist.values()].every((n) => n <= 4), 'a few songs per artist')
+  assert.equal(rock.titleVars.genre, 'Rock', 'named after the most common spelling')
 })
 
 test('a brand-new listener still gets mixes from the library', async (t) => {

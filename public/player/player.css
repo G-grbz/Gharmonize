@@ -1,4 +1,4 @@
-/* Ggrbz css editor | player.css | 2026-11-20 18:34:34 (Europe/Istanbul) */
+/* Ggrbz css editor | player.css | 2026-11-24 17:54:23 (Europe/Istanbul) */
 
 @font-face {
   font-display: swap;
@@ -3994,10 +3994,11 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 .mix-art__label {
   bottom: 10px;
   color: #fff;
+  font-family: var(--font);
   font-size: clamp(14px,1.3vw,19px);
-  font-weight: 900;
+  font-weight: 800;
   left: 14px;
-  letter-spacing: -.01em;
+  letter-spacing: -.015em;
   line-height: 1.1;
   position: absolute;
   right: 10px;
@@ -4674,7 +4675,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   overflow-wrap: anywhere;
 }
 
-.brand__text b,.gate__brand b,.gate__title,.hero__title,.home__greeting,.mix-art__label,.modal__title,.page-title,.panel-card__title,.section-title,.shelf__title,.side-section__title,.stat-tile__value,.wr__huge,.wr__lead,.wr__title,.wrapped-banner__title {
+.brand__text b,.gate__brand b,.gate__title,.hero__title,.home__greeting,.modal__title,.page-title,.panel-card__title,.section-title,.shelf__title,.side-section__title,.stat-tile__value,.wr__huge,.wr__lead,.wr__title,.wrapped-banner__title {
   font-family: var(--font-display);
   font-optical-sizing: auto;
 }
@@ -4957,6 +4958,11 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   background: var(--scrim);
 }
 
+.np-full__tab svg {
+  flex: none;
+  opacity: .9;
+}
+
 .range:focus-visible,.range:hover {
   --rf: var(--accent);
 }
@@ -4968,7 +4974,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 }
 
 .np-full.is-lyrics .np-full__tab {
-  background: rgba(225,241,255,.32);
+  background: linear-gradient(180deg,hsla(0,0%,100%,.34),hsla(0,0%,100%,.18));
 }
 
 .save-row:hover {
@@ -5183,7 +5189,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 }
 
 .np-full__tab:hover {
-  background: rgba(225,241,255,.32);
+  background: linear-gradient(180deg,hsla(0,0%,100%,.28),hsla(0,0%,100%,.14));
 }
 
 .swatch.is-on {
@@ -5588,7 +5594,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   border-radius: 36px;
   display: grid;
   gap: 22px;
-  grid-template-rows: auto minmax(0,1fr) auto auto auto auto;
+  grid-auto-rows: auto;
   height: 100%;
   height: min(100%,820px);
   margin: 0;
@@ -5722,6 +5728,29 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   justify-content: center;
 }
 
+.np-full__tab {
+  align-items: center;
+  align-self: end;
+  background: linear-gradient(180deg,hsla(0,0%,100%,.2),hsla(0,0%,100%,.1));
+  border: 1px solid hsla(0,0%,100%,.26);
+  border-bottom: 0;
+  border-radius: 22px 22px 0 0;
+  box-shadow: inset 0 1px 0 hsla(0,0%,100%,.22);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  gap: 10px;
+  justify-content: center;
+  letter-spacing: .01em;
+  min-height: 52px;
+  min-width: min(240px,100%);
+  padding: 0 30px;
+  transition: background .2s ease;
+}
+
 .np-full__extra {
   align-items: center;
   display: flex;
@@ -5731,18 +5760,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   justify-content: center;
   justify-items: center;
   padding: 0;
-}
-
-.np-full__tab {
-  background: rgba(225,241,255,.22);
-  border: 0;
-  border-radius: 40px 40px 0 0;
-  color: #fff;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 750;
-  min-height: 48px;
-  padding: 0 36px;
+  align-self: end;
 }
 
 .np-full__tab--top {
@@ -5781,7 +5799,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 
 :root {
   --font: "Plus Jakarta Sans Variable","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
-  --font-display: "Bricolage Grotesque Variable","Plus Jakarta Sans Variable",system-ui,sans-serif;
+  --font-display: system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
   --radius: 12px;
   --radius-lg: 18px;
   --panel-w: 340px;
@@ -6059,8 +6077,9 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   font-size: 12px;
   gap: 6px;
   justify-content: center;
-  margin: -12px auto -8px;
-  padding: 2px 10px;
+  margin: 0 auto;
+  opacity: .8;
+  padding: 0 10px;
 }
 
 .np-sheet {
@@ -6381,6 +6400,12 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   color: var(--on-accent,#fff);
 }
 
+.refresh-current__text b,.refresh-result__text b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 [data-tab=playlists] .sec-online>:not(.sec-playlists):not(.sec-mixes):not(.section-head),[data-tab=playlists]>:not(.sec-online) {
   display: none;
 }
@@ -6403,6 +6428,11 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 
 .seekbar:is([data-style=segments],[data-style=dots],[data-style=gradient],[data-style=needle],[data-style=ribbon]) {
   min-height: 26px;
+}
+
+.refresh-search>.input {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .seekbar:is([data-style=segments],[data-style=dots],[data-style=gradient],[data-style=needle],[data-style=ribbon]) .range {
@@ -6572,12 +6602,6 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   min-width: 0;
 }
 
-.refresh-current__text b,.refresh-result__text b {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .refresh-results {
   display: grid;
   max-block-size: min(46vh,420px);
@@ -6587,21 +6611,6 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 .refresh-search {
   display: flex;
   gap: 8px;
-}
-
-.refresh-search>.input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-@media (max-width:600px) {
-  .refresh-result {
-    grid-template-columns: auto minmax(0,1fr) auto;
-  }
-
-  .refresh-result>a {
-    display: none;
-  }
 }
 
 .health-failures {
@@ -6712,7 +6721,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 
 .np-full__inner {
   gap: 12px;
-  grid-template-rows: auto minmax(0,1fr) repeat(6,auto);
+  grid-template-rows: auto minmax(0,1fr);
   height: min(100%,940px);
   width: min(100%,540px);
 }
@@ -6755,7 +6764,7 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 @media (max-height:650px) {
   .np-full__inner {
     gap: 5px;
-    grid-template-rows: auto minmax(90px,1fr) repeat(6,auto);
+    grid-template-rows: auto minmax(90px,1fr);
     overflow-y: auto;
   }
 
@@ -7141,6 +7150,60 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   padding: 4px;
 }
 
+.search-history {
+  list-style: none;
+  margin: 4px 0 28px;
+  padding: 0;
+}
+
+.search-history__remove {
+  opacity: 0;
+}
+
+.search-history__remove:focus-visible,.search-history__row:hover .search-history__remove {
+  opacity: 1;
+}
+
+.search-history__row {
+  align-items: center;
+  border-radius: 10px;
+  display: flex;
+  gap: 4px;
+  min-height: 52px;
+}
+
+.search-history__row:hover {
+  background: var(--hover);
+}
+
+.search-history__text {
+  align-items: center;
+  color: var(--text);
+  display: flex;
+  flex: 1;
+  gap: 18px;
+  min-width: 0;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+
+.search-history__btn {
+  color: var(--text-2);
+  flex: none;
+}
+
+.search-history__text span {
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-history__text svg {
+  color: var(--text-2);
+  flex: none;
+}
+
 .sidebar {
   scrollbar-width: none;
 }
@@ -7149,6 +7212,53 @@ body.np-open .mobile-nav,body.np-open .playerbar {
   display: none;
   height: 0;
   width: 0;
+}
+
+@media (pointer:coarse) {
+  .search-history__remove {
+    display: none;
+  }
+}
+
+.art--empty .art__ph {
+  background: url(img/no-cover.webp) 50%/cover no-repeat;
+}
+
+.art--empty .art__ph svg {
+  display: none;
+}
+
+.art--empty .art__ph--photo {
+  background-image: url(img/no-photo.webp);
+}
+
+.artist-all__list[hidden],.artist-all__tools[hidden] {
+  display: none;
+}
+
+.artist-all__pick {
+  accent-color: var(--accent);
+  height: 18px;
+  width: 18px;
+}
+
+.artist-all__pickwrap {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.artist-all__tabs {
+  margin: 0 0 10px;
+}
+
+.hero__artist a,.np-card__artist a,.np-full__artist a,.pb-artist a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.hero__artist a:hover,.np-card__artist a:hover,.np-full__artist a:hover,.pb-artist a:hover {
+  text-decoration: underline;
 }
 
 @media (max-width:1280px) {
@@ -7714,6 +7824,14 @@ body.np-open .mobile-nav,body.np-open .playerbar {
 
   .health-row>.row-actions {
     grid-column: 1/-1;
+  }
+
+  .refresh-result {
+    grid-template-columns: auto minmax(0,1fr) auto;
+  }
+
+  .refresh-result>a {
+    display: none;
   }
 }
 

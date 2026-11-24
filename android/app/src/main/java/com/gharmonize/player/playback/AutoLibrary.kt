@@ -50,6 +50,7 @@ class AutoLibrary(private val context: Context, private val scope: CoroutineScop
     "discover" -> context.getString(R.string.mix_discover)
     "liked" -> context.getString(R.string.mix_liked)
     "decade" -> context.getString(R.string.mix_decade, "${m.decade}")
+    "genre" -> context.getString(R.string.mix_genre, m.genre.orEmpty())
     else -> m.id
   }
 

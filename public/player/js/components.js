@@ -2,6 +2,7 @@
 
 import { app, bus } from './app.js'
 import { get, put, del, post, artworkUrl } from './api.js'
+import { rememberPick, searchQueryOf } from './searchHistory.js'
 import { h, append, t, icon, iconButton, artwork, fmtTime, fmtNumber, contextMenu, toast, toastError, modal, promptDialog, hueOf, clear, plural } from './dom.js'
 import { fromTrack, fromOnline, adoptDownload } from './engine.js'
 import { downloadButton } from './downloads.js'
@@ -12,9 +13,11 @@ const coarse = () => window.matchMedia?.('(pointer: coarse)').matches
 // ---- play helpers ---------------------------------------------------------------
 
 export function playTracks(tracks, index = 0, context = null, opts = {}) {
-  if (context?.route?.startsWith('/search?')) {
+  const searched = searchQueryOf(context)
+  if (searched != null) {
     tracks = [tracks[index]]
     index = 0
+    if (tracks[0]?.id) rememberPick({ source: 'library', kind: 'track', id: tracks[0].id }, searched)
   }
   const items = tracks.map((track) => fromTrack(track)).filter(Boolean)
   if (!items.length) return toast(t('player.playback.nothing'))
@@ -25,7 +28,9 @@ export function playOnline(items, index = 0, context = null) {
   const target = items[index]
   const queue = []
   let start = 0
-  const search = context?.route?.startsWith('/search?')
+  const searched = searchQueryOf(context)
+  const search = searched != null
+  if (search && target) rememberPick({ source: 'online', online: target }, searched)
   items.forEach((item, i) => {
     if (search && i !== index) return
     const q = fromOnline(item)
@@ -225,6 +230,20 @@ export function primaryArtist(name) {
   return String(name || '').split(/\s*(?:,|;|&|\/| feat\.? | ft\.? | x )\s*/i)[0].trim() || String(name || '')
 }
 
+// ---- artist names ----------------------------------------------------------------------
+
+// "Oguz Aksaç, Atakan Dalkılıç": each artist links to their own page. A
+// song with one artist links to it (a song not in the library: its online
+// page).
+export function artistLinks(item, { stop = false } = {}) {
+  const onclick = stop ? (e) => e.stopPropagation() : null
+  const link = (href, text) => h('a', { href, text, onclick })
+  if (item?.artists?.length > 1) return item.artists.flatMap((a, i) => (i ? [', ', link(`#/artist/${a.id}`, a.name)] : [link(`#/artist/${a.id}`, a.name)]))
+  if (item?.artistId) return [link(`#/artist/${item.artistId}`, item.artist || '')]
+  if (item?.artist && item.type && item.type !== 'library') return [link(`#/online/artist?name=${encodeURIComponent(primaryArtist(item.artist))}`, item.artist)]
+  return [item?.artist || '']
+}
+
 // ---- cards ----------------------------------------------------------------------------
 
 function card({ art, title, subtitle, onOpen, onPlay, onMenu, badge = null, cls = '', href = null, dataset = null }) {
@@ -322,9 +341,9 @@ export function mixDescription(mix) {
   return t(`player.mix.${mix.kind}Desc`, mix.titleVars || {})
 }
 
-const MIX_HUES = { daily: [96, 28, 160, 200, 330], discover: [265], liked: [345], decade: [38] }
+const MIX_HUES = { daily: [96, 28, 160, 200, 330, 52, 290, 182], discover: [265], liked: [345], decade: [38] }
 function mixHue(mix) {
-  const list = MIX_HUES[mix.kind] || [hueOf(mix.id)]
+  const list = MIX_HUES[mix.kind] || [hueOf(mix.genre || mix.id)]
   return list[((mix.titleVars?.n || 1) - 1) % list.length]
 }
 
@@ -519,7 +538,7 @@ export function trackList(tracks, { context = null, showAlbum = true, showArt = 
         h('span', { class: 'tl-name', text: track.title, title: track.title }),
         h('span', { class: 'tl-artist' },
           track.lossless ? h('span', { class: 'chip-mini', text: 'HQ', title: t('player.badge.lossless') }) : null,
-          track.artistId ? h('a', { href: `#/artist/${track.artistId}`, text: track.artist, onclick: (e) => e.stopPropagation() }) : h('span', { text: track.artist || '' }))))
+          h('span', {}, ...artistLinks(track, { stop: true })))))
     const albumCell = showAlbum
       ? h('span', { class: 'tl-album' }, track.albumId ? h('a', { href: `#/album/${track.albumId}`, text: track.album || '', onclick: (e) => e.stopPropagation() }) : h('span', { text: track.album || '' }))
       : h('span', { class: 'tl-album' }, showPlays && track.playCount ? h('span', { class: 'muted', text: plural(track.playCount, 'player.count.play', 'player.count.plays') }) : null)

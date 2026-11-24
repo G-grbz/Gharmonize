@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gharmonize.player.R
+import com.gharmonize.player.data.OnlineItem
 import com.gharmonize.player.data.Track
 
 /** Multi-selection of songs (artist page "All songs"). */
@@ -96,6 +97,9 @@ val ARTIST_SONG_SORTS = listOf(
 )
 
 /** "All songs": every song of the artist in the library, sortable and selectable. */
+/** The artist's songs online: the loaded list and the picked ones (keys). */
+class OnlineSongs(val load: LoadState<List<OnlineItem>?>, val picked: androidx.compose.runtime.snapshots.SnapshotStateList<String>)
+
 fun LazyListScope.artistSongsSection(
   state: AppState,
   total: Int,
@@ -103,6 +107,9 @@ fun LazyListScope.artistSongsSection(
   sort: String,
   onSort: (String) -> Unit,
   selection: SongSelection,
+  onlineTab: Boolean = false,
+  onTab: ((Boolean) -> Unit)? = null,
+  online: OnlineSongs? = null,
 ) {
   item(key = "all-head") {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -110,17 +117,23 @@ fun LazyListScope.artistSongsSection(
         Text(stringResource(R.string.all_songs), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(" · $total", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.weight(1f))
-        TextButton(onClick = { if (selection.active) selection.stop() else selection.start() }, enabled = !songs.value.isNullOrEmpty()) {
+        if (!onlineTab) TextButton(onClick = { if (selection.active) selection.stop() else selection.start() }, enabled = !songs.value.isNullOrEmpty()) {
           Text(stringResource(if (selection.active) R.string.select_done else R.string.select_songs))
         }
       }
-      LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      // Library | Online (every song of the artist on Deezer).
+      if (onTab != null) Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = !onlineTab, onClick = { onTab(false) }, label = { Text(stringResource(R.string.artist_songs_library)) })
+        FilterChip(selected = onlineTab, onClick = { selection.stop(); onTab(true) }, label = { Text(stringResource(R.string.artist_songs_online)) })
+      }
+      if (!onlineTab) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(ARTIST_SONG_SORTS) { (key, label) ->
           FilterChip(selected = sort == key, onClick = { if (sort != key) onSort(key) }, label = { Text(stringResource(label)) })
         }
       }
     }
   }
+  if (onlineTab && online != null) { onlineSongsItems(state, online); return }
   val list = songs.value
   if (list == null) {
     if (songs.loading) item(key = "all-loading") { Loading() }
@@ -236,5 +249,49 @@ private fun androidx.compose.foundation.layout.RowScope.BarAction(icon: androidx
   ) {
     Icon(icon, null, tint = tint)
     Text(label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+  }
+}
+
+/**
+ * The artist's songs online: songs not in the library get a checkbox,
+ * "select missing" ticks them all, one button downloads the picked ones.
+ */
+private fun LazyListScope.onlineSongsItems(state: AppState, online: OnlineSongs) {
+  val list = online.load.value
+  if (list == null) {
+    if (online.load.loading) item(key = "on-loading") { Loading() }
+    else item(key = "on-error") { EmptyText(stringResource(R.string.artist_online_failed)) }
+    return
+  }
+  if (list.isEmpty()) { item(key = "on-empty") { EmptyText(stringResource(R.string.artist_online_none)) }; return }
+  fun pickable(item: OnlineItem): Boolean {
+    val known = state.downloadsByUrl[item.url]
+    return state.canDownload && item.libraryTrackId == null && (known == null || known.status == "failed" || known.status == "canceled")
+  }
+  item(key = "on-tools") {
+    val missing = list.count { it.libraryTrackId == null }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+      Text(stringResource(R.string.artist_online_count, list.size, missing), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      if (state.canDownload) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = {
+          if (online.picked.isNotEmpty()) online.picked.clear()
+          else online.picked.addAll(list.filter(::pickable).map { it.key })
+        }) { Text(stringResource(if (online.picked.isEmpty()) R.string.artist_select_missing else R.string.artist_clear_picked)) }
+        androidx.compose.material3.Button(enabled = online.picked.isNotEmpty(), onClick = {
+          val chosen = list.filter { it.key in online.picked && pickable(it) }
+          online.picked.clear()
+          state.downloadAll(chosen)
+        }) { Text(stringResource(R.string.artist_download_picked, online.picked.size)) }
+      }
+    }
+  }
+  itemsIndexed(list, key = { i, t -> "on-$i-${t.key}" }) { i, item ->
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+      if (state.canDownload) {
+        if (pickable(item)) Checkbox(checked = item.key in online.picked, onCheckedChange = { on -> if (on) online.picked.add(item.key) else online.picked.remove(item.key) })
+        else Spacer(Modifier.width(48.dp))
+      }
+      Box(Modifier.weight(1f)) { OnlineTrackRow(state, list, i) }
+    }
   }
 }

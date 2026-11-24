@@ -171,16 +171,56 @@ Restart the server after editing its active `.env` file manually.
 
 ## Build the Android client from source
 
-Requires JDK 17 and the Android SDK. Configure the SDK through `ANDROID_HOME`
-or `android/local.properties`, then run from the repository root:
+Requirements: a JDK between 17 and 23 (17 recommended) and the Android SDK with
+the Android 36 platform (installed with Android Studio, or with the command line
+tools and `sdkmanager --licenses`). Linux and macOS:
+
+```bash
+android/scripts/build-apk.sh            # release APK
+android/scripts/build-apk.sh --debug    # debug APK
+```
+
+The script needs no environment set up by hand. It:
+
+- picks a suitable JDK even when the default `java` is older or newer (it looks
+  at `JAVA_HOME`, `/usr/lib/jvm`, macOS `java_home`, Android Studio's bundled
+  JDK and `~/.jdks`);
+- finds the Android SDK (`ANDROID_HOME`, `ANDROID_SDK_ROOT`, `sdk.dir` in
+  `android/local.properties`, `~/Android/Sdk`, `~/Library/Android/sdk`),
+  preferring one that already has the Android 36 platform;
+- signs a release build with the release key when one is available (see below),
+  otherwise with the local debug key, and says which one it used;
+- prints the path of the finished APK
+  (`android/app/build/outputs/apk/release/app-release.apk`).
+
+Anything it finds can be overridden with `JAVA_HOME` / `ANDROID_HOME`, and extra
+Gradle arguments follow `--`, for example `android/scripts/build-apk.sh -- --info`.
+
+Running Gradle directly also works when `java` is JDK 17–23 and the SDK is set
+through `ANDROID_HOME` or `android/local.properties`:
 
 ```bash
 cd android
-./gradlew :app:assembleRelease
+JAVA_HOME=/path/to/jdk-17 ./gradlew :app:assembleRelease
 ```
 
-The output is `app/build/outputs/apk/release/app-release.apk`. Local builds use
-the debug signing key unless a release key is configured.
+The error `Dependency requires at least JVM runtime version 11. This build uses a
+Java 8 JVM` means Gradle started with an old default Java: use the script or set
+`JAVA_HOME` as above. On Windows, run `gradlew.bat :app:assembleRelease` from
+`android` with `JAVA_HOME` pointing at JDK 17.
+
+### Signing
+
+An APK only installs over an existing app signed with the same key. A release
+build is signed with, in this order:
+
+1. the key given in `GHP_KEYSTORE_FILE`, `GHP_KEYSTORE_PASSWORD`,
+   `GHP_KEY_ALIAS` and `GHP_KEY_PASSWORD`;
+2. `~/.gharmonize/gharmonize-player-release.jks` with the password in
+   `~/.gharmonize/gharmonize-player-release.pass` (alias `gharmonize-player`), as
+   created by `android/scripts/set-signing-secrets.sh` (script builds only);
+3. otherwise the local debug key. Such an APK installs over APKs built on the same
+   machine, not over official releases: uninstall the app first.
 
 GitHub Actions publishes the Client APK using a persistent release key. The
 required repository secrets are `ANDROID_KEYSTORE_BASE64`,

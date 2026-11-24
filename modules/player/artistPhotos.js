@@ -11,6 +11,7 @@
 //    one at a time, never while Deezer is off;
 //  - the 500 px picture is downloaded (artist avatars are round and small).
 import fs from 'node:fs'
+import { writeFileDurable, usableCacheFile } from './cacheFile.js'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { normalizeKey } from './scanner.js'
@@ -66,7 +67,8 @@ export function createArtistPhotos({ cacheDir, db, logger = console, fetchImpl =
     try { names = fs.readdirSync(dir) } catch {}
     for (const name of names) {
       let m = FILE_RE.exec(name)
-      if (m) { states.set(m[1], { file: path.join(dir, name), key: `artist-${m[2]}` }); continue }
+      // An empty photo (left by a crash) is removed and asked again.
+      if (m) { if (usableCacheFile(path.join(dir, name))) states.set(m[1], { file: path.join(dir, name), key: `artist-${m[2]}` }); continue }
       m = MISS_RE.exec(name)
       if (m && !states.has(m[1])) {
         let missAt = 0
@@ -139,8 +141,7 @@ export function createArtistPhotos({ cacheDir, db, logger = console, fetchImpl =
     const key = sha1(bytes).slice(0, 16)
     const file = path.join(dir, `${hash}.${key}.jpg`)
     const tmp = `${file}.${process.pid}.tmp`
-    await fs.promises.writeFile(tmp, bytes)
-    await fs.promises.rename(tmp, file)
+    await writeFileDurable(file, tmp, bytes)
     // Old files of this artist (an earlier photo or a "none" marker).
     try {
       for (const name of await fs.promises.readdir(dir)) {

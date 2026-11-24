@@ -3,10 +3,18 @@
 // mix): reopening a mix shows the same songs until it refreshes.
 
 import { visibleSql, uidLiteral } from './access.js'
-import { uniqueSongs } from './songKey.js'
+import { uniqueSongs, artistCredits } from './songKey.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const MIX_SIZE = 40
+const DAILY_MIXES = 8
+const GENRE_MIXES = 10
+// A genre mix needs this much to choose from to sound like a mix.
+const GENRE_MIN_TRACKS = 20
+const GENRE_MIN_ARTISTS = 3
+// Songs per artist in a genre mix, so the genre's biggest artist does not
+// fill it.
+const GENRE_PER_ARTIST = 4
 // Placeholder "genres" (e.g. YouTube's "Music") say nothing about the style.
 const GENERIC_GENRES = new Set(['music', 'muzik', 'müzik', 'other', 'others', 'unknown', 'misc', 'genre', 'various', 'default', 'none', 'n/a'])
 export const isRealGenre = (g) => Boolean(g) && !GENERIC_GENRES.has(String(g).trim().toLowerCase())
@@ -53,6 +61,18 @@ function weekKey(ts) {
   return localDayKey(monday.getTime())
 }
 
+// Spellings of one genre share a key: "Rap/Hip Hop" and "Hip-Hop/Rap" →
+// "hip hop rap"; "Turkish Pop" stays apart from "Pop".
+export function genreFamilyKey(genre) {
+  const words = String(genre || '').toLocaleLowerCase('tr').split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  return [...new Set(words)].sort().join(' ')
+}
+
+// URL-safe, stable id part: "Rap/Hip Hop" → "rap-hip-hop", "Özgün" → "özgün".
+function genreSlug(genre) {
+  return String(genre || '').toLocaleLowerCase('tr').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+}
+
 /** Reorders so the same artist does not play twice in a row when avoidable. */
 export function spreadArtists(rows) {
   const pending = rows.slice()
@@ -89,7 +109,7 @@ export function createMixes(db, { now = () => Date.now() } = {}) {
     let rows = q(`SELECT t.artist_id AS id, ar.name, COUNT(*) AS plays FROM play_history h
       JOIN tracks t ON t.id = h.track_id JOIN artists ar ON ar.id = t.artist_id
       WHERE h.user_id = ${u} AND h.played_at >= ? AND ${vis(uid)}
-      GROUP BY t.artist_id ORDER BY plays DESC LIMIT 25`, now() - 90 * DAY)
+      GROUP BY t.artist_id ORDER BY plays DESC LIMIT 40`, now() - 90 * DAY)
     if (rows.length < 3) {
       const fav = q(`SELECT ar.id, ar.name, 1 AS plays FROM favorites f JOIN tracks t ON t.id = f.item_id AND f.item_type = 'track'
         JOIN artists ar ON ar.id = t.artist_id WHERE f.user_id = ${u} AND ${vis(uid)} GROUP BY ar.id LIMIT 25`)
@@ -134,7 +154,7 @@ export function createMixes(db, { now = () => Date.now() } = {}) {
     const leftover = { genre: null, artists: [], plays: 0, pooled: true }
     const ordered = [...clusters.values()].sort((a, b) => b.plays - a.plays)
     for (const c of [...ordered, leftover]) {
-      if (out.length >= 5) break
+      if (out.length >= DAILY_MIXES) break
       if (c === leftover && !c.artists.length) break
       const ids = c.artists.map((a) => a.id)
       const marks = ids.map(() => '?').join(',')
@@ -152,9 +172,58 @@ export function createMixes(db, { now = () => Date.now() } = {}) {
         titleKey: 'daily',
         titleVars: { n: out.length + 1 },
         genre: c.genre,
-        artists: c.artists.slice(0, 4).map((a) => a.name),
+        // Each name once, also inside collaborations ("A, B" + "A" → A, B).
+        artists: [...new Map(c.artists.flatMap((a) => artistCredits(a.name)).map((name) => [name.toLocaleLowerCase('tr'), name])).values()].slice(0, 4),
         trackIds: rows.map((r) => r.id),
       })
+    }
+    return out
+  }
+
+  // One mix per genre the user listens to (then the library's biggest
+  // genres): their favourites in it and songs to discover, a few per artist.
+  function genreMixes(uid, rnd) {
+    const u = uidLiteral(uid)
+    const rows = q(`SELECT t.genre, COUNT(*) AS n, COUNT(DISTINCT COALESCE(t.artist_id, t.artist_name)) AS artists,
+        SUM(COALESCE((SELECT ps.play_count FROM play_stats ps WHERE ps.user_id = ${u} AND ps.track_id = t.id), 0)) AS plays
+      FROM tracks t WHERE ${GENRE_OK} AND ${vis(uid)}
+      GROUP BY t.genre`)
+    const families = new Map()
+    for (const row of rows) {
+      const key = genreFamilyKey(row.genre)
+      if (!key) continue
+      const f = families.get(key) || { genres: [], name: row.genre, top: 0, n: 0, artists: 0, plays: 0 }
+      f.genres.push(row.genre)
+      if (row.n > f.top) { f.top = row.n; f.name = row.genre }
+      f.n += row.n
+      f.artists += row.artists
+      f.plays += row.plays
+      families.set(key, f)
+    }
+    const chosen = [...families.values()]
+      .filter((f) => f.n >= GENRE_MIN_TRACKS && f.artists >= GENRE_MIN_ARTISTS)
+      .sort((a, b) => b.plays - a.plays || b.n - a.n || a.name.localeCompare(b.name))
+      .slice(0, GENRE_MIXES)
+    const out = []
+    const seen = new Set()
+    for (const f of chosen) {
+      const slug = genreSlug(f.name)
+      if (!slug || seen.has(slug)) continue
+      const marks = f.genres.map(() => '?').join(',')
+      const where = `t.genre COLLATE NOCASE IN (${marks})`
+      const perArtist = new Map()
+      const capped = finalize([
+        ...tracks(uid, where, f.genres, { order: 'plays DESC, t.id', limit: 12 }),
+        ...pick(tracks(uid, where, f.genres, { limit: 2000 }), rnd, 120),
+      ], rnd, 400).filter((r) => {
+        const key = r.artist_id ?? r.artist_name
+        perArtist.set(key, (perArtist.get(key) || 0) + 1)
+        return perArtist.get(key) <= GENRE_PER_ARTIST
+      })
+      const trackIds = spreadArtists(capped).slice(0, MIX_SIZE).map((r) => r.id)
+      if (trackIds.length < 8) continue
+      seen.add(slug)
+      out.push({ id: `genre-${slug}`, kind: 'genre', titleKey: 'genre', titleVars: { genre: f.name }, genre: f.name, artists: [], trackIds })
     }
     return out
   }
@@ -203,7 +272,7 @@ export function createMixes(db, { now = () => Date.now() } = {}) {
     const hit = cache.get(key)
     if (hit) return hit
     const rnd = seededRandom(key)
-    const mixes = [...dailyMixes(uid, rnd), discoverMix(uid), likedMix(uid, rnd), ...decadeMixes(uid, rnd)].filter(Boolean)
+    const mixes = [...dailyMixes(uid, rnd), discoverMix(uid), likedMix(uid, rnd), ...decadeMixes(uid, rnd), ...genreMixes(uid, rnd)].filter(Boolean)
     for (const k of cache.keys()) if (k.startsWith(`${uid}:`)) cache.delete(k)
     cache.set(key, mixes)
     return mixes

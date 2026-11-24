@@ -28,10 +28,29 @@
     ['data-i18n-aria', 'aria-label'],
   ];
 
-  async function loadDict(lang) {
+  async function fetchDict(lang) {
     const res = await fetch(`/lang/${lang}.json`);
     if (!res.ok) throw new Error('dict fetch failed');
     return res.json();
+  }
+
+  // One retry: a request cut off by a quick reload or a network blip must
+  // not cost the user their language.
+  async function loadDict(lang) {
+    try {
+      return await fetchDict(lang);
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return fetchDict(lang);
+    }
+  }
+
+  // The chosen language is saved only when the user picks one (or a
+  // ?lang= link does), never because a dictionary failed to load: a page
+  // left while loading (Ctrl+Shift+R pressed again) used to save "en".
+  function rememberLang(lang) {
+    try { localStorage.setItem('lang', lang); } catch {}
+    setLangCookie(lang);
   }
 
   function detectLang() {
@@ -39,8 +58,7 @@
     const u = new URL(window.location.href);
     const q = (u.searchParams.get('lang') || '').toLowerCase();
     if (SUPPORTED.includes(q)) {
-      localStorage.setItem('lang', q);
-      setLangCookie(q);
+      rememberLang(q);
       return q;
     }
   } catch {}
@@ -95,21 +113,21 @@
     }, 1500);
 
     try {
-      let lang = detectLang();
+      const wanted = detectLang();
+      let lang = wanted;
       let fallback = {};
       let dict = null;
 
-      try { fallback = await loadDict(DEFAULT_LANG); } catch {}
+      // Both dictionaries at once; English fills keys a language lacks.
+      const [en, own] = await Promise.allSettled([
+        loadDict(DEFAULT_LANG),
+        wanted === DEFAULT_LANG ? null : loadDict(wanted),
+      ]);
+      if (en.status === 'fulfilled' && en.value) fallback = en.value;
+      if (wanted === DEFAULT_LANG) dict = fallback;
+      else if (own.status === 'fulfilled' && own.value) dict = own.value;
 
-      if (lang === DEFAULT_LANG) {
-        dict = fallback;
-      } else {
-        try { dict = await loadDict(lang); } catch {
-          lang = DEFAULT_LANG;
-          dict = fallback;
-        }
-      }
-
+      // Not loaded: English for this page view only; the saved choice stays.
       if (!dict) {
         lang = DEFAULT_LANG;
         dict = fallback;
@@ -117,7 +135,8 @@
 
       applyDict(dict);
       html.lang = lang;
-      setLangCookie(lang);
+      // Keep the shared cookie in step with a choice that loaded fine.
+      if (lang === wanted) setLangCookie(lang);
 
       const api = {
         lang,
@@ -125,16 +144,15 @@
         t: createT(dict, fallback),
         apply(root) { applyDict(api.dict, root || document); },
         async setLang(next) {
-          let safeNext = SUPPORTED.includes(next) ? next : DEFAULT_LANG;
+          const safeNext = SUPPORTED.includes(next) ? next : DEFAULT_LANG;
           let newDict = null;
           try {
             newDict = safeNext === DEFAULT_LANG ? fallback : await loadDict(safeNext);
           } catch {
-            safeNext = DEFAULT_LANG;
-            newDict = fallback;
+            // Keep the current language rather than saving one not chosen.
+            return;
           }
-          localStorage.setItem('lang', safeNext);
-          setLangCookie(safeNext);
+          rememberLang(safeNext);
           applyDict(newDict);
           api.lang = safeNext;
           api.dict = newDict;

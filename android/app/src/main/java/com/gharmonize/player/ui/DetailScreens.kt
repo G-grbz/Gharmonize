@@ -60,7 +60,8 @@ fun AlbumScreen(state: AppState, id: Long) {
         listOfNotNull(album.artist.ifBlank { null }, album.year?.toString(), stringResource(R.string.count_songs, album.trackCount), fmtTime(album.duration)).joinToString(" · ")) {
         PlayShuffle(state, album.tracks)
         SavePlaylistButton(state, album.tracks.map { it.id }, album.title)
-        album.artistId?.let { aid -> OutlinedButton(onClick = { state.navigate(Route.Artist(aid)) }) { Text(stringResource(R.string.go_to_artist)) } }
+        if (album.artists.size > 1) album.artists.forEach { a -> OutlinedButton(onClick = { state.navigate(Route.Artist(a.id)) }) { Text(a.name) } }
+        else album.artistId?.let { aid -> OutlinedButton(onClick = { state.navigate(Route.Artist(aid)) }) { Text(stringResource(R.string.go_to_artist)) } }
       }
     }
     itemsIndexed(album.tracks, key = { _, t -> "at-${t.id}" }) { i, t -> TrackRow(state, album.tracks, i, showArt = false, number = t.trackNo ?: (i + 1), selection = selection) }
@@ -108,6 +109,14 @@ fun ArtistScreen(state: AppState, id: Long, preOnline: JSONObject? = null) {
   val online = remember(onlineLoad.value) { onlineLoad.value?.let(::OnlineArtistRows) }
   var sort by rememberSaveable(id) { mutableStateOf("album") }
   val songs = rememberLoad("artist-songs", id, sort) { state.api.artistTracks(id, sort) }
+  // "All songs" → Online: loaded the first time the tab is opened.
+  var onlineTab by rememberSaveable(id) { mutableStateOf(false) }
+  var onlineOpened by rememberSaveable(id) { mutableStateOf(false) }
+  val onlineSongsLoad = rememberLoad("artist-online-songs", id, onlineOpened, data.value?.name) {
+    val n = data.value?.name
+    if (onlineOpened && n != null) state.api.onlineArtistTracks(n) else null
+  }
+  val onlinePicked = remember(id) { androidx.compose.runtime.mutableStateListOf<String>() }
   val selection = rememberSongSelection(id)
   BackHandler(enabled = selection.active) { selection.stop() }
   val artist = data.value
@@ -159,7 +168,10 @@ fun ArtistScreen(state: AppState, id: Long, preOnline: JSONObject? = null) {
       if (online.albums.isNotEmpty()) item { ShelfRow(stringResource(R.string.albums) + " · " + p, online.albums) { i, _ -> OnlineCard(state, online.albums, i) } }
       if (online.singles.isNotEmpty()) item { ShelfRow(stringResource(R.string.singles_eps) + " · " + p, online.singles) { i, _ -> OnlineCard(state, online.singles, i) } }
     }
-    if (artist.trackCount > 0) artistSongsSection(state, artist.trackCount, songs, sort, { sort = it }, selection)
+    if (artist.trackCount > 0) artistSongsSection(state, artist.trackCount, songs, sort, { sort = it }, selection,
+      onlineTab = onlineTab,
+      onTab = if (online?.artist?.provider == "deezer") { on -> onlineTab = on; if (on) onlineOpened = true } else null,
+      online = OnlineSongs(onlineSongsLoad, onlinePicked))
     if (artist.singles.isNotEmpty()) {
       item { SectionTitle(stringResource(R.string.singles)) }
       itemsIndexed(artist.singles, key = { _, t -> "sg-${t.id}" }) { i, _ -> TrackRow(state, artist.singles, i) }
@@ -343,10 +355,14 @@ fun providerName(provider: String) = when (provider) {
 @Composable
 fun ArtistBio(state: AppState, name: String, deezerId: String?) {
   val lang = java.util.Locale.getDefault().language
-  val bio = rememberLoad("artist-bio", name, deezerId) { runCatching { state.api.artistBio(name, deezerId, lang) }.getOrNull() }.value ?: return
+  // Shown from memory at once when the header is built again after
+  // scrolling away (it used to load again from nothing and push the page).
+  val bio = rememberLoad("artist-bio", name, deezerId, initial = { state.api.cachedArtistBio(name, deezerId, lang) }) {
+    state.api.cachedArtistBio(name, deezerId, lang) ?: runCatching { state.api.artistBio(name, deezerId, lang) }.getOrNull()
+  }.value ?: return
   val text = bio.optString("text").ifBlank { return }
   var open by rememberSaveable(name) { mutableStateOf(false) }
-  var overflow by remember(name) { mutableStateOf(false) }
+  var overflow by rememberSaveable(name) { mutableStateOf(false) }
   val uri = androidx.compose.ui.platform.LocalUriHandler.current
   val url = bio.optString("url")
   val source = stringResource(R.string.bio_source, bio.optString("source", "Wikipedia"), bio.optString("lang").uppercase())

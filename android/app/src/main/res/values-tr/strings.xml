@@ -52,6 +52,7 @@
   <string name="favorite_removed">Beğenilen parçalardan kaldırıldı</string>
   <string name="go_to_album">Albüme git</string>
   <string name="go_to_artist">Sanatçıya git</string>
+  <string name="go_to_artist_named">Sanatçı: %1$s</string>
   <string name="greeting_morning">Günaydın, %1$s</string>
   <string name="greeting_afternoon">İyi günler, %1$s</string>
   <string name="greeting_evening">İyi akşamlar, %1$s</string>
@@ -102,6 +103,10 @@
   <string name="repeat">Tekrarla</string>
   <string name="retry">Yeniden dene</string>
   <string name="search_hint">Parça, albüm, sanatçı veya bağlantı</string>
+  <string name="search_recent">Son aramalar</string>
+  <string name="search_clear">Temizle</string>
+  <string name="search_use_text">Metni aramaya taşı</string>
+  <string name="search_remove">Geçmişten kaldır</string>
   <string name="search_no_local">Kitaplıkta bu aramayla eşleşen sonuç bulunamadı.</string>
   <string name="search_online">Çevrimiçi</string>
   <string name="settings_account">Hesap</string>
@@ -161,6 +166,8 @@
   <!-- mixes & stats -->
   <string name="home_mixes">Senin için miksler</string>
   <string name="home_mixes_sub">Her gün dinlediklerine göre yenilenir</string>
+  <string name="home_genre_mixes">Türlere göre miksler</string>
+  <string name="home_genre_mixes_sub">Her tür için ayrı, her gün yenilenir</string>
   <string name="stats_teaser">Bu hafta %1$s dakika müzik</string>
   <string name="stats_teaser_top">En çok %1$s · istatistiklerine bak</string>
   <string name="mix_kind">Miks</string>
@@ -168,10 +175,12 @@
   <string name="mix_discover">Haftalık Keşif</string>
   <string name="mix_liked">Beğendiklerin Miksi</string>
   <string name="mix_decade">%1$s Miksi</string>
+  <string name="mix_genre">%1$s Miksi</string>
   <string name="mix_daily_desc">%1$s ve daha fazlası</string>
   <string name="mix_discover_desc">Kitaplığında henüz dinlemediğin parçalar</string>
   <string name="mix_liked_desc">Beğendiğin parçalar, her gün yeni bir sırayla</string>
   <string name="mix_decade_desc">%1$s: en sevdiklerin ve fazlası</string>
+  <string name="mix_genre_desc">%1$s: en sevdiklerin ve keşfedilecekler, farklı sanatçılardan</string>
   <string name="mix_refresh_daily">Her gün yenilenir</string>
   <string name="mix_refresh_weekly">Her pazartesi yenilenir</string>
   <string name="stats_title">Dinleme istatistiklerin</string>
@@ -347,6 +356,14 @@
   <string name="disc_appleLists">Apple Music: sanatçılarının listeleri</string>
   <string name="disc_spLists">Spotify: sanatçılarının listeleri</string>
   <string name="all_songs">Tüm şarkılar</string>
+  <string name="artist_songs_library">Kitaplıkta</string>
+  <string name="artist_songs_online">İnternette</string>
+  <string name="artist_online_failed">Sanatçının şarkıları internetten alınamadı</string>
+  <string name="artist_online_none">Bu sanatçının internette şarkısı bulunamadı</string>
+  <string name="artist_online_count">%1$d şarkı · %2$d tanesi kitaplıkta yok</string>
+  <string name="artist_select_missing">Eksikleri seç</string>
+  <string name="artist_clear_picked">Seçimi temizle</string>
+  <string name="artist_download_picked">Seçilenleri indir (%1$d)</string>
   <string name="sort_album">Albüm sırası</string>
   <string name="sort_alpha">A-Z</string>
   <string name="sort_recent">Son eklenen</string>

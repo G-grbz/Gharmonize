@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { syncFile, usableCacheFile } from './cacheFile.js'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
@@ -217,6 +218,8 @@ export function createStreamService({ cacheDir, libraries, getCacheLimitBytes = 
         })
         const st = await fs.promises.stat(tmp)
         job.bytes = st.size
+        if (!st.size) throw new Error('ffmpeg wrote no audio')
+        await syncFile(tmp)
         await fs.promises.rename(tmp, finalFile)
         job.done = true
         job.emit('progress')
@@ -303,7 +306,7 @@ export function createStreamService({ cacheDir, libraries, getCacheLimitBytes = 
     const spec = TRANSCODE_FORMATS[target.format]
     const key = cacheKey(abs, st, target)
     const finalFile = path.join(dir, key + spec.ext)
-    if (fs.existsSync(finalFile)) {
+    if (usableCacheFile(finalFile)) {
       const now = new Date()
       fs.promises.utimes(finalFile, now, now).catch(() => {})
       res.setHeader('X-Gharmonize-Transcode', 'cached')

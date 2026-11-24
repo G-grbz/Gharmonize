@@ -20,6 +20,7 @@ export function fromTrack(track, extra = {}) {
     title: track.title || t('player.common.unknownTitle'),
     artist: track.artist || '',
     artistId: track.artistId || null,
+    artists: Array.isArray(track.artists) ? track.artists : null,
     album: track.album || '',
     albumId: track.albumId || null,
     duration: Number(track.duration) || 0,

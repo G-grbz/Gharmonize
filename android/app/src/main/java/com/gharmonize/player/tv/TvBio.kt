@@ -55,8 +55,9 @@ import java.util.Locale
  */
 @Composable
 fun TvArtistBio(name: String, deezerId: String?, modifier: Modifier = Modifier) {
-  val bio = rememberLoad("tv-artist-bio", name, deezerId) {
-    runCatching { App.instance.api.artistBio(name, deezerId, Locale.getDefault().language) }.getOrNull()
+  val lang = Locale.getDefault().language
+  val bio = rememberLoad("tv-artist-bio", name, deezerId, initial = { App.instance.api.cachedArtistBio(name, deezerId, lang) }) {
+    App.instance.api.cachedArtistBio(name, deezerId, lang) ?: runCatching { App.instance.api.artistBio(name, deezerId, lang) }.getOrNull()
   }.value ?: return
   val text = bio.optString("text").ifBlank { return }
   val source = stringResource(R.string.bio_source, bio.optString("source", "Wikipedia"), bio.optString("lang").uppercase())

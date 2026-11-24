@@ -47,7 +47,7 @@ import org.json.JSONObject
 
 /** A card for an online item: albums and lists open, songs play. */
 @Composable
-fun TvOnlineCard(nav: TvNav, items: List<OnlineItem>, index: Int, modifier: Modifier = Modifier) {
+fun TvOnlineCard(nav: TvNav, items: List<OnlineItem>, index: Int, modifier: Modifier = Modifier, onPick: (() -> Unit)? = null) {
   val item = items[index]
   val owned = item.libraryTrackId != null || (item.kind == "album" && item.libraryComplete)
   val badge: (@Composable () -> Unit)? = when {
@@ -58,7 +58,7 @@ fun TvOnlineCard(nav: TvNav, items: List<OnlineItem>, index: Int, modifier: Modi
   }
   val subtitle = item.artist.ifBlank { providerName(item.provider) }
   TvCard(item.title, subtitle, item.artworkUrl, round = item.kind == "artist", placeholder = if (item.kind == "artist") FluentIcons.Person else FluentIcons.Album,
-    modifier = modifier, badge = badge) { nav.openOnline(items, index) }
+    modifier = modifier, badge = badge) { onPick?.invoke(); nav.openOnline(items, index) }
 }
 
 /** One discover shelf from /discover (title from its key). */

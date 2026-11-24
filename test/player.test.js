@@ -342,6 +342,12 @@ test('player end-to-end: setup, login, catalog, search, stream, personal data', 
   assert.equal(r.body.source, 'file')
   assert.equal(r.body.synced, true)
   assert.deepEqual(r.body.lines[1], { timeMs: 2000, text: 'kurban olam' })
+  // No lyrics: 404 for older apps, a plain answer with ?soft=1.
+  r = await call('GET', `/tracks/${firstTrack.id}/lyrics`)
+  assert.equal(r.status, 404)
+  r = await call('GET', `/tracks/${firstTrack.id}/lyrics?soft=1`)
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.body, { none: true })
 
   // Favorites + history feed the home page.
   r = await call('PUT', `/favorites/track/${firstTrack.id}`)

@@ -3,6 +3,8 @@ package com.gharmonize.player.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -69,6 +71,9 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
 import com.gharmonize.player.R
 import com.gharmonize.player.data.Lyrics
+import com.gharmonize.player.data.OnlineItem
+import com.gharmonize.player.data.parseOnline
+import androidx.compose.material3.CircularProgressIndicator
 import kotlinx.coroutines.delay
 
 /** Current playback position, refreshed while visible. */
@@ -108,6 +113,61 @@ fun Modifier.queueSwipe(onOpen: () -> Unit): Modifier = pointerInput(Unit) {
     onVerticalDrag = { change, amount -> distance += amount; change.consume() },
     onDragEnd = { if (distance < -threshold) onOpen(); distance = 0f },
   )
+}
+
+/**
+ * Swipes anywhere on the player: up opens the queue, left / right change the
+ * song. Read after the player's own controls had the touch: a drag that the
+ * cover ring, a slider or the lyrics list used (consumed) is theirs, so those
+ * keep working; taps and drags that start on buttons or empty space count.
+ */
+fun Modifier.playerSwipes(onUp: () -> Unit, onNext: () -> Unit, onPrevious: () -> Unit): Modifier = pointerInput(Unit) {
+  val up = 48.dp.toPx()
+  val side = 64.dp.toPx()
+  awaitEachGesture {
+    val down = awaitFirstDown(requireUnconsumed = false)
+    var dx = 0f
+    var dy = 0f
+    var taken = false
+    while (true) {
+      val event = awaitPointerEvent()
+      val change = event.changes.firstOrNull { it.id == down.id } ?: break
+      if (!change.pressed) break
+      if (change.isConsumed) taken = true
+      val delta = change.position - change.previousPosition
+      dx += delta.x
+      dy += delta.y
+    }
+    if (taken) return@awaitEachGesture
+    when {
+      dy < -up && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.2f -> onUp()
+      kotlin.math.abs(dx) > side && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f -> if (dx < 0) onNext() else onPrevious()
+    }
+  }
+}
+
+/** Download control for a preview in the full player: progress while it downloads, a check when it is in. */
+@Composable
+private fun PreviewDownloadButton(state: AppState, item: OnlineItem) {
+  val row = state.downloadsByUrl[item.url]
+  val status = row?.status ?: item.downloadStatus
+  val active = status in setOf("queued", "resolving", "downloading", "indexing")
+  val done = status == "completed" || status == "exists" || item.libraryTrackId != null
+  val white = Color.White
+  Box(
+    Modifier.size(40.dp).clip(CircleShape).background(white.copy(alpha = if (done) 0.24f else 0.16f))
+      .clickable(enabled = !active && !done) { state.download(item) },
+    contentAlignment = Alignment.Center,
+  ) {
+    when {
+      active -> CircularProgressIndicator(
+        progress = { ((row?.progress ?: item.downloadProgress) / 100f).coerceIn(0.05f, 1f) },
+        modifier = Modifier.size(26.dp), strokeWidth = 3.dp, color = white, trackColor = white.copy(alpha = 0.2f),
+      )
+      done -> Icon(FluentIcons.CheckCircle, stringResource(R.string.in_library), tint = white, modifier = Modifier.size(22.dp))
+      else -> Icon(FluentIcons.Download, stringResource(R.string.download), tint = white, modifier = Modifier.size(22.dp))
+    }
+  }
 }
 
 @Composable
@@ -228,7 +288,9 @@ fun NowPlayingScreen(state: AppState) {
     Column(
       Modifier.widthIn(max = 500.dp).fillMaxSize().clip(RoundedCornerShape(28.dp))
         .background(Brush.linearGradient(LocalAccent.current.glass))
-        .border(1.dp, white.copy(alpha = 0.32f), RoundedCornerShape(28.dp)).padding(horizontal = 20.dp),
+        .border(1.dp, white.copy(alpha = 0.32f), RoundedCornerShape(28.dp))
+        .playerSwipes(onUp = { openSheet(0) }, onNext = { player.next() }, onPrevious = { player.previous() })
+        .padding(horizontal = 20.dp),
     ) {
       Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         RoundButton(FluentIcons.KeyboardArrowDown, stringResource(R.string.close), 44) { state.back() }
@@ -241,7 +303,7 @@ fun NowPlayingScreen(state: AppState) {
         Spacer(Modifier.width(8.dp))
         RoundButton(FluentIcons.Playlist, stringResource(R.string.playlists), 44) { openSheet(1) }
       }
-      Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp).then(if (mode == 0) Modifier.queueSwipe { openSheet(0) }.swipeTracks(state) else Modifier), contentAlignment = Alignment.Center) {
+      Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
         when (mode) {
           1 -> LyricsView(state, trackId, isPreview, pos)
           else -> CoverDial(artRef, fraction, ring = style == "ring", volumeArc = prefs.coverVolume && style == "ring", volume = musicVolume, onVolume = setMusicVolume, onSeekDrag = seekDrag, onSeekCommit = seekCommit, onToggleMute = toggleMute)
@@ -253,7 +315,7 @@ fun NowPlayingScreen(state: AppState) {
       }
       Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(40.dp))
-        Column(Modifier.weight(1f).then(Modifier.queueSwipe { openSheet(0) }.swipeTracks(state)), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
           Text(meta.title?.toString().orEmpty(), color = white, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
           Text(meta.artist?.toString().orEmpty() + if (isPreview) " · " + stringResource(R.string.preview) else "",
             color = dim, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
@@ -263,7 +325,13 @@ fun NowPlayingScreen(state: AppState) {
           IconButton(onClick = { favorite = !favorite; state.setFavorite(trackId, favorite) { favorite = it } }, modifier = Modifier.size(40.dp)) {
             Icon(if (favorite) FluentIcons.Favorite else FluentIcons.FavoriteBorder, stringResource(R.string.like), tint = if (favorite) Color(0xFFDEB9FF) else white)
           }
-        } else Box(Modifier.size(40.dp))
+        } else {
+          // A preview: download the song to the library right here (where the
+          // heart is for library songs).
+          val online = remember(item.mediaId) { extras?.getString("online")?.let { runCatching { parseOnline(org.json.JSONObject(it)) }.getOrNull() } }
+          if (isPreview && online != null && state.canDownload && online.downloadable && online.url.isNotBlank()) PreviewDownloadButton(state, online)
+          else Box(Modifier.size(40.dp))
+        }
       }
       val album = (trackDetails?.album ?: meta.albumTitle?.toString())?.trim().orEmpty()
       val recordingDetails = listOfNotNull((trackDetails?.genre ?: meta.genre?.toString())?.trim()?.takeIf { it.isNotEmpty() }, (trackDetails?.year ?: meta.recordingYear)?.takeIf { it > 0 }?.toString()).joinToString(" · ")
@@ -307,8 +375,17 @@ fun NowPlayingScreen(state: AppState) {
           Icon(FluentIcons.Shuffle, stringResource(R.string.shuffle), tint = if (player.shuffle) LocalAccent.current.onDarkTint else dim)
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.BottomCenter) {
-          Box(Modifier.clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)).background(white.copy(alpha = if (mode == 1) 0.32f else 0.22f)).clickable { mode = if (mode == 1) 0 else 1 }.padding(horizontal = 36.dp, vertical = 16.dp)) {
-              Text(stringResource(R.string.lyrics), color = white, fontWeight = FontWeight.Bold)
+          // A tab resting on the card's bottom edge.
+          val tabShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+          Row(
+            Modifier.widthIn(min = 180.dp).clip(tabShape)
+              .background(Brush.verticalGradient(listOf(white.copy(alpha = if (mode == 1) 0.34f else 0.22f), white.copy(alpha = if (mode == 1) 0.2f else 0.1f))))
+              .border(1.dp, white.copy(alpha = 0.26f), tabShape)
+              .clickable { mode = if (mode == 1) 0 else 1 }.padding(horizontal = 26.dp, vertical = 15.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Icon(FluentIcons.Lyrics, null, tint = white, modifier = Modifier.size(20.dp))
+            Text(stringResource(R.string.lyrics), color = white, fontWeight = FontWeight.Bold)
           }
         }
         IconButton(onClick = { player.cycleRepeat() }) {

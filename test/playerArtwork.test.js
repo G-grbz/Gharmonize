@@ -268,3 +268,34 @@ test('waveforms are revalidated by file identity, never cached by track id', { s
   assert.equal(after.status, 200)
   assert.notEqual(after.etag, dockerTag)
 })
+
+test('an empty cover left in the cache by a crash is made again, not served', { skip: !HAS_FFMPEG && 'ffmpeg not available' }, async (t) => {
+  const { service, call, art, library } = await startInstance(t, async (lib) => {
+    await writeSong(path.join(lib, 'Single', 'Kapaklı.mp3'), { title: 'Kapaklı', artist: 'Sanatçı A, Sanatçı B', album: 'Tekli' }, RED)
+  })
+  const track = (await tracksByTitle(call))['Kapaklı']
+  let res = await art(track.artwork, 256)
+  assert.equal(res.status, 200)
+  assert.ok(Buffer.from(await res.arrayBuffer()).length > 0)
+
+  // A power cut after the rename, before the bytes reached the disk: every
+  // cached copy (original and resized) is now an empty file.
+  const cacheDir = path.join(path.dirname(library), 'cache')
+  const cached = []
+  const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) walk(p); else cached.push(p) } }
+  walk(path.join(cacheDir, 'artwork'))
+  assert.ok(cached.length >= 2, cached.join('\n'))
+  for (const f of cached) fs.truncateSync(f, 0)
+
+  // A fresh process (nothing remembered in memory) reads the cache again.
+  const { createArtworkService } = await import('../modules/player/artwork.js')
+  const fresh = createArtworkService({ cacheDir, db: service.context.db, libraries: service.context.libraries, logger: silentLogger })
+  const result = await fresh.getArtwork('track', track.id, 256, 1)
+  assert.ok(result, 'still has a cover')
+  assert.ok(fs.statSync(result.file).size > 0, 'not the empty file')
+  // The running server heals too.
+  service.context.artwork.invalidate()
+  res = await art(track.artwork, 128)
+  assert.equal(res.status, 200)
+  assert.ok(Buffer.from(await res.arrayBuffer()).length > 0)
+})

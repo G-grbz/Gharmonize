@@ -201,6 +201,7 @@ object TvChannels {
     "discover" -> context.getString(R.string.mix_discover)
     "liked" -> context.getString(R.string.mix_liked)
     "decade" -> context.getString(R.string.mix_decade, decadeLabel(mix.decade))
+    "genre" -> context.getString(R.string.mix_genre, mix.genre.orEmpty())
     else -> mix.id
   }
 

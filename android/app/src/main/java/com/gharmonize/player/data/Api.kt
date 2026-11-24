@@ -101,6 +101,19 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
     val o = get("/search?q=${enc(q)}&limit=30")
     return SearchResult(o.optJSONArray("tracks").mapObjects(::parseTrack), o.optJSONArray("albums").mapObjects(::parseAlbum), o.optJSONArray("artists").mapObjects(::parseArtist))
   }
+  // ---- search history (the user's own, shared by all their devices) ------------------
+
+  suspend fun searchHistory(): SearchHistory = parseSearchHistory(get("/search/history"))
+  /** [q]: the search text; [item]: {source:"library",kind,id} or {source:"online",online}. */
+  suspend fun rememberSearch(q: String?, item: JSONObject? = null) {
+    val body = JSONObject()
+    q?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("http://") && !it.startsWith("https://") }?.let { body.put("q", it) }
+    item?.let { body.put("item", it) }
+    if (body.length() > 0) post("/search/history", body)
+  }
+  suspend fun forgetSearch(q: String) { request("DELETE", "/search/history?q=${enc(q)}") }
+  suspend fun clearSearchHistory() { request("DELETE", "/search/history") }
+
   suspend fun onlineSearch(q: String): OnlineSearchResult {
     val o = get("/online/search?q=${enc(q)}&kinds=track,album,artist&limit=20")
     return OnlineSearchResult(o.optJSONArray("tracks").mapObjects(::parseOnline), o.optJSONArray("albums").mapObjects(::parseOnline), o.optJSONArray("artists").mapObjects(::parseOnline))
@@ -142,7 +155,10 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
   suspend fun stats(range: String) = parseStats(get("/stats/listening?range=${enc(range)}"))
   suspend fun statYears() = get("/stats/years").optJSONArray("items").let { a -> (0 until (a?.length() ?: 0)).map { a!!.optInt(it) } }
   suspend fun wrapped(year: Int) = parseStats(get("/stats/wrapped?year=$year"))
-  suspend fun lyrics(trackId: Long): Lyrics? = try { parseLyrics(get("/tracks/$trackId/lyrics")) } catch (e: ApiException) { if (e.status == 404) null else throw e }
+  // soft=1: no lyrics come back as {"none": true} (older servers still answer 404).
+  suspend fun lyrics(trackId: Long): Lyrics? = try {
+    get("/tracks/$trackId/lyrics?soft=1").let { o -> if (o.optBoolean("none")) null else parseLyrics(o) }
+  } catch (e: ApiException) { if (e.status == 404) null else throw e }
 
   /** Real waveform of a library track: 0..1 values (null when unavailable). */
   suspend fun waveform(trackId: Long): FloatArray? = try {
@@ -209,11 +225,32 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
   }
 
   /** Artist biography (Wikipedia, language order chosen on the server); null when none. */
-  suspend fun artistBio(name: String, deezerId: String?, lang: String): JSONObject? =
-    get("/online/artist-bio?name=${enc(name)}&lang=${enc(lang)}" + (deezerId?.let { "&deezerId=${enc(it)}" } ?: "")).optJSONObject("bio")
+  suspend fun artistBio(name: String, deezerId: String?, lang: String): JSONObject? {
+    val bio = get("/online/artist-bio?name=${enc(name)}&lang=${enc(lang)}" + (deezerId?.let { "&deezerId=${enc(it)}" } ?: "")).optJSONObject("bio")
+    synchronized(bioCache) { bioCache[bioKey(name, deezerId, lang)] = bio ?: NO_BIO }
+    return bio
+  }
+
+  /**
+   * A biography already loaded in this session, shown at once when its view
+   * is built again (a page header scrolled away and back), so the page does
+   * not jump while it loads a second time.
+   */
+  fun cachedArtistBio(name: String, deezerId: String?, lang: String): JSONObject? =
+    synchronized(bioCache) { bioCache[bioKey(name, deezerId, lang)] }?.takeIf { it !== NO_BIO }
+
+  private fun bioKey(name: String, deezerId: String?, lang: String) = "$lang|${deezerId.orEmpty()}|$name"
+  private val NO_BIO = JSONObject()
+  private val bioCache = object : LinkedHashMap<String, JSONObject>(64, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, JSONObject>?) = size > 60
+  }
 
   /** A mood's playlists / albums and songs (YouTube Music). */
   suspend fun mood(preset: String, lang: String): JSONObject = get("/discover/mood/${enc(preset)}?lang=${enc(lang)}")
+
+  /** Every song of an artist online (newest first), owned ones carry their library id. */
+  suspend fun onlineArtistTracks(name: String): List<OnlineItem> =
+    get("/online/artist/tracks?name=${enc(name)}").optJSONArray("tracks").mapObjects(::parseOnline)
 
   suspend fun onlineArtist(id: String?, name: String?): JSONObject =
     if (!id.isNullOrBlank()) get("/online/artist?id=${enc(id)}") else get("/online/artist?name=${enc(name ?: "")}")
