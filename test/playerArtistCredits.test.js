@@ -89,3 +89,18 @@ test('songs scanned before the split move off combined artists once, follows kep
   assert.deepEqual(createArtistCredits(db).migrate(), { changed: false }, 'runs once')
   void service
 })
+
+test('"A & B" is split once both are known, whatever order the files were scanned in', async (t) => {
+  const { service, db, catalog, library } = await start(t, async (lib) => {
+    // Only the duet at first: "Dedublüman" and "Cem Adrian" are unknown.
+    await writeTrack(path.join(lib, 'Duet.mp3'), { title: 'Düet', artist: 'Dedublüman & Cem Adrian', album: 'Düet - Single' })
+  })
+  assert.ok(artistByName(db, 'Dedublüman & Cem Adrian'), 'kept as one name while the parts are unknown')
+  await writeTrack(path.join(library, 'Cem.mp3'), { title: 'Solo Cem', artist: 'Cem Adrian', album: 'Cem Albüm' })
+  await writeTrack(path.join(library, 'Dedu.mp3'), { title: 'Solo Dedu', artist: 'Dedublüman', album: 'Dedu Albüm' })
+  await service.context.scanner.requestScan('all')
+  assert.equal(artistByName(db, 'Dedublüman & Cem Adrian'), undefined, 'split after the solo songs arrived')
+  const duet = db.prepare("SELECT id, artist_id FROM tracks WHERE title = 'Düet'").get()
+  assert.equal(duet.artist_id, artistByName(db, 'Dedublüman').id)
+  assert.ok(catalog.getArtist(artistByName(db, 'Cem Adrian').id, 1).topTracks.some((tr) => tr.id === duet.id))
+})

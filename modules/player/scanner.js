@@ -319,6 +319,12 @@ export function createScanner(db, { parseFile = defaultParseFile, now = () => Da
       stmt.orphanFavorites.run()
       stmt.libraryResult.run(now(), 'ok', null, library.id, library.id)
     })
+    // "A & B" splits only when both are artists of their own; songs scanned
+    // before the solo songs of their artists are split now, so the result
+    // does not depend on the order files were read in.
+    if (changedIds.length || removedIds.length) {
+      try { credits.relink({ onlyAmpersand: true }) } catch (error) { logger.warn?.(`⚠️ [player] artist credits: ${error?.message || error}`) }
+    }
     if ((changedIds.length || removedIds.length) && onTrackChanges) {
       try { onTrackChanges({ libraryId: library.id, changedIds, removedIds }) } catch {}
     }

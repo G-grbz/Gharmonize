@@ -56,11 +56,12 @@ export function createArtistCredits(db, { now = () => Date.now() } = {}) {
     ids.album.forEach((artistId, i) => stmt.link.run(trackId, 1, artistId, i))
   }
 
-  // Once per CREDITS_VERSION: link every song to each of its artists, move
-  // songs, albums and follows off combined rows ("A, B") and drop those.
-  function migrate() {
-    const done = db.prepare('SELECT value FROM settings WHERE key = ?').get(SETTING_KEY)?.value
-    if (done === CREDITS_VERSION) return { changed: false }
+  // Links songs to each of their artists again, moves songs, albums and
+  // follows off combined rows ("A, B") and drops those. `onlyAmpersand`:
+  // just the songs credited "A & B", whose split depends on which artists
+  // the library knows (a duet scanned before the solo songs of its artists
+  // could not be split yet).
+  function relink({ onlyAmpersand = false } = {}) {
     let changed = false
     transaction(db, () => {
       // Names that are artists of their own somewhere in the library.
@@ -70,10 +71,16 @@ export function createArtistCredits(db, { now = () => Date.now() } = {}) {
       const isKnown = (name) => known.has(normalizeKey(name))
 
       const setArtist = db.prepare('UPDATE tracks SET artist_id = ? WHERE id = ?')
-      for (const tr of db.prepare('SELECT id, artist_id, artist_name, album_artist FROM tracks').all()) {
+      const songs = db.prepare(`SELECT id, artist_id, artist_name, album_artist FROM tracks
+        ${onlyAmpersand ? "WHERE artist_name LIKE '% & %' OR album_artist LIKE '% & %'" : ''}`).all()
+      if (onlyAmpersand && !songs.length) return
+      const linked = db.prepare('SELECT role, artist_id FROM track_artists WHERE track_id = ? ORDER BY role, position')
+      for (const tr of songs) {
         const r = resolve(tr.artist_name, tr.album_artist, isKnown)
         if (r.artistId !== tr.artist_id) { setArtist.run(r.artistId, tr.id); changed = true }
-        link(tr.id, r.ids)
+        const before = linked.all(tr.id).map((l) => `${l.role}:${l.artist_id}`).join(',')
+        const after = [...r.ids.song.map((id) => `0:${id}`), ...r.ids.album.map((id) => `1:${id}`)].join(',')
+        if (before !== after) { link(tr.id, r.ids); changed = true }
       }
 
       // Albums belong to the first album artist; one already there is merged.
@@ -114,10 +121,18 @@ export function createArtistCredits(db, { now = () => Date.now() } = {}) {
       }
       db.prepare(`DELETE FROM artists WHERE ${NOT_LINKED_ARTIST_SQL()}`).run()
       db.prepare(`DELETE FROM favorites WHERE item_type = 'album' AND NOT EXISTS (SELECT 1 FROM albums WHERE id = favorites.item_id)`).run()
-      db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(SETTING_KEY, CREDITS_VERSION)
     })
     return { changed }
   }
 
-  return { resolve, link, migrate, ensureArtist }
+  // Once per CREDITS_VERSION: every song, at start.
+  function migrate() {
+    const done = db.prepare('SELECT value FROM settings WHERE key = ?').get(SETTING_KEY)?.value
+    if (done === CREDITS_VERSION) return { changed: false }
+    const result = relink()
+    db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(SETTING_KEY, CREDITS_VERSION)
+    return result
+  }
+
+  return { resolve, link, migrate, relink, ensureArtist }
 }
