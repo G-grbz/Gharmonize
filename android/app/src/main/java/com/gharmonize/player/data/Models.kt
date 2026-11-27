@@ -22,6 +22,8 @@ data class Track(
   val year: Int? = null,
   /** Every artist of "A, B" (only when there are several). */
   val artists: List<ArtistRef> = emptyList(),
+  /** This song's entry in a playlist (to remove just that copy). */
+  val entryId: Long? = null,
 )
 
 /** An artist of a song or album by several artists. */
@@ -128,9 +130,50 @@ data class DownloadRow(
   val progress: Int,
   val error: String?,
   val trackIds: List<Long>,
+  val phase: String? = null,
+  /** The download group (songs picked together) this song belongs to. */
+  val groupId: String? = null,
+  /** Album / playlist jobs: how many of their songs are done. */
+  val steps: DownloadSteps? = null,
+  /** Source and requested links (to find the row of an item). */
+  val urls: List<String> = emptyList(),
+  val createdAt: Long = 0,
 ) {
   val active: Boolean get() = status in setOf("queued", "resolving", "downloading", "indexing")
+  /** A song still waiting in its group (over the queue limit), not requested yet. */
+  val waiting: Boolean get() = id.startsWith(WAITING_PREFIX)
+
+  companion object {
+    const val WAITING_PREFIX = "waiting:"
+    fun waitingIn(groupId: String, url: String) =
+      DownloadRow("$WAITING_PREFIX$groupId", "track", "", "", null, "queued", 0, null, emptyList(), phase = "waiting", groupId = groupId, urls = listOf(url))
+  }
 }
+
+data class DownloadSteps(val total: Int, val downloaded: Int, val converted: Int)
+
+data class DownloadGroupCounts(
+  val total: Int, val done: Int, val running: Int, val queued: Int, val waiting: Int,
+  val failed: Int, val canceled: Int, val skipped: Int,
+)
+
+data class DownloadGroupCurrent(val title: String, val artist: String, val status: String, val phase: String?, val progress: Int)
+
+/** Songs picked together: one entry with its progress. */
+data class DownloadGroup(
+  val id: String,
+  val title: String?,
+  val artworkUrl: String?,
+  /** active | done | canceled */
+  val status: String,
+  val active: Boolean,
+  val progress: Float,
+  val counts: DownloadGroupCounts,
+  val current: DownloadGroupCurrent?,
+  val errors: List<String>,
+  val pendingUrls: List<String>?,
+  val createdAt: Long,
+)
 
 data class AlbumMissing(val found: Boolean, val total: Int, val missing: List<OnlineItem>, val onlineAlbum: OnlineItem?)
 
@@ -194,6 +237,7 @@ fun parseTrack(o: JSONObject): Track = Track(
   genre = o.strOrNull("genre"),
   year = o.intOrNull("year")?.takeIf { it > 0 },
   artists = parseArtistRefs(o),
+  entryId = o.longOrNull("entryId"),
 )
 
 fun parseAlbum(o: JSONObject): Album = Album(
@@ -273,7 +317,34 @@ fun parseDownload(o: JSONObject): DownloadRow = DownloadRow(
   progress = o.optInt("progress"),
   error = o.optJSONObject("error")?.let { it.strOrNull("message") ?: it.strOrNull("code") },
   trackIds = o.optJSONArray("trackIds")?.let { arr -> (0 until arr.length()).map { arr.optLong(it) } } ?: emptyList(),
+  phase = o.strOrNull("phase"),
+  groupId = o.strOrNull("groupId"),
+  steps = o.optJSONObject("steps")?.let { DownloadSteps(it.optInt("total"), it.optInt("downloaded"), it.optInt("converted")) }?.takeIf { it.total > 0 },
+  urls = listOfNotNull(o.strOrNull("sourceUrl"), o.strOrNull("requestedUrl")),
+  createdAt = o.optLong("createdAt"),
 )
+
+fun parseDownloadGroup(o: JSONObject): DownloadGroup {
+  val c = o.optJSONObject("counts") ?: JSONObject()
+  return DownloadGroup(
+    id = o.str("id"),
+    title = o.strOrNull("title"),
+    artworkUrl = o.strOrNull("artworkUrl"),
+    status = o.str("status"),
+    active = o.optBoolean("active"),
+    progress = o.optDouble("progress", 0.0).toFloat(),
+    counts = DownloadGroupCounts(
+      c.optInt("total"), c.optInt("done"), c.optInt("running"), c.optInt("queued"), c.optInt("waiting"),
+      c.optInt("failed"), c.optInt("canceled"), c.optInt("skipped"),
+    ),
+    current = o.optJSONObject("current")?.let { DownloadGroupCurrent(it.str("title"), it.str("artist"), it.str("status"), it.strOrNull("phase"), it.optInt("progress")) },
+    errors = o.optJSONArray("errors")?.let { arr ->
+      (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { e -> listOfNotNull(e.strOrNull("title"), e.strOrNull("message") ?: e.strOrNull("code")).joinToString(": ") } }
+    } ?: emptyList(),
+    pendingUrls = o.optJSONArray("pendingUrls")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
+    createdAt = o.optLong("createdAt"),
+  )
+}
 
 fun parseLyrics(o: JSONObject): Lyrics = Lyrics(
   synced = o.optBoolean("synced"),

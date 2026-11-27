@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, shell, dialog, session, ipcMain, clipboard, N
 import './runtimeEnvironment.mjs';
 import { createTrayIconManager, normalizeTrayIconMode, TRAY_ICON_MODES } from './trayIcon.mjs';
 import { startDesktopServer } from './desktopServer.mjs';
+import { integrateAppImage } from './linuxDesktopIntegration.mjs';
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import net from 'node:net'
@@ -867,11 +868,32 @@ function resolveIcon() {
       : path.join(process.cwd(), 'build', 'icon.ico');
   }
   if (process.platform === 'linux') {
+    // The app logo (public/src/logo.png as build/icons); the tray keeps its own.
     return app.isPackaged
-      ? path.join(process.resourcesPath, 'icon.png')
-      : path.join(process.cwd(), 'build', 'icon.png');
+      ? path.join(process.resourcesPath, 'icons', '512x512.png')
+      : path.join(process.cwd(), 'build', 'icons', '512x512.png');
   }
   return undefined;
+}
+
+// AppImage only: icon + desktop entry so docks and search show the logo.
+async function applyLinuxAppImageIntegration() {
+  if (process.platform !== 'linux' || !app.isPackaged || !process.env.APPIMAGE) return;
+  try {
+    const result = integrateAppImage({
+      appImage: process.env.APPIMAGE,
+      iconsDir: path.join(process.resourcesPath, 'icons'),
+      home: app.getPath('home')
+    });
+    if (result.desktop === 'written' || result.desktop === 'removed') {
+      await updateLinuxDesktopDatabase(path.join(process.env.XDG_DATA_HOME || path.join(app.getPath('home'), '.local', 'share'), 'applications'));
+    }
+    if (result.icons || result.desktop === 'written' || result.desktop === 'removed') {
+      console.log(`[desktop] AppImage integration: ${result.icons} icon(s), desktop entry ${result.desktop}`);
+    }
+  } catch (error) {
+    console.warn('[desktop] AppImage integration failed:', error?.message || error);
+  }
 }
 
 // Checks whether port ready is valid for the Electron runtime bridge.
@@ -1513,6 +1535,7 @@ app.whenReady().then(async () => {
       waitForServer
     });
     await applyTrackExtractorShellIntegration();
+    await applyLinuxAppImageIntegration();
     const startHidden = await shouldStartHidden();
     const queuedShow = showOnWindowReady;
     if (queuedShow || !startHidden) {

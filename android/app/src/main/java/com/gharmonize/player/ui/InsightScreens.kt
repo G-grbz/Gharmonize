@@ -276,7 +276,9 @@ fun StatsScreen(state: AppState) {
   var range by rememberSaveable { mutableStateOf("month") }
   val data = rememberLoad("stats", range) { state.api.stats(range) }
   val years = rememberLoad("years") { state.api.statYears() }
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+  val selection = rememberSongSelection("stats-$range")
+  SelectionScaffold(state, data.value?.topTracks.orEmpty().map { it.first }, selection, stringResource(R.string.stats_top_tracks)) { pad ->
+  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = pad)) {
     item {
       Column(Modifier.padding(16.dp)) {
         Text(stringResource(R.string.stats_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -347,7 +349,7 @@ fun StatsScreen(state: AppState) {
     if (s.topTracks.isNotEmpty()) {
       val tracks = s.topTracks.map { it.first }
       item { SectionTitle(stringResource(R.string.stats_top_tracks)) }
-      itemsIndexed(tracks, key = { _, t -> "st-${t.id}" }) { i, _ -> TrackRow(state, tracks, i, number = i + 1) }
+      itemsIndexed(tracks, key = { _, t -> "st-${t.id}" }) { i, _ -> TrackRow(state, tracks, i, number = i + 1, selection = selection) }
     }
     if (s.topAlbums.isNotEmpty()) item { ShelfRow(stringResource(R.string.stats_top_albums), s.topAlbums) { _, a -> AlbumCard(state, a) } }
     item {
@@ -379,6 +381,7 @@ fun StatsScreen(state: AppState) {
         if (s.newArtistNames.isNotEmpty()) Fact(stringResource(R.string.stats_new_artists_list), s.newArtistNames.joinToString(", "))
       }
     }
+  }
   }
 }
 

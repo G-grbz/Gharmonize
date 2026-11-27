@@ -134,6 +134,17 @@ class AutoLibrary(private val context: Context, private val scope: CoroutineScop
     }
   }
 
+  // Play pressed with an empty player (headset / Bluetooth / car after the
+  // service was gone): continue the last saved queue where it stopped.
+  override fun onPlaybackResumption(
+    mediaSession: MediaSession,
+    controller: MediaSession.ControllerInfo,
+  ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+    val saved = QueueStore.read(context)
+      ?: return Futures.immediateFailedFuture(UnsupportedOperationException("Nothing to resume"))
+    return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(saved.items, saved.index, saved.positionMs))
+  }
+
   // Controllers send items without their URIs; rebuild them from the id.
   override fun onAddMediaItems(
     mediaSession: MediaSession,

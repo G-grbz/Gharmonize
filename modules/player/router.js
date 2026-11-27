@@ -239,6 +239,14 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   router.get('/home', requireUser, (req, res) => res.json(catalog.home(uid(req))))
   router.get('/stats', requireUser, (req, res) => res.json(catalog.getStats(uid(req))))
   router.get('/search', requireUser, (req, res) => res.json(catalog.search(req.query.q, { limit: req.query.limit, userId: uid(req) })))
+  // Sidebar library: followed artists, saved albums and the liked-songs count.
+  router.get('/library/saved', requireUser, (req, res) => res.json(catalog.savedItems(uid(req))))
+  // The user's own listening of an artist / album / song (search top result).
+  router.get('/insight/:kind/:id', requireUser, (req, res) => {
+    const kind = String(req.params.kind)
+    if (!['artist', 'album', 'track'].includes(kind)) return sendError(res, 400, 'INVALID_KIND', 'Invalid kind.')
+    res.json(catalog.insight(kind, intParam(req.params.id), uid(req)))
+  })
   // The user's own search history (every device shows the same one):
   // { queries: [{ q, at }], items: [{ key, at, source, kind, track|album|artist|item }] }.
   router.get('/search/history', requireUser, (req, res) => {
@@ -555,15 +563,56 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
   router.get('/online/artist/tracks', requireUser, rateLimit(20, 60_000), async (req, res) => {
     res.json(await discovery.onlineArtistTracks(req.playerUser, { id: req.query.id, name: req.query.name }))
   })
+  // "Complete the discography" wizard: missing releases with their songs.
+  router.get('/online/artist/gaps', requireUser, rateLimit(20, 60_000), async (req, res) => {
+    res.json(await discovery.onlineArtistGaps(req.playerUser, { id: req.query.id, name: req.query.name }))
+  })
+
+  // A whole store album (an album card, "download"): the songs the library
+  // already has are left out, so a partly owned album only gets its missing
+  // songs and a complete one is reported as owned. Any failure → the album.
+  const STORE_ALBUM_RE = /^https:\/\/(?:www\.deezer\.com\/(?:[a-z]{2}\/)?album\/(\d+)|open\.spotify\.com\/album\/([A-Za-z0-9]+))(?:[/?#]|$)/
+  async function withAlbumGaps(user, item) {
+    if (item?.kind !== 'album' || (Array.isArray(item.only) && item.only.length)) return item
+    const m = STORE_ALBUM_RE.exec(String(item.url || ''))
+    if (!m) return item
+    try {
+      const data = await discovery.onlineAlbum(user, m[1] ? { provider: 'deezer', id: m[1] } : { provider: 'spotify', id: m[2] })
+      const tracks = data?.tracks || []
+      const missing = tracks.filter((tr) => !tr.library)
+      if (!tracks.length || missing.length === tracks.length) return item
+      // Nothing missing: every song is asked for, the bridge finds them all owned.
+      const only = (missing.length ? missing : tracks).map((tr) => ({ id: tr.id, url: tr.url, title: tr.title, artist: tr.artist, isrc: tr.isrc, duration: tr.duration }))
+      return { ...item, only, trackCount: tracks.length }
+    } catch { return item }
+  }
 
   router.post('/downloads', requireUser, rateLimit(120, 60_000), async (req, res) => {
     const body = req.body || {}
-    const record = await bridge.request(req.playerUser, body.item || {}, { playlistId: body.playlistId, force: Boolean(body.force) })
+    const item = body.force ? (body.item || {}) : await withAlbumGaps(req.playerUser, body.item || {})
+    const record = await bridge.request(req.playerUser, item, { playlistId: body.playlistId, force: Boolean(body.force) })
     res.status(record.status === 'exists' ? 200 : 202).json(record)
   })
   router.get('/downloads', requireUser, (req, res) => {
-    res.json({ items: bridge.list(req.playerUser, { all: bool(req.query.all), activeOnly: bool(req.query.active), limit: req.query.limit }) })
+    res.json({
+      items: bridge.list(req.playerUser, {
+        all: bool(req.query.all), activeOnly: bool(req.query.active), limit: req.query.limit,
+        group: req.query.group ? String(req.query.group) : null, ungrouped: bool(req.query.ungrouped)
+      })
+    })
   })
+  // Many songs at once (a selection, missing songs ...): one group with its
+  // own progress; songs over the queue limit wait in it and follow later.
+  router.post('/downloads/groups', requireUser, rateLimit(30, 60_000), async (req, res) => {
+    const body = req.body || {}
+    res.status(202).json(await bridge.requestMany(req.playerUser, body.items, { title: body.title, artworkUrl: body.artworkUrl, playlistId: body.playlistId }))
+  })
+  router.get('/downloads/groups', requireUser, (req, res) => {
+    res.json({ items: bridge.listGroups(req.playerUser, { all: bool(req.query.all), activeOnly: bool(req.query.active), limit: req.query.limit }) })
+  })
+  router.get('/downloads/groups/:id', requireUser, (req, res) => res.json(bridge.getGroup(req.params.id, req.playerUser)))
+  router.post('/downloads/groups/:id/cancel', requireUser, async (req, res) => res.json(await bridge.cancelGroup(req.params.id, req.playerUser)))
+  router.post('/downloads/groups/:id/retry', requireUser, (req, res) => res.json(bridge.retryGroup(req.params.id, req.playerUser)))
   // Live updates (Server-Sent Events) for the user's own downloads.
   router.get('/downloads/events', requireUser, (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' })
@@ -573,14 +622,20 @@ export function createPlayerRouter(ctx, { adminBridge = defaultAdminBridge, getM
       if (!row || (row.userId !== user.id && user.role !== 'admin')) return
       res.write(`event: download\ndata: ${JSON.stringify(row)}\n\n`)
     }
+    const sendGroup = (group) => {
+      if (!group || (group.userId !== user.id && user.role !== 'admin')) return
+      res.write(`event: group\ndata: ${JSON.stringify(group)}\n\n`)
+    }
     const libraryRemoved = () => res.write('event: library-removed\ndata: {}\n\n')
     const ping = setInterval(() => res.write(': ping\n\n'), 25_000)
     bridge.events.on('update', send)
+    bridge.events.on('group', sendGroup)
     scanner.events?.on('removed', libraryRemoved)
     res.write(`event: ready\ndata: {}\n\n`)
     req.on('close', () => {
       clearInterval(ping)
       bridge.events.off('update', send)
+      bridge.events.off('group', sendGroup)
       scanner.events?.off('removed', libraryRemoved)
     })
   })

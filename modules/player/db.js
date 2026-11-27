@@ -365,6 +365,29 @@ const MIGRATIONS = [
     PRIMARY KEY (track_id, role, artist_id)
   );
   CREATE INDEX track_artists_artist_idx ON track_artists(artist_id);
+  `,
+  // v16: many songs picked at once are one download group (one entry with its
+  // progress); songs over the per-user queue limit wait in the group and are
+  // queued as earlier ones finish. "steps": the song counts of an album or
+  // playlist job ({ total, downloaded, converted }).
+  `
+  CREATE TABLE download_groups (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT,
+    artwork_url TEXT,
+    playlist_id INTEGER,
+    total INTEGER NOT NULL DEFAULT 0,
+    pending TEXT NOT NULL DEFAULT '[]',
+    skipped TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'canceled')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX download_groups_user_idx ON download_groups(user_id, created_at DESC);
+  ALTER TABLE downloads ADD COLUMN group_id TEXT;
+  ALTER TABLE downloads ADD COLUMN steps TEXT;
+  CREATE INDEX downloads_group_idx ON downloads(group_id);
   `
 ]
 

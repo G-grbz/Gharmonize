@@ -461,6 +461,14 @@ Per-search timeout in milliseconds for the mapping/search step. If a search hang
 ### `YT_SEARCH_STAGGER_MS`
 Stagger delay (ms) applied when starting parallel searches. Helps avoid burst/throttle behavior by spacing out requests across concurrency slots. Lower = faster burst; higher = smoother and often fewer throttles/timeouts. Set to `0` to disable staggering.
 
+### `YOUTUBE_HOURLY_BUDGET`
+Off by default (`0`): the previous behaviour, with no waiting and no automatic pause. A number (`30`–`2000`, `250` recommended) turns on the YouTube request guard: the most videos Gharmonize fetches from YouTube in one hour, shared by every job, the Player and YTLive (a search counts about a third of a video). Up to half of the budget runs at full speed; after that the gap between requests grows gradually, so a long batch slows down instead of reaching YouTube's limit (roughly 300 videos/hour without an account). A bot check from YouTube then pauses YouTube requests automatically. Changes apply without a restart. See [COOKIES.md](COOKIES.md#youtube-request-guard).
+
+```dotenv
+YOUTUBE_HOURLY_BUDGET=0     # off (default)
+YOUTUBE_HOURLY_BUDGET=250   # on
+```
+
 ---
 
 ## Title Cleaning
@@ -563,6 +571,8 @@ GHARMONIZE_INITIAL_ADMIN_PASSWORD_FILE=/secure/runtime/INITIAL_ADMIN_PASSWORD.tx
 ## Cookies & yt-dlp Cookie Behavior
 
 > For a full walkthrough of cookie behavior across local, desktop, and Docker installs, and age-restricted content requirements, see [COOKIES.md](COOKIES.md).
+
+YouTube is asked **without** the account by default. The account is used only for the track list of personal mixes (`list=RD…`), YTLive's signed-in home, and videos YouTube refuses without an account (age-restricted, members-only). Use a secondary Google account, not your main one.
 
 ### `YT_STRIP_COOKIES`
 Master switch that disables both `YTDLP_COOKIES` and `YTDLP_COOKIES_FROM_BROWSER` when set.

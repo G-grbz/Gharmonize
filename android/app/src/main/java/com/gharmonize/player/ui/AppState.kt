@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import com.gharmonize.player.App
 import com.gharmonize.player.R
 import com.gharmonize.player.data.ApiException
+import com.gharmonize.player.data.DownloadGroup
 import com.gharmonize.player.data.DownloadRow
 import com.gharmonize.player.data.Me
 import com.gharmonize.player.data.OnlineItem
@@ -103,6 +104,8 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
   /** Live download state by source URL, for the badges on online items. */
   val downloadsByUrl = mutableStateMapOf<String, DownloadRow>()
   var downloads by mutableStateOf<List<DownloadRow>>(emptyList())
+  /** Songs picked together (one entry each on the downloads screen). */
+  var downloadGroups by mutableStateOf<List<DownloadGroup>>(emptyList())
   private var poller: Job? = null
 
   fun navigate(route: Route) {
@@ -125,6 +128,7 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
   }
 
   fun messageRes(res: Int, vararg args: Any) = message(context.getString(res, *args))
+  fun text(res: Int, vararg args: Any): String = context.getString(res, *args)
 
   fun errorText(e: Throwable): String = when {
     e is ApiException && e.code == "SERVER_UNREACHABLE" -> context.getString(R.string.error_unreachable)
@@ -177,6 +181,29 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
         message(errorText(e))
         onDone(!value)
       }
+    }
+  }
+
+  /** Likes several songs with one message (selection bar). */
+  fun likeAll(trackIds: List<Long>, onDone: () -> Unit = {}) {
+    scope.launch {
+      try {
+        for (id in trackIds) { api.setFavorite(id, true); player.updateFavorite(id, true) }
+        messageRes(R.string.liked_many, trackIds.size)
+        onDone()
+      } catch (e: Exception) { message(errorText(e)) }
+    }
+  }
+
+  /** Removes these entries from one of your playlists. */
+  fun removeFromPlaylist(playlistId: Long, tracks: List<Track>, onDone: () -> Unit) {
+    scope.launch {
+      try {
+        val entries = tracks.mapNotNull { it.entryId }
+        for (entry in entries) api.removeFromPlaylist(playlistId, entry)
+        messageRes(R.string.removed_many, entries.size)
+        onDone()
+      } catch (e: Exception) { message(errorText(e)) }
     }
   }
 
@@ -241,31 +268,117 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
     }
   }
 
-  /** Queues several songs at once with a single message. */
-  fun downloadAll(items: List<OnlineItem>) {
+  /**
+   * Queues several songs at once: one request and one message. Songs over
+   * the per-user queue limit wait on the server and follow as earlier ones
+   * finish (shown as queued here meanwhile).
+   */
+  /** [only]: per album link, just these of its songs (the rest stays out). */
+  fun downloadAll(items: List<OnlineItem>, title: String? = null, playlistId: Long? = null, only: Map<String, List<OnlineItem>> = emptyMap(), onQueued: (() -> Unit)? = null) {
     scope.launch {
-      var queued = 0
-      for (item in items) {
+      val wanted = items.filter { item ->
         val known = downloadsByUrl[item.url]
-        if (item.libraryTrackId != null || (known != null && known.status != "failed" && known.status != "canceled")) continue
-        runCatching { api.requestDownload(item) }.onSuccess { downloadsByUrl[item.url] = it; queued++ }
+        item.url.isNotBlank() && item.libraryTrackId == null && (known == null || known.status == "failed" || known.status == "canceled")
+      }.distinctBy { it.url }
+      if (wanted.isEmpty()) return@launch
+      try {
+        val group = api.requestDownloadGroup(wanted, title, playlistId, only)
+        markWaiting(group)
+        downloadGroups = listOf(group) + downloadGroups.filter { it.id != group.id }
+        // Songs, not links: an album counts with the songs it brings.
+        messageRes(R.string.group_queued, wanted.sumOf { item -> only[item.url]?.size ?: if (item.kind == "album") (item.trackCount ?: 1) else 1 })
+        startPolling()
+        onQueued?.invoke()
+      } catch (e: Exception) {
+        message(errorText(e))
       }
-      if (queued > 0) { messageRes(R.string.missing_queued, queued); startPolling() }
+    }
+  }
+
+  /** The songs of a group that wait on the server show as queued. */
+  private fun markWaiting(group: DownloadGroup) {
+    val pending = group.pendingUrls ?: return
+    for (url in pending) {
+      val known = downloadsByUrl[url]
+      if (known == null || known.waiting || !known.active) downloadsByUrl[url] = DownloadRow.waitingIn(group.id, url)
+    }
+  }
+
+  fun cancelDownloadGroup(id: String) {
+    scope.launch {
+      runCatching { api.cancelDownloadGroup(id) }.onFailure { message(errorText(it)) }
+      refreshDownloadsNow()
+    }
+  }
+
+  fun retryDownloadGroup(id: String) {
+    scope.launch {
+      runCatching { api.retryDownloadGroup(id) }.onSuccess { markWaiting(it) }
+      startPolling()
+      refreshDownloadsNow()
     }
   }
 
   fun refreshDownloads() {
-    scope.launch { runCatching { applyDownloads(api.downloads()) } }
+    scope.launch { refreshDownloadsNow() }
   }
+
+  private suspend fun refreshDownloadsNow() {
+    runCatching { api.downloads() }.getOrNull()?.let { applyDownloads(it) }
+    runCatching { api.downloadGroups(activeOnly = false) }.getOrNull()?.let { applyGroups(it) }
+    runCatching { api.downloadGroups(activeOnly = true) }.getOrNull()?.forEach(::markWaiting)
+  }
+
+  // A group finished: one message for all of its songs.
+  private fun applyGroups(groups: List<DownloadGroup>) {
+    val before = downloadGroups.associateBy { it.id }
+    downloadGroups = groups
+    for (group in groups) {
+      val prev = before[group.id] ?: continue
+      if (!prev.active || group.active || group.status == "canceled") continue
+      val name = group.title ?: context.getString(R.string.group_untitled)
+      if (group.counts.failed > 0) messageRes(R.string.group_done_failed, name, group.counts.done, group.counts.failed)
+      else messageRes(R.string.group_done, name, group.counts.done)
+    }
+    // Waiting songs of a canceled or finished group are not waiting any more.
+    val live = groups.filter { it.active && it.counts.waiting > 0 }.map { it.id }.toSet()
+    for ((url, row) in downloadsByUrl.toMap()) if (row.waiting && row.groupId !in live) downloadsByUrl.remove(url)
+  }
+
+  // A selection, an album or a playlist finishes song by song: one message
+  // for the batch (when nothing is left, or a progress note every 30 s)
+  // instead of a queue of messages, one per song.
+  private val batchDone = mutableListOf<String>()
+  private val batchFailed = mutableListOf<String>()
+  private var batchStartedAt = 0L
 
   private fun applyDownloads(rows: List<DownloadRow>) {
     val before = downloads.associateBy { it.id }
     downloads = rows
     for (row in rows) {
       val prev = before[row.id]
-      if (prev != null && prev.active && row.status == "completed") messageRes(R.string.download_done, row.title)
-      if (prev != null && prev.active && row.status == "failed") messageRes(R.string.download_failed, row.title)
+      // Songs of a group get one message when the whole group is done.
+      if (row.groupId != null) continue
+      if (prev != null && prev.active && row.status == "completed") batchDone.add(row.title)
+      if (prev != null && prev.active && row.status == "failed") batchFailed.add(row.title)
     }
+    if (batchDone.isEmpty() && batchFailed.isEmpty()) return
+    val now = System.currentTimeMillis()
+    if (batchStartedAt == 0L) batchStartedAt = now
+    val left = rows.count { it.active && it.groupId == null }
+    if (left > 0 && now - batchStartedAt < 30_000) return
+    when {
+      batchDone.size == 1 && left == 0 -> messageRes(R.string.download_done, batchDone[0])
+      batchDone.isNotEmpty() && left > 0 -> messageRes(R.string.download_done_many_left, batchDone.size, left)
+      batchDone.isNotEmpty() -> messageRes(R.string.download_done_many, batchDone.size)
+    }
+    when {
+      batchFailed.size == 1 -> messageRes(R.string.download_failed, batchFailed[0])
+      batchFailed.isNotEmpty() -> messageRes(R.string.download_failed_many, batchFailed.size)
+    }
+    batchDone.clear()
+    batchFailed.clear()
+    batchStartedAt = 0L
   }
 
   fun startPolling() {
@@ -273,11 +386,17 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
     poller = scope.launch {
       while (isActive) {
         val rows = runCatching { api.downloads() }.getOrNull()
+        val groups = runCatching { api.downloadGroups() }.getOrNull()
+        if (groups != null) applyGroups(groups)
         if (rows != null) {
           applyDownloads(rows)
-          // Keep badges of items started from this phone up to date.
-          for ((url, row) in downloadsByUrl.toMap()) rows.firstOrNull { it.id == row.id }?.let { downloadsByUrl[url] = it }
-          if (rows.none { it.active }) break
+          // Keep badges of items started from this phone up to date; a song
+          // that waited in its group gets its real download once queued.
+          for ((url, row) in downloadsByUrl.toMap()) {
+            val fresh = if (row.waiting) rows.firstOrNull { url in it.urls } else rows.firstOrNull { it.id == row.id }
+            fresh?.let { downloadsByUrl[url] = it }
+          }
+          if (rows.none { it.active } && groups.orEmpty().none { it.active }) break
         }
         delay(3000)
       }

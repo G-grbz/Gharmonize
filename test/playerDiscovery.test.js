@@ -44,11 +44,14 @@ function createFakeSources() {
       count(`artistAlbums:${id}`)
       return id === '100'
         ? [dzAlbum(20, 'Yepyeni', 'Sezen Aksu', isoDaysAgo(10)), dzAlbum(21, 'Eski Plak', 'Sezen Aksu', isoDaysAgo(900)), dzAlbum(22, 'Gülümse', 'Sezen Aksu', isoDaysAgo(20)), dzAlbum(23, 'Tek', 'Sezen Aksu', isoDaysAgo(5), { recordType: 'single', trackCount: 1 }), ...(deezer.extraAlbums || [])]
+          // The real /artist/:id/albums answer has no artist on its albums.
+          .map((a) => (deezer.albumsWithoutArtist ? { ...a, artist: '', trackCount: null } : a))
         : []
     },
     async artistRadio(id) { count(`artistRadio:${id}`); return [dzTrack(60, 'Radyo Şarkısı', 'Nilüfer')] },
     async album(id) {
       count(`album:${id}`)
+      if (deezer.albumDetails?.[id]) return deezer.albumDetails[id]
       if (id !== '22') return null
       return { album: dzAlbum(22, 'Gülümse', 'Sezen Aksu', isoDaysAgo(20), { trackCount: 2 }), tracks: [dzTrack(70, 'Hadi Bakalım', 'Sezen Aksu'), dzTrack(71, 'Yeni Parça', 'Sezen Aksu')] }
     },
@@ -316,6 +319,57 @@ test('online detail pages: album, playlist, artist (discography completion)', as
   assert.equal(r.body.missingAlbums, 2)
   assert.ok(r.body.artist.library?.artistId)
   assert.equal((await call('GET', `/online/artist?name=${encodeURIComponent('Kimse Bilmez')}`, { token: admin })).status, 404)
+})
+
+test('artist page matches owned albums although Deezer lists them without their artist', async (t) => {
+  const { call, admin, fake } = await setup(t)
+  fake.sources.deezer.albumsWithoutArtist = true
+  const r = await call('GET', `/online/artist?name=${encodeURIComponent('Sezen Aksu')}`, { token: admin })
+  assert.equal(r.status, 200)
+  const owned = r.body.albums.find((a) => a.title === 'Gülümse')
+  assert.ok(owned.library?.albumId, 'the owned album is recognised')
+  assert.equal(owned.artist, 'Sezen Aksu', 'the artist is filled in')
+  assert.equal(r.body.missingAlbums, 2, 'only the albums the library lacks count as missing')
+  // The album list has no song counts: an owned album is checked song by
+  // song, like its own page ("Yeni Parça" is not in the library).
+  assert.equal(owned.library.complete, false, 'one of its two songs is missing')
+  assert.equal(owned.library.ownedTracks, 1)
+  assert.equal(owned.trackCount, 2)
+})
+
+test('a duet single of another artist counts as owned on the featured artist\'s page', async (t) => {
+  const { call, admin, service, fake } = await setup(t)
+  const lib = service.context.libraries.list().find((l) => l.isDefault).path
+  await writeTrack(path.join(lib, 'Ramiz', 'Peki Madem', '01.mp3'), { title: 'Peki Madem', artist: 'Ramiz, Sezen Aksu', albumartist: 'Ramiz', album: 'Peki Madem', trackNumber: '1' })
+  await service.context.scanner.requestScan('all')
+  fake.sources.deezer.albumsWithoutArtist = true
+  fake.sources.deezer.extraAlbums = [dzAlbum(30, 'Peki Madem', 'Ramiz', isoDaysAgo(40), { recordType: 'single', trackCount: 1 }), dzAlbum(31, 'Başka Tekli', 'Ramiz', isoDaysAgo(50), { recordType: 'single', trackCount: 1 })]
+  const r = await call('GET', `/online/artist?name=${encodeURIComponent('Sezen Aksu')}`, { token: admin })
+  const single = r.body.singles.find((a) => a.title === 'Peki Madem')
+  assert.ok(single.library?.albumId, 'found through the song credits')
+  assert.equal(single.library.complete, true)
+  assert.equal(r.body.singles.find((a) => a.title === 'Başka Tekli').library, null)
+})
+
+test('downloading a store album leaves out the songs the library has', async (t) => {
+  const core = {
+    inspect: async (url) => ({ provider: 'deezer', url, isPlaylist: true }),
+    createAndEnqueue: () => new Promise(() => {}),
+    getJob: async () => null,
+    cancel: async () => {},
+    cleanupJob: async () => false
+  }
+  const { call, admin, service } = await setup(t, { core })
+  const album = { kind: 'album', provider: 'deezer', url: 'https://www.deezer.com/album/22', title: 'Gülümse', artist: 'Sezen Aksu', trackCount: 2 }
+  const r = await call('POST', '/downloads', { token: admin, body: { item: album } })
+  assert.equal(r.status, 202)
+  const row = service.context.db.prepare('SELECT only_tracks, expected_tracks FROM downloads WHERE id = ?').get(r.body.id)
+  assert.deepEqual(JSON.parse(row.only_tracks).map((song) => song.title), ['Yeni Parça'], 'only the missing song')
+  assert.equal(row.expected_tracks, 1)
+  // force: the whole album, as asked.
+  await call('POST', `/downloads/${r.body.id}/cancel`, { token: admin })
+  const forced = await call('POST', '/downloads', { token: admin, body: { item: album, force: true } })
+  assert.equal(service.context.db.prepare('SELECT only_tracks FROM downloads WHERE id = ?').get(forced.body.id).only_tracks, null)
 })
 
 test('Deezer artist lookup picks the most-followed exact name match', async () => {
@@ -897,4 +951,34 @@ test('all of an artist\'s songs online: one per song, owned ones marked', async 
   const duo = await call('GET', `/online/artist/tracks?name=${encodeURIComponent('Sezen Aksu, Tarkan')}`, { token: admin })
   assert.equal(duo.status, 200)
   assert.equal((await call('GET', '/online/artist/tracks?name=Kimse', { token: admin })).status, 404)
+})
+
+test('complete the discography: missing releases with their songs, singles pointing at album twins', async (t) => {
+  const { call, admin, fake } = await setup(t)
+  // Single 23 "Tek" has "Yeni Parça" too (album 22 has it, same length).
+  fake.sources.deezer.albumDetails = {
+    23: { album: dzAlbum(23, 'Tek', 'Sezen Aksu', isoDaysAgo(5), { recordType: 'single', trackCount: 2 }), tracks: [dzTrack(90, 'Yeni Parça', 'Sezen Aksu'), dzTrack(91, 'B Yüzü', 'Sezen Aksu')] }
+  }
+  const r = await call('GET', `/online/artist/gaps?name=${encodeURIComponent('Sezen Aksu')}`, { token: admin })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.artist.title, 'Sezen Aksu')
+  const byTitle = Object.fromEntries(r.body.releases.map((rel) => [rel.title, rel]))
+  // Album 20/21 have no songs online here; only releases lacking songs are listed.
+  assert.deepEqual(Object.keys(byTitle).sort(), ['Gülümse', 'Tek'])
+  const album = byTitle['Gülümse']
+  assert.equal(album.recordType, 'album')
+  assert.equal(album.trackCount, 2)
+  assert.equal(album.missing, 1)
+  assert.ok(album.tracks.find((tr) => tr.title === 'Hadi Bakalım').library?.trackId, 'owned song is marked')
+  assert.ok(album.tracks.every((tr) => tr.album === 'Gülümse'))
+  const single = byTitle['Tek']
+  assert.equal(single.recordType, 'single')
+  assert.equal(single.tracks.find((tr) => tr.title === 'Yeni Parça').sameAs, 'https://www.deezer.com/track/71')
+  assert.equal(single.tracks.find((tr) => tr.title === 'B Yüzü').sameAs, undefined)
+  // Popular songs that no listed release has and the library lacks.
+  const popular = r.body.popular.map((tr) => tr.title)
+  assert.ok(popular.includes('Firuze'))
+  assert.ok(!popular.includes('Hadi Bakalım'))
+  assert.equal(r.body.missingTracks, 3 + r.body.popular.length)
+  assert.equal((await call('GET', '/online/artist/gaps?name=Kimse', { token: admin })).status, 404)
 })

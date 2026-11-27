@@ -48,11 +48,17 @@ for (const format of formats) {
     assert.match(desktop, /^Exec=[^\n]*\/opt\/Gharmonize\/gharmonize(?:\s|$)/m);
     assert.match(desktop, /^StartupWMClass=gharmonize$/m);
     assert.doesNotMatch(desktop, /\.AppImage|npm start|node app\.js/);
+    assert.match(desktop, /^Icon=gharmonize$/m);
+    // Icon themes only know the standard sizes (no 1024x1024): every one the
+    // set has must be installed, or docks and search show a generic icon.
+    for (const size of ['16x16', '32x32', '48x48', '64x64', '128x128', '256x256', '512x512']) {
+      assert.ok(fs.existsSync(path.join(root, 'usr', 'share', 'icons', 'hicolor', size, 'apps', 'gharmonize.png')), `${files[0]} is missing the ${size} app icon`);
+    }
     const archive = path.join(appDir, 'resources', 'app.asar');
     const entries = listPackage(archive).map(entry => entry.replaceAll('\\', '/'));
     for (const required of [
       '/bootstrap.mjs', '/app.js', '/electron/main.mjs', '/electron/desktopServer.mjs', '/electron/trayIcon.mjs',
-      '/electron/assets/gharmonize-tray-dark.png', '/electron/assets/gharmonize-tray-light.png'
+      '/electron/assets/gharmonize-tray-color.png', '/electron/assets/gharmonize-tray-dark.png', '/electron/assets/gharmonize-tray-light.png'
     ]) assert.ok(entries.includes(required), `${files[0]} is missing ${required}`);
     const pkg = JSON.parse(extractFile(archive, 'package.json'));
     assert.equal(pkg.main, 'electron/main.mjs');

@@ -31,7 +31,7 @@ When administrator-gated application access is enabled, Gharmonize enforces the 
 
 ## Release verification
 
-**Windows builds for v2.1.0 do not carry a trusted Authenticode signature.**
+**Windows builds for v2.2.0 do not carry a trusted Authenticode signature.**
 The Setup installer, Portable EXE, and application executable in the Portable
 Folder ZIP may trigger unknown-publisher or SmartScreen warnings. Test
 certificates are not used for public releases. Do not disable Windows security

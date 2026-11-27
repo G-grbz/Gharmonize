@@ -39,6 +39,34 @@ function sample(bins, i, n) {
   return max
 }
 
+// Bar heights for the "wave" look. Mastered music sits between ~60 and 90 %
+// almost everywhere, so drawn as is every bar looks the same. The bars are
+// stretched between the quiet end and the loudest bar and each one is
+// compared with its neighbours, so verses, hits and drops stand out.
+export function waveBars(bins, n) {
+  const bars = new Array(n)
+  for (let i = 0; i < n; i += 1) {
+    const from = Math.floor((i * bins.length) / n)
+    const to = Math.max(from + 1, Math.floor(((i + 1) * bins.length) / n))
+    let sum = 0
+    let count = 0
+    for (let j = from; j < to && j < bins.length; j += 1) { sum += bins[j]; count += 1 }
+    bars[i] = count ? sum / count : 0
+  }
+  const sorted = [...bars].sort((a, b) => a - b)
+  const lo = sorted[Math.floor(0.08 * (n - 1))]
+  const span = Math.max(1e-6, sorted[n - 1] - lo)
+  return bars.map((v, i) => {
+    let near = 0
+    let count = 0
+    for (let k = -2; k <= 2; k += 1) if (k && i + k >= 0 && i + k < n) { near += bars[i + k]; count += 1 }
+    const level = Math.max(0, Math.min(1, (v - lo) / span))
+    const local = count ? Math.max(-1, Math.min(1, (v - near / count) / (span * 0.35))) : 0
+    const y = Math.max(0, Math.min(1, level * 0.7 + local * 0.3 + 0.1))
+    return 0.1 + 0.9 * Math.pow(y, 1.4)
+  })
+}
+
 function fitCanvas(canvas, w, hgt) {
   const dpr = Math.min(2, window.devicePixelRatio || 1)
   const cw = Math.round(w * dpr)
@@ -124,17 +152,20 @@ export function seekBar({ big = false, label, onInput, onCommit }) {
       ctx.save(); ctx.clip(); ctx.fillStyle = played; ctx.fillRect(0, 0, w * f, hgt); ctx.restore()
       return
     }
-    const barW = big ? 3 : 2
-    const gap = big ? 2 : 1.5
+    const barW = big ? 2.5 : 2
+    const gap = big ? 2.5 : 1.5
     const n = Math.max(8, Math.floor((w + gap) / (barW + gap)))
     const step = (w - barW) / Math.max(1, n - 1)
+    const heights = bins ? waveBars(bins, n) : null
     for (let i = 0; i < n; i += 1) {
-      const v = bins ? sample(bins, i, n) : 0.18
+      const v = heights ? heights[i] : 0.18
       const bh = Math.max(2, v * hgt)
       const x = i * step
       const at = (x + barW / 2) / w
       ctx.fillStyle = at <= f ? played : at <= buffered ? buf : rest
-      ctx.fillRect(x, (hgt - bh) / 2, barW, bh)
+      ctx.beginPath()
+      ctx.roundRect(x, (hgt - bh) / 2, barW, bh, barW / 2)
+      ctx.fill()
     }
   }
 

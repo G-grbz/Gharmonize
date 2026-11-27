@@ -34,8 +34,12 @@ test('tray icon modes are allowlisted; missing and invalid preferences preserve 
   }
   const f = fixture();
   f.manager.setMode('../../outside');
-  assert.equal(f.manager.getImage(), '/fixture/icon.original');
-  assert.equal(f.loads.length, 0);
+  assert.equal(f.manager.mode, 'original');
+  f.manager.getImage();
+  assert.equal(f.loads.length, 1);
+  assert.equal(path.basename(f.loads[0]), 'gharmonize-tray-color.png');
+  const missing = fixture('linux', true);
+  assert.equal(missing.manager.getImage(), '/fixture/icon.original', 'the app icon remains the fallback');
 });
 
 test('automatic mode contrasts with the system theme and Windows follows taskbar rather than app colors', () => {
@@ -195,7 +199,7 @@ test('bundled tray assets and translated menus are included by the desktop packa
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
   assert.ok(pkg.build.files.includes('electron/**'));
   assert.ok(pkg.build.files.includes('public/**'));
-  for (const variant of ['dark', 'light']) {
+  for (const variant of ['color', 'dark', 'light']) {
     const png = fs.readFileSync(`electron/assets/gharmonize-tray-${variant}.png`);
     assert.equal(png.subarray(1, 4).toString(), 'PNG');
     assert.equal(png.readUInt32BE(16), 128);

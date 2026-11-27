@@ -5,7 +5,7 @@ import { app, bus, store } from './app.js'
 import { get, post, artworkUrl } from './api.js'
 import { h, append, t, icon, iconButton, setIcon, artwork, fmtTime, fmtRelative, clear, contextMenu, toast, toastError, plural } from './dom.js'
 import { itemArtwork } from './engine.js'
-import { heartButton, createPlaylistFlow, trackMenu, onlineMenu, trackInfo, markCurrent, providerName, primaryArtist, artistLinks, mixArt, mixTitle, mixDescription, averageColor, playCollection } from './components.js'
+import { heartButton, createPlaylistFlow, trackMenu, onlineMenu, trackInfo, markCurrent, providerName, primaryArtist, artistLinks, averageColor, playCollection } from './components.js'
 import { applyTheme, currentTheme } from './theme.js'
 import { saveButton } from './playlistSave.js'
 import { rememberQuery } from './searchHistory.js'
@@ -237,30 +237,6 @@ function buildSidebar() {
   const collapseBtn = iconButton('chevL', t('player.side.collapse'), () => setCollapsed(!app.prefs.sideCollapsed), { cls: 'side-collapse', size: 18 })
   requestAnimationFrame(() => document.getElementById('app')?.classList.toggle('side-collapsed', Boolean(app.prefs.sideCollapsed)))
 
-  // ---- "for you" mixes ----
-  const forYou = h('div', { class: 'side-sect side-sect--foryou', hidden: true })
-  const paintMixes = async () => {
-    try {
-      const { items } = await get('/mixes')
-      clear(forYou)
-      if (!items?.length) { forYou.hidden = true; return }
-      forYou.hidden = false
-      forYou.append(h('div', { class: 'side-section' },
-        h('span', { class: 'side-section__title', text: t('player.side.forYou') }),
-        h('a', { class: 'side-section__link', href: '#/stats', title: t('player.nav.stats') }, icon('chart', { size: 16 }))))
-      for (const mix of items.slice(0, 4)) {
-        forYou.append(h('a', { class: 'side-item side-item--mix', href: `#/mix/${encodeURIComponent(mix.id)}`, dataset: { route: `/mix/${mix.id}` }, title: mixTitle(mix) },
-          mixArt(mix, { size: 96, label: false }),
-          h('span', { class: 'side-item__text' },
-            h('span', { class: 'side-item__title', text: mixTitle(mix) }),
-            h('span', { class: 'side-item__sub', text: mixDescription(mix) }))))
-      }
-      highlightRoute()
-    } catch { forYou.hidden = true }
-  }
-
-  paintMixes()
-  bus.on('library:changed', paintMixes)
   return h('aside', { class: 'sidebar', id: 'sidebar' },
     h('div', { class: 'side-card side-card--all' },
       h('div', { class: 'brand-row' },
@@ -269,13 +245,144 @@ function buildSidebar() {
         navLink('/home', 'home', 'player.nav.home'),
         navLink('/search', 'search', 'player.nav.search'),
         navLink('/library', 'library', 'player.nav.library'),
-        navLink('/liked', 'heart', 'player.nav.liked'),
         navLink('/history', 'history', 'player.nav.history'),
         navLink('/downloads', 'download', 'player.nav.downloads', dlBadge),
-        navLink('/stats', 'chart', 'player.nav.stats'), adminLink),
-      h('button', { type: 'button', class: 'side-create btn btn--outline', title: t('player.playlist.create'), onclick: () => createPlaylistFlow().then((pl) => pl && app.nav(`/playlist/${pl.id}`)) },
-        icon('plus', { size: 20 }), h('span', { class: 'nav-link__label', text: t('player.playlist.create') }))),
-    forYou)
+        navLink('/stats', 'chart', 'player.nav.stats'), adminLink)),
+    buildSideLibrary())
+}
+
+// "Your library" in the sidebar: liked songs, playlists, followed artists
+// and saved albums, one tab at a time, with a filter and a sort. The list
+// that is playing shows the equalizer.
+const SIDE_TABS = ['playlists', 'artists', 'albums']
+
+function buildSideLibrary() {
+  let tab = SIDE_TABS.includes(app.prefs.sideTab) ? app.prefs.sideTab : 'playlists'
+  let sort = app.prefs.sideSort === 'alpha' ? 'alpha' : 'recent'
+  let filter = ''
+  let saved = null
+
+  const list = h('div', { class: 'side-playlists', role: 'list' })
+  const tabButtons = {}
+  const tabBar = h('div', { class: 'side-tabs', role: 'tablist' }, SIDE_TABS.map((key) => {
+    const btn = h('button', { type: 'button', class: ['side-tab', key === tab && 'is-active'], role: 'tab', text: t(`player.side.tab.${key}`) })
+    btn.addEventListener('click', () => {
+      tab = key
+      app.setPref('sideTab', key)
+      for (const [k, b] of Object.entries(tabButtons)) { b.classList.toggle('is-active', k === key); b.setAttribute('aria-selected', String(k === key)) }
+      paint()
+    })
+    btn.setAttribute('aria-selected', String(key === tab))
+    tabButtons[key] = btn
+    return btn
+  }))
+  const input = h('input', { class: 'side-filter__input', type: 'search', placeholder: t('player.side.filter'), 'aria-label': t('player.side.filter'), autocomplete: 'off', spellcheck: 'false' })
+  input.addEventListener('input', () => { filter = input.value.trim().toLocaleLowerCase(); paint() })
+  const sortLabel = h('span')
+  const sortBtn = h('button', { type: 'button', class: 'side-sort', title: t('player.side.sort') }, sortLabel)
+  const paintSort = () => { sortLabel.textContent = t(sort === 'alpha' ? 'player.side.sortAlpha' : 'player.side.sortRecent') }
+  sortBtn.addEventListener('click', () => { sort = sort === 'alpha' ? 'recent' : 'alpha'; app.setPref('sideSort', sort); paintSort(); paint() })
+  paintSort()
+
+  const playingRoute = () => app.player?.context?.route || ''
+  const row = ({ route, art, title, sub, play }) => {
+    const el = h('a', { class: 'side-item', href: `#${route}`, role: 'listitem', title, dataset: { route } },
+      art,
+      h('span', { class: 'side-item__text' },
+        h('span', { class: 'side-item__title', text: title }),
+        sub ? h('span', { class: 'side-item__sub', text: sub }) : null),
+      h('span', { class: 'tl-eq side-item__eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
+      play ? iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); e.stopPropagation(); play() }, { cls: 'side-item__play', size: 16 }) : null)
+    el.classList.toggle('is-playing-list', route === playingRoute())
+    return el
+  }
+  const matches = (...texts) => !filter || texts.some((x) => String(x || '').toLocaleLowerCase().includes(filter))
+  const byName = (key) => (a, b) => String(a[key] || '').localeCompare(String(b[key] || ''), undefined, { sensitivity: 'base' })
+
+  function paint() {
+    clear(list)
+    const rows = []
+    if (tab === 'playlists') {
+      if (matches(t('player.nav.liked'))) {
+        rows.push(row({
+          route: '/liked',
+          art: h('span', { class: 'side-item__art side-item__art--liked' }, icon('heartFill', { size: 18 })),
+          title: t('player.nav.liked'),
+          sub: saved ? plural(saved.likedCount, 'player.count.track', 'player.count.tracks') : '',
+          play: saved?.likedCount ? () => playCollection('liked') : null
+        }))
+      }
+      let items = (app.playlists || []).filter((pl) => matches(pl.name, pl.owner?.displayName))
+      if (sort === 'alpha') items = [...items].sort(byName('name'))
+      for (const pl of items) {
+        rows.push(row({
+          route: `/playlist/${pl.id}`,
+          art: artwork(pl.trackCount ? artworkUrl(pl.artwork, 128) : null, { cls: 'side-item__art', placeholder: 'list', seed: pl.name }),
+          title: pl.name,
+          sub: [pl.editable ? t('player.kind.playlist') : pl.owner?.displayName, plural(pl.trackCount, 'player.count.track', 'player.count.tracks')].filter(Boolean).join(' · '),
+          play: pl.trackCount ? () => playCollection('playlist', pl.id) : null
+        }))
+      }
+    } else if (tab === 'artists') {
+      let items = (saved?.artists || []).filter((a) => matches(a.name))
+      if (sort === 'alpha') items = [...items].sort(byName('name'))
+      for (const a of items) {
+        rows.push(row({
+          route: `/artist/${a.id}`,
+          art: artwork(artworkUrl(a.artwork, 128), { round: true, cls: 'side-item__art', placeholder: 'user', seed: a.name }),
+          title: a.name,
+          sub: a.trackCount ? plural(a.trackCount, 'player.count.track', 'player.count.tracks') : t('player.side.noSongsYet'),
+          play: a.trackCount ? () => playCollection('artist', a.id) : null
+        }))
+      }
+    } else {
+      let items = (saved?.albums || []).filter((al) => matches(al.title, al.artist))
+      if (sort === 'alpha') items = [...items].sort(byName('title'))
+      for (const al of items) {
+        rows.push(row({
+          route: `/album/${al.id}`,
+          art: artwork(artworkUrl(al.artwork, 128), { cls: 'side-item__art', placeholder: 'album', seed: al.title }),
+          title: al.title,
+          sub: [al.artist, al.year].filter(Boolean).join(' · '),
+          play: () => playCollection('album', al.id)
+        }))
+      }
+    }
+    if (rows.length) list.append(...rows)
+    else if (saved || tab === 'playlists') list.append(h('p', { class: 'side-empty', text: t(filter ? 'player.side.noMatch' : `player.side.empty.${tab}`) }))
+    highlightRoute()
+  }
+
+  let loading = null
+  const load = () => {
+    loading ||= get('/library/saved')
+      .then((res) => { saved = res })
+      .catch(() => {})
+      .finally(() => { loading = null; paint() })
+    return loading
+  }
+  let favTimer = null
+  bus.on('favorite', () => { clearTimeout(favTimer); favTimer = setTimeout(load, 400) })
+  bus.on('library:changed', load)
+  bus.on('playlists', paint)
+  bus.on('player:track', () => {
+    const route = playingRoute()
+    list.querySelectorAll('.side-item').forEach((el) => el.classList.toggle('is-playing-list', el.dataset.route === route))
+  })
+  paint()
+  load()
+
+  const create = iconButton('plus', t('player.playlist.create'), () => createPlaylistFlow().then((pl) => pl && app.nav(`/playlist/${pl.id}`)), { cls: 'side-create-btn', size: 20 })
+  return h('div', { class: 'side-card side-card--collection' },
+    h('div', { class: 'side-sect side-sect--library' },
+      h('div', { class: 'side-head' },
+        h('a', { class: 'side-head__title', href: '#/library', dataset: { route: '/library' } }, icon('library', { size: 22 }), h('span', { text: t('player.side.yourLibrary') })),
+        h('div', { class: 'side-head__tools' }, create)),
+      tabBar,
+      h('div', { class: 'side-tools' },
+        h('label', { class: 'side-filter' }, icon('search', { size: 16 }), input),
+        sortBtn),
+      list))
 }
 
 export function highlightRoute() {
@@ -770,7 +877,7 @@ function buildFullPlayer() {
         iconButton('next', t('player.controls.next'), () => p.next(), { cls: 'ctl ctl--round ctl--md', size: 24 })),
       volumeRow,
       hint,
-      h('div', { class: 'np-full__extra' }, shuffle, lyricsToggle, repeat),
+      h('div', { class: 'np-full__extra' }, lyricsWave(), shuffle, lyricsToggle, repeat),
       sheet))
   document.body.append(root)
   stage.append(artWrap)
@@ -1008,3 +1115,23 @@ export function showShortcuts() {
 }
 
 export { QUALITY_OPTIONS, post }
+
+// The wave under the full player's controls: it starts at the card's bottom
+// corners (shuffle and repeat sit above them) and rises to a crest in the
+// middle holding the Lyrics button. Same curve as the Android player.
+const WAVE_TOP = 'M0 84C100 84 120 22 200 22S300 84 400 84'
+function lyricsWave() {
+  const ns = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(ns, 'svg')
+  svg.setAttribute('viewBox', '0 0 400 84')
+  svg.setAttribute('preserveAspectRatio', 'none')
+  svg.setAttribute('focusable', 'false')
+  const fill = document.createElementNS(ns, 'path')
+  fill.setAttribute('class', 'np-wave__fill')
+  fill.setAttribute('d', `${WAVE_TOP}Z`)
+  const line = document.createElementNS(ns, 'path')
+  line.setAttribute('class', 'np-wave__line')
+  line.setAttribute('d', WAVE_TOP)
+  svg.append(fill, line)
+  return h('span', { class: 'np-wave', 'aria-hidden': 'true' }, svg)
+}

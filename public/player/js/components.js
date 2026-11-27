@@ -246,15 +246,22 @@ export function artistLinks(item, { stop = false } = {}) {
 
 // ---- cards ----------------------------------------------------------------------------
 
-function card({ art, title, subtitle, onOpen, onPlay, onMenu, badge = null, cls = '', href = null, dataset = null }) {
+// Cover layout, the same on every card: status badges sit in the top
+// corners like tabs of the cover (left: in library / partly owned / preview,
+// right: Mix), actions in the bottom-left (download, save to playlist) and
+// play in the bottom-right.
+function card({ art, title, subtitle, onOpen, onPlay, onMenu, start = null, end = null, actions = null, cls = '', href = null, dataset = null }) {
   const el = h(href ? 'a' : 'div', { class: `card ${cls}`.trim(), tabindex: href ? null : '0', role: href ? null : 'button', href, dataset })
   const artWrap = h('div', { class: 'card__art' }, art)
+  if (start) artWrap.append(start)
+  if (end) artWrap.append(end)
+  const acts = (actions || []).filter(Boolean)
+  if (acts.length) artWrap.append(h('div', { class: 'card__actions' }, acts))
   if (onPlay) {
     const play = h('button', { type: 'button', class: 'play-fab card__play', title: t('player.common.play'), 'aria-label': t('player.common.play') }, icon('play', { size: 22 }))
     play.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onPlay() })
     artWrap.append(play)
   }
-  if (badge) artWrap.append(badge)
   append(el, [artWrap, h('div', { class: 'card__title', text: title, title }), subtitle ? h('div', { class: 'card__sub', text: subtitle, title: subtitle }) : null])
   if (onOpen && !href) {
     el.addEventListener('click', onOpen)
@@ -271,7 +278,7 @@ export function albumCard(album) {
     subtitle: [album.year, album.artist].filter(Boolean).join(' · '),
     href: `#/album/${album.id}`,
     onPlay: () => playCollection('album', album.id),
-    badge: h('div', { class: 'card__badges card__badges--end' }, saveButton(() => ({ name: album.title, getTrackIds: async () => (await get(`/albums/${album.id}`)).tracks.map((x) => x.id), count: album.trackCount }))),
+    actions: [saveButton(() => ({ name: album.title, getTrackIds: async () => (await get(`/albums/${album.id}`)).tracks.map((x) => x.id), count: album.trackCount }))],
     onMenu: (e) => contextMenu([
       { label: t('player.common.play'), icon: 'play', run: () => playCollection('album', album.id) },
       { label: t('player.menu.playNext'), icon: 'playNext', run: () => queueCollection('album', album.id, 'next') },
@@ -367,7 +374,7 @@ export function mixCard(mix) {
     href: `#/mix/${encodeURIComponent(mix.id)}`,
     cls: 'card--mix',
     onPlay: () => playCollection('mix', mix.id),
-    badge: h('div', { class: 'card__badges card__badges--end' }, saveButton(() => ({ name: mixTitle(mix), getTrackIds: async () => (await get(`/mixes/${encodeURIComponent(mix.id)}`)).tracks.map((x) => x.id), count: mix.trackCount })))
+    actions: [saveButton(() => ({ name: mixTitle(mix), getTrackIds: async () => (await get(`/mixes/${encodeURIComponent(mix.id)}`)).tracks.map((x) => x.id), count: mix.trackCount }))]
   })
 }
 
@@ -397,15 +404,24 @@ export function onlineCard(item, list = [item], index = 0, context = null) {
   else if (isArtist) open = () => app.nav(owned?.artistId ? `/artist/${owned.artistId}` : `/online/artist?${item.provider === 'deezer' ? `id=${item.id}` : `name=${encodeURIComponent(item.title)}`}`)
   else open = () => playOnline(list, index, context)
   const playable = item.kind === 'track' && (owned?.trackId || item.previewUrl)
-  const badges = h('div', { class: 'card__badges' })
-  if (owned && (item.kind !== 'album' || owned.complete)) badges.append(h('span', { class: 'badge badge--owned', title: t('player.downloads.inLibrary') }, icon('check', { size: 14 })))
-  else if (owned && item.kind === 'album') badges.append(h('span', { class: 'badge badge--partial', title: t('player.online.partialAlbum') }, icon('check', { size: 14 })))
-  if (!owned && item.kind === 'track' && item.previewUrl) badges.append(h('span', { class: 'badge badge--preview', text: t('player.badge.preview') }))
-  if (['album', 'playlist'].includes(item.kind) && (owned || app.canDownload)) {
-    badges.append(saveButton(() => ({ name: item.title, onlineItem: item, count: item.trackCount ?? null })))
+  const corner = (side, kind, props, ...children) => h('span', { class: `card__corner card__corner--${side} card__corner--${kind}`, ...props }, ...children)
+  let start = null
+  if (owned && (item.kind !== 'album' || owned.complete)) start = corner('start', 'owned', { title: t('player.downloads.inLibrary') }, icon('check', { size: 14 }))
+  else if (owned && item.kind === 'album') start = corner('start', 'partial', { title: t('player.online.partialAlbum') }, icon('check', { size: 14 }))
+  else if (item.kind === 'track' && item.previewUrl) start = corner('start', 'preview', { text: t('player.badge.preview') })
+  // The Mix tab carries the source dot, so nothing else sits in that corner.
+  const end = item.mix
+    ? corner('end', 'mix', { title: providerName(item.provider) }, h('span', { class: `provider-dot provider-dot--${item.provider}` }), t('player.badge.mix'))
+    : null
+  const actions = []
+  // A partly owned album can still download its missing songs.
+  const partial = owned && item.kind === 'album' && !owned.complete
+  if ((!owned || partial) && app.canDownload && item.downloadable !== false && ['track', 'album', 'playlist'].includes(item.kind)) {
+    actions.push(downloadButton(item, partial ? { idleLabel: t('player.online.downloadMissing') } : {}))
   }
-  if (item.mix) badges.append(h('span', { class: 'badge badge--mix', text: t('player.badge.mix') }))
-  if (!owned && app.canDownload && item.downloadable !== false && ['track', 'album', 'playlist'].includes(item.kind)) badges.append(downloadButton(item))
+  if (['album', 'playlist'].includes(item.kind) && (owned || app.canDownload)) {
+    actions.push(saveButton(() => ({ name: item.title, onlineItem: item, count: item.trackCount ?? null })))
+  }
   const el = card({
     art: artwork(item.artworkUrl, { alt: item.title, round: isArtist, placeholder: isArtist ? 'user' : item.kind === 'album' ? 'album' : 'music', seed: item.title }),
     title: item.title,
@@ -414,10 +430,12 @@ export function onlineCard(item, list = [item], index = 0, context = null) {
     onOpen: open,
     onPlay: playable ? () => playOnline(list, index, context) : null,
     onMenu: (e) => onlineMenu(item, e),
-    badge: badges,
+    start,
+    end,
+    actions,
     dataset: owned?.trackId ? { trackId: String(owned.trackId) } : null
   })
-  el.append(h('span', { class: `provider-dot provider-dot--${item.provider}`, title: providerName(item.provider) }))
+  if (!end) el.append(h('span', { class: `provider-dot provider-dot--${item.provider}`, title: providerName(item.provider) }))
   return el
 }
 
@@ -585,7 +603,10 @@ export function selectButton(getList) {
   return iconButton('select', t('player.select.start'), () => getList()?.selection?.toggle(), { cls: 'icon-btn--lg', size: 24 })
 }
 
-function selectionController(list, tracks, { context, playlist, onChanged }) {
+// `actions(items, act, stop)` returns the bar buttons for the picked rows
+// (library songs by default); `quick` adds extra "select …" links as
+// [{ label, test(track) }].
+function selectionController(list, tracks, { context, playlist, onChanged, actions = null, quick = null }) {
   const picked = new Set()
   let active = false
   let anchor = null
@@ -666,12 +687,12 @@ function selectionController(list, tracks, { context, playlist, onChanged }) {
     }
     const n = picked.size
     const items = chosen()
-    const ids = items.map((tr) => tr.id)
-    const act = (iconName, label, run, { danger = false } = {}) => {
-      const b = h('button', { type: 'button', class: ['select-bar__btn', danger && 'is-danger'], disabled: !n, title: label }, icon(iconName, { size: 18 }), h('span', { text: label }))
+    const act = (iconName, label, run, { danger = false, disabled = false } = {}) => {
+      const b = h('button', { type: 'button', class: ['select-bar__btn', danger && 'is-danger'], disabled: !n || disabled, title: label }, icon(iconName, { size: 18 }), h('span', { text: label }))
       b.addEventListener('click', run)
       return b
     }
+    const pickWhere = (test) => { picked.clear(); tracks.forEach((tr, i) => { if (test(tr)) picked.add(i) }); paint() }
     bar.replaceChildren(
       iconButton('close', t('player.common.close'), stop, { cls: 'select-bar__close', size: 18 }),
       h('b', { class: 'select-bar__count', text: n ? t('player.select.count', { n }) : t('player.select.hint') }),
@@ -679,7 +700,15 @@ function selectionController(list, tracks, { context, playlist, onChanged }) {
         if (picked.size === tracks.length) picked.clear(); else tracks.forEach((_, i) => picked.add(i))
         paint()
       } }),
+      ...(quick || []).map(({ label, test }) => h('button', { type: 'button', class: 'link-btn select-bar__all', text: label, onclick: () => pickWhere(test) })),
       h('span', { class: 'select-bar__spacer' }),
+      ...(actions || libraryActions)(items, act, stop).filter(Boolean))
+  }
+
+  function libraryActions(items, act) {
+    const n = items.length
+    const ids = items.map((tr) => tr.id)
+    return [
       act('play', t('player.common.play'), () => { playTracks(items, 0, context); stop() }),
       act('queue', t('player.menu.addToQueue'), () => { app.player.addToQueue(items.map((tr) => fromTrack(tr))); toast(t('player.select.queued', { n })); stop() }),
       act('playlistAdd', t('player.save.short'), async () => {
@@ -702,7 +731,8 @@ function selectionController(list, tracks, { context, playlist, onChanged }) {
           stop()
           onChanged?.()
         } catch (error) { toastError(error) }
-      }, { danger: true }) : '')
+      }, { danger: true }) : null
+    ]
   }
 
   const api = { get active() { return active }, start, stop, toggle: (i) => (i === undefined ? (active ? stop() : start()) : toggle(i)), handleClick, bindLongPress }
@@ -710,14 +740,80 @@ function selectionController(list, tracks, { context, playlist, onChanged }) {
   return api
 }
 
+// A missing song that can be requested now (not already on its way).
+function downloadable(item) {
+  if (!app.canDownload || !item?.url || adoptDownload(item)) return false
+  const state = app.downloads.stateFor(item)
+  return !state || state.status === 'failed' || state.status === 'canceled'
+}
+
+// Selection bar of online rows: songs in the library play, queue and get
+// liked from there; missing ones preview, download (or go into a playlist,
+// downloaded into it) and their links can be copied.
+function onlineSelectionActions(context) {
+  return (items, act, stop) => {
+    const owned = items.filter((it) => adoptDownload(it))
+    const ownedIds = owned.map((it) => it.library.trackId)
+    const playable = items.filter((it) => it.library?.trackId || it.previewUrl)
+    const missing = items.filter((it) => !it.library?.trackId)
+    const wanted = missing.filter(downloadable)
+    const fetchable = app.canDownload ? missing.filter((it) => it.url) : []
+    const links = [...new Set(items.map((it) => it.url || it.sourceUrl).filter(Boolean))]
+    return [
+      act('play', t('player.common.play'), () => { playOnline(playable, 0, context); stop() }, { disabled: !playable.length }),
+      act('queue', t('player.menu.addToQueue'), () => {
+        app.player.addToQueue(owned.map((it) => fromOnline(it)).filter(Boolean))
+        toast(t('player.select.queued', { n: owned.length }))
+        stop()
+      }, { disabled: !owned.length }),
+      app.canDownload && act('download', wanted.length ? t('player.select.download', { n: wanted.length }) : t('player.downloads.download'), async () => {
+        if (await app.downloads.requestMany(wanted, { title: context?.label || null })) stop()
+      }, { disabled: !wanted.length }),
+      act('playlistAdd', t('player.save.short'), async () => {
+        const name = context?.label ? t('player.select.suggestName', { name: context.label }) : ''
+        // Missing songs are downloaded one by one into the playlist.
+        const pl = fetchable.length
+          ? await saveToPlaylistDialog({ name, trackIds: ownedIds, onlineItem: { kind: 'playlist', downloadable: false, title: name }, onlineTracks: items, count: items.length })
+          : await saveToPlaylistDialog({ name, trackIds: ownedIds, count: ownedIds.length })
+        if (pl) stop()
+      }, { disabled: !ownedIds.length && !fetchable.length }),
+      act('heart', t('player.favorite.add'), async () => {
+        try {
+          await Promise.all(ownedIds.map((id) => put(`/favorites/track/${id}`)))
+          ownedIds.forEach((id) => bus.emit('favorite', { type: 'track', id, favorite: true }))
+          toast(t('player.select.liked', { n: ownedIds.length }), { type: 'success' })
+          stop()
+        } catch (error) { toastError(error) }
+      }, { disabled: !ownedIds.length }),
+      act('link', t('player.select.copyLinks'), async () => {
+        try {
+          await navigator.clipboard.writeText(links.join('\n'))
+          toast(t('player.select.copied', { n: links.length }), { type: 'success' })
+          stop()
+        } catch { toast(t('player.select.copyFailed'), { type: 'error' }) }
+      }, { disabled: !links.length })
+    ]
+  }
+}
+
 // Online track table with library / preview / download state per row.
 // `action(item)` adds an own control per row (e.g. "add to playlist").
-export function onlineTrackList(items, { context = null, showAlbum = true, numbered = true, action = null } = {}) {
+// Rows can be multi-selected like library rows (Ctrl/Shift click, long press).
+export function onlineTrackList(items, { context = null, showAlbum = true, numbered = true, action = null, selectable = true } = {}) {
   const list = h('div', { class: ['tracklist', 'tracklist--online', !showAlbum && 'tracklist--noalbum'], role: 'list' })
+  const sel = selectable
+    ? selectionController(list, items, {
+        context,
+        actions: onlineSelectionActions(context),
+        quick: items.some((it) => !adoptDownload(it)) && items.some((it) => adoptDownload(it))
+          ? [{ label: t('player.select.missing'), test: (it) => !adoptDownload(it) }]
+          : null
+      })
+    : null
   items.forEach((item, index) => {
     const owned = adoptDownload(item)
     const duration = item.library?.track?.duration || item.duration
-    const row = h('div', { class: ['tl-row', !owned && 'is-missing'], role: 'listitem', tabindex: '0', dataset: owned ? { trackId: String(owned) } : null })
+    const row = h('div', { class: ['tl-row', !owned && 'is-missing'], role: 'listitem', tabindex: '0', dataset: owned ? { trackId: String(owned), index: String(index) } : { index: String(index) } })
     const play = () => playOnline(items, index, context)
     // A download can finish while the list is open: decide on each tap.
     const canPlay = owned || item.previewUrl || (app.canDownload && item.kind === 'track')
@@ -727,6 +823,7 @@ export function onlineTrackList(items, { context = null, showAlbum = true, numbe
         : app.canDownload ? downloadButton(item, { onDone: () => play() }) : item.previewUrl ? h('span', { class: 'badge badge--preview', text: t('player.badge.preview') }) : null
     row.append(
       h('span', { class: 'tl-num' },
+        sel ? h('span', { class: 'tl-check', role: 'checkbox', 'aria-checked': 'false', 'aria-label': t('player.select.one') }, icon('check', { size: 14 })) : null,
         h('span', { class: 'tl-num__n', text: String(numbered ? index + 1 : '') }),
         h('span', { class: 'tl-eq', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
         canPlay ? iconButton('play', owned ? t('player.common.play') : t('player.menu.preview'), play, { cls: 'tl-num__play', size: 16 }) : null),
@@ -739,12 +836,18 @@ export function onlineTrackList(items, { context = null, showAlbum = true, numbe
       h('span', { class: 'tl-dur', text: duration ? fmtTime(Math.round(duration)) : '' }),
       h('span', { class: 'tl-actions' }, action ? action(item, row) : null, status, iconButton('more', t('player.common.more'), (e) => onlineMenu(item, e.currentTarget), { cls: 'tl-more', size: 18 }))
     )
-    if (canPlay) {
-      row.addEventListener('dblclick', play)
-      row.addEventListener('click', (e) => { if (coarse() && !e.target.closest('button, a')) play() })
-      row.addEventListener('keydown', (e) => { if (e.key === 'Enter') play() })
-    }
-    row.addEventListener('contextmenu', (e) => { e.preventDefault(); onlineMenu(item, e) })
+    row.addEventListener('click', (e) => {
+      if (sel?.handleClick(e, index)) return
+      if (canPlay && coarse() && !e.target.closest('button, a, input')) play()
+    })
+    row.addEventListener('dblclick', () => { if (canPlay && !sel?.active) play() })
+    row.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return
+      if (sel?.active) sel.toggle(index)
+      else if (canPlay) play()
+    })
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); if (sel?.active) return; onlineMenu(item, e) })
+    sel?.bindLongPress(row, index)
     list.append(row)
   })
   markCurrent(list)

@@ -3,7 +3,8 @@ import path from "path";
 import { execFileSafe } from "./safeProcess.js";
 import { terminateProcess } from "./processTermination.js";
 import { getBinaryRuntimeEnv } from "./binaries.js";
-import { resolveYtDlp, withYT403Workarounds, hasCookieArgs, stripCookieArgs, searchYouTubeMusicSongs } from "./yt.js";
+import { resolveYtDlp, withYT403Workarounds, searchYouTubeMusicSongs, hasYouTubeAccountCookies } from "./yt.js";
+import { youtubeGuard, needsYouTubeAccount, YouTubeBlockedError } from "./youtubeGuard.js";
 import { registerJobProcess } from "./store.js";
 import crypto from "crypto";
 import { getUserAgent, getYouTubeHeaders, addGeoArgs, getExtraArgs, FLAGS } from "./config.js";
@@ -274,7 +275,7 @@ function getYtDlpSearchArgsLite() {
 }
 
 // Runs YouTube metadata json lite for core application logic.
-async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEARCH_TIMEOUT_MS) {
+async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEARCH_TIMEOUT_MS, options = {}) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) throw new Error("yt-dlp not found");
 
@@ -283,6 +284,13 @@ async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEA
     { stripCookies: true }
   );
 
+  return youtubeGuard.withSlot("lookup", async () => {
+    await youtubeGuard.before("search", { wait: true, onWait: options.onWait });
+    return runYtJsonLiteOnce(YTDLP_BIN, args, label, timeoutMs);
+  });
+}
+
+function runYtJsonLiteOnce(YTDLP_BIN, args, label, timeoutMs) {
   return new Promise((resolve, reject) => {
     execFileSafe(
       YTDLP_BIN,
@@ -290,6 +298,7 @@ async function runYtJsonLite(urls, label = "ytm-search-lite", timeoutMs = YT_SEA
       { maxBuffer: 32 * 1024 * 1024, timeout: timeoutMs, env: getBinaryRuntimeEnv() },
       (err, stdout, stderr) => {
         if (err) {
+          if (youtubeGuard.observe(stderr)) return reject(new YouTubeBlockedError(youtubeGuard.status()));
           const tail = String(stderr || "").split("\n").slice(-10).join("\n");
           return reject(new Error(`[${label}] yt-dlp error: ${err.code}\n${tail}`));
         }
@@ -545,12 +554,22 @@ async function runMappedMusicSearchQuery(query, resultLimit, provider, onStage) 
   const attempts = catalogProvider ? (1 + MAPPED_MUSIC_YT_SEARCH_RETRIES) : 1;
   let lastError = null;
 
+  let pauses = 0;
   for (let attempt = 0; attempt < attempts; attempt++) {
     await waitForCatalogSearchCooldown(provider, onStage);
     try {
-      return await runYtJsonLite([`ytsearch${resultLimit}:${query}`], 'ytm-search-lite', YT_SEARCH_TIMEOUT_MS);
+      return await runYtJsonLite([`ytsearch${resultLimit}:${query}`], 'ytm-search-lite', YT_SEARCH_TIMEOUT_MS, {
+        onWait: () => onStage?.('waiting')
+      });
     } catch (error) {
       lastError = error;
+      // YouTube asked for a bot check: every YouTube request is paused; the
+      // next try waits for the pause to end and does not count as an attempt.
+      if (error?.code === 'YOUTUBE_PAUSED' && pauses < 3) {
+        pauses += 1;
+        attempt -= 1;
+        continue;
+      }
       if (catalogProvider && isYouTubeSearchRateLimitError(error)) {
         _catalogSearchCooldownUntil = Math.max(
           _catalogSearchCooldownUntil,
@@ -698,7 +717,8 @@ function getYtDlpCommonArgs() {
   const extra = getExtraArgs();
   if (extra.length) base.push(...extra);
 
-  addCookieArgs(base);
+  // No account here: song downloads run anonymously. The account is added
+  // only for a video YouTube refuses without one (see downloadSingleYouTubeVideoOnce).
   base.push(...getJsRuntimeArgs());
 
   return base;
@@ -1016,11 +1036,16 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
       const is403 = /403|Forbidden/i.test(stderrStr);
       const isMusic = isYouTubeMusicUrl(url);
 
-      // Cookies are optional: a run that used them and failed is repeated once
-      // without them (expired or unreadable browser cookies must not break downloads).
-      if (allowCookieFallback && hasCookieArgs(finalArgs)) {
-        console.warn("[yt-download] failed with cookies, retrying without cookies");
-        const retryArgs = stripCookieArgs(finalArgs);
+      // A bot check pauses every YouTube request (the caller waits it out).
+      if (youtubeGuard.observe(stderrStr)) {
+        return reject(new YouTubeBlockedError(youtubeGuard.status()));
+      }
+
+      // Downloads run without the account. Only a video YouTube refuses
+      // without one (age/members) is tried once more with the configured cookies.
+      if (allowCookieFallback && hasYouTubeAccountCookies() && needsYouTubeAccount(stderrStr)) {
+        console.warn("[yt-download] video needs an account, retrying with the configured cookies");
+        const retryArgs = [...finalArgs, ...addCookieArgs([], { ui: true })];
         startYtDlpDownloadProcess(
           YTDLP_BIN,
           retryArgs,
@@ -1040,13 +1065,6 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
           .map((x) => x)
           .filter((x) => x !== url)
           .concat(fallbackUrl);
-        const idxExtr = retryArgs.findIndex(
-          (v, i) => v === "--extractor-args"
-        );
-        if (idxExtr >= 0 && retryArgs[idxExtr + 1]) {
-          retryArgs[idxExtr + 1] = "youtube:player_client=android,web";
-        }
-
         startYtDlpDownloadProcess(
           YTDLP_BIN,
           retryArgs,
@@ -1082,15 +1100,29 @@ async function downloadSingleYouTubeVideoOnce(url, fileId, downloadDir) {
 }
 
 // Downloads single you tube video with outer retry in core application logic.
-export async function downloadSingleYouTubeVideo(url, fileId, downloadDir, onStage = null) {
+// At most two YouTube downloads run at once server wide and every start goes
+// through the YouTube guard (hourly budget, pause after a bot check).
+export async function downloadSingleYouTubeVideo(url, fileId, downloadDir, onStage = null, { isCanceled = null } = {}) {
   let lastError = null;
+  let pauses = 0;
 
   for (let attempt = 1; attempt <= YT_DOWNLOAD_RETRY_ATTEMPTS; attempt++) {
     try {
-      onStage?.('downloading');
-      return await downloadSingleYouTubeVideoOnce(url, fileId, downloadDir);
+      return await youtubeGuard.withSlot("download", async () => {
+        await youtubeGuard.before("download", { wait: true, isCanceled, onWait: () => onStage?.('waiting') });
+        onStage?.('downloading');
+        return downloadSingleYouTubeVideoOnce(url, fileId, downloadDir);
+      }, { isCanceled });
     } catch (error) {
       lastError = error;
+      if (String(error?.message || "") === "CANCELED") throw error;
+      if (error?.code === "YOUTUBE_PAUSED" && pauses < 3) {
+        // Not a failed attempt: wait for the pause to end, then try again.
+        pauses += 1;
+        attempt -= 1;
+        onStage?.('waiting');
+        continue;
+      }
       if (attempt >= YT_DOWNLOAD_RETRY_ATTEMPTS) break;
 
       console.warn(
@@ -1152,7 +1184,8 @@ export function createDownloadQueue(
         const filePath = await downloadSingleYouTubeVideo(
           item.webpage_url,
           `${jobId}_${idx}`,
-          downloadDir, stage
+          downloadDir, stage,
+          { isCanceled: shouldCancel }
         );
 
         const dlResult = {

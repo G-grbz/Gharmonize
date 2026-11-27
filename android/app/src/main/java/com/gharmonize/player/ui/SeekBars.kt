@@ -53,6 +53,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.pow
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -61,6 +62,7 @@ val PROGRESS_STYLES = listOf("ring", "classic", "bold", "minimal", "wave", "segm
 
 private val Played = Color.White
 private val Rest = Color.White.copy(alpha = 0.25f)
+private val WaveRest = Color.White.copy(alpha = 0.36f)
 
 /**
  * Linear seek bar in the "bold", "minimal" or "wave" look (the "classic" look
@@ -106,16 +108,17 @@ fun StyledSeekBar(
     val cy = size.height / 2
     when (style) {
       "wave" -> {
-        val barW = 3.dp.toPx()
-        val gap = 2.dp.toPx()
+        val barW = 2.5.dp.toPx()
+        val gap = 2.5.dp.toPx()
         val n = max(8, ((size.width + gap) / (barW + gap)).toInt())
         val step = (size.width - barW) / (n - 1)
+        val heights = bins?.let { waveBars(it, n) }
         for (i in 0 until n) {
-          val v = bins?.let { sampleBins(it, i, n) } ?: 0.18f
+          val v = heights?.get(i) ?: 0.18f
           val h = max(2.dp.toPx(), v * size.height)
           val x = i * step
           drawRoundRect(
-            if ((x + barW / 2) / size.width <= fraction) Played else Rest,
+            if ((x + barW / 2) / size.width <= fraction) Played else WaveRest,
             topLeft = Offset(x, cy - h / 2), size = Size(barW, h), cornerRadius = CornerRadius(barW / 2),
           )
         }
@@ -171,6 +174,35 @@ fun StyledSeekBar(
         drawCircle(Played, (if (dragging) 10 else 8).dp.toPx(), Offset(end, cy))
       }
     }
+  }
+}
+
+/**
+ * Bar heights for the "wave" look (same as the web player). Mastered music
+ * sits between ~60 and 90 % almost everywhere, so drawn as is every bar looks
+ * the same: the bars are stretched between the quiet end and the loudest bar
+ * and compared with their neighbours, so verses, hits and drops stand out.
+ */
+internal fun waveBars(bins: FloatArray, n: Int): FloatArray {
+  val bars = FloatArray(n) { i ->
+    val from = i * bins.size / n
+    val to = max(from + 1, (i + 1) * bins.size / n)
+    var sum = 0f
+    var count = 0
+    for (j in from until min(to, bins.size)) { sum += bins[j]; count++ }
+    if (count > 0) sum / count else 0f
+  }
+  val sorted = bars.sortedArray()
+  val lo = sorted[(0.08f * (n - 1)).toInt()]
+  val span = max(1e-6f, sorted[n - 1] - lo)
+  return FloatArray(n) { i ->
+    var near = 0f
+    var count = 0
+    for (k in -2..2) if (k != 0 && i + k in 0 until n) { near += bars[i + k]; count++ }
+    val level = ((bars[i] - lo) / span).coerceIn(0f, 1f)
+    val local = if (count > 0) ((bars[i] - near / count) / (span * 0.35f)).coerceIn(-1f, 1f) else 0f
+    val y = (level * 0.7f + local * 0.3f + 0.1f).coerceIn(0f, 1f)
+    0.1f + 0.9f * y.toDouble().pow(1.4).toFloat()
   }
 }
 

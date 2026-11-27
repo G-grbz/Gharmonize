@@ -4,7 +4,7 @@ This policy applies to Windows binaries distributed through the official [G-grbz
 
 ## Current Release Status
 
-Windows binaries built for **Gharmonize v2.1.0 do not carry a trusted Authenticode signature**.
+Windows binaries built for **Gharmonize v2.2.0 do not carry a trusted Authenticode signature**.
 
 This includes:
 

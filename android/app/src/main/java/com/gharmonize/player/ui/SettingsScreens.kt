@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
@@ -53,31 +54,63 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gharmonize.player.BuildConfig
 import com.gharmonize.player.R
+import com.gharmonize.player.data.DownloadGroup
 import com.gharmonize.player.data.DownloadRow
 import kotlinx.coroutines.launch
 
 @Composable
 fun DownloadsScreen(state: AppState) {
   LaunchedEffect(Unit) { state.refreshDownloads(); state.startPolling() }
-  val rows = state.downloads
+  // Songs of a group are shown inside its entry, not on their own.
+  val rows = state.downloads.filter { it.groupId == null }
+  val groups = state.downloadGroups
+  val expanded = remember { androidx.compose.runtime.mutableStateMapOf<String, List<DownloadRow>?>() }
+  // An open group's song list follows the live rows.
+  val live = state.downloads.filter { it.groupId != null }.associateBy { it.id }
+  LaunchedEffect(groups) {
+    for (id in expanded.keys.toList()) runCatching { state.api.groupSongs(id) }.getOrNull()?.let { expanded[id] = it }
+  }
+  val entries = (groups.map { it.createdAt to (it as Any) } + rows.map { it.createdAt to (it as Any) })
+  val active = entries.filter { (_, e) -> if (e is DownloadGroup) e.active else (e as DownloadRow).active }.sortedByDescending { it.first }.map { it.second }
+  val done = entries.filter { (_, e) -> if (e is DownloadGroup) !e.active else !(e as DownloadRow).active }.sortedByDescending { it.first }.map { it.second }
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
     item { Text(stringResource(R.string.nav_downloads), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp)) }
     if (!state.canDownload) item { Text(stringResource(R.string.downloads_not_allowed), modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    if (rows.isEmpty()) item { EmptyText(stringResource(R.string.downloads_empty)) }
-    items(rows, key = { it.id }) { row -> DownloadRowView(state, row) }
+    if (entries.isEmpty()) item { EmptyText(stringResource(R.string.downloads_empty)) }
+    for ((title, list) in listOf(R.string.downloads_active to active, R.string.downloads_history to done)) {
+      if (list.isEmpty()) continue
+      item(key = "h-$title") {
+        Text(stringResource(title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp))
+      }
+      items(list, key = { e -> if (e is DownloadGroup) "g-${e.id}" else "d-${(e as DownloadRow).id}" }) { e ->
+        if (e is DownloadGroup) {
+          val songs = expanded[e.id]?.map { live[it.id] ?: it }
+          DownloadGroupView(state, e, open = e.id in expanded, songs = songs, onToggle = {
+            if (e.id in expanded) expanded.remove(e.id)
+            else {
+              expanded[e.id] = null
+              state.scope.launch { expanded[e.id] = runCatching { state.api.groupSongs(e.id) }.getOrDefault(emptyList()) }
+            }
+          })
+        } else DownloadRowView(state, e as DownloadRow)
+      }
+    }
   }
 }
 
 @Composable
-private fun DownloadRowView(state: AppState, row: DownloadRow) {
-  Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-    Artwork(row.artworkUrl, Modifier.size(52.dp), size = 128)
-    Spacer(Modifier.width(12.dp))
+private fun DownloadRowView(state: AppState, row: DownloadRow, child: Boolean = false) {
+  Row(Modifier.fillMaxWidth().padding(horizontal = if (child) 8.dp else 16.dp, vertical = if (child) 4.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    if (!child) {
+      Artwork(row.artworkUrl, Modifier.size(52.dp), size = 128)
+      Spacer(Modifier.width(12.dp))
+    }
     Column(Modifier.weight(1f)) {
-      Text(row.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+      Text(row.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (child) FontWeight.Normal else FontWeight.SemiBold)
       Text(listOfNotNull(row.artist.ifBlank { null }, statusText(row)).joinToString(" · "), style = MaterialTheme.typography.bodySmall,
         color = if (row.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
-      if (row.active) LinearProgressIndicator(progress = { row.progress / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+      stepsText(row)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+      if (row.active && !child) LinearProgressIndicator(progress = { row.progress / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
     }
     when {
       row.active -> IconButton(onClick = { state.scope.launch { runCatching { state.api.cancelDownload(row.id) }; state.refreshDownloads() } }) { Icon(FluentIcons.Close, stringResource(R.string.cancel)) }
@@ -87,11 +120,92 @@ private fun DownloadRowView(state: AppState, row: DownloadRow) {
   }
 }
 
+/** Songs picked together: what downloads now, how many are done / left, its songs behind a toggle. */
+@Composable
+private fun DownloadGroupView(state: AppState, group: DownloadGroup, open: Boolean, songs: List<DownloadRow>?, onToggle: () -> Unit) {
+  val c = group.counts
+  val name = group.title ?: stringResource(R.string.group_untitled)
+  val parts = listOfNotNull(
+    stringResource(R.string.group_done_of, c.done, c.total),
+    if (c.running > 0) stringResource(R.string.group_running, c.running) else null,
+    if (c.queued > 0) stringResource(R.string.group_queued_n, c.queued) else null,
+    if (c.waiting > 0) stringResource(R.string.group_waiting, c.waiting) else null,
+    if (c.failed > 0) stringResource(R.string.group_failed, c.failed) else null,
+    if (c.canceled > 0) stringResource(R.string.group_canceled, c.canceled) else null,
+    if (c.skipped > 0) stringResource(R.string.group_skipped, c.skipped) else null,
+  )
+  Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Artwork(group.artworkUrl, Modifier.size(52.dp), size = 128)
+      Spacer(Modifier.width(12.dp))
+      Column(Modifier.weight(1f)) {
+        Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.group_songs, c.total) + " · " + parts.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+          color = if (!group.active && c.failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+      }
+      when {
+        group.active -> IconButton(onClick = { state.cancelDownloadGroup(group.id) }) { Icon(FluentIcons.Close, stringResource(R.string.group_cancel_all)) }
+        c.failed > 0 || c.canceled > 0 -> IconButton(onClick = { state.retryDownloadGroup(group.id) }) { Icon(FluentIcons.Refresh, stringResource(R.string.group_retry_failed)) }
+      }
+    }
+    group.current?.let { cur ->
+      Text(stringResource(R.string.group_now, listOf(cur.title, cur.artist).filter { it.isNotBlank() }.joinToString(" — ")) + " · " +
+        phaseText(cur.status, cur.phase, cur.progress),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 2, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(top = 6.dp))
+    }
+    if (group.active) LinearProgressIndicator(progress = { (group.progress / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+    if (!group.active && group.errors.isNotEmpty()) {
+      for (e in group.errors.take(3)) Text(e, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = 0.dp)) {
+      Icon(FluentIcons.KeyboardArrowDown, null, modifier = Modifier.size(18.dp).rotate(if (open) 180f else 0f))
+      Spacer(Modifier.width(4.dp))
+      Text(if (open) stringResource(R.string.group_hide_songs) else stringResource(R.string.group_show_songs, c.total))
+    }
+    if (open) {
+      Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
+        when {
+          songs == null -> Text("…", modifier = Modifier.padding(12.dp))
+          songs.isEmpty() -> Text(stringResource(if (c.waiting > 0) R.string.group_all_waiting else R.string.group_no_songs), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+          // The running ones first, then the queue in its order.
+          else -> songs.sortedWith(compareBy({ CHILD_RANK[it.status] ?: 3 }, { it.createdAt })).take(200).forEach { DownloadRowView(state, it, child = true) }
+        }
+      }
+    }
+  }
+}
+
+private val CHILD_RANK = mapOf("downloading" to 0, "indexing" to 0, "resolving" to 1, "queued" to 2)
+
+/** "Song 5 of 12 · converting" for album / playlist jobs. */
+@Composable
+private fun stepsText(row: DownloadRow): String? {
+  val s = row.steps ?: return null
+  if (!row.active) return null
+  return when {
+    row.phase == "converting" -> stringResource(R.string.steps_converting, minOf(s.total, s.converted + 1), s.total)
+    s.downloaded >= s.total -> stringResource(R.string.steps_downloaded, s.total)
+    else -> stringResource(R.string.steps_downloading, minOf(s.total, s.downloaded + 1), s.total, s.downloaded)
+  }
+}
+
+@Composable
+private fun phaseText(status: String, phase: String?, progress: Int): String = when {
+  status == "downloading" && phase == "converting" -> stringResource(R.string.dl_converting, progress)
+  status == "downloading" && phase == "preparing" -> stringResource(R.string.dl_preparing)
+  status == "downloading" -> stringResource(R.string.dl_downloading, progress)
+  status == "resolving" -> stringResource(R.string.dl_resolving)
+  status == "indexing" -> stringResource(R.string.dl_indexing)
+  else -> stringResource(R.string.dl_queued)
+}
+
 @Composable
 fun statusText(row: DownloadRow): String = when (row.status) {
-  "queued" -> stringResource(R.string.dl_queued)
+  "queued" -> stringResource(if (row.waiting) R.string.group_waiting_song else R.string.dl_queued)
+  "downloading" -> phaseText(row.status, row.phase, row.progress)
   "resolving" -> stringResource(R.string.dl_resolving)
-  "downloading" -> stringResource(R.string.dl_downloading, row.progress)
   "indexing" -> stringResource(R.string.dl_indexing)
   "completed" -> stringResource(R.string.dl_completed)
   "exists" -> stringResource(R.string.in_library)
@@ -182,7 +296,8 @@ fun SettingsScreen(state: AppState, theme: String, onTheme: (String) -> Unit, on
       }
       SettingItem(stringResource(R.string.equalizer), stringResource(if (com.gharmonize.player.playback.AudioEq.params.enabled) R.string.eq_on else R.string.eq_off)) { state.navigate(Route.Equalizer) }
       SettingItem(stringResource(R.string.settings_progress), progressLabel(progress)) { picker = "progress" }
-      Row(Modifier.fillMaxWidth().clickable { coverVolume = !coverVolume; app.prefs.coverVolume = coverVolume }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+      // The volume arc only exists around the ring: other styles don't offer it.
+      if ((progress.takeIf { it in PROGRESS_STYLES } ?: "ring") == "ring") Row(Modifier.fillMaxWidth().clickable { coverVolume = !coverVolume; app.prefs.coverVolume = coverVolume }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
           Text(stringResource(R.string.settings_cover_volume), style = MaterialTheme.typography.bodyLarge)
           Text(stringResource(R.string.settings_cover_volume_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

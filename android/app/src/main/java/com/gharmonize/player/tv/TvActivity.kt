@@ -286,13 +286,17 @@ class TvNav(val player: PlayerController, private val scope: CoroutineScope) {
   /** Mixes without a downloadable link: each missing song on its own. */
   fun downloadEach(items: List<OnlineItem>, key: String) {
     scope.launch {
-      var n = 0
-      for (item in items) {
-        if (item.libraryTrackId != null) continue
-        runCatching { App.instance.api.requestDownload(item) }.onSuccess { n++; queued.add(item.key) }
+      // One request: the server keeps songs over the queue limit waiting.
+      val missing = items.filter { it.libraryTrackId == null && it.url.isNotBlank() }
+      if (missing.isEmpty()) return@launch
+      try {
+        App.instance.api.requestDownloadGroup(missing)
+        missing.forEach { queued.add(it.key) }
+        queued.add(key)
+        toast(R.string.group_queued, missing.size)
+      } catch (e: Exception) {
+        android.widget.Toast.makeText(App.instance, e.message ?: "", android.widget.Toast.LENGTH_LONG).show()
       }
-      queued.add(key)
-      if (n > 0) toast(R.string.missing_queued, n)
     }
   }
 }

@@ -79,3 +79,36 @@ test('a short, common title still finds its song, and mapped songs are found thr
     assert.equal(linkedTrack(matcher, [], { id: '1512736231' }, 1), null)
   } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }) }
 })
+
+test('a song of the same name on another release is another recording unless the length agrees', async () => {
+  const dir = tmpDir('other-release'); const db = await openPlayerDatabase(dir, { fileName: ':memory:' })
+  try {
+    const audio = path.join(dir, 'music'); fs.mkdirSync(audio)
+    db.prepare('INSERT INTO libraries (name,path,enabled,is_default,created_at) VALUES (?, ?, 1, 1, 0)').run('Test', audio)
+    db.prepare("INSERT INTO users (username,display_name,password_hash,role,created_at,updated_at) VALUES ('admin','Admin','test','admin',0,0)").run()
+    const old = await writeTrack(path.join(audio, 'gulum.mp3'), { title: 'Gülüm', artist: 'Kıvırcık Ali', album: 'Isırgan Otu' })
+    const single = await writeTrack(path.join(audio, 'gomlek.mp3'), { title: 'Kirlenmiş Gömleğin', artist: 'Erkan Acar', album: 'Kirlenmiş Gömleğin' })
+    const indexed = await createScanner(db).indexFiles([old, single])
+    const id = indexed.get(old)
+    const singleId = indexed.get(single)
+    db.prepare('UPDATE tracks SET duration = 319.2 WHERE id = ?').run(id)
+    db.prepare('UPDATE tracks SET duration = 294.4 WHERE id = ?').run(singleId)
+    const matcher = createLibraryMatcher(db)
+    const song = { title: 'Gülüm', artist: 'Kıvırcık Ali' }
+    // The 2000 recording on its own album (store and file lengths differ a little).
+    assert.equal(matcher.findTrack({ ...song, album: 'Isırgan Otu', duration: 319 }, 1), id)
+    // The 2017 re-recording: same name, other album, 14 s longer.
+    assert.equal(matcher.findTrack({ ...song, album: 'Sevdiklerim', duration: 333 }, 1), null)
+    // A compilation with the same recording.
+    assert.equal(matcher.findTrack({ ...song, album: 'En İyileri', duration: 320 }, 1), id)
+    // Without a release the old length tolerance applies.
+    assert.equal(matcher.findTrack({ ...song, duration: 333 }, 1), id)
+    // A single is a release too: the album's title song recorded anew is not it.
+    assert.equal(matcher.findTrack({ title: 'Kirlenmiş Gömleğin', artist: 'Erkan Acar', album: 'Best Of', duration: 268 }, 1), null)
+    assert.equal(matcher.findTrack({ title: 'Kirlenmiş Gömleğin', artist: 'Erkan Acar', album: 'Best Of', duration: 295 }, 1), singleId)
+    // Different ISRCs count as another release too.
+    db.prepare("UPDATE tracks SET isrc = 'TR0150500208' WHERE id = ?").run(id)
+    assert.equal(matcher.findTrack({ ...song, isrc: 'TRARD1700099', duration: 333 }, 1), null)
+    assert.equal(matcher.findTrack({ ...song, isrc: 'TR0150500208', duration: 333 }, 1), id)
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }) }
+})

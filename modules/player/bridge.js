@@ -5,6 +5,7 @@ import { visibleSql, uidLiteral } from './access.js'
 import { placeUpgradeOutput, planUpgradeOutput, relocateDownloads } from './relocate.js'
 import { transaction } from './db.js'
 import { linkedTrack } from './annotate.js'
+import { publicUser } from './auth.js'
 
 export { BridgeError }
 
@@ -18,7 +19,7 @@ const RETENTION_MS = 90 * 24 * 60 * 60 * 1000
 
 const ONLY_MAX = 1000
 
-// The songs an album or playlist download is limited to: { title, artist, isrc, duration }.
+// The songs an album or playlist download is limited to: { title, artist, album, isrc, duration }.
 export function onlyTracks(value) {
   if (!Array.isArray(value)) return []
   const text = (v, max) => String(v ?? '').trim().slice(0, max)
@@ -27,6 +28,7 @@ export function onlyTracks(value) {
     url: /^https:\/\//i.test(String(song?.url || '')) ? text(song.url, 2000) : null,
     title: text(song?.title, 300),
     artist: text(song?.artist, 300) || null,
+    album: text(song?.album, 300) || null,
     isrc: text(song?.isrc, 32).toUpperCase() || null,
     duration: Number(song?.duration) > 0 ? Number(song.duration) : null
   })).filter((song) => song.title)
@@ -34,6 +36,20 @@ export function onlyTracks(value) {
 
 function parseOnly(value) {
   try { return onlyTracks(JSON.parse(value || '[]')) } catch { return [] }
+}
+
+function parseSteps(value) {
+  try {
+    const steps = JSON.parse(value || 'null')
+    return steps && Number(steps.total) > 0 ? { total: Number(steps.total), downloaded: Number(steps.downloaded) || 0, converted: Number(steps.converted) || 0 } : null
+  } catch { return null }
+}
+
+function parseList(value) {
+  try {
+    const list = JSON.parse(value || '[]')
+    return Array.isArray(list) ? list : []
+  } catch { return [] }
 }
 
 function parseIds(value) {
@@ -61,6 +77,8 @@ export function serializeDownload(row) {
     active: ACTIVE_STATUSES.includes(row.status),
     progress: Math.max(0, Math.min(100, Number(row.progress) || 0)),
     phase: row.phase,
+    steps: parseSteps(row.steps),
+    groupId: row.group_id || null,
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at,
     error: row.error_code ? { code: row.error_code, message: row.error } : null,
@@ -102,8 +120,8 @@ export function createDownloadBridge({
   const stmt = {
     get: db.prepare('SELECT * FROM downloads WHERE id = ?'),
     insert: db.prepare(`INSERT INTO downloads (id, user_id, kind, provider, source_url, requested_url, title, artist, album, artwork_url, isrc, duration,
-      expected_tracks, status, progress, phase, result_track_ids, playlist_id, created_at, updated_at, completed_at, upgrade_target, only_tracks)
-      VALUES ($id, $user, $kind, $provider, $url, $requested, $title, $artist, $album, $art, $isrc, $duration, $expected, $status, $progress, $phase, $ids, $playlist, $ts, $ts, $completed, $upgrade, $only)`),
+      expected_tracks, status, progress, phase, result_track_ids, playlist_id, created_at, updated_at, completed_at, upgrade_target, only_tracks, group_id)
+      VALUES ($id, $user, $kind, $provider, $url, $requested, $title, $artist, $album, $art, $isrc, $duration, $expected, $status, $progress, $phase, $ids, $playlist, $ts, $ts, $completed, $upgrade, $only, $group)`),
     activeBySource: db.prepare(`SELECT * FROM downloads WHERE (source_url = $u OR requested_url = $u) AND status IN ('queued','resolving','downloading','indexing') ORDER BY created_at LIMIT 1`),
     activeByTarget: db.prepare(`SELECT * FROM downloads WHERE (source_url = $u OR requested_url = $u) AND upgrade_target IS $upgrade AND status IN ('queued','resolving','downloading','indexing') ORDER BY created_at LIMIT 1`),
     doneBySource: db.prepare(`SELECT result_track_ids, completed_at, updated_at FROM downloads WHERE (source_url = $u OR requested_url = $u) AND status = 'completed' ORDER BY COALESCE(completed_at, updated_at) DESC LIMIT 5`),
@@ -116,7 +134,20 @@ export function createDownloadBridge({
     inCore: db.prepare(`SELECT COUNT(*) AS n FROM downloads WHERE status IN ('resolving','downloading','indexing')`),
     dueQueued: db.prepare(`SELECT * FROM downloads WHERE status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY created_at LIMIT ?`),
     downloading: db.prepare(`SELECT * FROM downloads WHERE status = 'downloading'`),
-    purge: db.prepare(`DELETE FROM downloads WHERE status IN ('completed','exists','failed','canceled') AND updated_at < ?`)
+    purge: db.prepare(`DELETE FROM downloads WHERE status IN ('completed','exists','failed','canceled') AND updated_at < ?`),
+    groupGet: db.prepare('SELECT * FROM download_groups WHERE id = ?'),
+    groupInsert: db.prepare(`INSERT INTO download_groups (id, user_id, title, artwork_url, playlist_id, total, pending, skipped, status, created_at, updated_at)
+      VALUES ($id, $user, $title, $art, $playlist, $total, $pending, '[]', 'active', $ts, $ts)`),
+    groupSave: db.prepare('UPDATE download_groups SET pending = $pending, skipped = $skipped, status = $status, updated_at = $ts WHERE id = $id'),
+    groupsWaiting: db.prepare(`SELECT id FROM download_groups WHERE status = 'active' AND pending <> '[]'`),
+    groupCounts: db.prepare('SELECT status, COUNT(*) AS n FROM downloads WHERE group_id = ? GROUP BY status'),
+    groupCurrent: db.prepare(`SELECT * FROM downloads WHERE group_id = ? AND status IN ('resolving','downloading','indexing')
+      ORDER BY (status = 'downloading') DESC, progress DESC, updated_at DESC LIMIT 1`),
+    groupActiveRows: db.prepare(`SELECT * FROM downloads WHERE group_id = ? AND status IN ('queued','resolving','downloading','indexing')`),
+    groupRetryRows: db.prepare(`SELECT * FROM downloads WHERE group_id = ? AND status IN ('failed','canceled')`),
+    userRow: db.prepare('SELECT * FROM users WHERE id = ?'),
+    purgeGroups: db.prepare(`DELETE FROM download_groups WHERE updated_at < $before AND (status = 'canceled' OR pending = '[]')
+      AND NOT EXISTS (SELECT 1 FROM downloads d WHERE d.group_id = download_groups.id AND d.status IN ('queued','resolving','downloading','indexing'))`)
   }
 
   function update(id, fields) {
@@ -128,6 +159,7 @@ export function createDownloadBridge({
     db.prepare(`UPDATE downloads SET ${sets}, updated_at = $updated_at WHERE id = $id`).run(params)
     const row = stmt.get.get(id)
     events.emit('update', serializeDownload(row))
+    if (row?.group_id) emitGroup(row.group_id)
     return row
   }
 
@@ -184,7 +216,7 @@ export function createDownloadBridge({
   }
 
   // Creates a download request. Returns the (possibly pre-existing) record.
-  async function request(user, input = {}, { playlistId = null, force = false, signal, onRequested, upgrade = null } = {}) {
+  async function request(user, input = {}, { playlistId = null, force = false, signal, onRequested, upgrade = null, groupId = null } = {}) {
     signal?.throwIfAborted()
     if (!user?.id) throw new BridgeError('PLAYER_AUTH_REQUIRED', 'Sign in first.', { status: 401 })
     if (!canDownload(user)) throw new BridgeError('DOWNLOADS_NOT_ALLOWED', 'Downloading into the library is not allowed for this account.', { status: 403 })
@@ -217,6 +249,7 @@ export function createDownloadBridge({
       $playlist: Number(playlistId) > 0 ? Number(playlistId) : null,
       $upgrade: upgrade ? JSON.stringify(upgrade) : null,
       $only: null,
+      $group: groupId || null,
       $ts: ts
     }
     if (base.$playlist && catalog) {
@@ -234,7 +267,9 @@ export function createDownloadBridge({
       try { links = await mappedLinks(info.url) } catch {}
       signal?.throwIfAborted()
       only = only.filter((song) => {
-        const id = matcher.findTrack(song, user.id) || linkedTrack(matcher, links, song, user.id)
+        // An album's songs belong to that album (older clients do not send it).
+        const id = matcher.findTrack({ ...song, album: song.album || (kind === 'album' ? input.title : null) }, user.id) ||
+          linkedTrack(matcher, links, song, user.id)
         if (id) owned.push(id)
         return !id
       })
@@ -244,6 +279,7 @@ export function createDownloadBridge({
         attachPlaylist(user.id, base.$playlist, owned)
         const row = serializeDownload(stmt.get.get(id))
         events.emit('update', row)
+        if (groupId) emitGroup(groupId)
         return row
       }
     }
@@ -254,7 +290,7 @@ export function createDownloadBridge({
     if (!force && !only.length && matcher) {
       let existingIds = []
       if (kind === 'track') {
-        const id = matcher.findTrack({ title: input.title, artist: input.artist, isrc: base.$isrc, duration: base.$duration }, user.id)
+        const id = matcher.findTrack({ title: input.title, artist: input.artist, album: base.$album, isrc: base.$isrc, duration: base.$duration }, user.id)
         if (id) existingIds = [id]
       } else if (kind === 'album') {
         const album = matcher.findAlbum({ title: input.title, artist: input.artist }, user.id)
@@ -269,6 +305,7 @@ export function createDownloadBridge({
         attachPlaylist(user.id, base.$playlist, existingIds)
         const row = serializeDownload(stmt.get.get(id))
         events.emit('update', row)
+        if (groupId) emitGroup(groupId)
         return row
       }
     }
@@ -278,6 +315,8 @@ export function createDownloadBridge({
     const running = stmt.activeByTarget.get({ $u: info.url, $upgrade: base.$upgrade })
     if (running && (only.length || !running.only_tracks)) {
       if (base.$playlist && !running.playlist_id && running.user_id === user.id) update(running.id, { playlist_id: base.$playlist })
+      // A song of this group that was already on its way on its own joins it.
+      if (groupId && !running.group_id && running.user_id === user.id) update(running.id, { group_id: groupId })
       if (onRequested) transaction(db, () => onRequested(running.id, false), { durable: true })
       return serializeDownload(stmt.get.get(running.id))
     }
@@ -298,8 +337,232 @@ export function createDownloadBridge({
     else enqueue()
     const row = serializeDownload(stmt.get.get(id))
     events.emit('update', row)
+    if (groupId) emitGroup(groupId)
     schedule(0)
     return row
+  }
+
+  // ---- download groups -------------------------------------------------------
+  // Songs picked together (a selection, an artist's missing songs ...) are one
+  // group: one entry with its progress. Songs over the per-user queue limit
+  // wait in the group and are queued as earlier ones finish.
+
+  const GROUP_MAX = 1000
+  const feeding = new Map()
+  const feedAgain = new Set()
+
+  function groupItem(input = {}) {
+    const text = (v, max) => String(v ?? '').trim().slice(0, max) || null
+    const url = text(input.url, 2000)
+    if (!url) return null
+    const kind = ['track', 'album', 'playlist'].includes(input.kind) ? input.kind : 'track'
+    const only = kind === 'track' ? [] : onlyTracks(input.only)
+    return {
+      kind,
+      url,
+      title: text(input.title, 300),
+      artist: text(input.artist, 300),
+      album: text(input.album, 300),
+      artworkUrl: /^https:\/\//i.test(String(input.artworkUrl || '')) ? text(input.artworkUrl, 1000) : null,
+      isrc: text(input.isrc, 32),
+      duration: Number(input.duration) > 0 ? Number(input.duration) : null,
+      trackCount: Number(input.trackCount) > 0 ? Math.floor(Number(input.trackCount)) : null,
+      ...(only.length ? { only } : {})
+    }
+  }
+
+  function saveGroup(id, { pending, skipped, status = 'active' }) {
+    stmt.groupSave.run({ $id: id, $pending: JSON.stringify(pending), $skipped: JSON.stringify(skipped), $status: status, $ts: now() })
+  }
+
+  // Skipped songs: canceled before they were queued, already on their way in
+  // another download, or refused (bad link, no right ...).
+  function skippedKind(entry) {
+    if (entry.code === 'CANCELED') return 'canceled'
+    if (entry.code === 'ALREADY_DOWNLOADING') return 'elsewhere'
+    return 'failed'
+  }
+
+  function groupSummary(id, { pendingUrls = false } = {}) {
+    const g = typeof id === 'object' ? id : stmt.groupGet.get(String(id))
+    if (!g) return null
+    const rows = { queued: 0, resolving: 0, downloading: 0, indexing: 0, completed: 0, exists: 0, failed: 0, canceled: 0 }
+    for (const r of stmt.groupCounts.all(g.id)) rows[r.status] = r.n
+    const pending = parseList(g.pending)
+    const skipped = parseList(g.skipped)
+    const by = { canceled: 0, elsewhere: 0, failed: 0 }
+    for (const entry of skipped) by[skippedKind(entry)] += 1
+    const running = rows.resolving + rows.downloading + rows.indexing
+    const active = rows.queued + running
+    const current = stmt.groupCurrent.get(g.id)
+    const counts = {
+      total: g.total,
+      done: rows.completed + rows.exists,
+      owned: rows.exists,
+      running,
+      queued: rows.queued,
+      waiting: pending.length,
+      failed: rows.failed + by.failed,
+      canceled: rows.canceled + by.canceled,
+      skipped: by.elsewhere
+    }
+    const finished = counts.done + counts.failed + counts.canceled + counts.skipped
+    return {
+      id: g.id,
+      userId: g.user_id,
+      title: g.title,
+      artworkUrl: g.artwork_url,
+      playlistId: g.playlist_id,
+      status: g.status === 'canceled' && !active ? 'canceled' : (pending.length || active) ? 'active' : 'done',
+      active: Boolean(pending.length || active),
+      counts,
+      progress: g.total ? Math.round(((finished + (current ? (Number(current.progress) || 0) / 100 : 0)) / g.total) * 1000) / 10 : 0,
+      current: current ? { id: current.id, title: current.title, artist: current.artist, status: current.status, phase: current.phase, progress: Number(current.progress) || 0 } : null,
+      errors: skipped.filter((entry) => skippedKind(entry) === 'failed').slice(0, 20).map(({ title, artist, code, message }) => ({ title, artist, code, message })),
+      createdAt: g.created_at,
+      updatedAt: g.updated_at,
+      ...(pendingUrls ? { pendingUrls: pending.map((item) => item.url) } : {})
+    }
+  }
+
+  function emitGroup(id) {
+    const summary = groupSummary(id)
+    if (summary) events.emit('group', summary)
+  }
+
+  function ownGroup(id, user) {
+    const g = stmt.groupGet.get(String(id))
+    if (!g || (g.user_id !== user?.id && user?.role !== 'admin')) throw new BridgeError('NOT_FOUND', 'Download not found.', { status: 404 })
+    return g
+  }
+
+  async function requestMany(user, input = [], { title = null, artworkUrl = null, playlistId = null } = {}) {
+    if (!user?.id) throw new BridgeError('PLAYER_AUTH_REQUIRED', 'Sign in first.', { status: 401 })
+    if (!canDownload(user)) throw new BridgeError('DOWNLOADS_NOT_ALLOWED', 'Downloading into the library is not allowed for this account.', { status: 403 })
+    const seen = new Set()
+    const items = (Array.isArray(input) ? input : []).map(groupItem).filter((item) => {
+      if (!item || seen.has(item.url)) return false
+      seen.add(item.url)
+      return true
+    })
+    if (!items.length) throw new BridgeError('SOURCE_URL_REQUIRED', 'A source link is required.')
+    if (items.length > GROUP_MAX) throw new BridgeError('TOO_MANY_ITEMS', `At most ${GROUP_MAX} songs can be downloaded at once.`)
+    const playlist = Number(playlistId) > 0 ? Number(playlistId) : null
+    if (playlist && catalog) {
+      const pl = catalog.getPlaylist(playlist, user.id)
+      if (!pl.editable) throw new BridgeError('FORBIDDEN', 'Only the owner can add to this playlist.', { status: 403 })
+    }
+    const id = crypto.randomUUID()
+    stmt.groupInsert.run({
+      $id: id,
+      $user: user.id,
+      $title: String(title || '').trim().slice(0, 300) || null,
+      $art: /^https:\/\//i.test(String(artworkUrl || '')) ? String(artworkUrl).slice(0, 1000) : items.find((item) => item.artworkUrl)?.artworkUrl || null,
+      $playlist: playlist,
+      $total: items.length,
+      $pending: JSON.stringify(items),
+      $ts: now()
+    })
+    feedGroup(id)
+    return groupSummary(id, { pendingUrls: true })
+  }
+
+  // One feeder per group at a time; a request meanwhile runs it once more.
+  function feedGroup(id) {
+    if (feeding.has(id)) { feedAgain.add(id); return feeding.get(id) }
+    const run = (async () => {
+      do {
+        feedAgain.delete(id)
+        try { await feedOnce(id) } catch (error) {
+          logger.warn?.(`⚠️ [player] download group ${id}: ${error?.message || error}`)
+        }
+      } while (feedAgain.has(id) && !stopped)
+    })().finally(() => feeding.delete(id))
+    feeding.set(id, run)
+    return run
+  }
+
+  async function feedOnce(id) {
+    const group = stmt.groupGet.get(id)
+    if (!group || group.status !== 'active') return
+    let pending = parseList(group.pending)
+    const skipped = parseList(group.skipped)
+    if (!pending.length) return
+    const user = publicUser(stmt.userRow.get(group.user_id))
+    if (!canDownload(user)) {
+      skipped.push(...pending.map((item) => ({ ...item, code: 'DOWNLOADS_NOT_ALLOWED', message: 'Downloading into the library is not allowed for this account.' })))
+      saveGroup(id, { pending: [], skipped })
+      emitGroup(id)
+      return
+    }
+    while (pending.length && !stopped) {
+      if (stmt.activeCountForUser.get(user.id).n >= getConfig().maxQueuedPerUser) break
+      const current = stmt.groupGet.get(id)
+      if (current?.status !== 'active') return
+      // Canceled or retried meanwhile: continue from what is saved.
+      pending = parseList(current.pending)
+      const item = pending[0]
+      if (!item) break
+      let entry = null
+      try {
+        const row = await request(user, item, { playlistId: group.playlist_id, groupId: id })
+        if (row && row.groupId !== id) entry = { ...item, code: 'ALREADY_DOWNLOADING' }
+      } catch (error) {
+        if (error?.code === 'TOO_MANY_DOWNLOADS') break
+        entry = { ...item, code: error?.code || 'DOWNLOAD_FAILED', message: String(error?.message || error || '').slice(0, 300) }
+      }
+      const latest = stmt.groupGet.get(id)
+      if (latest?.status !== 'active') return
+      const left = parseList(latest.pending).filter((p) => p.url !== item.url)
+      const done = parseList(latest.skipped)
+      if (entry) done.push(entry)
+      saveGroup(id, { pending: left, skipped: done })
+      pending = left
+      emitGroup(id)
+    }
+  }
+
+  function feedWaiting() {
+    for (const { id } of stmt.groupsWaiting.all()) feedGroup(id)
+  }
+
+  function getGroup(id, user) {
+    return groupSummary(ownGroup(id, user))
+  }
+
+  function listGroups(user, { all = false, activeOnly = false, limit = 50 } = {}) {
+    const where = []
+    const params = { $limit: Math.min(Math.max(Number(limit) || 50, 1), 200) }
+    if (!(all && user?.role === 'admin')) { where.push('user_id = $uid'); params.$uid = user.id }
+    if (activeOnly) where.push(`(pending <> '[]' OR EXISTS (SELECT 1 FROM downloads d WHERE d.group_id = download_groups.id AND d.status IN ('queued','resolving','downloading','indexing')))`)
+    return db.prepare(`SELECT * FROM download_groups ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT $limit`)
+      .all(params).map((g) => groupSummary(g, { pendingUrls: activeOnly }))
+  }
+
+  async function cancelGroup(id, user) {
+    const g = ownGroup(id, user)
+    const skipped = parseList(g.skipped)
+    skipped.push(...parseList(g.pending).map((item) => ({ ...item, code: 'CANCELED' })))
+    saveGroup(g.id, { pending: [], skipped, status: 'canceled' })
+    for (const row of stmt.groupActiveRows.all(g.id)) await cancel(row.id, user).catch(() => {})
+    emitGroup(g.id)
+    return groupSummary(g.id)
+  }
+
+  // Failed and canceled songs of the group are tried again (those that were
+  // never queued go back to the waiting list, so the queue limit holds).
+  function retryGroup(id, user) {
+    const g = ownGroup(id, user)
+    const skipped = parseList(g.skipped)
+    const pending = parseList(g.pending)
+    const items = skipped.filter((entry) => skippedKind(entry) !== 'elsewhere')
+      .map(({ code, message, ...item }) => groupItem(item)).filter(Boolean)
+    saveGroup(g.id, { pending: [...pending, ...items], skipped: skipped.filter((entry) => skippedKind(entry) === 'elsewhere'), status: 'active' })
+    for (const row of stmt.groupRetryRows.all(g.id)) {
+      try { retry(row.id, user) } catch {}
+    }
+    feedGroup(g.id)
+    return groupSummary(g.id)
   }
 
   function fail(row, error) {
@@ -459,7 +722,8 @@ export function createDownloadBridge({
         continue
       }
       const progress = Math.round(job.progress * 10) / 10
-      if (progress !== row.progress || job.phase !== row.phase) update(row.id, { progress, phase: job.phase })
+      const steps = job.steps ? JSON.stringify(job.steps) : null
+      if (progress !== row.progress || job.phase !== row.phase || steps !== (row.steps || null)) update(row.id, { progress, phase: job.phase, steps })
     }
   }
 
@@ -479,6 +743,7 @@ export function createDownloadBridge({
     try {
       await checkDownloading()
       startDue()
+      feedWaiting()
     } catch (error) {
       logger.error?.('❌ [player] download bridge tick failed:', error?.message || error)
     } finally {
@@ -518,13 +783,24 @@ export function createDownloadBridge({
     return stmt.completedUpgrades.all(JSON.stringify(target)).map((row) => downloadForUser(row, user.id))
   }
 
-  function list(user, { all = false, limit = 100, activeOnly = false } = {}) {
+  // `group`: the songs of one download group; `ungrouped`: only downloads
+  // that are not part of a group (the downloads page shows groups apart).
+  function list(user, { all = false, limit = 100, activeOnly = false, group = null, ungrouped = false } = {}) {
     const where = []
-    const params = { $limit: Math.min(Math.max(Number(limit) || 100, 1), 500) }
-    if (!(all && user?.role === 'admin')) { where.push('user_id = $uid'); params.$uid = user.id }
+    const params = { $limit: Math.min(Math.max(Number(limit) || 100, 1), 1000) }
+    if (group) {
+      const g = ownGroup(group, user)
+      where.push('group_id = $gid')
+      params.$gid = g.id
+    } else if (!(all && user?.role === 'admin')) { where.push('user_id = $uid'); params.$uid = user.id }
+    if (ungrouped && !group) where.push('group_id IS NULL')
     if (activeOnly) where.push(`status IN ('queued','resolving','downloading','indexing')`)
+    // A group's songs: the running ones first, then the queue in its order.
+    const order = group
+      ? `CASE status WHEN 'downloading' THEN 0 WHEN 'indexing' THEN 0 WHEN 'resolving' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END, created_at`
+      : `(status IN ('queued','resolving','downloading','indexing')) DESC, created_at DESC`
     return db.prepare(`SELECT * FROM downloads ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY (status IN ('queued','resolving','downloading','indexing')) DESC, created_at DESC LIMIT $limit`).all(params)
+      ORDER BY ${order} LIMIT $limit`).all(params)
       .map((row) => downloadForUser(row, user.id))
   }
 
@@ -567,7 +843,11 @@ export function createDownloadBridge({
 
   function purgeOld() {
     stmt.purge.run(now() - RETENTION_MS)
+    stmt.purgeGroups.run({ $before: now() - RETENTION_MS })
   }
 
-  return { request, get, completedUpgrades, list, cancel, retry, activeBySources, libraryBySources, start, stop, tick, purgeOld, events, canDownload }
+  return {
+    request, get, completedUpgrades, list, cancel, retry, activeBySources, libraryBySources, start, stop, tick, purgeOld, events, canDownload,
+    requestMany, getGroup, listGroups, cancelGroup, retryGroup
+  }
 }

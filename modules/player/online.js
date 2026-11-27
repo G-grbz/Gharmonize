@@ -246,11 +246,16 @@ function youtubeProvider({ searchImpl, searchPlaylistsImpl } = {}) {
       if (kind === 'playlist') {
         // Only YouTube Music's own lists: one request on the shared YouTube
         // Music queue (community lists were mostly noise).
-        const find = searchPlaylistsImpl || (await import('../yt.js')).searchYouTubeMusicPlaylists
-        return (await find(q, { limit, community: false }) || []).map((item) => mapYouTubeItem(item, 'playlist')).filter(Boolean)
+        const yt = searchPlaylistsImpl ? null : await import('../yt.js')
+        const find = searchPlaylistsImpl || yt.searchYouTubeMusicPlaylists
+        const anonymous = yt ? yt.withoutYouTubeAccount : (fn) => fn()
+        return (await anonymous(() => find(q, { limit, community: false })) || []).map((item) => mapYouTubeItem(item, 'playlist')).filter(Boolean)
       }
-      const search = searchImpl || (await import('../yt.js')).searchYouTubeContent
-      const result = await search(q, { limit, type: kind === 'album' ? 'album' : 'track' })
+      // Player searches never use the YouTube account.
+      const yt = searchImpl ? null : await import('../yt.js')
+      const search = searchImpl || yt.searchYouTubeContent
+      const anonymous = yt ? yt.withoutYouTubeAccount : (fn) => fn()
+      const result = await anonymous(() => search(q, { limit, type: kind === 'album' ? 'album' : 'track' }))
       return (result?.items || []).map((item) => mapYouTubeItem(item, kind)).filter(Boolean)
     }
   }

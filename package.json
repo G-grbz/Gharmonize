@@ -1,7 +1,7 @@
 {
   "name": "Gharmonize",
   "desktopName": "gharmonize.desktop",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Gharmonize is a desktop application that brings together third-party tools from various platforms to help you build and manage your local music library.",
   "author": "G-grbz <gkhn.gurbuz@hotmail.com>",
   "homepage": "https://github.com/G-grbz/Gharmonize",
@@ -106,6 +106,13 @@
         "to": "icon.ico"
       },
       {
+        "from": "build/icons",
+        "to": "icons",
+        "filter": [
+          "*.png"
+        ]
+      },
+      {
         "from": "LICENSE.md",
         "to": "LICENSE.md"
       },
@@ -145,7 +152,7 @@
         "rpm",
         "pacman"
       ],
-      "icon": "build/icon.png",
+      "icon": "build/icons",
       "category": "AudioVideo",
       "maintainer": "G-grbz <gkhn.gurbuz@hotmail.com>",
       "syncDesktopName": true,

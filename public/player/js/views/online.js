@@ -5,8 +5,9 @@
 import { app } from '../app.js'
 import { get, post, api } from '../api.js'
 import { h, t, icon, iconButton, artwork, contextMenu, fmtLong, fmtNumber, plural, emptyState, toast, toastError } from '../dom.js'
-import { hero, actionBar, onlineTrackList, shelf, onlineCard, playOnline, providerName, createPlaylistFlow, grid, setTint, refreshPlaylists, artistBio } from '../components.js'
+import { hero, actionBar, onlineTrackList, shelf, onlineCard, playOnline, providerName, createPlaylistFlow, grid, setTint, refreshPlaylists, artistBio, selectButton } from '../components.js'
 import { downloadButton } from '../downloads.js'
+import { discographyCard } from '../discographyWizard.js'
 import { saveButton } from '../playlistSave.js'
 
 function sourceMenu(item) {
@@ -18,14 +19,13 @@ function sourceMenu(item) {
 }
 
 // Mixes without a downloadable link: every missing song is downloaded on its own.
-function downloadEachButton(tracks) {
+function downloadEachButton(tracks, title = null) {
   const btn = h('button', { type: 'button', class: 'btn btn--outline' }, icon('download', { size: 18 }), h('span', { text: t('player.online.downloadMissing') }))
   btn.addEventListener('click', async () => {
     const missing = tracks.filter((tr) => !tr.library && tr.url)
     if (!missing.length) return
     btn.disabled = true
-    for (const tr of missing) await app.downloads.request(tr, { quiet: true })
-    toast(t('player.online.downloadQueuedMany', { n: missing.length }))
+    if (!(await app.downloads.requestMany(missing, { title }))) btn.disabled = false
   })
   return btn
 }
@@ -35,7 +35,7 @@ function downloadEachButton(tracks) {
 function downloadMissingButton(item, kind, tracks) {
   const missing = tracks.filter((tr) => !tr.library)
   const partial = missing.length > 0 && missing.length < tracks.length
-  const only = partial ? missing.map((tr) => ({ id: tr.id, url: tr.url, title: tr.title, artist: tr.artist, isrc: tr.isrc, duration: tr.duration })) : undefined
+  const only = partial ? missing.map((tr) => ({ id: tr.id, url: tr.url, title: tr.title, artist: tr.artist, album: tr.album, isrc: tr.isrc, duration: tr.duration })) : undefined
   return downloadButton({ ...item, kind, trackCount: tracks.length || item.trackCount, only }, {
     compact: false,
     idleLabel: partial ? t('player.online.downloadMissingCount', { n: missing.length }) : null
@@ -78,6 +78,7 @@ async function albumView(query) {
   if (album.library?.albumId) extra.push(h('a', { class: 'btn btn--outline btn--pill', href: `#/album/${album.library.albumId}` }, icon('library', { size: 18 }), t('player.online.openInLibrary')))
   if (!complete && app.canDownload) extra.push(downloadMissingButton(album, 'album', tracks))
   if (complete || app.canDownload) extra.push(onlineSave(album, 'album', tracks))
+  if (tracks.length) extra.push(selectButton(() => root.querySelector('.tracklist')))
   extra.push(sourceMenu(album))
   root.append(playable(tracks)
     ? actionBar({ onPlay: () => playFirst(tracks, context), extra })
@@ -140,10 +141,11 @@ async function playlistView(query) {
     }))
   const extra = []
   if (app.canDownload && owned < tracks.length) {
-    extra.push(pl.downloadable === false ? downloadEachButton(tracks) : downloadMissingButton(pl, 'playlist', tracks))
+    extra.push(pl.downloadable === false ? downloadEachButton(tracks, pl.title) : downloadMissingButton(pl, 'playlist', tracks))
   }
   if (owned || app.canDownload) extra.push(onlineSave(pl, 'playlist', tracks))
   if (pl.downloadable !== false) extra.push(followButton(pl, data.follow))
+  if (tracks.length) extra.push(selectButton(() => root.querySelector('.tracklist')))
   extra.push(sourceMenu(pl))
   root.append(playable(tracks) ? actionBar({ onPlay: () => playFirst(tracks, context), extra }) : h('div', { class: 'action-bar' }, ...extra))
   root.append(tracks.length ? onlineTrackList(tracks, { context }) : emptyState('list', t('player.online.emptyPlaylist')))
@@ -193,12 +195,8 @@ async function artistView(query) {
     }))
   const extra = [onlineFollowButton(artist), sourceMenu(artist)]
   root.append(playable(data.topTracks) ? actionBar({ onPlay: () => playFirst(data.topTracks, context), extra }) : h('div', { class: 'action-bar' }, ...extra))
-  if (data.albums.length) {
-    const ownedAlbums = data.albums.length - data.missingAlbums
-    root.append(h('div', { class: 'online-banner' }, icon(data.missingAlbums ? 'sparkles' : 'checkCircle', { size: 22 }),
-      h('div', {}, h('b', { text: data.missingAlbums ? t('player.online.discographyGap', { owned: ownedAlbums, total: data.albums.length }) : t('player.online.discographyComplete') }),
-        h('span', { text: data.missingAlbums ? (app.canDownload ? t('player.online.discographyHint') : t('player.downloads.notAllowedHint')) : '' }))))
-  }
+  const gapCard = discographyCard(data, { name: artist.title })
+  if (gapCard) root.append(gapCard)
   if (data.topTracks.length) root.append(h('section', { class: 'section' }, h('h2', { class: 'section-title', text: t('player.artist.popular') }), onlineTrackList(data.topTracks.slice(0, 10), { context })))
   if (data.albums.length) root.append(shelf({ title: t('player.artist.albums'), items: data.albums, render: (item, i) => onlineCard(item, data.albums, i) }))
   if (data.singles.length) root.append(shelf({ title: t('player.artist.singlesEps'), items: data.singles, render: (item, i) => onlineCard(item, data.singles, i) }))

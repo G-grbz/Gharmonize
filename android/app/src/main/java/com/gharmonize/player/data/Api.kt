@@ -182,6 +182,10 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
     request(if (value) "PUT" else "DELETE", "/favorites/track/$trackId")
   }
 
+  suspend fun removeFromPlaylist(playlistId: Long, entryId: Long) {
+    request("DELETE", "/playlists/$playlistId/tracks/$entryId")
+  }
+
   suspend fun addToPlaylist(playlistId: Long, trackIds: List<Long>) {
     post("/playlists/$playlistId/tracks", JSONObject().put("trackIds", JSONArray(trackIds)))
   }
@@ -252,6 +256,10 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
   suspend fun onlineArtistTracks(name: String): List<OnlineItem> =
     get("/online/artist/tracks?name=${enc(name)}").optJSONArray("tracks").mapObjects(::parseOnline)
 
+  /** "Complete the discography": releases the library lacks songs of (with their songs) + missing popular songs. */
+  suspend fun onlineArtistGaps(id: String?, name: String?): JSONObject =
+    if (!id.isNullOrBlank()) get("/online/artist/gaps?id=${enc(id)}") else get("/online/artist/gaps?name=${enc(name ?: "")}")
+
   suspend fun onlineArtist(id: String?, name: String?): JSONObject =
     if (!id.isNullOrBlank()) get("/online/artist?id=${enc(id)}") else get("/online/artist?name=${enc(name ?: "")}")
 
@@ -280,7 +288,7 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
     if (!only.isNullOrEmpty()) {
       payload.put("only", JSONArray(only.map { song ->
         JSONObject().put("id", song.id).put("url", song.url).put("title", song.title).put("artist", song.artist)
-          .put("isrc", song.raw.optString("isrc", "")).put("duration", song.duration)
+          .put("album", song.album).put("isrc", song.raw.optString("isrc", "")).put("duration", song.duration)
       }))
     }
     val body = JSONObject().put("item", payload)
@@ -288,7 +296,41 @@ class Api(private val servers: ServerManager, private val prefs: Prefs, private 
     return parseDownload(post("/downloads", body))
   }
 
-  suspend fun downloads() = get("/downloads?limit=100").optJSONArray("items").mapObjects(::parseDownload)
+  /** Every download of the user (grouped songs too), newest active first. */
+  suspend fun downloads() = get("/downloads?limit=300").optJSONArray("items").mapObjects(::parseDownload)
+  suspend fun downloadGroups(activeOnly: Boolean = false) =
+    get("/downloads/groups?limit=30${if (activeOnly) "&active=1" else ""}").optJSONArray("items").mapObjects(::parseDownloadGroup)
+  suspend fun groupSongs(id: String) = get("/downloads?group=${enc(id)}&limit=1000").optJSONArray("items").mapObjects(::parseDownload)
+  suspend fun cancelDownloadGroup(id: String) = parseDownloadGroup(post("/downloads/groups/${enc(id)}/cancel"))
+  suspend fun retryDownloadGroup(id: String) = parseDownloadGroup(post("/downloads/groups/${enc(id)}/retry"))
+
+  /**
+   * Many songs at once: one request, one group on the server. Songs over the
+   * per-user queue limit wait there and are queued as earlier ones finish.
+   */
+  /** [only]: per album / playlist link, just these of its songs. */
+  suspend fun requestDownloadGroup(items: List<OnlineItem>, title: String? = null, playlistId: Long? = null, only: Map<String, List<OnlineItem>> = emptyMap()): DownloadGroup {
+    val list = JSONArray(items.map { item ->
+      val row = JSONObject()
+        .put("kind", if (item.kind == "album" || item.kind == "playlist") item.kind else "track")
+        .put("url", item.url).put("title", item.title).put("artist", item.artist).put("album", item.album)
+        .put("artworkUrl", item.artworkUrl ?: JSONObject.NULL)
+        .put("isrc", item.raw.optString("isrc", ""))
+        .put("duration", item.duration)
+        .put("trackCount", item.trackCount ?: JSONObject.NULL)
+      only[item.url]?.takeIf { it.isNotEmpty() }?.let { songs ->
+        row.put("only", JSONArray(songs.map { song ->
+          JSONObject().put("id", song.id).put("url", song.url).put("title", song.title).put("artist", song.artist)
+            .put("album", song.album.ifBlank { item.title }).put("isrc", song.raw.optString("isrc", "")).put("duration", song.duration)
+        }))
+      }
+      row
+    })
+    val body = JSONObject().put("items", list)
+    if (!title.isNullOrBlank()) body.put("title", title)
+    if (playlistId != null) body.put("playlistId", playlistId)
+    return parseDownloadGroup(post("/downloads/groups", body))
+  }
   suspend fun cancelDownload(id: String) = parseDownload(post("/downloads/${enc(id)}/cancel"))
   suspend fun retryDownload(id: String) = parseDownload(post("/downloads/${enc(id)}/retry"))
   suspend fun tracksByIds(ids: List<Long>) = post("/tracks/batch", JSONObject().put("ids", JSONArray(ids))).optJSONArray("items").mapObjects(::parseTrack)

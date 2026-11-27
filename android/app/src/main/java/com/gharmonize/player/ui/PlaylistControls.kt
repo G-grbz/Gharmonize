@@ -16,7 +16,7 @@ import com.gharmonize.player.R
 import kotlinx.coroutines.launch
 
 @Composable
-fun SavePlaylistDialog(state: AppState, trackIds: List<Long>, suggestedName: String = "", onDismiss: () -> Unit, onSaved: (Long) -> Unit = {}) {
+fun SavePlaylistDialog(state: AppState, trackIds: List<Long>, suggestedName: String = "", onDismiss: () -> Unit, allowExisting: Boolean = trackIds.isNotEmpty(), onSaved: (Long) -> Unit = {}) {
   val choices = rememberLoad("playlist-choices") { state.api.playlists().filter { it.editable } }
   var name by rememberSaveable { mutableStateOf(suggestedName) }
   var selected by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -24,11 +24,11 @@ fun SavePlaylistDialog(state: AppState, trackIds: List<Long>, suggestedName: Str
   var error by remember { mutableStateOf<String?>(null) }
   AlertDialog(
     onDismissRequest = { if (!busy) onDismiss() },
-    title = { Text(stringResource(if (trackIds.isEmpty()) R.string.create_playlist else R.string.save_to_playlist)) },
+    title = { Text(stringResource(if (!allowExisting) R.string.create_playlist else R.string.save_to_playlist)) },
     text = {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(name, { name = it; selected = null }, enabled = !busy, label = { Text(stringResource(R.string.playlist_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        if (trackIds.isNotEmpty()) {
+        if (allowExisting) {
           Text(stringResource(R.string.playlist_existing), style = MaterialTheme.typography.labelMedium)
           LazyColumn(Modifier.heightIn(max = 220.dp)) {
             items(choices.value.orEmpty(), key = { it.id }) { pl ->
@@ -51,7 +51,7 @@ fun SavePlaylistDialog(state: AppState, trackIds: List<Long>, suggestedName: Str
           try {
             val ids = trackIds.filter { it > 0 }.distinct()
             val id = selected ?: state.api.createPlaylist(name.trim(), ids).id
-            if (selected != null) state.api.addToPlaylist(id, ids)
+            if (selected != null && ids.isNotEmpty()) state.api.addToPlaylist(id, ids)
             state.messageRes(R.string.playlist_saved)
             onSaved(id); onDismiss()
           } catch (e: Exception) { error = state.errorText(e) }

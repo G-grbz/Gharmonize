@@ -17,6 +17,8 @@ import { parseSafeYtDlpExtra, sanitizeLogValue } from "./security.js";
 import { requestYtMusicJson, createYtMusicRequestGate } from "./ytMusicRequest.js";
 import { createYtMusicSharedCache } from "./ytMusicSharedCache.js";
 import { resolveRuntimeCacheDir } from "./runtimeEnvironment.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { youtubeGuard, isYouTubeBlockMessage, needsYouTubeAccount, YouTubeBlockedError } from "./youtubeGuard.js";
 import {
   normalizeYtMusicAlbumEntry,
   normalizeYtMusicAlbumMeta,
@@ -27,6 +29,28 @@ import {
 } from "./ytMusicMetadata.js";
 
 const DEFAULT_TIMEOUT = 30000;
+
+// The YouTube account (cookies) is used only where it changes the answer:
+// personal mixes (list=RD…), YTLive's signed-in home, and videos that need an
+// account (age/members). Searches, downloads and the Player stay anonymous so
+// a large batch never runs under the person's own Google account.
+const youtubeAccountScope = new AsyncLocalStorage();
+export function withoutYouTubeAccount(fn) {
+  return youtubeAccountScope.run({ anonymous: true }, fn);
+}
+function youtubeAccountOff() {
+  return youtubeAccountScope.getStore()?.anonymous === true;
+}
+// forList: YT_UI_FORCE_COOKIES=1 keeps mix lists personal even when
+// YT_STRIP_COOKIES=1 turns the account off for everything else.
+export function hasYouTubeAccountCookies({ forList = false } = {}) {
+  if (process.env.YT_STRIP_COOKIES === "1" && !(forList && process.env.YT_UI_FORCE_COOKIES === "1")) return false;
+  const cookieFile = String(process.env.YTDLP_COOKIES || "").trim();
+  if (cookieFile) {
+    try { if (fs.existsSync(cookieFile)) return true; } catch {}
+  }
+  return !!String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
+}
 const DEFAULT_USER_AGENT = getUserAgent();
 const DEFAULT_HEADERS = getYouTubeHeaders();
 const SKIP_RE = /(private|members\s*only|copyright|blocked|region|geo|not\s+available|unavailable|age[-\s]?restricted|signin|sign\s*in|skipp?ed|removed)/i;
@@ -74,13 +98,31 @@ const ytmApiGate = createYtMusicRequestGate({
 const ytmRateLimitWarning = "YouTube geçici istek sınırı uyguladı; mevcut içerikler korunuyor ve yeni sorgular bekletiliyor.";
 
 async function requestSharedYtmJson(fetchPage, { timeoutMs, deadline = Date.now() + timeoutMs, retries = 1 } = {}) {
+  // A bot check seen by downloads (same IP) also stops YouTube Music calls.
+  const pausedMs = youtubeGuard.pausedForMs();
+  if (pausedMs > 0) throw ytmApiGate.rateLimited(String(Math.ceil(pausedMs / 1000)));
   return ytmApiGate.run(() => requestYtMusicJson(async (signal) => {
     if (ytmApiGate.retryAfterMs()) throw Object.assign(new Error(ytmRateLimitWarning), { code: "YTM_RATE_LIMITED", status: 429 });
+    try {
+      await youtubeGuard.before("search", { wait: false });
+    } catch (error) {
+      throw ytmApiGate.rateLimited(String(Math.ceil((error?.retryAfterMs || 60000) / 1000)));
+    }
     const response = await fetchPage(signal);
     if (response.status === 429) {
+      youtubeGuard.observe("HTTP Error 429: Too Many Requests (YouTube Music)");
       const error = ytmApiGate.rateLimited(response.headers?.get?.("retry-after"));
       try { await response.body?.cancel?.(); } catch {}
       throw error;
+    }
+    if (response.status === 403) {
+      // The "automated queries" answer is an HTML page with status 403.
+      let body = "";
+      try { body = await response.clone().text(); } catch {}
+      if (youtubeGuard.observe(body)) {
+        try { await response.body?.cancel?.(); } catch {}
+        throw ytmApiGate.rateLimited(String(Math.ceil(youtubeGuard.pausedForMs() / 1000)));
+      }
     }
     return response;
   }, { timeoutMs, deadline, retries }), { deadline });
@@ -480,14 +522,17 @@ function shouldUseFlatPlaylist(url) {
 }
 
 // Determines whether attach cookies should run for the yt-dlp YouTube download pipeline.
-function shouldAttachCookies(sourceUrl = "", forceCookies = false) {
-  if (forceCookies) return true;
+// YouTube gets the account only when asked for (account=true); other sites
+// keep their previous behaviour.
+function shouldAttachCookies(sourceUrl = "", forceCookies = false, account = false) {
   const src = String(sourceUrl || "");
-  return isYouTubeUrl(src) || isDailymotionUrl(src);
+  if (isYouTubeUrl(src)) return !!account && hasYouTubeAccountCookies({ forList: true });
+  if (forceCookies) return true;
+  return isDailymotionUrl(src);
 }
 
 // Builds base args for the yt-dlp YouTube download pipeline.
-function buildBaseArgs(additionalArgs = [], { sourceUrl = "" } = {}) {
+function buildBaseArgs(additionalArgs = [], { sourceUrl = "", account = false } = {}) {
   const isYouTubeSource = isYouTubeUrl(String(sourceUrl || ""));
   const args = [
     "--ignore-config", "--no-warnings",
@@ -498,9 +543,9 @@ function buildBaseArgs(additionalArgs = [], { sourceUrl = "" } = {}) {
     "-J"
   ];
 
-  if (isYouTubeSource) {
-    args.push("--extractor-args", "youtube:player_client=android,web");
-  }
+  // No forced player clients: yt-dlp's own defaults follow YouTube's changes.
+  // The old forced "android,web" pair made a failing (403) web API call and
+  // lost the android formats on every lookup.
 
   if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
 
@@ -513,7 +558,7 @@ function buildBaseArgs(additionalArgs = [], { sourceUrl = "" } = {}) {
   const extra = getExtraArgs();
   if (extra.length) args.push(...extra);
 
-  if (shouldAttachCookies(sourceUrl)) {
+  if (shouldAttachCookies(sourceUrl, false, account)) {
     addCookieArgs(args, { ui: true });
   }
   args.push(...getJsRuntimeArgs());
@@ -587,60 +632,105 @@ export function withYT403Workarounds(baseArgs, { stripCookies = false } = {}) {
   return args;
 }
 
+// Whether a yt-dlp argument list talks to YouTube (URL or ytsearch: query).
+function ytDlpTargetsYouTube(args = [], sourceUrl = "") {
+  if (isYouTubeUrl(String(sourceUrl || ""))) return true;
+  return args.some((x) => typeof x === "string" && /^ytsearch\d*:/i.test(x));
+}
+
+// Personal mixes (list=RD…) differ per account: their track list is the one
+// place where the account is asked first.
+function prefersYouTubeAccount(args = [], sourceUrl = "") {
+  return isYouTubeAutomix(String(sourceUrl || "")) && args.includes("--flat-playlist");
+}
+
+function spawnYtJson(YTDLP_BIN, runArgs, label, timeout) {
+  return new Promise((resolve) => {
+    let stdoutData = "", stderrData = "", done = false;
+    const finish = (result) => { if (!done) { done = true; resolve(result); } };
+    const child = spawnSafe(YTDLP_BIN, runArgs, getYtDlpJobSpawnOptions({
+      stdio: ["ignore", "pipe", "pipe"]
+    }));
+    const timeoutId = setTimeout(() => {
+      terminateProcess(child);
+      finish({ error: new Error(`[${label}] timeout (${timeout}ms)`), stderr: stderrData });
+    }, timeout);
+    child.stdout.on("data", chunk => stdoutData += chunk.toString());
+    child.stderr.on("data", chunk => stderrData += chunk.toString());
+    child.on("close", (code) => {
+      clearTimeout(timeoutId);
+      if (code === 0) {
+        try {
+          finish({ data: JSON.parse(stdoutData), stderr: stderrData });
+        } catch (error) {
+          finish({ error: new Error(`[${label}] JSON parse error: ${error.message}\n${stderrData}`), stderr: stderrData });
+        }
+      } else {
+        finish({ error: new Error(`[${label}] exit code ${code}\n${stderrData.slice(-500)}`), stderr: stderrData });
+      }
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeoutId);
+      finish({ error: new Error(`[${label}] failed to start: ${error.message}`), stderr: stderrData });
+    });
+  });
+}
+
 // Runs YouTube metadata json for the yt-dlp YouTube download pipeline.
-export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOUT) {
+// YouTube is asked without the account first; the account is tried only when
+// YouTube says the video needs one (or first, for personal mixes). A bot check
+// pauses all YouTube requests instead of retrying.
+// options.wait: false = a person is waiting (preview/search): fail fast while
+// YouTube requests are paused instead of hanging.
+export async function runYtJson(args, label = "ytjson", timeout = DEFAULT_TIMEOUT, options = {}) {
   const YTDLP_BIN = resolveYtDlp();
   if (!YTDLP_BIN) {
     throw new Error("yt-dlp not found. Please install it or set YTDLP_BIN to its path.");
   }
+  const list = Array.isArray(args) ? args : [];
+  const sourceUrl =
+    [...list].reverse().find((x) => typeof x === "string" && /^https?:\/\//i.test(x)) || "";
+  const youtube = ytDlpTargetsYouTube(list, sourceUrl);
+  const kind = list.includes("--flat-playlist") || list.some((x) => /^ytsearch/i.test(String(x))) ? "list" : "info";
+  const accountFirst = youtube && options.account !== false && prefersYouTubeAccount(list, sourceUrl) && hasYouTubeAccountCookies({ forList: true });
 
-  return new Promise((resolve, reject) => {
-    const sourceUrl =
-      [...(Array.isArray(args) ? args : [])]
-        .reverse()
-        .find((x) => typeof x === "string" && /^https?:\/\//i.test(x)) || "";
-    const finalArgs = buildBaseArgs(args, { sourceUrl });
+  const attempt = async (account) => {
+    if (youtube) await youtubeGuard.before(kind, { wait: options.wait === true, isCanceled: options.isCanceled, onWait: options.onWait });
+    const result = await spawnYtJson(YTDLP_BIN, buildBaseArgs(list, { sourceUrl, account }), label, timeout);
+    if (youtube && result.error && youtubeGuard.observe(result.stderr)) {
+      throw new YouTubeBlockedError(youtubeGuard.status());
+    }
+    return result;
+  };
 
-    const run = (runArgs, retryWithoutCookies) => {
-      let stdoutData = "", stderrData = "";
-      const child = spawnSafe(YTDLP_BIN, runArgs, getYtDlpJobSpawnOptions({
-        stdio: ["ignore", "pipe", "pipe"]
-      }));
+  if (!youtube) {
+    // Other sites keep their cookie behaviour: with cookies, then once without.
+    const runArgs = buildBaseArgs(list, { sourceUrl });
+    const first = await spawnYtJson(YTDLP_BIN, runArgs, label, timeout);
+    if (!first.error) return first.data;
+    if (!hasCookieArgs(runArgs)) throw first.error;
+    console.warn(`[${label}] failed with cookies, retrying without cookies`);
+    const second = await spawnYtJson(YTDLP_BIN, stripCookieArgs(runArgs), label, timeout);
+    if (second.error) throw second.error;
+    return second.data;
+  }
 
-      const timeoutId = setTimeout(() => {
-        terminateProcess(child);
-        reject(new Error(`[${label}] timeout (${timeout}ms)`));
-      }, timeout);
-
-      child.stdout.on("data", chunk => stdoutData += chunk.toString());
-      child.stderr.on("data", chunk => stderrData += chunk.toString());
-
-      child.on("close", (code) => {
-        clearTimeout(timeoutId);
-
-        if (code === 0) {
-          try {
-            const result = JSON.parse(stdoutData);
-            resolve(result);
-          } catch (error) {
-            reject(new Error(`[${label}] JSON parse error: ${error.message}\n${stderrData}`));
-          }
-        } else if (retryWithoutCookies) {
-          console.warn(`[${label}] failed with cookies, retrying without cookies`);
-          run(stripCookieArgs(runArgs), false);
-        } else {
-          reject(new Error(`[${label}] exit code ${code}\n${stderrData.slice(-500)}`));
-        }
-      });
-
-      child.on("error", (error) => {
-        clearTimeout(timeoutId);
-        reject(new Error(`[${label}] failed to start: ${error.message}`));
-      });
-    };
-
-    run(finalArgs, hasCookieArgs(finalArgs));
-  });
+  const first = await attempt(accountFirst);
+  if (!first.error) return first.data;
+  if (accountFirst) {
+    // Expired or unreadable cookies must not break a mix: the public list still works.
+    console.warn(`[${label}] failed with the YouTube account, retrying without it`);
+    const second = await attempt(false);
+    if (second.error) throw second.error;
+    return second.data;
+  }
+  if (options.account !== false && hasYouTubeAccountCookies() && needsYouTubeAccount(first.stderr)) {
+    console.warn(`[${label}] YouTube requires an account for this item; retrying with the configured cookies`);
+    const second = await attempt(true);
+    if (second.error) throw second.error;
+    return second.data;
+  }
+  throw first.error;
 }
 
 // Processes entry in the yt-dlp YouTube download pipeline.
@@ -1055,7 +1145,7 @@ function ytmSearchBlockedError() {
 
 // throwOnError: report a failed/blocked request instead of answering "no
 // results" (song matching must not mistake an outage for a missing song).
-async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = "", region = "", timeoutMs: timeoutOverride = null, useCookies = true, params = "", throwOnError = false } = {}) {
+async function searchYouTubeMusicContent(query, { limit = 12, type = "", lang = "", region = "", timeoutMs: timeoutOverride = null, useCookies = false, params = "", throwOnError = false } = {}) {
   const q = String(query || "").trim();
   if (!q) return [];
   if (ytmApiGate.retryAfterMs()) {
@@ -3183,6 +3273,7 @@ async function loadDiscoverYouTubeContent({ preset = "popular", limit = 18, page
 }
 
 function hasUsableCookieSource() {
+  if (youtubeAccountOff()) return false;
   const cookieFile = String(process.env.YTDLP_COOKIES || "").trim();
   if (cookieFile) {
     try {
@@ -3566,6 +3657,7 @@ function exportBrowserCookiesForMusicHome(timeoutMs = 5000) {
 const ytmCookieExportsInFlight = new Map();
 
 async function resolveMusicHomeCookieFile({ forceRefresh = false } = {}) {
+  if (youtubeAccountOff()) return "";
   const cookieFile = String(process.env.YTDLP_COOKIES || "").trim();
   if (hasCookieFile(cookieFile)) return cookieFile;
   if (String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim()) {
@@ -5314,8 +5406,8 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
   if (!YTDLP_BIN) throw new Error("yt-dlp not found.");
 
   // Builds args for the yt-dlp YouTube download pipeline.
-  const buildArgs = (flat = false, { stripCookies = false } = {}) => {
-    let args = buildBaseArgs([], { sourceUrl: url });
+  const buildArgs = (flat = false, { stripCookies = false, account = false } = {}) => {
+    let args = buildBaseArgs([], { sourceUrl: url, account });
     if (!args.includes("--no-check-formats")) {
       args.push("--no-check-formats");
     }
@@ -5365,20 +5457,42 @@ export async function fetchYtMetadata(url, isPlaylist = false) {
       });
     });
 
-  const attempts = [
-    { label: "meta+cookies+flat", args: buildArgs(true,  { stripCookies: false }) },
-    { label: "meta+cookies",      args: buildArgs(false, { stripCookies: false }) },
-    { label: "meta+nocookies",    args: buildArgs(false, { stripCookies: true  }) }
-  ];
+  const youtube = isYouTubeUrl(String(url || ""));
+  const canUseAccount = youtube && hasYouTubeAccountCookies();
+  const listAccount = youtube && isPlaylist && isYouTubeAutomix(url) && hasYouTubeAccountCookies({ forList: true });
+  // YouTube: anonymous first; the account only for a personal mix list or a
+  // video YouTube refuses without one. Other sites: unchanged order.
+  const attempts = youtube
+    ? [
+        ...(listAccount
+          ? [{ label: "meta+account+flat", args: buildArgs(true, { account: true }) }]
+          : []),
+        { label: "meta+flat", args: buildArgs(true) },
+        { label: "meta", args: buildArgs(false) },
+        ...(canUseAccount ? [{ label: "meta+account", args: buildArgs(false, { account: true }), onlyIfAccountNeeded: true }] : [])
+      ]
+    : [
+        { label: "meta+cookies+flat", args: buildArgs(true,  { stripCookies: false }) },
+        { label: "meta+cookies",      args: buildArgs(false, { stripCookies: false }) },
+        { label: "meta+nocookies",    args: buildArgs(false, { stripCookies: true  }) }
+      ];
 
   let lastError;
+  let accountNeeded = false;
 for (const attempt of attempts) {
+  if (attempt.onlyIfAccountNeeded ? !accountNeeded : accountNeeded) continue;
   try {
+    if (youtube) await youtubeGuard.before(attempt.args.includes("--flat-playlist") ? "list" : "info", { wait: true });
     const data = await attemptDownload(attempt.args, attempt.label);
     return data;
   } catch (error) {
     lastError = error;
     const msg = String(error.message || "");
+    if (youtube && youtubeGuard.observe(msg)) throw new YouTubeBlockedError(youtubeGuard.status());
+    if (canUseAccount && !accountNeeded && needsYouTubeAccount(msg)) {
+      accountNeeded = true;
+      continue;
+    }
     if (isDailymotionUrl(url) && isImpersonationUnavailableError(msg)) {
       console.warn("[yt-meta] dailymotion metadata skipped (impersonation dependency unavailable)");
       return null;
@@ -5813,133 +5927,139 @@ async function downloadSelectedIdsParallel(
     const stage = phase => {
       try { opts.onTrackStage?.({ id: selectedIds[index], playlistIndex: idToIndex.get(selectedIds[index]), phase }); } catch {}
     };
-    if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
+    const isCanceled = () => typeof ctrl?.isCanceled === "function" && ctrl.isCanceled();
+    if (isCanceled()) {
       stage('canceled');
       throw new Error("CANCELED");
     }
-    stage('downloading');
-
+    const youtube = isYouTubeUrl(String(url || ""));
     const outputTemplate = path.join(playlistDir, `%(id)s.%(ext)s`);
 
-    let args;
+    const buildArgs = (account) => {
+      let args;
+      if (opts.video) {
+        const h = (opts.maxHeight && Number.isFinite(opts.maxHeight))
+          ? opts.maxHeight
+          : 1080;
 
-    if (opts.video) {
-      const h = (opts.maxHeight && Number.isFinite(opts.maxHeight))
-        ? opts.maxHeight
-        : 1080;
+        args = [
+          "--force-ipv4",
+          "--no-playlist",
+          "--ignore-errors", "--no-abort-on-error",
+          "--no-part",
+          "--progress", "--newline",
+          "-N", String(fragmentConc),
+          "-f", buildVideoFormatSelector(url, h),
+          "-o", outputTemplate,
+          url
+        ];
+      } else {
+        args = [
+          "--ignore-config", "--no-warnings",
+          "--socket-timeout", "15",
+          "--retries", "3", "--fragment-retries", "3", "--retry-sleep", "1",
+          "--user-agent", DEFAULT_USER_AGENT,
+          ...headersToArgs(youtube ? DEFAULT_HEADERS : null),
+          "--no-playlist",
+          "--ignore-errors", "--no-abort-on-error",
+          "--write-thumbnail", "--convert-thumbnails", "jpg",
+          // The tag step reads this file instead of asking YouTube again.
+          ...(youtube ? ["--write-info-json"] : []),
+          "--continue", "--no-overwrites",
+          "--autonumber-size", "3",
+          "--progress", "--newline",
+          "-N", String(fragmentConc),
+          "-f", "bestaudio[abr>=128]/bestaudio/best",
+          "-o", outputTemplate,
+          url
+        ];
 
-      args = [
-        "--force-ipv4",
-        "--no-playlist",
-        "--ignore-errors", "--no-abort-on-error",
-        "--no-part",
-        "--progress", "--newline",
-        "-N", String(fragmentConc),
-        "-f", buildVideoFormatSelector(url, h),
-        "-o", outputTemplate,
-        url
-      ];
-    } else {
-      args = [
-        "--ignore-config", "--no-warnings",
-        "--socket-timeout", "15",
-        "--retries", "3", "--fragment-retries", "3", "--retry-sleep", "1",
-        "--user-agent", DEFAULT_USER_AGENT,
-        ...headersToArgs(isYouTubeUrl(String(url || "")) ? DEFAULT_HEADERS : null),
-        "--no-playlist",
-        "--ignore-errors", "--no-abort-on-error",
-        "--write-thumbnail", "--convert-thumbnails", "jpg",
-        "--continue", "--no-overwrites",
-        "--autonumber-size", "3",
-        "--progress", "--newline",
-        "-N", String(fragmentConc),
-        "-f", "bestaudio[abr>=128]/bestaudio/best",
-        "-o", outputTemplate,
-        url
-      ];
+        if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
+        const geoNetArgs = addGeoArgs([]);
+        if (geoNetArgs.length) args.push(...geoNetArgs);
 
-      if (FLAGS.FORCE_IPV4) args.push("--force-ipv4");
-      const geoNetArgs = addGeoArgs([]);
-      if (geoNetArgs.length) args.push(...geoNetArgs);
-
-      const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
-      if (extraEnv) {
-        args.push(...parseSafeYtDlpExtra(extraEnv));
+        const extraEnv = process.env.YTDLP_EXTRA || process.env.YTDLP_ARGS_EXTRA;
+        if (extraEnv) {
+          args.push(...parseSafeYtDlpExtra(extraEnv));
+        }
       }
-    }
 
-    if (shouldAttachCookies(url, !!opts?.forceCookies)) {
-      addCookieArgs(args, { ui: !!opts?.forceCookies });
-    }
-    addFfmpegLocationArgs(args);
-    args.push(...getJsRuntimeArgs());
-    args = withDailymotionNoImpersonation(args, url);
+      if (shouldAttachCookies(url, !!opts?.forceCookies, account)) {
+        addCookieArgs(args, { ui: account || !!opts?.forceCookies });
+      }
+      addFfmpegLocationArgs(args);
+      args.push(...getJsRuntimeArgs());
+      return withDailymotionNoImpersonation(args, url);
+    };
 
-    return new Promise((resolve, reject) => {
+    let mediaDestAbs = null;
+    let emittedDone = false;
+    const downloadStartedAt = Date.now();
+
+    // Handles fallback abs path by id in the yt-dlp YouTube download pipeline.
+    const fallbackAbsPathById = () => {
+      const fallbackId = selectedIds[index];
+      if (!fallbackId) return null;
+      try {
+        const all = getDownloadedFiles(playlistDir, true)
+          .filter((p) => parseIdFromPath(p) === fallbackId);
+        return all[0] || null;
+      } catch {
+        return null;
+      }
+    };
+
+    // Handles emit file done once in the yt-dlp YouTube download pipeline.
+    const emitFileDoneOnce = () => {
+      if (emittedDone) return;
+      const donePath =
+        (mediaDestAbs && fs.existsSync(mediaDestAbs) && mediaDestAbs) ||
+        fallbackAbsPathById();
+      if (!donePath) return;
+      emittedDone = true;
+      stage('queued');
+      console.log(`[youtube ${sanitizeLogValue(jobId)}] Downloaded ${sanitizeLogValue(selectedIds[index])} in ${((Date.now() - downloadStartedAt) / 1000).toFixed(1)}s; preparing metadata`);
+
+      const fileId = parseIdFromPath(donePath);
+      if (youtube && fileId) rememberDownloadedInfoJson(fileId, path.join(playlistDir, `${fileId}.info.json`));
+
+      completedCount++;
+      overallProgress();
+
+      emitEvent(progressCallback, opts, {
+        type: "file-done",
+        downloaded: completedCount,
+        total: totalCount,
+        jobId
+      });
+
+      if (typeof opts.onFileDone === "function") {
+        const playlistIndex = (fileId && idToIndex.has(fileId))
+          ? idToIndex.get(fileId)
+          : parsePlaylistIndexFromPath(donePath);
+        try {
+          opts.onFileDone({
+            filePath: donePath,
+            playlistIndex,
+            id: fileId || null
+          });
+        } catch {}
+      }
+    };
+
+    // One yt-dlp run; resolves with how it ended.
+    const runOnce = (args) => new Promise((resolve) => {
       let stderrBuf = "";
-      let mediaDestAbs = null;
-      let emittedDone = false;
-      const downloadStartedAt = Date.now();
-
       const child = spawnSafe(ytDlpBin, args, getYtDlpJobSpawnOptions());
       try { registerJobProcess(jobId, child); } catch {}
 
       // Handles abort if canceled in the yt-dlp YouTube download pipeline.
       const abortIfCanceled = () => {
-        if (typeof ctrl?.isCanceled === "function" && ctrl.isCanceled()) {
+        if (isCanceled()) {
           terminateYtDlpJobProcess(child, "SIGTERM");
           return true;
         }
         return false;
-      };
-
-      // Handles fallback abs path by id in the yt-dlp YouTube download pipeline.
-      const fallbackAbsPathById = () => {
-        const fallbackId = selectedIds[index];
-        if (!fallbackId) return null;
-        try {
-          const all = getDownloadedFiles(playlistDir, true)
-            .filter((p) => parseIdFromPath(p) === fallbackId);
-          return all[0] || null;
-        } catch {
-          return null;
-        }
-      };
-
-      // Handles emit file done once in the yt-dlp YouTube download pipeline.
-      const emitFileDoneOnce = () => {
-        if (emittedDone) return;
-        const donePath =
-          (mediaDestAbs && fs.existsSync(mediaDestAbs) && mediaDestAbs) ||
-          fallbackAbsPathById();
-        if (!donePath) return;
-        emittedDone = true;
-        stage('queued');
-        console.log(`[youtube ${sanitizeLogValue(jobId)}] Downloaded ${sanitizeLogValue(selectedIds[index])} in ${((Date.now() - downloadStartedAt) / 1000).toFixed(1)}s; preparing metadata`);
-
-        completedCount++;
-        overallProgress();
-
-        emitEvent(progressCallback, opts, {
-          type: "file-done",
-          downloaded: completedCount,
-          total: totalCount,
-          jobId
-        });
-
-        if (typeof opts.onFileDone === "function") {
-          const fileId = parseIdFromPath(donePath);
-          const playlistIndex = (fileId && idToIndex.has(fileId))
-            ? idToIndex.get(fileId)
-            : parsePlaylistIndexFromPath(donePath);
-          try {
-            opts.onFileDone({
-              filePath: donePath,
-              playlistIndex,
-              id: fileId || null
-            });
-          } catch {}
-        }
       };
 
       // Handles handle line in the yt-dlp YouTube download pipeline.
@@ -5971,35 +6091,64 @@ async function downloadSelectedIdsParallel(
         s.split(/\r?\n/).forEach(handleLine);
       });
 
-      child.on("close", (code, signal) => {
-        if (signal === "SIGTERM" || signal === "SIGKILL") {
-          stage('canceled');
-          return reject(new Error("CANCELED"));
-        }
+      child.on("close", (code, signal) => resolve({ code, signal, stderr: stderrBuf }));
+      child.on("error", (err) => resolve({ startError: err, stderr: stderrBuf }));
+    });
 
-        if (code === 0) {
+    const run = async () => {
+      let account = false;
+      let pauses = 0;
+      for (;;) {
+        if (youtube) {
+          await youtubeGuard.before("download", { wait: true, isCanceled, onWait: () => stage('waiting') });
+        }
+        stage('downloading');
+        const result = await runOnce(buildArgs(account));
+
+        if (result.startError) {
+          stage('error');
+          throw new Error(`yt-dlp failed to start: ${result.startError.message}`);
+        }
+        if (result.signal === "SIGTERM" || result.signal === "SIGKILL") {
+          stage('canceled');
+          throw new Error("CANCELED");
+        }
+        if (result.code === 0) {
           emitFileDoneOnce();
           if (!emittedDone) stage('skipped');
-          return resolve();
+          return;
         }
 
-        const tail = String(stderrBuf).split("\n").slice(-20).join("\n");
+        const tail = String(result.stderr).split("\n").slice(-20).join("\n");
+        if (!emittedDone && !fallbackAbsPathById()) {
+          // A bot check pauses every YouTube request; this song is tried
+          // again after the pause instead of being marked as failed.
+          if (youtube && youtubeGuard.observe(result.stderr) && pauses < 3) {
+            pauses += 1;
+            stage('waiting');
+            continue;
+          }
+          if (youtube && !account && hasYouTubeAccountCookies() && needsYouTubeAccount(result.stderr)) {
+            console.warn(`[youtube ${sanitizeLogValue(jobId)}] ${sanitizeLogValue(selectedIds[index])} needs an account; retrying with the configured cookies`);
+            account = true;
+            continue;
+          }
+        }
 
         if (SKIP_RE.test(tail) || ERROR_WORD.test(tail)) {
           emitFileDoneOnce();
           if (!emittedDone) stage(SKIP_RE.test(tail) ? 'skipped' : 'error');
-          return resolve();
+          return;
         }
 
         stage('error');
-        return reject(new Error(`yt-dlp error (parallel id ${index + 1}): ${code}\n${tail}`));
-      });
+        throw new Error(`yt-dlp error (parallel id ${index + 1}): ${result.code}\n${tail}`);
+      }
+    };
 
-      child.on("error", (err) => {
-        stage('error');
-        reject(new Error(`yt-dlp failed to start: ${err.message}`));
-      });
-    });
+    // At most two YouTube downloads at once server wide, whatever the job's
+    // parallel setting is (that setting still drives the ffmpeg conversions).
+    return youtube ? youtubeGuard.withSlot("download", run, { isCanceled }) : run();
   };
 
   const conc = normalizeConcurrency(opts.youtubeConcurrency);
@@ -6197,8 +6346,12 @@ async function downloadStandard(
   }
 
   const finalArgs = withDailymotionNoImpersonation(args, opts?.sourceUrl || url);
-  return new Promise((resolve, reject) => {
-    const child = spawnSafe(ytDlpBin, finalArgs, {
+  const youtube = isYouTubeUrl(String(opts?.sourceUrl || url || ""));
+  const single = !isPlaylist && !isAutomix;
+  // The tag step reads this file instead of asking YouTube again.
+  if (youtube && single && !opts.video) finalArgs.push("--write-info-json");
+  const runStandard = (runArgs) => new Promise((resolve, reject) => {
+    const child = spawnSafe(ytDlpBin, runArgs, {
       ...getYtDlpJobSpawnOptions(),
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -6420,6 +6573,37 @@ async function downloadStandard(
       reject(new Error(`yt-dlp failed to start: ${err.message}`));
     });
   });
+
+  if (!youtube) return runStandard(finalArgs);
+
+  const isCanceled = () => typeof ctrl?.isCanceled === "function" && ctrl.isCanceled();
+  const run = async () => {
+    let account = false;
+    let pauses = 0;
+    for (;;) {
+      await youtubeGuard.before("download", { wait: true, isCanceled });
+      try {
+        const result = await runStandard(account ? [...finalArgs, ...addCookieArgs([], { ui: true })] : finalArgs);
+        if (single && !opts.video && typeof result === "string") {
+          const id = youtubeVideoIdOf(url);
+          if (id) rememberDownloadedInfoJson(id, result.replace(/\.[^./\\]+$/, ".info.json"));
+        }
+        return result;
+      } catch (error) {
+        const message = String(error?.message || error || "");
+        if (message === "CANCELED") throw error;
+        // A bot check pauses every YouTube request; try again after it.
+        if (youtubeGuard.observe(message) && pauses < 3) { pauses += 1; continue; }
+        if (!account && hasYouTubeAccountCookies() && needsYouTubeAccount(message)) {
+          console.warn(`[youtube ${sanitizeLogValue(jobId)}] video needs an account; retrying with the configured cookies`);
+          account = true;
+          continue;
+        }
+        throw error;
+      }
+    }
+  };
+  return youtubeGuard.withSlot("download", run, { isCanceled });
 }
 
 // Returns downloaded files used for the yt-dlp YouTube download pipeline.
@@ -6471,15 +6655,51 @@ export function buildEntriesMap(ytMetadata) {
   return map;
 }
 
+// Info written by yt-dlp while downloading (--write-info-json), by video id,
+// so tagging does not ask YouTube for the same video a second time.
+const downloadedInfoJson = new Map();
+function rememberDownloadedInfoJson(id, file) {
+  if (!id || !file) return;
+  downloadedInfoJson.delete(id);
+  downloadedInfoJson.set(id, file);
+  while (downloadedInfoJson.size > 2000) downloadedInfoJson.delete(downloadedInfoJson.keys().next().value);
+}
+function youtubeVideoIdOf(input) {
+  const value = String(input || "").trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(value)) return value;
+  try {
+    const parsed = new URL(value);
+    const v = parsed.searchParams.get("v");
+    if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return v;
+    if (/(^|\.)youtu\.be$/i.test(parsed.hostname)) {
+      const id = parsed.pathname.split("/").filter(Boolean)[0] || "";
+      if (/^[A-Za-z0-9_-]{11}$/.test(id)) return id;
+    }
+  } catch {}
+  return "";
+}
+function takeDownloadedInfoJson(input) {
+  const id = youtubeVideoIdOf(input);
+  const file = id ? downloadedInfoJson.get(id) : "";
+  if (!file) return null;
+  downloadedInfoJson.delete(id);
+  try {
+    const info = JSON.parse(fs.readFileSync(file, "utf8"));
+    return info && typeof info === "object" && info.id === id ? info : null;
+  } catch {
+    return null;
+  }
+}
+
 // Handles media probe data youtube music meta in the yt-dlp YouTube download pipeline.
 export async function probeYoutubeMusicMeta(input, { timeoutMs = 20000 } = {}) {
   const url = typeof input === "string" && !/^https?:\/\//i.test(input)
     ? `https://www.youtube.com/watch?v=${input}`
     : input;
-  const data = await runYtJson([
+  const data = takeDownloadedInfoJson(input) || await runYtJson([
     "--no-playlist",
     url
-  ], "yt-music-probe", Math.max(1, Math.min(20000, Number(timeoutMs) || 20000)));
+  ], "yt-music-probe", Math.max(1, Math.min(20000, Number(timeoutMs) || 20000)), { wait: true });
 
   const d = Array.isArray(data?.entries) ? data.entries[0] : data;
   if (!d) return null;

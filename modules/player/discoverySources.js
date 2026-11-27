@@ -74,7 +74,14 @@ export function createDeezerSource({ fetchImpl } = {}) {
       const body = await get(`/album/${Number(id)}`)
       const album = mapDeezerAlbum(body)
       if (!album) return null
-      const tracks = (body?.tracks?.data || [])
+      // The album answer lists at most 25 songs and without ISRC codes; its
+      // /tracks list has every song with its ISRC (used to match them).
+      let listed = body?.tracks?.data || []
+      try {
+        const full = await get(`/album/${Number(id)}/tracks?limit=500`)
+        if (Array.isArray(full?.data) && full.data.length >= listed.length) listed = full.data
+      } catch {}
+      const tracks = listed
         .map((t) => mapDeezerTrack({ ...t, album: { id: body.id, title: body.title, cover_xl: body.cover_xl, cover_big: body.cover_big } }))
         .filter(Boolean)
       return { album: { ...album, trackCount: Number(body.nb_tracks) || tracks.length, genre: body.genres?.data?.[0]?.name || null, label: body.label || null }, tracks }
@@ -88,16 +95,22 @@ export function createDeezerSource({ fetchImpl } = {}) {
   }
 }
 
-// ---- YouTube Music (YTLive's tested functions: cookies, cache, 429 guard) ---
+// ---- YouTube Music (YTLive's tested functions: cache, 429 guard) ----------
+// The Player never uses the YouTube account (home, discovery, artist pages);
+// only personal mixes (list=RD…) are read with it, like the downloader does.
 
 export function createYouTubeSource({ yt = null } = {}) {
   const mod = async () => yt || import('../yt.js')
+  const anonymous = async (fn) => {
+    const m = await mod()
+    return typeof m.withoutYouTubeAccount === 'function' ? m.withoutYouTubeAccount(fn) : fn()
+  }
   return {
     name: 'youtube',
     available: () => true,
     async home({ lang, shelves = 8, limit = 16 } = {}) {
       const { getYouTubeMusicHomeShelves } = await mod()
-      const result = await getYouTubeMusicHomeShelves({ shelves, limit, lang })
+      const result = await anonymous(() => getYouTubeMusicHomeShelves({ shelves, limit, lang }))
       return {
         personalized: Boolean(result?.personalized),
         shelves: (result?.shelves || []).map((shelf) => ({
@@ -108,14 +121,14 @@ export function createYouTubeSource({ yt = null } = {}) {
     },
     async discover(preset, { lang, limit = 20 } = {}) {
       const { discoverYouTubeContent } = await mod()
-      const result = await discoverYouTubeContent({ preset, lang, limit })
+      const result = await anonymous(() => discoverYouTubeContent({ preset, lang, limit }))
       return (result?.items || []).map((item) => mapYouTubeItem(item)).filter(Boolean)
     },
     // Album (browse/MPRE…) or playlist (?list=) track listing. Mixes
     // (list=RD…) are read like the download pipeline reads them.
     async playlist(url, { artist = null, automix = false } = {}) {
       const m = await mod()
-      const result = automix ? await m.extractAutomixAllFlat(url) : await m.extractPlaylistAllFlat(url)
+      const result = automix ? await m.extractAutomixAllFlat(url) : await anonymous(() => m.extractPlaylistAllFlat(url))
       const tracks = (result?.items || []).map((entry) => {
         const mapped = mapYouTubeItem({ ...entry, type: 'track', uploader: entry.artist || entry.uploader || artist || '' }, 'track')
         if (!mapped) return null
@@ -127,7 +140,7 @@ export function createYouTubeSource({ yt = null } = {}) {
     // artist's YouTube Music page. null = no artist with exactly this name.
     async artistMixes(name, { lang } = {}) {
       const { getYouTubeMusicArtistMixes } = await mod()
-      const result = await getYouTubeMusicArtistMixes(name, { lang, limit: 12 })
+      const result = await anonymous(() => getYouTubeMusicArtistMixes(name, { lang, limit: 12 }))
       if (!result) return null
       const artistName = clip(result.artist?.title) || clip(name)
       const mix = result.mix

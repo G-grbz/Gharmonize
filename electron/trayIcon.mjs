@@ -20,6 +20,9 @@ export function trayIconVariant(mode, nativeTheme, platform) {
 
 // Raster counterparts of public/src/gharmonize-tray*.svg are bundled alongside
 // this module: nativeImage does not decode SVG. No renderer or polling is needed.
+// "original" is the colored tray icon (gharmonize-tray-color.svg); the app
+// icon is only its fallback.
+const ASSET_FOR_VARIANT = Object.freeze({ original: 'color', dark: 'dark', light: 'light' });
 export function createTrayIconManager({ nativeImage, nativeTheme, platform,
   assetDir, originalIconPath, onWarning = console.warn }) {
   let mode = 'original';
@@ -29,11 +32,10 @@ export function createTrayIconManager({ nativeImage, nativeTheme, platform,
 
   function getImage() {
     const variant = trayIconVariant(mode, nativeTheme, platform);
-    if (variant === 'original') return originalIconPath;
     if (images.has(variant)) return images.get(variant);
     try {
       // Only allowlisted variants reach the filesystem; preferences are not paths.
-      const source = nativeImage.createFromPath(path.join(assetDir, `gharmonize-tray-${variant}.png`));
+      const source = nativeImage.createFromPath(path.join(assetDir, `gharmonize-tray-${ASSET_FOR_VARIANT[variant]}.png`));
       if (source.isEmpty()) throw new Error(`Empty ${variant} tray icon`);
       const image = nativeImage.createEmpty();
       const size = platform === 'win32' ? 16 : 24;

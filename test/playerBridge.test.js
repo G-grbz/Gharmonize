@@ -7,7 +7,7 @@ import express from 'express'
 import { writeTrack, tmpDir, waitFor, silentLogger } from './fixtures/playerAudio.mjs'
 import { startPlayerService, normalizeConfig } from '../modules/player/service.js'
 import { createPlayerRouter } from '../modules/player/router.js'
-import { BridgeError, collectJobOutputs } from '../modules/player/coreAdapter.js'
+import { BridgeError, collectJobOutputs, jobSteps } from '../modules/player/coreAdapter.js'
 import { getSetting, setSetting } from '../modules/player/db.js'
 import { cleanTitleForMatch, primaryArtistKey, splitArtistFromTitle } from '../modules/player/matching.js'
 import { mapDeezerTrack, mapYouTubeItem, mapSpotifyTrack, mergeOnlineItems, cleanYouTubeArtist } from '../modules/player/online.js'
@@ -277,6 +277,19 @@ test('missing songs are picked from the source by ISRC or title and main artist'
     { title: 'Kış Ortasında', artist: 'Onur Can Özcan' },
     { title: 'Dip', artist: 'Onur Can Özcan' }
   ]), [1, 2, 3], 'a live version is another song')
+
+  // A compilation credits every song with all of its artists; the store
+  // names the one artist of each song.
+  const compilation = [
+    { title: 'Vasiyet', artist: 'Sagopa Kajmer, Fuat, Kolera, Cash Flow' },
+    { title: 'Okyanuslar', artist: 'Sagopa Kajmer, Fuat, Kolera, Cash Flow' },
+    { title: 'Matine Araları', artist: 'Sagopa Kajmer, Fuat, Kolera, Cash Flow' },
+    { title: 'Okyanuslar', artist: 'Başka Biri' }
+  ]
+  assert.deepEqual(pickWantedEntries(compilation, [
+    { title: 'Okyanuslar', artist: 'Fuat' },
+    { title: 'Matine Araları', artist: 'Kolera' }
+  ]), [1, 2], 'an artist in common counts, a stranger with the same title does not')
 })
 
 test('refresh online replaces a song with the chosen version and keeps its places', async (t) => {
@@ -859,6 +872,88 @@ test('cancel, parallel limit and per-user queue limit', async (t) => {
   const list = await call('GET', '/downloads?active=1', { token: admin })
   assert.equal(list.body.items.length, 3)
   void service
+})
+
+test('album downloads report which song of how many they are on', async (t) => {
+  assert.equal(jobSteps({ counters: { dlTotal: 1, dlDone: 0 } }), null, 'a single song has no steps')
+  assert.deepEqual(jobSteps({ counters: { dlTotal: 12, dlDone: 5, cvTotal: 12, cvDone: 3 } }), { total: 12, downloaded: 5, converted: 3 })
+  assert.deepEqual(jobSteps({ playlist: { total: 4 }, counters: { dlDone: 9 } }), { total: 4, downloaded: 4, converted: 0 })
+
+  const { call, admin, core } = await setup(t)
+  const r = await call('POST', '/downloads', { token: admin, body: { item: { kind: 'album', url: 'https://www.deezer.com/album/77', title: 'Uzun Albüm', artist: 'Biri', trackCount: 12 } } })
+  await waitStatus(call, admin, r.body.id, 'downloading')
+  const jobId = core.calls.created[0].id
+  Object.assign(core.jobs.get(jobId), { status: 'processing', progress: 40, phase: 'downloading', steps: { total: 12, downloaded: 5, converted: 0 } })
+  const d = await waitFor(async () => { const x = (await call('GET', `/downloads/${r.body.id}`, { token: admin })).body; return x.steps ? x : null }, { label: 'steps' })
+  assert.deepEqual(d.steps, { total: 12, downloaded: 5, converted: 0 })
+})
+
+test('many songs at once are one group: over the queue limit they wait, then follow', async (t) => {
+  const { call, admin, core, downloads } = await setup(t, { config: { maxParallelDownloads: 1, maxQueuedPerUser: 2 } })
+  const items = [1, 2, 3, 4, 5].map((n) => ytTrack(`g${n}`, `Grup ${n}`, 'Grup Sanatçı'))
+  // The same link twice is one song.
+  const r = await call('POST', '/downloads/groups', { token: admin, body: { title: 'Seçim', items: [...items, items[0]] } })
+  assert.equal(r.status, 202)
+  assert.equal(r.body.counts.total, 5)
+  assert.equal(r.body.title, 'Seçim')
+  assert.equal(r.body.pendingUrls.length, 5)
+  const gid = r.body.id
+
+  const group = async () => (await call('GET', `/downloads/groups/${gid}`, { token: admin })).body
+  let g = await waitFor(async () => { const x = await group(); return x.counts.waiting === 3 ? x : null }, { label: 'two queued, three waiting' })
+  assert.equal(g.counts.queued + g.counts.running, 2, 'never more than the queue limit at once')
+  assert.equal(g.status, 'active')
+  let active = await call('GET', '/downloads?active=1', { token: admin })
+  assert.equal(active.body.items.length, 2)
+  assert.ok(active.body.items.every((d) => d.groupId === gid))
+  // Grouped songs stay off the plain list of the downloads page.
+  assert.equal((await call('GET', '/downloads?ungrouped=1', { token: admin })).body.items.length, 0)
+
+  // Each finished song lets the next waiting one in, until all are done.
+  for (let n = 0; n < 5; n++) {
+    const job = await waitFor(() => [...core.jobs.entries()].find(([, j]) => j.status === 'queued'), { label: `job ${n + 1}` })
+    const [jobId, info] = job
+    const id = info.url.split('v=')[1]
+    const file = await writeTrack(path.join(downloads, `${id}.mp3`), { title: `Grup ${id.slice(1)}`, artist: 'Grup Sanatçı' }, { fresh: true })
+    core.complete(jobId, [file])
+    await waitFor(async () => (await group()).counts.done === n + 1, { label: `done ${n + 1}` })
+  }
+  g = await group()
+  assert.equal(g.status, 'done')
+  assert.equal(g.active, false)
+  assert.deepEqual({ done: g.counts.done, waiting: g.counts.waiting, failed: g.counts.failed }, { done: 5, waiting: 0, failed: 0 })
+  const songs = await call('GET', `/downloads?group=${gid}`, { token: admin })
+  assert.equal(songs.body.items.length, 5)
+})
+
+test('a download group can be canceled (waiting songs too) and its failures retried', async (t) => {
+  const { call, admin, core } = await setup(t, { config: { maxParallelDownloads: 1, maxQueuedPerUser: 1 } })
+  const items = [1, 2, 3].map((n) => ytTrack(`c${n}`, `İptal ${n}`, 'Sanatçı'))
+  const bad = { kind: 'track', url: 'https://evil.example/x', title: 'Kötü link', artist: 'Sanatçı' }
+  const r = await call('POST', '/downloads/groups', { token: admin, body: { items: [bad, ...items] } })
+  const gid = r.body.id
+  const group = async () => (await call('GET', `/downloads/groups/${gid}`, { token: admin })).body
+  let g = await waitFor(async () => { const x = await group(); return x.counts.failed === 1 && x.counts.waiting === 2 ? x : null }, { label: 'bad link failed, one queued' })
+  assert.equal(g.errors[0].code, 'UNSUPPORTED_SOURCE')
+  await waitFor(() => core.calls.created.length === 1, { label: 'first song started' })
+
+  const canceled = await call('POST', `/downloads/groups/${gid}/cancel`, { token: admin })
+  assert.equal(canceled.body.status, 'canceled')
+  assert.equal(canceled.body.counts.canceled, 3, 'the running song and both waiting ones')
+  assert.equal(canceled.body.counts.waiting, 0)
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal(core.calls.created.length, 1, 'nothing new starts after a cancel')
+
+  const retried = await call('POST', `/downloads/groups/${gid}/retry`, { token: admin })
+  assert.equal(retried.body.active, true)
+  // The canceled song is queued again; the bad link and the two songs that
+  // never started wait for the queue limit again.
+  g = await waitFor(async () => { const x = await group(); return x.counts.queued + x.counts.running === 1 && x.counts.waiting === 3 ? x : null }, { label: 'retried' })
+  assert.equal(g.status, 'active')
+  assert.equal(g.counts.failed, 0)
+  assert.equal(g.counts.canceled, 0)
+  // Someone else's group is not visible.
+  assert.equal((await call('GET', '/downloads/groups/nope', { token: admin })).status, 404)
 })
 
 test('download permissions and library guards', async (t) => {

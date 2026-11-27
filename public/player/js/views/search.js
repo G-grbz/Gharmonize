@@ -3,8 +3,9 @@
 
 import { app } from '../app.js'
 import { get, artworkUrl } from '../api.js'
-import { h, t, icon, clear, artwork, skeletonShelf, emptyState, debounce, toastError, iconButton } from '../dom.js'
-import { shelf, trackList, onlineTrackList, albumCard, artistCard, onlineCard, genreTile, moodTile, playTracks, playCollection, providerName, trackCard } from '../components.js'
+import { h, t, icon, clear, artwork, skeletonShelf, emptyState, debounce, toastError, iconButton, plural, fmtTime, fmtLong, fmtRelative } from '../dom.js'
+import { shelf, trackList, onlineTrackList, albumCard, artistCard, onlineCard, genreTile, moodTile, playTracks, playCollection, providerName, trackCard, heartButton } from '../components.js'
+import { codecName } from '../chrome.js'
 import { loadSearchHistory, rememberQuery, rememberPick, forgetQuery, clearSearchHistory } from '../searchHistory.js'
 
 // Picking a result (opening an album / artist / list) remembers it with the
@@ -103,34 +104,117 @@ function paintHistory(root, history, fillInput) {
   root.append(list)
 }
 
+// "FLAC 24/96", "MP3 320" from a song's file details.
+function qualityText(track) {
+  const name = codecName(track.codec, track.container) || (track.lossless ? 'FLAC' : '')
+  if (!name) return ''
+  if (track.lossless) return track.bitDepth && track.bitDepth > 16 ? `${name} ${track.bitDepth}/${Math.round((track.sampleRate || 44100) / 1000)}` : name
+  return track.bitrate ? `${name} ${Math.round(track.bitrate / 1000)}` : name
+}
+
+const dotted = (parts) => parts.filter(Boolean).join(' · ')
+const tag = (text, cls = '') => (text ? h('span', { class: `top-result__tag ${cls}`.trim(), text }) : null)
+
+// Buttons inside the card (itself a link) act without opening the page.
+function inCard(...nodes) {
+  const box = h('span', { class: 'top-result__actions' }, ...nodes)
+  box.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation() })
+  return box
+}
+
+// Fills in what the user's own listening says: plays, last time, their
+// most played song of it and (artists) the main genres and newest album.
+function fillInsight(slot, tags, kind, id, context) {
+  get(`/insight/${kind}/${id}`).then((info) => {
+    if (!slot.isConnected) return
+    clear(slot)
+    const plays = info.plays
+      ? dotted([plural(info.plays, 'player.top.play', 'player.top.plays'), info.lastPlayedAt ? t('player.top.last', { when: fmtRelative(info.lastPlayedAt) }) : ''])
+      : t('player.top.never')
+    slot.append(h('span', { class: 'top-result__plays' }, icon('history', { size: 16 }), h('span', { text: plays })))
+    if (info.topTrack) {
+      const tr = info.topTrack
+      const btn = h('button', { type: 'button', class: 'top-result__link', title: t('player.common.play') },
+        icon('play', { size: 14 }), h('span', { class: 'muted', text: `${t('player.top.mostPlayed')}:` }), h('b', { text: tr.title }))
+      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); playTracks([tr], 0, context) })
+      slot.append(btn)
+    }
+    if (info.latestAlbum) {
+      const al = info.latestAlbum
+      const btn = h('button', { type: 'button', class: 'top-result__link', title: al.title },
+        icon('album', { size: 14 }), h('span', { class: 'muted', text: `${t('player.top.latest')}:` }), h('b', { text: al.year ? `${al.title} (${al.year})` : al.title }))
+      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); app.nav(`/album/${al.id}`) })
+      slot.append(btn)
+    }
+    for (const genre of info.genres || []) tags.append(tag(genre))
+  }).catch(() => { if (slot.isConnected) clear(slot) })
+}
+
+function topCard({ href, tagName = 'a', art, kind, title, meta, tags, actions, onPlay, insight, context }) {
+  const tagRow = h('div', { class: 'top-result__tags' }, tags)
+  const insightSlot = h('div', { class: 'top-result__insight' }, h('span', { class: 'top-result__plays muted', text: t('player.common.loading') }))
+  const el = h(tagName, { class: 'top-result', ...(href ? { href } : { tabindex: '0' }), dataset: { kind } },
+    h('div', { class: 'top-result__head' },
+      art,
+      h('div', { class: 'top-result__text' },
+        h('h3', { class: 'top-result__title', text: title }),
+        h('span', { class: 'top-result__meta', text: meta }))),
+    tagRow,
+    insightSlot,
+    inCard(...actions),
+    iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); e.stopPropagation(); onPlay() }, { cls: 'play-fab top-result__play', size: 24 }))
+  fillInsight(insightSlot, tagRow, insight.kind, insight.id, context)
+  return el
+}
+
 function topResult(local, q) {
   const needle = q.trim().toLowerCase()
   const artist = local.artists.find((a) => a.name.toLowerCase() === needle) || null
   const album = !artist && local.albums.find((a) => a.title.toLowerCase() === needle)
   const track = local.tracks[0]
+  const context = { label: q, route: `/search?q=${encodeURIComponent(q)}` }
   if (artist) {
-    return picked(h('a', { class: 'top-result', href: `#/artist/${artist.id}` },
-      artwork(artworkUrl(artist.artwork, 256), { round: true, cls: 'top-result__art', placeholder: 'user', seed: artist.name }),
-      h('h3', { class: 'top-result__title', text: artist.name }),
-      h('span', { class: 'pill', text: t('player.kind.artist') }),
-      iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); playCollection('artist', artist.id) }, { cls: 'play-fab top-result__play', size: 24 })),
-    { source: 'library', kind: 'artist', id: artist.id }, q)
+    return picked(topCard({
+      href: `#/artist/${artist.id}`,
+      kind: 'artist',
+      art: artwork(artworkUrl(artist.artwork, 256), { round: true, cls: 'top-result__art', placeholder: 'user', seed: artist.name }),
+      title: artist.name,
+      meta: dotted([t('player.kind.artist'), plural(artist.trackCount, 'player.count.track', 'player.count.tracks'), artist.albumCount ? plural(artist.albumCount, 'player.count.album', 'player.count.albums') : '']),
+      tags: [artist.favorite ? tag(t('player.top.following'), 'is-accent') : null],
+      actions: [heartButton('artist', artist.id, artist.favorite, { size: 22 })],
+      onPlay: () => playCollection('artist', artist.id),
+      insight: { kind: 'artist', id: artist.id },
+      context
+    }), { source: 'library', kind: 'artist', id: artist.id }, q)
   }
   if (album) {
-    return picked(h('a', { class: 'top-result', href: `#/album/${album.id}` },
-      artwork(artworkUrl(album.artwork, 256), { cls: 'top-result__art', placeholder: 'album', seed: album.title }),
-      h('h3', { class: 'top-result__title', text: album.title }),
-      h('span', { class: 'muted' }, h('span', { class: 'pill', text: t('player.kind.album') }), ' ', album.artist),
-      iconButton('play', t('player.common.play'), (e) => { e.preventDefault(); playCollection('album', album.id) }, { cls: 'play-fab top-result__play', size: 24 })),
-    { source: 'library', kind: 'album', id: album.id }, q)
+    return picked(topCard({
+      href: `#/album/${album.id}`,
+      kind: 'album',
+      art: artwork(artworkUrl(album.artwork, 256), { cls: 'top-result__art', placeholder: 'album', seed: album.title }),
+      title: album.title,
+      meta: dotted([album.artist, album.year, plural(album.trackCount, 'player.count.track', 'player.count.tracks'), album.duration ? fmtLong(album.duration) : '']),
+      tags: [tag(t('player.kind.album')), album.lossless ? tag(t('player.badge.lossless'), 'is-accent') : null, tag(album.genre)],
+      actions: [heartButton('album', album.id, album.favorite, { size: 22 })],
+      onPlay: () => playCollection('album', album.id),
+      insight: { kind: 'album', id: album.id },
+      context
+    }), { source: 'library', kind: 'album', id: album.id }, q)
   }
   if (track) {
-    const el = h('div', { class: 'top-result', tabindex: '0' },
-      artwork(artworkUrl(track.artwork, 256), { cls: 'top-result__art', seed: track.album || track.title }),
-      h('h3', { class: 'top-result__title', text: track.title }),
-      h('span', { class: 'muted' }, h('span', { class: 'pill', text: t('player.kind.track') }), ' ', track.artist),
-      iconButton('play', t('player.common.play'), () => playTracks(local.tracks, 0, { label: q, route: `/search?q=${encodeURIComponent(q)}` }), { cls: 'play-fab top-result__play', size: 24 }))
-    el.addEventListener('dblclick', () => playTracks([track], 0, { label: q, route: `/search?q=${encodeURIComponent(q)}` }))
+    const el = topCard({
+      tagName: 'div',
+      kind: 'track',
+      art: artwork(artworkUrl(track.artwork, 256), { cls: 'top-result__art', seed: track.album || track.title }),
+      title: track.title,
+      meta: dotted([track.artist, track.album, track.year]),
+      tags: [tag(track.duration ? fmtTime(track.duration) : ''), tag(qualityText(track), track.lossless ? 'is-accent' : ''), tag(track.genre), track.hasLyrics ? tag(t('player.shortcuts.lyrics')) : null],
+      actions: [heartButton('track', track.id, track.favorite, { size: 22 })],
+      onPlay: () => playTracks(local.tracks, 0, context),
+      insight: { kind: 'track', id: track.id },
+      context
+    })
+    el.addEventListener('dblclick', () => playTracks([track], 0, context))
     return el
   }
   return null

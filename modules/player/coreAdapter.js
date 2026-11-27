@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { AUDIO_EXTENSIONS, normalizeKey } from './scanner.js'
 import { toFrozenEntries } from './ytTitles.js'
-import { cleanTitleForMatch, primaryArtistKey, songKey } from './songKey.js'
+import { artistCreditKeys, cleanTitleForMatch, primaryArtistKey, songKey } from './songKey.js'
 
 export class BridgeError extends Error {
   constructor(code, message, { status = 400, permanent = false } = {}) {
@@ -90,10 +90,13 @@ export async function prepareYouTubePlaylist(m, url, { isAutomix = false } = {})
 }
 
 // Positions (0-based) of the source entries that are one of the `wanted`
-// songs ({ title, artist, isrc }): same ISRC, or same title and main artist.
+// songs ({ title, artist, isrc }): same ISRC, or same title and an artist in
+// common. Compilations credit every song with all the album's artists
+// ("Sagopa Kajmer, Fuat, Kolera …") while the store names one ("Fuat").
 export function pickWantedEntries(entries, wanted) {
   const isrcs = new Set(wanted.map((song) => String(song.isrc || '').toUpperCase()).filter(Boolean))
-  const keys = wanted.map((song) => ({ title: fold(cleanTitleForMatch(song.title) || song.title), artist: fold(primaryArtistKey(song.artist)) }))
+  const credits = (artist) => new Set([fold(primaryArtistKey(artist)), ...artistCreditKeys(artist).map(fold)].filter(Boolean))
+  const keys = wanted.map((song) => ({ title: fold(cleanTitleForMatch(song.title) || song.title), artist: fold(primaryArtistKey(song.artist)), credits: credits(song.artist) }))
   const exact = new Set(wanted.map((song) => songKey(song.title, song.artist)).filter(Boolean))
   const picked = []
   ;(Array.isArray(entries) ? entries : []).forEach((entry, index) => {
@@ -102,13 +105,24 @@ export function pickWantedEntries(entries, wanted) {
     const isrc = String(entry.isrc || '').toUpperCase()
     const title = fold(cleanTitleForMatch(entry.title || entry.track) || entry.title || '')
     const artistKey = fold(primaryArtistKey(artist))
+    const entryCredits = credits(artist)
+    const shared = (key) => [...key.credits].some((name) => entryCredits.has(name))
     if ((isrc && isrcs.has(isrc)) || exact.has(songKey(entry.title || entry.track, artist)) ||
-      keys.some((key) => key.title && key.title === title && (!key.artist || !artistKey || key.artist === artistKey))) picked.push(index)
+      keys.some((key) => key.title && key.title === title && (!key.artist || !artistKey || key.artist === artistKey || shared(key)))) picked.push(index)
   })
   return picked
 }
 
 // Collects absolute output files from a finished core job.
+// { total, downloaded, converted } of a job with several songs, else null.
+export function jobSteps(job) {
+  const c = job?.counters || {}
+  const total = Math.max(Number(c.dlTotal) || 0, Number(c.cvTotal) || 0, Number(job?.playlist?.total) || 0)
+  if (total < 2) return null
+  const clamp = (n) => Math.max(0, Math.min(total, Math.floor(Number(n) || 0)))
+  return { total, downloaded: clamp(c.dlDone), converted: clamp(c.cvDone) }
+}
+
 export function collectJobOutputs(job, resolveDownloadPathToAbs) {
   const raw = job?.resultPath
   const entries = Array.isArray(raw) ? raw : raw ? [raw] : []
@@ -335,6 +349,8 @@ export function createCoreAdapter({ logger = console } = {}) {
       status: job.status,
       progress: Number(job.progress) || 0,
       phase: job.currentPhase || null,
+      // Album / playlist jobs: how many of their songs are downloaded and converted.
+      steps: jobSteps(job),
       error: job.error ? String(job.error?.message || job.error).slice(0, 500) : null,
       outputs: job.status === 'completed' ? collectJobOutputs(job, m.outputPaths.resolveDownloadPathToAbs) : []
     }

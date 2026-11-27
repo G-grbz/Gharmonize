@@ -18,6 +18,13 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.shape.GenericShape
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -366,29 +373,35 @@ fun NowPlayingScreen(state: AppState) {
       // The ring style has its own volume arc beside the cover.
       if (!(mode == 0 && style == "ring" && prefs.coverVolume)) Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.volume), color = dim, style = MaterialTheme.typography.labelSmall)
-        Slider(value = musicVolume, onValueChange = setMusicVolume, modifier = Modifier.weight(1f).height(40.dp),
+        // No fixed height: the Material thumb is taller than 40 dp and spilled
+        // into the lyrics wave below when the row was squeezed.
+        Slider(value = musicVolume, onValueChange = setMusicVolume, modifier = Modifier.weight(1f),
           colors = SliderDefaults.colors(thumbColor = white, activeTrackColor = white, inactiveTrackColor = white.copy(alpha = 0.22f)))
         Text("${(musicVolume * 100).toInt()}%", color = dim, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(34.dp), textAlign = TextAlign.End)
       }
-      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-        IconButton(onClick = { player.toggleShuffle() }) {
+      Spacer(Modifier.height(6.dp))
+      // A wave rising from the card's bottom edge with "Lyrics" in its crest;
+      // shuffle and repeat sit over its low ends. It spans the whole card
+      // width (out of the column padding) and the card's corners clip it.
+      Box(Modifier.bleed(20.dp).height(64.dp)) {
+        val lit = mode == 1
+        Box(
+          Modifier.matchParentSize().clip(LyricsWaveShape)
+            .background(Brush.verticalGradient(listOf(white.copy(alpha = if (lit) 0.36f else 0.24f), white.copy(alpha = if (lit) 0.2f else 0.1f))))
+            .drawBehind { drawPath(lyricsWavePath(size, closed = false), white.copy(alpha = 0.3f), style = Stroke(1.5.dp.toPx())) }
+            .clickable { mode = if (mode == 1) 0 else 1 },
+        )
+        Row(
+          Modifier.align(Alignment.BottomCenter).padding(bottom = 9.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(FluentIcons.Lyrics, null, tint = white, modifier = Modifier.size(18.dp))
+          Text(stringResource(R.string.lyrics), color = white, fontWeight = FontWeight.Bold)
+        }
+        IconButton(onClick = { player.toggleShuffle() }, modifier = Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 4.dp)) {
           Icon(FluentIcons.Shuffle, stringResource(R.string.shuffle), tint = if (player.shuffle) LocalAccent.current.onDarkTint else dim)
         }
-        Box(Modifier.weight(1f), contentAlignment = Alignment.BottomCenter) {
-          // A tab resting on the card's bottom edge.
-          val tabShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
-          Row(
-            Modifier.widthIn(min = 180.dp).clip(tabShape)
-              .background(Brush.verticalGradient(listOf(white.copy(alpha = if (mode == 1) 0.34f else 0.22f), white.copy(alpha = if (mode == 1) 0.2f else 0.1f))))
-              .border(1.dp, white.copy(alpha = 0.26f), tabShape)
-              .clickable { mode = if (mode == 1) 0 else 1 }.padding(horizontal = 26.dp, vertical = 15.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Icon(FluentIcons.Lyrics, null, tint = white, modifier = Modifier.size(20.dp))
-            Text(stringResource(R.string.lyrics), color = white, fontWeight = FontWeight.Bold)
-          }
-        }
-        IconButton(onClick = { player.cycleRepeat() }) {
+        IconButton(onClick = { player.cycleRepeat() }, modifier = Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = 4.dp)) {
           Icon(if (player.repeatMode == Player.REPEAT_MODE_ONE) FluentIcons.RepeatOne else FluentIcons.Repeat, stringResource(R.string.repeat),
             tint = if (player.repeatMode != Player.REPEAT_MODE_OFF) LocalAccent.current.onDarkTint else dim)
         }
@@ -396,6 +409,33 @@ fun NowPlayingScreen(state: AppState) {
     }
   }
 }
+
+/** Takes the full width plus [each] on both sides (out of a parent's padding). */
+private fun Modifier.bleed(each: Dp): Modifier = layout { measurable, constraints ->
+  val extra = each.roundToPx() * 2
+  val width = constraints.maxWidth + extra
+  val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+  layout(constraints.maxWidth, placeable.height) { placeable.place(-extra / 2, 0) }
+}
+
+/**
+ * The lyrics wave: starts at the card's bottom corners and rises to a smooth
+ * crest in the middle. Open (`closed = false`) it is only the top line, for
+ * the highlight stroke.
+ */
+private fun lyricsWavePath(size: Size, closed: Boolean): Path {
+  val w = size.width
+  val h = size.height
+  val top = h * 0.26f
+  return Path().apply {
+    moveTo(0f, h)
+    cubicTo(w * 0.25f, h, w * 0.3f, top, w * 0.5f, top)
+    cubicTo(w * 0.7f, top, w * 0.75f, h, w, h)
+    if (closed) close()
+  }
+}
+
+private val LyricsWaveShape = GenericShape { size, _ -> addPath(lyricsWavePath(size, closed = true)) }
 
 @Composable
 private fun LyricsView(state: AppState, trackId: Long?, isPreview: Boolean, positionMs: Long) {

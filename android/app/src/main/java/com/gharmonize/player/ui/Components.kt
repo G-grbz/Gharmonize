@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -39,11 +41,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.gharmonize.player.R
 import com.gharmonize.player.data.Album
 import com.gharmonize.player.data.Artist
@@ -107,13 +111,24 @@ fun EmptyText(text: String) {
 
 // ---- cards ----------------------------------------------------------------------------
 
+/**
+ * Cover layout, the same as the web cards: status badges are tabs cut into
+ * the top corners of the cover (start = in library, end = Mix) and the
+ * action (download) sits bottom-start.
+ */
 @Composable
-fun Card(title: String, subtitle: String, art: String?, round: Boolean = false, badge: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
+fun Card(
+  title: String, subtitle: String, art: String?, round: Boolean = false,
+  start: (@Composable () -> Unit)? = null, end: (@Composable () -> Unit)? = null, action: (@Composable () -> Unit)? = null,
+  onClick: () -> Unit
+) {
   Column(Modifier.width(140.dp).clickable(onClick = onClick).padding(6.dp)) {
     Box {
       Artwork(art, Modifier.fillMaxWidth().aspectRatio(1f), shape = if (round) CircleShape else MaterialTheme.shapes.medium, size = 300,
         placeholder = if (round) FluentIcons.Person else FluentIcons.Album)
-      if (badge != null) Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) { badge() }
+      if (start != null) Box(Modifier.align(Alignment.TopStart).padding(if (round) 4.dp else 0.dp)) { start() }
+      if (end != null) Box(Modifier.align(Alignment.TopEnd).padding(if (round) 4.dp else 0.dp)) { end() }
+      if (action != null) Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { action() }
     }
     Spacer(Modifier.height(6.dp))
     Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -155,12 +170,16 @@ fun TrackCard(state: AppState, tracks: List<Track>, index: Int, onPick: (() -> U
 fun OnlineCard(state: AppState, items: List<OnlineItem>, index: Int, onPick: (() -> Unit)? = null) {
   val item = items[index]
   val owned = item.libraryTrackId != null || (item.kind == "album" && item.libraryComplete)
-  val badge: (@Composable () -> Unit)? = when {
-    owned -> { { OwnedBadge() } }
-    state.canDownload && item.downloadable && item.kind in setOf("track", "album", "playlist") -> { { DownloadButton(state, item, small = true) } }
+  val round = item.kind == "artist"
+  val start: (@Composable () -> Unit)? = when {
+    owned -> { { CornerBadge(CornerSide.Start, round) { Icon(FluentIcons.Check, stringResource(R.string.in_library), modifier = Modifier.size(14.dp)) } } }
+    item.kind == "track" && !item.previewUrl.isNullOrBlank() -> { { CornerBadge(CornerSide.Start, round, color = Color.Black.copy(alpha = 0.62f), content = Color.White) { Text(stringResource(R.string.preview), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold) } } }
     else -> null
   }
-  Card(item.title, item.artist, item.artworkUrl, round = item.kind == "artist", badge = badge) {
+  val end: (@Composable () -> Unit)? = if (item.isMix) { { CornerBadge(CornerSide.End, round) { Text(stringResource(R.string.mix_kind), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold) } } } else null
+  val action: (@Composable () -> Unit)? =
+    if (!owned && state.canDownload && item.downloadable && item.kind in setOf("track", "album", "playlist")) { { DownloadButton(state, item, small = true) } } else null
+  Card(item.title, item.artist, item.artworkUrl, round = round, start = start, end = end, action = action) {
     onPick?.invoke()
     when (item.kind) {
       "album", "playlist" -> state.navigate(Route.OnlineAlbum(item))
@@ -168,6 +187,27 @@ fun OnlineCard(state: AppState, items: List<OnlineItem>, index: Int, onPick: (()
         else state.navigate(Route.OnlineArtist(if (item.provider == "deezer") item.id else null, item.title))
       else -> state.playOnline(items, index)
     }
+  }
+}
+
+enum class CornerSide { Start, End }
+
+/** A tab cut into a top corner of a square cover (a pill on round covers). */
+@Composable
+fun CornerBadge(
+  side: CornerSide, round: Boolean = false,
+  color: Color = MaterialTheme.colorScheme.primary, content: Color = MaterialTheme.colorScheme.onPrimary,
+  body: @Composable () -> Unit
+) {
+  val outer = 10.dp
+  val inner = 12.dp
+  val shape = when {
+    round -> CircleShape
+    side == CornerSide.Start -> RoundedCornerShape(topStart = outer, bottomEnd = inner)
+    else -> RoundedCornerShape(topEnd = outer, bottomStart = inner)
+  }
+  Surface(shape = shape, color = color, contentColor = content) {
+    Box(Modifier.height(24.dp).widthIn(min = 28.dp).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) { body() }
   }
 }
 
@@ -208,10 +248,12 @@ fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean 
   var menu by remember { mutableStateOf(false) }
   var favorite by remember(t.id, t.favorite) { mutableStateOf(t.favorite) }
   val selecting = selection?.active == true
+  SwipeToSelect(selection, t.id) {
   Row(
     Modifier.fillMaxWidth()
       .combinedClickable(
-        // With a selection: long press starts selecting, taps then toggle.
+        // With a selection: long press (or a swipe to the right) starts
+        // selecting, taps then toggle.
         onClick = {
           if (selecting) selection?.toggle(t.id)
           else {
@@ -252,6 +294,7 @@ fun TrackRow(state: AppState, tracks: List<Track>, index: Int, showArt: Boolean 
       }
     }
   }
+  }
 }
 
 @Composable
@@ -283,15 +326,31 @@ fun TrackMenu(state: AppState, t: Track, expanded: Boolean, onDismiss: () -> Uni
   }
 }
 
-/** Online track row: owned → play, preview → 30 s clip, otherwise download. */
+/**
+ * Online track row: owned → play, preview → 30 s clip, otherwise download.
+ * With a [selection]: long press or a swipe to the right starts selecting.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSingle: Boolean = false, onPick: (() -> Unit)? = null) {
+fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSingle: Boolean = false, onPick: (() -> Unit)? = null, selection: OnlineSelection? = null) {
   val item = state.withDownload(items[index])
   val owned = item.libraryTrackId != null
+  val selecting = selection?.active == true
+  val pickThis: () -> Unit = { if (selection?.active == true) selection.toggle(index) else selection?.start(index) }
+  val row: @Composable () -> Unit = {
   Row(
-    Modifier.fillMaxWidth().clickable { onPick?.invoke(); if (playSingle) state.playOnline(listOf(item), 0) else state.playOnline(items, index) }.padding(horizontal = 16.dp, vertical = 6.dp),
+    Modifier.fillMaxWidth()
+      .combinedClickable(
+        onClick = {
+          if (selecting) selection?.toggle(index)
+          else { onPick?.invoke(); if (playSingle) state.playOnline(listOf(item), 0) else state.playOnline(items, index) }
+        },
+        onLongClick = if (selection != null) pickThis else null,
+      )
+      .padding(start = if (selecting) 4.dp else 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
+    if (selecting) androidx.compose.material3.Checkbox(checked = index in selection!!.picked, onCheckedChange = { selection.toggle(index) })
     Artwork(item.artworkUrl, Modifier.size(48.dp), size = 128)
     Spacer(Modifier.width(12.dp))
     Column(Modifier.weight(1f)) {
@@ -307,11 +366,12 @@ fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSin
     }
     when {
       owned -> OwnedBadge()
+      selecting -> {}
       state.canDownload -> DownloadButton(state, item)
     }
     // Admins: the library copy of an owned song can be replaced with another version.
     val trackId = item.libraryTrackId
-    if (trackId != null && state.canRefreshOnline) {
+    if (trackId != null && state.canRefreshOnline && !selecting) {
       var menu by remember { mutableStateOf(false) }
       var refresh by remember { mutableStateOf(false) }
       if (refresh) RefreshOnlineDialog(state, RefreshTarget(trackId, item.title, item.artist, item.duration, item.artworkUrl), onDismiss = { refresh = false })
@@ -323,6 +383,8 @@ fun OnlineTrackRow(state: AppState, items: List<OnlineItem>, index: Int, playSin
       }
     }
   }
+  }
+  if (selection == null) row() else SwipeToPick(picked = index in selection.picked, key = index, onPick = pickThis, content = row)
 }
 
 /** Suggestion row: tap plays (library or preview), + adds it to the playlist. */

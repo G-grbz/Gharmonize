@@ -315,6 +315,52 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
     return { tracks: tracks.map(serializeTrack), albums: albums.map(serializeAlbum), artists: artists.map(serializeArtist) }
   }
 
+  // The sidebar's library: followed artists and saved albums (newest
+  // first) and how many songs the user liked. Playlists come from /playlists.
+  function savedItems(userId, { limit } = {}) {
+    const params = { $uid: Number(userId) || 0, $limit: clampLimit(limit, 300, 1000) }
+    const artists = q(`${ARTIST_BASE.replace('FROM artists ar JOIN ta ON ta.aid = ar.id', 'FROM favorites f JOIN artists ar ON ar.id = f.item_id LEFT JOIN ta ON ta.aid = ar.id')}
+      WHERE f.user_id = $uid AND f.item_type = 'artist' GROUP BY ar.id ORDER BY MAX(f.created_at) DESC, ar.id DESC LIMIT $limit`).all(params)
+    const albums = q(`${ALBUM_SELECT} WHERE ${favoriteExpr('album', 'a.id')} GROUP BY a.id
+      ORDER BY (SELECT f.created_at FROM favorites f WHERE f.user_id = $uid AND f.item_type = 'album' AND f.item_id = a.id) DESC, a.id DESC LIMIT $limit`).all(params)
+    const liked = q(`SELECT COUNT(*) AS n FROM favorites f JOIN tracks t ON t.id = f.item_id
+      WHERE f.user_id = $uid AND f.item_type = 'track' AND ${VISIBLE}`).get({ $uid: params.$uid })
+    return { likedCount: liked.n, artists: artists.map(serializeArtist), albums: albums.map(serializeAlbum) }
+  }
+
+  // What the user's own listening says about an artist, album or song
+  // (search's top result): plays, last play, their most played song of
+  // it, and for an artist the main genres and newest album.
+  const INSIGHT_TRACKS = {
+    artist: '(t.artist_id = $id OR t.id IN (SELECT track_id FROM track_artists WHERE artist_id = $id) OR t.album_id IN (SELECT id FROM albums WHERE artist_id = $id))',
+    album: 't.album_id = $id',
+    track: 't.id = $id'
+  }
+  function insight(kind, id, userId) {
+    const where = INSIGHT_TRACKS[kind]
+    if (!where) throw new CatalogError('INVALID_KIND', 'Invalid kind.')
+    const params = { $id: Number(id), $uid: Number(userId) || 0 }
+    const sum = q(`SELECT COALESCE(SUM(ps.play_count), 0) AS plays, MAX(ps.last_played_at) AS last
+      FROM tracks t JOIN play_stats ps ON ps.track_id = t.id AND ps.user_id = $uid
+      WHERE ${where} AND ${VISIBLE}`).get(params)
+    const out = { kind, id: params.$id, plays: sum.plays, lastPlayedAt: sum.last || null }
+    if (kind !== 'track' && sum.plays > 0) {
+      const top = q(`SELECT ${TRACK_COLUMNS}, ${favoriteExpr('track', 't.id')} AS favorite, ps.play_count, ps.last_played_at
+        FROM tracks t JOIN play_stats ps ON ps.track_id = t.id AND ps.user_id = $uid
+        WHERE ${where} AND ${VISIBLE} AND ps.play_count > 0
+        ORDER BY ps.play_count DESC, ps.last_played_at DESC LIMIT 1`).get(params)
+      out.topTrack = serializeTrack(top)
+    }
+    if (kind === 'artist') {
+      out.genres = q(`SELECT MIN(t.genre) AS name, COUNT(*) AS n FROM tracks t
+        WHERE ${where} AND ${VISIBLE} AND t.genre IS NOT NULL AND t.genre != ''
+        GROUP BY t.genre COLLATE NOCASE ORDER BY n DESC LIMIT 2`).all(params).map((row) => row.name)
+      out.latestAlbum = serializeAlbum(q(`${ALBUM_SELECT} WHERE a.artist_id = $id GROUP BY a.id
+        ORDER BY a.year DESC NULLS LAST, added_at DESC LIMIT 1`).get(params))
+    }
+    return out
+  }
+
   function listGenres({ limit, userId } = {}) {
     return q(`SELECT t.genre AS name, COUNT(*) AS track_count, COUNT(DISTINCT t.album_id) AS album_count
       FROM tracks t WHERE t.genre IS NOT NULL AND t.genre != '' AND ${VISIBLE}
@@ -750,6 +796,8 @@ export function createCatalog(db, { now = () => Date.now() } = {}) {
     followArtistByName,
     artistTracks,
     search,
+    savedItems,
+    insight,
     listGenres,
     getStats,
     setFavorite,

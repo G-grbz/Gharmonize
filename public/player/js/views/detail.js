@@ -10,6 +10,7 @@ import {
 } from '../components.js'
 import { saveButton } from '../playlistSave.js'
 import { downloadButton } from '../downloads.js'
+import { discographyCard } from '../discographyWizard.js'
 import { randomIndex } from '../random.js'
 
 // ---- album ------------------------------------------------------------------
@@ -85,13 +86,11 @@ async function loadAlbumMissing(id, album, slot) {
     const all = h('button', { type: 'button', class: 'btn btn--primary btn--sm' }, icon('download', { size: 16 }), t('player.album.downloadMissing', { n: missing.length }))
     all.addEventListener('click', async () => {
       all.disabled = true
-      let queued = 0
-      for (const item of missing) {
+      const wanted = missing.filter((item) => {
         const state = app.downloads.stateFor(item)
-        if (item.library?.trackId || (state && state.status !== 'failed' && state.status !== 'canceled')) continue
-        if (await app.downloads.request(item, { quiet: true })) queued += 1
-      }
-      if (queued) toast(t('player.album.missingQueued', { n: queued }), { type: 'success' })
+        return !item.library?.trackId && !(state && state.status !== 'failed' && state.status !== 'canceled')
+      })
+      if (!(await app.downloads.requestMany(wanted, { title: album.title, artworkUrl: data.album?.artworkUrl }))) all.disabled = false
     })
     actions.append(all)
   }
@@ -270,18 +269,19 @@ async function loadArtistOnlineSongs(name, slot, tools) {
     }
     refresh()
   })
+  // One request for the whole selection: songs over the queue limit wait
+  // on the server and follow as earlier ones finish.
   downloadBtn.addEventListener('click', async () => {
     downloadBtn.disabled = true
-    let queued = 0
-    for (const item of [...picked]) {
-      if (!canPick(item)) continue
-      try { if (await app.downloads.request(item, { quiet: true })) queued += 1 } catch (error) { toastError(error); break }
+    const wanted = [...picked].filter(canPick)
+    const group = await app.downloads.requestMany(wanted, { title: t('player.downloads.group.artistSongs', { name }) })
+    if (!group) { refresh(); return }
+    for (const item of wanted) {
       const box = boxes.get(item)
       if (box) { box.checked = false; box.disabled = true }
     }
     picked.clear()
     refresh()
-    if (queued) toast(t('player.album.missingQueued', { n: queued }), { type: 'success' })
   })
   tools.replaceChildren(summary, app.canDownload ? selectMissing : null, app.canDownload ? downloadBtn : null)
   refresh()
@@ -322,20 +322,10 @@ function paintOnlineArtist(data, name, slot, relatedSlot, heroMeta, bioSlot) {
   const titled = (key) => `${t(key)} · ${provider}`
   const context = { label: name }
   if (data.artist.fans && heroMeta) heroMeta.append(h('span', { class: 'dot', text: '•' }), t('player.online.fans', { n: fmtNumber(data.artist.fans) }))
-  // Counted over the songs shown (top 10), and only the parts that are > 0.
   const top = data.topTracks.slice(0, 10)
-  const missingTop = top.filter((tr) => !tr.library).length
-  const albums = data.missingAlbums
-  const gapText = albums && missingTop ? t('player.artist.completeText', { albums, tracks: missingTop })
-    : albums ? t('player.artist.completeTextAlbums', { albums })
-      : missingTop ? t('player.artist.completeTextTracks', { tracks: missingTop }) : ''
-  if (gapText) {
-    slot.append(h('div', { class: 'online-banner' },
-      icon('sparkles', { size: 22 }),
-      h('div', {},
-        h('b', { text: t('player.artist.completeTitle') }),
-        h('span', { text: gapText }))))
-  }
+  // Only when something is missing: a library artist page needs no "complete" note.
+  const card = discographyCard(data, { name, quietWhenComplete: true })
+  if (card) slot.append(card)
   if (top.length) slot.append(h('section', { class: 'section' }, h('h2', { class: 'section-title', text: titled('player.artist.popular') }), onlineTrackList(top, { context })))
   if (data.albums.length) slot.append(shelf({ title: titled('player.artist.albums'), items: data.albums, render: (item, i) => onlineCard(item, data.albums, i) }))
   if (data.singles.length) slot.append(shelf({ title: titled('player.artist.singlesEps'), items: data.singles, render: (item, i) => onlineCard(item, data.singles, i) }))
@@ -496,11 +486,13 @@ async function playlistView(id) {
       { label: t('player.menu.addToQueue'), icon: 'queue', run: () => queueCollection('playlist', id, 'add') }
     ], e.currentTarget), { cls: 'icon-btn--lg', size: 26 }))
   }
+  // Native append() writes a missing banner (null) as the text "null".
+  const banner = followBanner(pl, reload)
   root.append(actionBar({
     onPlay: () => playTracks(pl.tracks, 0, context, { shuffle: false }),
     onShuffle: () => playTracks(pl.tracks, randomIndex(Math.max(1, pl.tracks.length)), context, { shuffle: true }),
     extra
-  }), followBanner(pl, reload), listHolder)
+  }), ...(banner ? [banner] : []), listHolder)
   paintList()
   if (pl.editable) root.append(playlistSuggestions(pl, reload), playlistFinder(pl, reload))
   return { node: root, hero: true }

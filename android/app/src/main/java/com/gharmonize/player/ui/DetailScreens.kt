@@ -71,7 +71,7 @@ fun AlbumScreen(state: AppState, id: Long) {
       item {
         SectionTitle(stringResource(R.string.album_missing_title), subtitle = stringResource(R.string.album_missing_text, gaps.missing.size, gaps.total))
         Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          if (state.canDownload) Button(onClick = { state.downloadAll(gaps.missing) }) {
+          if (state.canDownload) Button(onClick = { state.downloadAll(gaps.missing, title = album.title) }) {
             Icon(FluentIcons.Download, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.download_missing, gaps.missing.size))
           }
           gaps.onlineAlbum?.let { online -> OutlinedButton(onClick = { state.navigate(Route.OnlineAlbum(online)) }) { Text(stringResource(R.string.full_album)) } }
@@ -152,9 +152,11 @@ fun ArtistScreen(state: AppState, id: Long, preOnline: JSONObject? = null) {
         else OutlinedButton(onClick = toggleFollow, enabled = !followBusy) { Text(stringResource(R.string.follow_follow)) }
       }
     }
+    // "Complete the discography" (only when something is missing).
+    onlineLoad.value?.let { o -> item(key = "gaps") { DiscographyCard(state, o, artist.name, quietWhenComplete = true) } }
     if (artist.topTracks.isNotEmpty()) {
       item { SectionTitle(stringResource(R.string.popular)) }
-      itemsIndexed(artist.topTracks, key = { _, t -> "top-${t.id}" }) { i, _ -> TrackRow(state, artist.topTracks, i) }
+      itemsIndexed(artist.topTracks, key = { _, t -> "top-${t.id}" }) { i, _ -> TrackRow(state, artist.topTracks, i, selection = selection) }
     }
     if (artist.albums.isNotEmpty()) item { ShelfRow(stringResource(R.string.albums), artist.albums) { _, a -> AlbumCard(state, a) } }
     // Online rows between the discography and the (long) song list.
@@ -171,15 +173,17 @@ fun ArtistScreen(state: AppState, id: Long, preOnline: JSONObject? = null) {
     if (artist.trackCount > 0) artistSongsSection(state, artist.trackCount, songs, sort, { sort = it }, selection,
       onlineTab = onlineTab,
       onTab = if (online?.artist?.provider == "deezer") { on -> onlineTab = on; if (on) onlineOpened = true } else null,
-      online = OnlineSongs(onlineSongsLoad, onlinePicked))
+      online = OnlineSongs(onlineSongsLoad, onlinePicked, artist.name))
     if (artist.singles.isNotEmpty()) {
       item { SectionTitle(stringResource(R.string.singles)) }
-      itemsIndexed(artist.singles, key = { _, t -> "sg-${t.id}" }) { i, _ -> TrackRow(state, artist.singles, i) }
+      itemsIndexed(artist.singles, key = { _, t -> "sg-${t.id}" }) { i, _ -> TrackRow(state, artist.singles, i, selection = selection) }
     }
     if (artist.appearsOn.isNotEmpty()) item { ShelfRow(stringResource(R.string.appears_on), artist.appearsOn) { _, a -> AlbumCard(state, a) } }
     if (online != null && online.related.isNotEmpty()) item { ShelfRow(stringResource(R.string.related), online.related) { i, _ -> OnlineCard(state, online.related, i) } }
   }
-  if (selection.active) SongSelectionBar(state, songs.value.orEmpty(), selection, artist?.name.orEmpty(), Modifier.align(Alignment.BottomCenter))
+  // Popular songs and singles can be picked too (before "All songs" loads).
+  if (selection.active) SongSelectionBar(state, (songs.value.orEmpty() + artist?.topTracks.orEmpty() + artist?.singles.orEmpty()).distinctBy { it.id },
+    selection, artist?.name.orEmpty(), Modifier.align(Alignment.BottomCenter))
   }
 }
 
@@ -191,7 +195,10 @@ fun PlaylistScreen(state: AppState, id: Long) {
   val added = remember(round) { mutableStateListOf<String>() }
   val pl = data.value
   val selection = rememberSongSelection("playlist-$id")
-  SelectionScaffold(state, pl?.tracks.orEmpty(), selection, pl?.name.orEmpty()) { pad ->
+  // Your own playlist: the picked songs can be taken out of it.
+  val removeFromPlaylist: ((List<com.gharmonize.player.data.Track>) -> Unit)? =
+    if (pl?.editable == true) { picked -> state.removeFromPlaylist(id, picked) { data.reload() } } else null
+  SelectionScaffold(state, pl?.tracks.orEmpty(), selection, pl?.name.orEmpty(), removeFromPlaylist) { pad ->
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = pad)) {
     data.error?.let { e -> item { ErrorBox(state.errorText(e)) { data.reload() } } }
     if (pl == null) { if (data.loading) item { Loading() }; return@LazyColumn }
@@ -237,7 +244,10 @@ fun OnlineAlbumScreen(state: AppState, item: OnlineItem) {
     header to o.optJSONArray("tracks").mapObjects(::parseOnline)
   }
   val pair = data.value
-  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+  // Swipe a song to the right (or long press) to select songs.
+  val selection = rememberOnlineSelection(item.key)
+  OnlineSelectionScaffold(state, pair?.second.orEmpty(), selection, pair?.first?.title.orEmpty()) { pad ->
+  LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = pad)) {
     data.error?.let { e -> item { ErrorBox(state.errorText(e)) { data.reload() } } }
     if (pair == null) { if (data.loading) item { Loading() }; return@LazyColumn }
     val (header, tracks) = pair
@@ -280,7 +290,7 @@ fun OnlineAlbumScreen(state: AppState, item: OnlineItem) {
           val partial = owned > 0
           Button(onClick = {
             if (header.downloadable) state.download(header.copy(kind = item.kind, trackCount = tracks.size), only = if (partial) missing else null)
-            else state.downloadAll(tracks)
+            else state.downloadAll(tracks, title = header.title)
           }) {
             Icon(FluentIcons.Download, null); Spacer(Modifier.width(6.dp))
             Text(if (partial) stringResource(R.string.download_missing, missing.size) else stringResource(R.string.download))
@@ -288,7 +298,8 @@ fun OnlineAlbumScreen(state: AppState, item: OnlineItem) {
         }
       }
     }
-    itemsIndexed(tracks, key = { i, t -> "ot-$i-${t.id}" }) { i, _ -> OnlineTrackRow(state, tracks, i) }
+    itemsIndexed(tracks, key = { i, t -> "ot-$i-${t.id}" }) { i, _ -> OnlineTrackRow(state, tracks, i, selection = selection) }
+  }
   }
 }
 
@@ -309,7 +320,7 @@ fun OnlineArtistScreen(state: AppState, id: String?, name: String?) {
     item {
       val fans = rows.fans.takeIf { it > 0 }?.let { stringResource(R.string.fans_count, java.text.NumberFormat.getIntegerInstance().format(it)) }
       HeaderBlock(artist?.artworkUrl, stringResource(R.string.kind_artist) + " · " + rows.provider, title,
-        listOfNotNull(fans, (o?.optInt("missingAlbums") ?: 0).takeIf { it > 0 }?.let { stringResource(R.string.missing_albums, it) }).joinToString(" · "), round = true,
+        listOfNotNull(fans).joinToString(" · "), round = true,
         footer = { ArtistBio(state, title, artist?.id?.takeIf { artist.provider == "deezer" }) }) {
         val playable = rows.top.indexOfFirst { it.libraryTrackId != null || it.previewUrl != null }
         if (playable >= 0) FilledIconButton(onClick = { state.playOnline(rows.top, playable) }) { Icon(FluentIcons.PlayArrow, stringResource(R.string.play)) }
@@ -329,6 +340,8 @@ fun OnlineArtistScreen(state: AppState, id: String?, name: String?) {
         else OutlinedButton(onClick = toggle, enabled = !followBusy) { Text(stringResource(R.string.follow_follow)) }
       }
     }
+    // Missing albums and popular songs (the header used to only count albums).
+    o?.let { json -> item(key = "gaps") { DiscographyCard(state, json, title) } }
     if (rows.top.isNotEmpty()) {
       item { SectionTitle(stringResource(R.string.popular)) }
       val top = rows.top.take(10)

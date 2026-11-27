@@ -101,7 +101,7 @@ export async function saveToPlaylistDialog({ name = '', trackIds = null, getTrac
       const pl = await createOrExtend(result, owned)
       await refreshPlaylists()
       const missing = tracks.filter((tr) => !tr.library?.trackId && tr.url)
-      for (const tr of missing) await app.downloads.request(tr, { playlistId: pl.id, quiet: true })
+      if (missing.length) await app.downloads.requestMany(missing, { playlistId: pl.id, title: pl.name || result.name || null, quiet: true })
       toast(missing.length ? t('player.save.mixQueued', { n: missing.length, name: pl.name || result.name || '' }) : t('player.playlist.addedTo', { name: pl.name || result.name || '' }),
         { type: 'success', action: { label: t('player.save.open'), run: () => app.nav(`/playlist/${pl.id}`) } })
       return pl

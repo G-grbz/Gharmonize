@@ -1,4 +1,4 @@
-/* Ggrbz css editor | settings.css | 2026-11-24 17:54:42 (Europe/Istanbul) */
+/* Ggrbz css editor | settings.css | 2026-11-27 14:11:51 (Europe/Istanbul) */
 
 #settingsModal.gh-settings {
   --sm-surface: var(--surface,var(--bg-elev,#151a23));
@@ -195,6 +195,12 @@
   grid-row: 1;
   text-align: left;
   width: auto;
+}
+
+#settingsModal.gh-settings .settings-field-hint.settings-field-warning {
+  border-left: 3px solid #d97706;
+  color: var(--sm-text);
+  padding-left: 10px;
 }
 
 #settingsModal.gh-settings .settings-tabs {

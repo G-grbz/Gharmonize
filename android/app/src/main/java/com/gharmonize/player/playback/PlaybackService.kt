@@ -56,6 +56,10 @@ class PlaybackService : MediaLibraryService() {
   private var autoplayRevision = 0L
   private var autoplayAttempted = false
   private var autoplayAttemptedAtEnd = false
+  // The queue and position are kept on the phone (QueueStore) so the last
+  // song is back, paused, after the app or the phone restarts.
+  private var lastQueueSave = 0L
+  private val queueWriter = Dispatchers.IO.limitedParallelism(1)
 
   // ---- crossfade -----------------------------------------------------------------------
   // In the last seconds of a song the next one starts on a helper player and
@@ -72,6 +76,7 @@ class PlaybackService : MediaLibraryService() {
   private val crossfadeTick = object : Runnable {
     override fun run() {
       runCatching { crossfadeStep() }
+      mainPlayer?.let { if (it.isPlaying && SystemClock.elapsedRealtime() - lastQueueSave > 10_000) saveQueue(it) }
       handler.postDelayed(this, if (helper != null) 50L else 250L)
     }
   }
@@ -148,6 +153,7 @@ class PlaybackService : MediaLibraryService() {
         .build()
     }
     val player = buildPlayer(true)
+    restoreQueue(player)
     player.addListener(historyListener(player))
     mainPlayer = player
     handler.post(crossfadeTick)
@@ -176,6 +182,7 @@ class PlaybackService : MediaLibraryService() {
   // Swiping the app away from recents ends playback as well; stopping (idle)
   // also removes the media notification so nothing keeps the service alive.
   override fun onTaskRemoved(rootIntent: Intent?) {
+    mainPlayer?.let { saveQueue(it, now = true) }
     pauseAllPlayersAndStopSelf()
     session?.player?.stop()
   }
@@ -183,6 +190,7 @@ class PlaybackService : MediaLibraryService() {
   override fun onDestroy() {
     handler.removeCallbacks(crossfadeTick)
     cancelCrossfade()
+    mainPlayer?.let { saveQueue(it, now = true) }
     session?.run {
       flushPlay(player, completed = false)
       player.release()
@@ -195,6 +203,9 @@ class PlaybackService : MediaLibraryService() {
 
   private fun historyListener(player: ExoPlayer) = object : Player.Listener {
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+      // A restored queue waits unprepared: play from anywhere (app, queue,
+      // notification, headset) loads it first.
+      if (playWhenReady && player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) player.prepare()
       // Paused by the user (or focus loss) during a fade: stop the helper too.
       if (!playWhenReady && helper != null) cancelCrossfade()
     }
@@ -236,6 +247,10 @@ class PlaybackService : MediaLibraryService() {
     override fun onEvents(source: Player, events: Player.Events) {
       if (events.contains(Player.EVENT_REPEAT_MODE_CHANGED)) resetAutoplay()
       if (events.containsAny(
+        Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED, Player.EVENT_PLAY_WHEN_READY_CHANGED,
+        Player.EVENT_POSITION_DISCONTINUITY, Player.EVENT_REPEAT_MODE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+      )) saveQueue(player)
+      if (events.containsAny(
         Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED, Player.EVENT_PLAYBACK_STATE_CHANGED,
         Player.EVENT_PLAY_WHEN_READY_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
       )) keepPlaying(player)
@@ -255,6 +270,21 @@ class PlaybackService : MediaLibraryService() {
       player.seekTo(pos)
       player.play()
     }
+  }
+
+  private fun restoreQueue(player: ExoPlayer) {
+    val saved = QueueStore.read(this) ?: return
+    player.shuffleModeEnabled = saved.shuffle
+    player.repeatMode = saved.repeatMode
+    // Not prepared: nothing loads or plays until the user presses play.
+    player.setMediaItems(saved.items, saved.index, saved.positionMs)
+  }
+
+  private fun saveQueue(player: Player, now: Boolean = false) {
+    lastQueueSave = SystemClock.elapsedRealtime()
+    val snapshot = runCatching { QueueStore.snapshot(player) }.getOrElse { return }
+    if (now) QueueStore.write(this, snapshot)
+    else scope.launch(queueWriter) { QueueStore.write(this@PlaybackService, snapshot) }
   }
 
   private fun resetAutoplay() {

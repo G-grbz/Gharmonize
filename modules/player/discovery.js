@@ -1,6 +1,6 @@
 import { visibleSql } from './access.js'
 import { normalizeKey } from './scanner.js'
-import { primaryArtistKey, albumBaseKey, artistsMatch, cleanTitleForMatch } from './matching.js'
+import { primaryArtistKey, albumBaseKey, artistsMatch, cleanTitleForMatch, sameRecordingLength } from './matching.js'
 import { songKey, artistCredits, artistCreditNames, artistCreditKeys } from './songKey.js'
 import { seededRandom, seededShuffle, localDayKey } from './mixes.js'
 
@@ -108,9 +108,19 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     artist: (id) => cache.wrap(`dz:artist:${id}`, TTL.detail, () => deezer.artist(id)),
     artistTop: (id) => cache.wrap(`dz:artist-top:${id}`, TTL.artistTop, () => deezer.artistTop(id, 25)),
     artistRelated: (id) => cache.wrap(`dz:artist-related:${id}`, TTL.artistRelated, () => deezer.artistRelated(id, 20)),
-    artistAlbums: (id) => cache.wrap(`dz:artist-albums:${id}`, TTL.artistAlbums, () => deezer.artistAlbums(id, 50)),
+    // Deezer lists an artist's albums without their artist: it is filled in
+    // here (also for lists cached before), or no album could be matched with
+    // the library and every owned album looked missing.
+    artistAlbums: async (id) => {
+      const albums = await cache.wrap(`dz:artist-albums:${id}`, TTL.artistAlbums, () => deezer.artistAlbums(id, 50))
+      if (!Array.isArray(albums) || !albums.some((a) => !a.artist)) return albums
+      const artist = await dz.artist(id).catch(() => null)
+      if (!artist?.title) return albums
+      return albums.map((a) => (a.artist ? a : { ...a, artist: artist.title, providerIds: { ...a.providerIds, deezerArtist: a.providerIds?.deezerArtist || String(id) } }))
+    },
     artistRadio: (id) => cache.wrap(`dz:artist-radio:${id}`, TTL.artistRadio, () => deezer.artistRadio(id, 30)),
-    album: (id) => cache.wrap(`dz:album:${id}`, TTL.detail, () => deezer.album(id)),
+    // v2: every song with its ISRC (the first answers had at most 25, no ISRC).
+    album: (id) => cache.wrap(`dz:album2:${id}`, TTL.detail, () => deezer.album(id)),
     searchAlbums: (q) => cache.wrap(`dz:search-albums:${normalizeKey(q)}`, TTL.detail, () => deezer.searchAlbums(q, 10)),
     playlist: (id) => cache.wrap(`dz:playlist:${id}`, TTL.detail, () => deezer.playlist(id))
   }
@@ -549,6 +559,37 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     throw new DiscoveryError('UNKNOWN_PROVIDER', 'Unknown provider.')
   }
 
+  // Deezer's list of an artist's albums has no song counts, so an album the
+  // library has one song of looked complete. Owned albums are checked song
+  // by song (like their album page): complete only when every song is in
+  // the library. Read a few at a time; what is not read within the time
+  // budget keeps the count-based guess and is ready (cached) next time.
+  const OWNED_CHECK_MS = 3500
+  async function checkOwnedAlbums(items, userId) {
+    // Albums and EPs first: singles are one song and rarely partly owned.
+    const owned = items.filter((a) => a.library && a.provider === 'deezer' && a.id)
+      .sort((a, b) => Number(a.recordType === 'single') - Number(b.recordType === 'single'))
+    if (!owned.length) return
+    let next = 0
+    const worker = async () => {
+      while (next < owned.length) {
+        const item = owned[next++]
+        try {
+          const data = await dz.album(item.id)
+          if (!data?.tracks?.length) continue
+          const links = await annotator.links(data.album?.url || item.url)
+          const tracks = annotator.items(data.tracks, userId, { links })
+          const have = tracks.filter((t) => t.library).length
+          item.trackCount = item.trackCount || data.album?.trackCount || tracks.length
+          item.library = { ...item.library, ownedTracks: have, complete: have >= tracks.length }
+        } catch (error) {
+          logger.debug?.(`[player] album check failed for ${item.id}: ${error?.message || error}`)
+        }
+      }
+    }
+    await timeout(Promise.all([worker(), worker(), worker(), worker()]), OWNED_CHECK_MS)
+  }
+
   // Artist page: by Deezer id, or by name (e.g. from a library artist page).
   // Albums you do not own are what makes "complete the discography" possible.
   async function onlineArtist(user, { id, name } = {}) {
@@ -569,6 +610,7 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     if (!artist) throw new DiscoveryError('NOT_FOUND', 'Artist not found online.', 404)
     const sorted = [...albums].sort((a, b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')))
     const annotatedAlbums = annotator.items(sorted, user.id)
+    await checkOwnedAlbums(annotatedAlbums, user.id)
     const mainArtist = annotator.items([artist], user.id)[0]
     const relatedArtists = annotator.items(related, user.id)
     // The photos are already here: library artists keep them (no extra lookup).
@@ -632,6 +674,84 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
       tracks: items,
       releases: releases.length,
       missing: items.filter((t) => !t.library).length
+    }
+  }
+
+  // "Complete the discography": every release of the artist on Deezer that
+  // the library lacks songs of (albums, EPs, singles, compilations; newest
+  // first) with its songs, plus missing popular songs that are on none of
+  // them. A single's song that an album in the list has too (same song,
+  // practically the same length) points at it (`sameAs`), so picking both
+  // downloads it once.
+  const GAPS_MAX_RELEASES = 80
+  async function onlineArtistGaps(user, { id, name } = {}) {
+    if (!enabled('deezer')) throw new DiscoveryError('PROVIDER_DISABLED', 'Online artist data needs Deezer to be enabled.', 409)
+    const wanted = String(name || '').slice(0, 200)
+    let artistId = id ? requireId(id) : await dz.artistId(wanted)
+    if (!artistId && !id) {
+      const names = artistCreditNames(wanted)
+      if (names.length > 1) artistId = await dz.artistId(names[0])
+    }
+    if (!artistId) throw new DiscoveryError('NOT_FOUND', 'Artist not found online.', 404)
+    const [artist, top, albums] = await Promise.all([
+      dz.artist(artistId).catch(() => null),
+      dz.artistTop(artistId).catch(() => []),
+      dz.artistAlbums(artistId).catch(() => [])
+    ])
+    if (!artist) throw new DiscoveryError('NOT_FOUND', 'Artist not found online.', 404)
+    const releases = [...albums].sort((a, b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || ''))).slice(0, GAPS_MAX_RELEASES)
+    const details = new Array(releases.length).fill(null)
+    let next = 0
+    await Promise.all(Array.from({ length: Math.min(4, releases.length) }, async () => {
+      while (next < releases.length) {
+        const i = next++
+        details[i] = await dz.album(releases[i].id).catch(() => null)
+      }
+    }))
+    const own = new Set(artistCreditKeys(artist.title || wanted))
+    const credited = (track) => !own.size || artistCreditKeys(track.artist).some((key) => own.has(key))
+    const out = []
+    for (let i = 0; i < releases.length; i += 1) {
+      const detail = details[i]
+      if (!detail?.tracks?.length) continue
+      const recordType = releases[i].recordType || detail.album?.recordType || 'album'
+      // A compilation can carry other artists' songs: only this artist's.
+      const listed = recordType === 'compile' ? detail.tracks.filter(credited) : detail.tracks
+      if (!listed.length) continue
+      const links = await annotator.links(detail.album?.url || releases[i].url)
+      const tracks = annotator.items(listed, user.id, { links })
+      const missing = tracks.filter((t) => !t.library).length
+      if (!missing) continue
+      const [album] = annotator.items([{ ...releases[i], trackCount: detail.album?.trackCount || releases[i].trackCount }], user.id)
+      out.push({
+        ...album,
+        recordType,
+        year: Number(String(releases[i].releaseDate || '').slice(0, 4)) || null,
+        trackCount: tracks.length,
+        missing,
+        tracks: tracks.map((t) => ({ ...t, album: t.album || album.title }))
+      })
+    }
+    // Singles whose song an album, EP or compilation in the list has too.
+    const longer = out.filter((r) => r.recordType !== 'single').flatMap((r) => r.tracks.filter((t) => !t.library))
+    const sameSong = (a, b) => songKey(a.title, a.artist) === songKey(b.title, b.artist) &&
+      (!a.duration || !b.duration || sameRecordingLength(a.duration, b.duration))
+    for (const release of out) {
+      if (release.recordType !== 'single') continue
+      for (const track of release.tracks) {
+        if (track.library) continue
+        const twin = longer.find((other) => sameSong(track, other))
+        if (twin) track.sameAs = twin.url
+      }
+    }
+    const listedKeys = new Set(out.flatMap((r) => r.tracks.map((t) => songKey(t.title, t.artist))))
+    const popular = annotator.items(top.slice(0, 10), user.id)
+      .filter((t) => !t.library && !listedKeys.has(songKey(t.title, t.artist)))
+    return {
+      artist: annotator.items([artist], user.id)[0],
+      releases: out,
+      popular,
+      missingTracks: out.reduce((n, r) => n + r.missing, 0) + popular.length
     }
   }
 
@@ -730,5 +850,5 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     return { id: String(id), albums: await dz.artistAlbums(id) }
   }
 
-  return { discover, mood, onlineAlbum, albumMissing, onlinePlaylist, onlineArtist, onlineArtistTracks, artistPhotoUrl, rememberArtistPhoto, artistMixes, artistReleases, seedArtists, mixSuggestions, radioSuggestions, autoplayRelated, moods: () => MOOD_PRESETS }
+  return { discover, mood, onlineAlbum, albumMissing, onlinePlaylist, onlineArtist, onlineArtistTracks, onlineArtistGaps, artistPhotoUrl, rememberArtistPhoto, artistMixes, artistReleases, seedArtists, mixSuggestions, radioSuggestions, autoplayRelated, moods: () => MOOD_PRESETS }
 }
