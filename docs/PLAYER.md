@@ -4,6 +4,9 @@ Gharmonize Player streams the music stored on your Gharmonize server to a web
 browser or the native Android client. Both clients use the same accounts,
 libraries and playlists. Keep the server running while listening.
 
+> **Try it first:** the [live Gharmonize Player demo](https://g-grbz.github.io/demo/gharmonize/)
+> runs in your browser with sample data; downloads are simulated.
+
 | Component | Where it runs | What to install |
 | --- | --- | --- |
 | Music server and Web Player | Your computer or server | Gharmonize desktop, a source installation or Docker |

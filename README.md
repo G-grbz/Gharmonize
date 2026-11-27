@@ -26,7 +26,7 @@ Next-generation media processing, powered by **yt-dlp**, **FFmpeg** and **deno**
 
 Seamlessly download content from YouTube, YouTube Music, and major platforms like X, Facebook, Instagram, Vimeo, Dailymotion, and TikTok. Leverage Spotify, Apple Music, Deezer, TIDAL, and SoundCloud for intelligent metadata matching and track discovery — then fetch high-quality media via yt-dlp. Includes DRM-free disc ripping, iPhone / Android ringtone output, and blazing-fast GPU-accelerated transcoding, all powered by a robust and reliable processing engine.
 
-**[Gharmonize Player](#gharmonize-player)** adds a personal music server for listening to your library in a browser, on an Android phone, or on Android TV and Google TV.
+**[Gharmonize Player](#gharmonize-player)** adds a personal music server for listening to your library in a browser, on an Android phone, or on Android TV and Google TV. **[Try the live demo →](https://g-grbz.github.io/demo/gharmonize/)**
 
 > **Mapped-music note:** Spotify, Apple Music, Deezer, TIDAL, and SoundCloud are used as **metadata/catalog sources for matching and discovery**. Gharmonize matches supported catalog items to YouTube / YouTube Music for media retrieval and does **not** claim DRM bypass of subscription services.
 
@@ -115,7 +115,7 @@ Full Docker setup, bind mounts, permissions, `MUSIC_DIR`, NVIDIA Container Toolk
 
 ## Gharmonize Player
 
-![Gharmonize Player demo](docs/assets/gharmonize-player.gif)
+**▶️ [Try the live Gharmonize Player demo](https://g-grbz.github.io/demo/gharmonize/)** — runs in your browser with sample data and 30-second previews; downloads are simulated.
 
 - **Web Player** streams your library with playlists, queue management, favorites, synchronized lyrics and listening statistics.
 - **Android Client** supports offline listening, background playback, lock screen controls, an equalizer and separate Wi-Fi and mobile streaming quality. The `Gharmonize-Player-Client` APK is available on [GitHub Releases](https://github.com/G-grbz/Gharmonize/releases/latest).
