@@ -290,7 +290,8 @@ export function createCoreAdapter({ logger = console } = {}) {
       let resolved
       try { resolved = await mapped.resolve() } catch (error) {
         const msg = String(error?.message || error)
-        const permanent = /404|not found|SPOTIFY_MIX_UNSUPPORTED|required/i.test(msg)
+        // The store did not answer (outage, timeout): try again later.
+        const permanent = !error?.transient && /404|not found|SPOTIFY_MIX_UNSUPPORTED|required/i.test(msg)
         throw new BridgeError('SOURCE_RESOLVE_FAILED', msg.slice(0, 300), { permanent })
       }
       checkCanceled()

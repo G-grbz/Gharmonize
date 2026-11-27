@@ -5,6 +5,22 @@ import { metadataDeadline } from "./metadataDeadline.js";
 import { cleanCatalogTitleForSearch, catalogSearchTextVariants, catalogQueryKey } from "./catalogSearchText.js";
 
 const DEEZER_API_BASE = "https://api.deezer.com";
+// Without a limit an unanswered connection waits for the system's TCP
+// timeout (about two minutes on Linux).
+const DEEZER_API_TIMEOUT_MS = 15_000;
+// Deezer API error codes that mean "try again later": quota, service busy.
+const DEEZER_RETRYABLE_ERROR_CODES = new Set([4, 700]);
+
+// Deezer did not answer (network, timeout, rate limit, server error). Unlike
+// "no such track" it is worth trying again later, so it is never cached as
+// "not found" and the download that met it is retried.
+export class DeezerUnavailableError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "DeezerUnavailableError";
+    this.transient = true;
+  }
+}
 const DEEZER_WEB_GATEWAY = "https://www.deezer.com/ajax/gw-light.php";
 const DEEZER_WEB_HEADERS = Object.freeze({
   "user-agent":
@@ -363,6 +379,7 @@ async function resolveDeezerCanonicalUrl(url = "") {
 }
 
 // Fetches Deezer JSON payloads with shared headers for Deezer metadata flow.
+// Failures Deezer may recover from throw DeezerUnavailableError.
 async function fetchDeezerJson(url = "", { signal } = {}) {
   const target = new URL(String(url || ""));
   const host = target.hostname.toLowerCase();
@@ -374,21 +391,52 @@ async function fetchDeezerJson(url = "", { signal } = {}) {
   ) {
     throw new Error("Unsafe Deezer API URL");
   }
-  const res = await fetch(target.toString(), {
-    signal,
-    headers: DEEZER_WEB_HEADERS,
-    redirect: "error"
-  });
+  if (signal?.aborted) throw signal.reason || new Error("Aborted");
 
-  if (!res.ok) {
-    throw new Error(`Deezer API request failed (${res.status})`);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, DEEZER_API_TIMEOUT_MS);
+  const forwardAbort = () => controller.abort(signal.reason);
+  signal?.addEventListener?.("abort", forwardAbort, { once: true });
+
+  let data;
+  try {
+    const res = await fetch(target.toString(), {
+      signal: controller.signal,
+      headers: DEEZER_WEB_HEADERS,
+      redirect: "error"
+    });
+    if (res.status === 429 || res.status >= 500) {
+      throw new DeezerUnavailableError(`Deezer API is unavailable (${res.status})`);
+    }
+    if (!res.ok) {
+      throw new Error(`Deezer API request failed (${res.status})`);
+    }
+    data = await res.json();
+  } catch (error) {
+    if (error instanceof DeezerUnavailableError) throw error;
+    // The caller gave up: not a Deezer failure.
+    if (signal?.aborted && !timedOut) throw error;
+    if (timedOut) {
+      throw new DeezerUnavailableError(`Deezer API did not answer within ${DEEZER_API_TIMEOUT_MS / 1000} s`);
+    }
+    if (/^Deezer API request failed/.test(String(error?.message || ""))) throw error;
+    const reason = error?.cause?.code || error?.code || error?.message || "network error";
+    throw new DeezerUnavailableError(`Deezer API could not be reached (${reason})`);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener?.("abort", forwardAbort);
   }
 
-  const data = await res.json();
   if (data?.error) {
-    throw new Error(
-      String(data.error?.message || data.error?.type || "Unknown Deezer API error")
-    );
+    const message = String(data.error?.message || data.error?.type || "Unknown Deezer API error");
+    if (DEEZER_RETRYABLE_ERROR_CODES.has(Number(data.error?.code))) {
+      throw new DeezerUnavailableError(`Deezer API is busy (${message})`);
+    }
+    throw new Error(message);
   }
 
   return data;
@@ -913,7 +961,8 @@ async function resolveDeezerArtistSearch(parsed, options = {}) {
 }
 
 // Loads a Deezer track entity by id for metadata flow.
-async function lookupDeezerTrack(trackId, { signal } = {}) {
+// `strict`: a Deezer outage throws (DeezerUnavailableError) instead of null.
+async function lookupDeezerTrack(trackId, { signal, strict = false } = {}) {
   const id = numberOrNull(trackId);
   if (!id || id <= 0) return null;
 
@@ -926,13 +975,15 @@ async function lookupDeezerTrack(trackId, { signal } = {}) {
     const resolved = numberOrNull(track?.id) ? track : null;
     cacheSet(DEEZER_TRACK_CACHE, cacheKey, resolved, DEEZER_TRACK_CACHE_MAX);
     return resolved;
-  } catch {
+  } catch (error) {
+    if (strict && error?.transient) throw error;
     return null;
   }
 }
 
 // Loads a Deezer album entity by id for metadata flow.
-async function lookupDeezerAlbum(albumId, { signal } = {}) {
+// `strict`: a Deezer outage throws (DeezerUnavailableError) instead of null.
+async function lookupDeezerAlbum(albumId, { signal, strict = false } = {}) {
   const id = numberOrNull(albumId);
   if (!id || id <= 0) return null;
 
@@ -945,13 +996,16 @@ async function lookupDeezerAlbum(albumId, { signal } = {}) {
     const resolved = numberOrNull(album?.id) ? album : null;
     cacheSet(DEEZER_ALBUM_CACHE, cacheKey, resolved, DEEZER_ALBUM_CACHE_MAX);
     return resolved;
-  } catch {
+  } catch (error) {
+    if (strict && error?.transient) throw error;
     return null;
   }
 }
 
 // Loads a Deezer album with its full track bundle for metadata flow.
-async function lookupDeezerAlbumBundle(albumId) {
+// A Deezer outage is not cached (a later call asks again); `strict` makes it
+// throw instead of answering with an empty or partial bundle.
+async function lookupDeezerAlbumBundle(albumId, { strict = false } = {}) {
   const id = numberOrNull(albumId);
   if (!id || id <= 0) return { album: null, tracks: [] };
 
@@ -959,7 +1013,13 @@ async function lookupDeezerAlbumBundle(albumId) {
   const cached = cacheGet(DEEZER_ALBUM_BUNDLE_CACHE, cacheKey);
   if (cached !== undefined) return cached;
 
-  const album = await lookupDeezerAlbum(id);
+  let album;
+  try {
+    album = await lookupDeezerAlbum(id, { strict: true });
+  } catch (error) {
+    if (strict) throw error;
+    return { album: null, tracks: [] };
+  }
   if (!album) {
     const empty = { album: null, tracks: [] };
     cacheSet(DEEZER_ALBUM_BUNDLE_CACHE, cacheKey, empty, DEEZER_ALBUM_BUNDLE_CACHE_MAX);
@@ -970,23 +1030,30 @@ async function lookupDeezerAlbumBundle(albumId) {
     ? album.tracks.data.filter(Boolean)
     : [];
 
+  let complete = true;
   try {
     if (album.tracklist) {
       const fullTracks = await fetchAllTrackPages(album.tracklist, album.nb_tracks);
       if (fullTracks.length) tracks = fullTracks;
     }
-  } catch {}
+  } catch (error) {
+    if (error?.transient) {
+      if (strict) throw error;
+      complete = false;
+    }
+  }
 
   const payload = {
     album: mergeTracksIntoAlbum(album, tracks),
     tracks
   };
-  cacheSet(DEEZER_ALBUM_BUNDLE_CACHE, cacheKey, payload, DEEZER_ALBUM_BUNDLE_CACHE_MAX);
+  if (complete) cacheSet(DEEZER_ALBUM_BUNDLE_CACHE, cacheKey, payload, DEEZER_ALBUM_BUNDLE_CACHE_MAX);
   return payload;
 }
 
 // Loads a Deezer playlist entity by id for metadata flow.
-async function lookupDeezerPlaylist(playlistId) {
+// `strict`: a Deezer outage throws (DeezerUnavailableError) instead of null.
+async function lookupDeezerPlaylist(playlistId, { strict = false } = {}) {
   const id = numberOrNull(playlistId);
   if (!id || id <= 0) return null;
 
@@ -999,14 +1066,18 @@ async function lookupDeezerPlaylist(playlistId) {
     const resolved = numberOrNull(playlist?.id) ? playlist : null;
     cacheSet(DEEZER_PLAYLIST_CACHE, cacheKey, resolved, DEEZER_PLAYLIST_CACHE_MAX);
     return resolved;
-  } catch {
+  } catch (error) {
+    if (error?.transient) {
+      if (strict) throw error;
+      return null;
+    }
     cacheSet(DEEZER_PLAYLIST_CACHE, cacheKey, null, DEEZER_PLAYLIST_CACHE_MAX);
     return null;
   }
 }
 
 // Loads a Deezer playlist with all tracks for metadata flow.
-async function lookupDeezerPlaylistBundle(playlistId) {
+async function lookupDeezerPlaylistBundle(playlistId, { strict = false } = {}) {
   const id = numberOrNull(playlistId);
   if (!id || id <= 0) return { playlist: null, tracks: [] };
 
@@ -1014,7 +1085,13 @@ async function lookupDeezerPlaylistBundle(playlistId) {
   const cached = cacheGet(DEEZER_PLAYLIST_BUNDLE_CACHE, cacheKey);
   if (cached !== undefined) return cached;
 
-  const playlist = await lookupDeezerPlaylist(id);
+  let playlist;
+  try {
+    playlist = await lookupDeezerPlaylist(id, { strict: true });
+  } catch (error) {
+    if (strict) throw error;
+    return { playlist: null, tracks: [] };
+  }
   if (!playlist) {
     const empty = { playlist: null, tracks: [] };
     cacheSet(
@@ -1030,12 +1107,18 @@ async function lookupDeezerPlaylistBundle(playlistId) {
     ? playlist.tracks.data.filter(Boolean)
     : [];
 
+  let complete = true;
   try {
     if (playlist.tracklist) {
       const fullTracks = await fetchAllTrackPages(playlist.tracklist, playlist.nb_tracks);
       if (fullTracks.length) tracks = fullTracks;
     }
-  } catch {}
+  } catch (error) {
+    if (error?.transient) {
+      if (strict) throw error;
+      complete = false;
+    }
+  }
 
   const payload = {
     playlist: {
@@ -1047,12 +1130,14 @@ async function lookupDeezerPlaylistBundle(playlistId) {
     },
     tracks
   };
-  cacheSet(
-    DEEZER_PLAYLIST_BUNDLE_CACHE,
-    cacheKey,
-    payload,
-    DEEZER_PLAYLIST_BUNDLE_CACHE_MAX
-  );
+  if (complete) {
+    cacheSet(
+      DEEZER_PLAYLIST_BUNDLE_CACHE,
+      cacheKey,
+      payload,
+      DEEZER_PLAYLIST_BUNDLE_CACHE_MAX
+    );
+  }
   return payload;
 }
 
@@ -1070,8 +1155,9 @@ async function lookupDeezerArtist(artistId) {
     const resolved = numberOrNull(artist?.id) ? artist : null;
     cacheSet(DEEZER_ARTIST_CACHE, cacheKey, resolved, DEEZER_ARTIST_CACHE_MAX);
     return resolved;
-  } catch {
-    cacheSet(DEEZER_ARTIST_CACHE, cacheKey, null, DEEZER_ARTIST_CACHE_MAX);
+  } catch (error) {
+    // An outage is not "no such artist": ask again next time.
+    if (!error?.transient) cacheSet(DEEZER_ARTIST_CACHE, cacheKey, null, DEEZER_ARTIST_CACHE_MAX);
     return null;
   }
 }
@@ -1567,8 +1653,10 @@ function buildDeezerFallbackTitle(type = "", payload = null) {
 }
 
 // Loads Deezer track metadata by id for mapping and enrichment flow.
-export async function findDeezerTrackMetaById(trackId) {
-  const track = await lookupDeezerTrack(trackId);
+// `strict`: a Deezer outage throws (DeezerUnavailableError) instead of null;
+// the album only adds details, so it never fails the lookup.
+export async function findDeezerTrackMetaById(trackId, { strict = false } = {}) {
+  const track = await lookupDeezerTrack(trackId, { strict });
   if (!track) return null;
 
   const albumBundle = await lookupDeezerAlbumBundle(track?.album?.id);
@@ -1763,7 +1851,8 @@ export async function resolveDeezerUrlLite(url, _options = {}) {
   }
 
   if (parsed.type === "track") {
-    const meta = await findDeezerTrackMetaById(parsed.id);
+    // A Deezer outage is reported as such (and retried), not as "not found".
+    const meta = await findDeezerTrackMetaById(parsed.id, { strict: true });
     if (!meta) {
       throw new Error("Deezer track metadata not found");
     }
@@ -1782,7 +1871,7 @@ export async function resolveDeezerUrlLite(url, _options = {}) {
   }
 
   if (parsed.type === "album") {
-    const bundle = await lookupDeezerAlbumBundle(parsed.id);
+    const bundle = await lookupDeezerAlbumBundle(parsed.id, { strict: true });
     const albumResult = bundle?.album || null;
     const tracks = Array.isArray(bundle?.tracks) ? bundle.tracks : [];
     if (!albumResult || !tracks.length) {
@@ -1812,7 +1901,7 @@ export async function resolveDeezerUrlLite(url, _options = {}) {
   }
 
   if (parsed.type === "playlist") {
-    const bundle = await lookupDeezerPlaylistBundle(parsed.id);
+    const bundle = await lookupDeezerPlaylistBundle(parsed.id, { strict: true });
     const playlistResult = bundle?.playlist || null;
     const tracks = Array.isArray(bundle?.tracks) ? bundle.tracks : [];
     if (!playlistResult || !tracks.length) {
