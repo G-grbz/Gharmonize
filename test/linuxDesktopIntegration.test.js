@@ -58,7 +58,8 @@ test('an installed package or the user\'s own entry wins; icons are still instal
     fs.mkdirSync(path.join(sys, 'applications'), { recursive: true })
     fs.writeFileSync(path.join(sys, 'applications', 'gharmonize.desktop'), '[Desktop Entry]\nExec=/opt/Gharmonize/gharmonize\n')
     assert.equal(integrateAppImage({ appImage: '/a.AppImage', iconsDir: icons, env, home }).desktop, 'removed')
-    assert.ok(!fs.existsSync(userEntry))
+    // Read instead of an exists check (no check-then-write on the same path).
+    assert.throws(() => fs.readFileSync(userEntry), { code: 'ENOENT' })
     // A user's own entry is never rewritten.
     fs.mkdirSync(path.dirname(userEntry), { recursive: true })
     fs.writeFileSync(userEntry, '[Desktop Entry]\nName=Mine\n')
