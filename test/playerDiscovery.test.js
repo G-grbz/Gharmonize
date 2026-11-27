@@ -689,7 +689,8 @@ test('new releases of followed artists: first look is silent, later ones notify 
 test('library health: duplicates (best copy first), trash moves the file, covers, low bitrate', async (t) => {
   const { call, admin, service } = await setup(t)
   const lib = service.context.libraries.list().find((l) => l.isDefault)
-  await writeTrack(path.join(lib.path, 'Kopya', 'Hadi Bakalım.mp3'), { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Kopya' })
+  // The album's song once more in another folder, tagged with the same album.
+  await writeTrack(path.join(lib.path, 'Kopya', 'Hadi Bakalım.mp3'), { title: 'Hadi Bakalım', artist: 'Sezen Aksu', album: 'Gülümse' })
   await service.context.scanner.requestScan('all')
 
   let r = await call('POST', '/admin/health/check', { token: admin })
@@ -798,6 +799,26 @@ test('units: duplicate grouping keeps different versions apart', async () => {
     row(4, 'Kuzu Kuzu', 230, { lossless: 1 }), row(5, 'Kuzu Kuzu', 231)
   ])
   assert.deepEqual(groups.map((g) => g.map((x) => x.id)), [[2, 1], [4, 5]], 'best copy first; a much longer version is not a duplicate')
+
+  // The album is the album tag, not the folder.
+  const at = (id, folder, album, duration = 224, extra = {}) => row(id, 'Kalan Kalır', duration, { library_id: 1, rel_path: `${folder}/${id}.mp3`, album_title: album, ...extra })
+  const ids = (list) => findDuplicates(list).map((g) => g.map((x) => x.id).sort((a, b) => a - b))
+  // Same album in two folders ("Karışık" and the album's own) → copies; the
+  // same recording on other albums belongs to those albums.
+  assert.deepEqual(ids([
+    at(1, 'Başım Belada', 'Başım Belada'), at(2, 'Karışık', 'Başım Belada (Remastered)'),
+    at(3, 'Bize Kalan', 'Bize Kalan'), at(4, 'Resitaller 3', 'Resitaller 3')
+  ]), [[1, 2]])
+  // In one folder too: other album, other recording; same album, a copy.
+  assert.deepEqual(ids([at(1, 'Karışık', 'Başım Belada'), at(2, 'Karışık', 'Bize Kalan')]), [])
+  assert.deepEqual(ids([at(1, 'Karışık', 'Başım Belada'), at(2, 'Karışık', 'Başım Belada', 226)]), [[1, 2]])
+  // No album tag: a copy only at practically the same length or from the
+  // same video, never with another ISRC, and it does not tie two albums together.
+  assert.deepEqual(ids([at(1, 'A', 'Başım Belada'), at(2, 'B', '', 230)]), [], '6 s apart without an album: not proven')
+  assert.deepEqual(ids([at(1, 'A', 'Başım Belada', 224, { source_key: 'youtube:x' }), at(2, 'B', '', 227, { source_key: 'youtube:x' })]), [[1, 2]])
+  assert.deepEqual(ids([at(1, 'A', 'Başım Belada', 224, { isrc: 'TR1' }), at(2, 'B', '', 224, { isrc: 'TR2' })]), [])
+  const bridged = ids([at(1, 'A', 'Başım Belada', 224, { bitrate: 320000 }), at(2, 'B', ''), at(3, 'C', 'Bize Kalan')])
+  assert.deepEqual(bridged, [[1, 2]], 'the untagged copy joins the best one only')
 })
 
 test('library health batches keep the best file and move only selected duplicates', async (t) => {
@@ -981,4 +1002,32 @@ test('complete the discography: missing releases with their songs, singles point
   assert.ok(!popular.includes('Hadi Bakalım'))
   assert.equal(r.body.missingTracks, 3 + r.body.popular.length)
   assert.equal((await call('GET', '/online/artist/gaps?name=Kimse', { token: admin })).status, 404)
+})
+
+test('the discography wizard shows songs on their way as downloading and links re-released singles', async (t) => {
+  const { call, admin, fake, service } = await setup(t)
+  fake.sources.deezer.extraAlbums = [dzAlbum(24, 'B Yüzü', 'Sezen Aksu', isoDaysAgo(400), { recordType: 'single', trackCount: 1 })]
+  fake.sources.deezer.albumDetails = {
+    23: { album: dzAlbum(23, 'Tek', 'Sezen Aksu', isoDaysAgo(5), { recordType: 'single', trackCount: 2 }), tracks: [dzTrack(90, 'Yeni Parça', 'Sezen Aksu'), dzTrack(91, 'B Yüzü', 'Sezen Aksu')] },
+    // The same "B Yüzü" released again as a single of its own.
+    24: { album: dzAlbum(24, 'B Yüzü', 'Sezen Aksu', isoDaysAgo(400), { recordType: 'single', trackCount: 1 }), tracks: [dzTrack(92, 'B Yüzü', 'Sezen Aksu')] }
+  }
+  // The first run of the wizard is still downloading "Yeni Parça" of the
+  // album and the popular "Firuze".
+  service.context.bridge.inFlight = () => new Map([
+    ['https://www.deezer.com/album/22', { only: [{ id: '71', title: 'Yeni Parça', artist: 'Sezen Aksu' }] }],
+    ['https://www.deezer.com/track/3', { only: null }]
+  ])
+  const r = await call('GET', `/online/artist/gaps?name=${encodeURIComponent('Sezen Aksu')}`, { token: admin })
+  assert.equal(r.status, 200)
+  const byTitle = Object.fromEntries(r.body.releases.map((rel) => [rel.title, rel]))
+  // The album lacks nothing that is not on its way: not listed.
+  assert.deepEqual(Object.keys(byTitle).sort(), ['B Yüzü', 'Tek'])
+  const tek = byTitle['Tek']
+  assert.equal(tek.tracks.find((tr) => tr.title === 'Yeni Parça').downloading, true, 'its album copy is on its way')
+  assert.equal(tek.missing, 1)
+  assert.equal(byTitle['B Yüzü'].tracks[0].sameAs, 'https://www.deezer.com/track/91', 'the re-released single points at the newer copy')
+  assert.ok(!r.body.popular.some((tr) => tr.title === 'Firuze'))
+  assert.equal(r.body.downloadingTracks, 3)
+  assert.equal(r.body.missingTracks, 2 + r.body.popular.length)
 })

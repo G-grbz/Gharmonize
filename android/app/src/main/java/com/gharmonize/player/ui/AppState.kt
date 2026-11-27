@@ -133,6 +133,7 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
   fun errorText(e: Throwable): String = when {
     e is ApiException && e.code == "SERVER_UNREACHABLE" -> context.getString(R.string.error_unreachable)
     e is ApiException && e.code == "DOWNLOADS_NOT_ALLOWED" -> context.getString(R.string.downloads_not_allowed)
+    e is ApiException && e.code == "ALREADY_DOWNLOADING" -> context.getString(R.string.group_already_downloading)
     e is ApiException -> e.message ?: context.getString(R.string.error_generic)
     else -> context.getString(R.string.error_generic)
   }
@@ -285,8 +286,11 @@ class AppState(private val context: Context, val scope: CoroutineScope, val play
         val group = api.requestDownloadGroup(wanted, title, playlistId, only)
         markWaiting(group)
         downloadGroups = listOf(group) + downloadGroups.filter { it.id != group.id }
-        // Songs, not links: an album counts with the songs it brings.
-        messageRes(R.string.group_queued, wanted.sumOf { item -> only[item.url]?.size ?: if (item.kind == "album") (item.trackCount ?: 1) else 1 })
+        // Songs, not links: an album counts with the songs it brings. Links
+        // already on their way were not added again.
+        val already = group.alreadyQueuedUrls.toSet()
+        val added = wanted.filter { it.url !in already }.sumOf { item -> only[item.url]?.size ?: if (item.kind == "album") (item.trackCount ?: 1) else 1 }
+        if (already.isEmpty()) messageRes(R.string.group_queued, added) else messageRes(R.string.group_queued_some, added, already.size)
         startPolling()
         onQueued?.invoke()
       } catch (e: Exception) {

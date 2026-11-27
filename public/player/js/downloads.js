@@ -154,7 +154,11 @@ export class DownloadTracker {
       this.ingestGroup(group, { silent: true })
       for (const url of group.pendingUrls || []) this.paintUrl(url)
       if (!quiet) {
-        toast(t('player.downloads.group.queued', { n: list.length }), { type: 'success', action: { label: t('player.downloads.group.show'), run: () => app.nav('/downloads') } })
+        // Links that were already on their way are not added again.
+        const already = group.alreadyQueuedUrls?.length || 0
+        const n = list.length - already
+        toast(already ? t('player.downloads.group.queuedSome', { n, m: already }) : t('player.downloads.group.queued', { n }),
+          { type: 'success', action: { label: t('player.downloads.group.show'), run: () => app.nav('/downloads') } })
       }
       return group
     } catch (error) {

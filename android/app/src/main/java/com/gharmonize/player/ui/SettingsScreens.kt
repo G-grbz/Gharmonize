@@ -203,7 +203,11 @@ private fun phaseText(status: String, phase: String?, progress: Int): String = w
 
 @Composable
 fun statusText(row: DownloadRow): String = when (row.status) {
-  "queued" -> stringResource(if (row.waiting) R.string.group_waiting_song else R.string.dl_queued)
+  "queued" -> stringResource(when {
+    row.waiting -> R.string.group_waiting_song
+    row.phase == "waiting-duplicate" -> R.string.dl_waiting_duplicate
+    else -> R.string.dl_queued
+  })
   "downloading" -> phaseText(row.status, row.phase, row.progress)
   "resolving" -> stringResource(R.string.dl_resolving)
   "indexing" -> stringResource(R.string.dl_indexing)

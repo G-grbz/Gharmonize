@@ -710,6 +710,17 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     }))
     const own = new Set(artistCreditKeys(artist.title || wanted))
     const credited = (track) => !own.size || artistCreditKeys(track.artist).some((key) => own.has(key))
+    // Songs already on their way (the wizard opened again while its first
+    // picks download) are shown as downloading, not as missing.
+    const flight = annotator.inFlight ? annotator.inFlight(user.id) : new Map()
+    const onItsWay = (song, releaseUrl) => {
+      if (flight.has(song.url)) return true
+      const there = releaseUrl && flight.get(releaseUrl)
+      if (!there) return false
+      if (!there.only) return true
+      const key = songKey(song.title, song.artist)
+      return there.only.some((o) => (o.id && song.id != null && o.id === String(song.id)) || (o.url && o.url === song.url) || (key && songKey(o.title, o.artist) === key))
+    }
     const out = []
     for (let i = 0; i < releases.length; i += 1) {
       const detail = details[i]
@@ -719,39 +730,59 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
       const listed = recordType === 'compile' ? detail.tracks.filter(credited) : detail.tracks
       if (!listed.length) continue
       const links = await annotator.links(detail.album?.url || releases[i].url)
+      const releaseUrl = detail.album?.url || releases[i].url
       const tracks = annotator.items(listed, user.id, { links })
-      const missing = tracks.filter((t) => !t.library).length
-      if (!missing) continue
+        .map((t) => (!t.library && (onItsWay(t, releases[i].url) || onItsWay(t, releaseUrl)) ? { ...t, downloading: true } : t))
+      if (!tracks.some((t) => !t.library)) continue
       const [album] = annotator.items([{ ...releases[i], trackCount: detail.album?.trackCount || releases[i].trackCount }], user.id)
       out.push({
         ...album,
         recordType,
         year: Number(String(releases[i].releaseDate || '').slice(0, 4)) || null,
         trackCount: tracks.length,
-        missing,
         tracks: tracks.map((t) => ({ ...t, album: t.album || album.title }))
       })
     }
-    // Singles whose song an album, EP or compilation in the list has too.
-    const longer = out.filter((r) => r.recordType !== 'single').flatMap((r) => r.tracks.filter((t) => !t.library))
+    // The same song on several releases (a single re-released, a single whose
+    // song an album has too) is downloaded once: a single's copy points at the
+    // first one (albums, EPs and compilations first, then newer singles) by
+    // `sameAs`, and counts as downloading when that one is on its way.
     const sameSong = (a, b) => songKey(a.title, a.artist) === songKey(b.title, b.artist) &&
       (!a.duration || !b.duration || sameRecordingLength(a.duration, b.duration))
-    for (const release of out) {
-      if (release.recordType !== 'single') continue
+    const ordered = [...out.filter((r) => r.recordType !== 'single'), ...out.filter((r) => r.recordType === 'single')]
+    // A copy on its way is the one that counts.
+    const firstCopies = ordered.flatMap((r) => r.tracks.filter((t) => t.downloading))
+    for (const release of ordered) {
       for (const track of release.tracks) {
-        if (track.library) continue
-        const twin = longer.find((other) => sameSong(track, other))
-        if (twin) track.sameAs = twin.url
+        if (track.library || track.downloading) continue
+        const twin = firstCopies.find((other) => sameSong(track, other))
+        if (!twin) firstCopies.push(track)
+        else if (twin.downloading) track.downloading = true
+        else if (release.recordType === 'single') track.sameAs = twin.url
       }
     }
+    const releasesOut = []
+    let downloadingTracks = 0
+    for (const release of out) {
+      release.missing = release.tracks.filter((t) => !t.library && !t.downloading).length
+      release.downloading = release.tracks.filter((t) => t.downloading).length
+      downloadingTracks += release.downloading
+      if (release.missing) releasesOut.push(release)
+    }
     const listedKeys = new Set(out.flatMap((r) => r.tracks.map((t) => songKey(t.title, t.artist))))
-    const popular = annotator.items(top.slice(0, 10), user.id)
-      .filter((t) => !t.library && !listedKeys.has(songKey(t.title, t.artist)))
+    const popular = []
+    for (const t of annotator.items(top.slice(0, 10), user.id)) {
+      if (t.library || listedKeys.has(songKey(t.title, t.artist))) continue
+      if (onItsWay(t, null)) downloadingTracks += 1
+      else popular.push(t)
+    }
     return {
       artist: annotator.items([artist], user.id)[0],
-      releases: out,
+      releases: releasesOut,
       popular,
-      missingTracks: out.reduce((n, r) => n + r.missing, 0) + popular.length
+      // Only what is pickable counts; `downloadingTracks` are on their way.
+      missingTracks: releasesOut.reduce((n, r) => n + r.missing, 0) + popular.length,
+      downloadingTracks
     }
   }
 

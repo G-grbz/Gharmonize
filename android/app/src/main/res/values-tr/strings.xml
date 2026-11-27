@@ -31,6 +31,7 @@
   <string name="connect_player_disabled">Bu sunucuda Gharmonize Player kapalı.</string>
   <string name="count_songs">%1$d parça</string>
   <string name="dl_queued">Kuyrukta</string>
+  <string name="dl_waiting_duplicate">Aynı şarkı başka bir indirmede, o bekleniyor</string>
   <string name="dl_resolving">Kaynak hazırlanıyor</string>
   <string name="dl_downloading">İndiriliyor %%%1$d</string>
   <string name="dl_indexing">Kitaplığa ekleniyor</string>
@@ -517,6 +518,8 @@
   <string name="dl_converting">Dönüştürülüyor %%%1$d</string>
   <string name="dl_preparing">Hazırlanıyor</string>
   <string name="group_queued">%1$d şarkı indirme listesine eklendi.</string>
+  <string name="group_queued_some">%1$d şarkı indirme listesine eklendi, %2$d tanesi zaten indiriliyordu.</string>
+  <string name="group_already_downloading">Seçilen parçaların hepsi zaten indiriliyor.</string>
   <string name="group_untitled">Seçilen şarkılar</string>
   <string name="group_done">“%1$s” bitti: %2$d şarkı kitaplıkta.</string>
   <string name="group_done_failed">“%1$s” bitti: %2$d şarkı kitaplıkta, %3$d şarkı indirilemedi.</string>
@@ -550,8 +553,10 @@
   <string name="gaps_cta">Eksikleri seç</string>
   <string name="gaps_preparing">Diskografi taranıyor…</string>
   <string name="gaps_nothing">Eksik bir şey yok, diskografi tamam.</string>
+  <string name="gaps_all_downloading">Eksik %1$d parçanın hepsi zaten indiriliyor.</string>
   <string name="gaps_complete">Diskografinin tamamı kitaplıkta</string>
   <string name="gaps_lead">Kitaplığında olmayan %1$d parça bulundu. Hepsi seçili; istemediklerinin seçimini kaldırabilirsin.</string>
+  <string name="gaps_lead_downloading">%1$d parça zaten indiriliyor; onlar tekrar seçilemez.</string>
   <string name="gaps_group_albums">Albümler</string>
   <string name="gaps_group_eps">EP’ler</string>
   <string name="gaps_group_singles">Tekliler</string>
@@ -561,6 +566,7 @@
   <string name="gaps_missing_of">%2$d parçadan %1$d tanesi eksik</string>
   <string name="gaps_picked_of">%1$d/%2$d seçili</string>
   <string name="gaps_owned">Kitaplıkta</string>
+  <string name="gaps_downloading">İndiriliyor</string>
   <string name="gaps_show_songs">Parçaları göster</string>
   <string name="gaps_hide_songs">Parçaları gizle</string>
   <string name="gaps_select_all">Tümünü seç</string>

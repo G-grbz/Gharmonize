@@ -184,6 +184,8 @@ export function pickAlternativeVideo(entries, { title, artist, duration = 0, exc
   return best
 }
 
+const nothingNew = () => new BridgeError('NOTHING_NEW', 'Every song of this download is in the library or on its way in another download.')
+
 export function createCoreAdapter({ logger = console } = {}) {
   async function inspect(url) {
     const m = await loadCore()
@@ -202,7 +204,10 @@ export function createCoreAdapter({ logger = console } = {}) {
 
   // `only`: download just these songs of an album or playlist (the ones the
   // library lacks), the way the classic UI downloads selected tracks.
-  async function createAndEnqueue({ url, preset, tag, isCanceled, only = null }) {
+  // `skipVideos(ids)`: the YouTube videos (of those this link maps to) to
+  // leave out because the library has them or another download fetches
+  // them; nothing left → NOTHING_NEW.
+  async function createAndEnqueue({ url, preset, tag, isCanceled, only = null, skipVideos = null }) {
     const m = await loadCore()
     const info = await inspect(url)
     const checkCanceled = () => {
@@ -242,6 +247,10 @@ export function createCoreAdapter({ logger = console } = {}) {
         isAutomix,
         selectedIndices: info.isPlaylist ? 'all' : null
       }
+      if (!info.isPlaylist && skipVideos) {
+        const id = youTubeVideoId(info.url)
+        if (id && skipVideos([id]).has(id)) throw nothingNew()
+      }
       if (info.isPlaylist) {
         let prepared
         try { prepared = await prepareYouTubePlaylist(m, info.url, { isAutomix }) } catch (error) {
@@ -257,6 +266,18 @@ export function createCoreAdapter({ logger = console } = {}) {
           metadata.frozenEntries = picked.map((i) => prepared.frozenEntries[i])
           metadata.selectedIndices = picked.map((i) => i + 1)
           if (prepared.selectedIds) metadata.selectedIds = picked.map((i) => prepared.selectedIds[i])
+        }
+        if (skipVideos) {
+          const entries = metadata.frozenEntries
+          const skip = skipVideos(entries.map((entry) => entry?.id).filter(Boolean))
+          if (skip.size) {
+            const keep = entries.map((entry, i) => i).filter((i) => !skip.has(entries[i]?.id))
+            if (!keep.length) throw nothingNew()
+            const positions = Array.isArray(metadata.selectedIndices) ? metadata.selectedIndices : entries.map((entry, i) => i + 1)
+            metadata.frozenEntries = keep.map((i) => entries[i])
+            metadata.selectedIndices = keep.map((i) => positions[i])
+            if (metadata.selectedIds) metadata.selectedIds = keep.map((i) => metadata.selectedIds[i])
+          }
         }
         if (prepared.frozenTitle) metadata.frozenTitle = prepared.frozenTitle
         if (prepared.albumArtist) {
@@ -296,17 +317,23 @@ export function createCoreAdapter({ logger = console } = {}) {
           frozen[idx] = { ...item, index: positions ? positions[idx] : idx + 1, thumbnails: [] }
         }
       })
-      const selectedIds = ids.filter(Boolean)
-      if (!selectedIds.length) throw new BridgeError('NO_MATCH', 'No playable match was found on YouTube for this item.')
+      if (!ids.some(Boolean)) throw new BridgeError('NO_MATCH', 'No playable match was found on YouTube for this item.')
+      // Songs listed on several releases (re-released singles ...) map to
+      // the same video: one copy is enough.
+      const skip = skipVideos ? skipVideos(ids.filter(Boolean)) : new Set()
+      const matched = items.map((item, i) => i).filter((i) => ids[i] && frozen[i])
+      const keep = matched.filter((i) => !skip.has(ids[i]))
+      if (!keep.length) throw nothingNew()
+      const partial = Boolean(positions) || keep.length < matched.length
       metadata = {
         source: mapped.source,
         isPlaylist: true,
         isAutomix: false,
         spotifyKind: resolved.kind,
         spotifyTitle: resolved.title,
-        selectedIndices: positions || 'all',
-        selectedIds,
-        frozenEntries: frozen.filter(Boolean),
+        selectedIndices: partial ? keep.map((i) => (positions ? positions[i] : i + 1)) : 'all',
+        selectedIds: keep.map((i) => ids[i]),
+        frozenEntries: keep.map((i) => frozen[i]),
         frozenTitle: resolved.title || mapped.label
       }
     }

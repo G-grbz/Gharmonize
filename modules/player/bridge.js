@@ -6,11 +6,14 @@ import { placeUpgradeOutput, planUpgradeOutput, relocateDownloads } from './relo
 import { transaction } from './db.js'
 import { linkedTrack } from './annotate.js'
 import { publicUser } from './auth.js'
+import { songKey } from './songKey.js'
 
 export { BridgeError }
 
 export const ACTIVE_STATUSES = ['queued', 'resolving', 'downloading', 'indexing']
 const FINAL_STATUSES = ['completed', 'exists', 'failed', 'canceled']
+// Handed to the core: the YouTube videos of these are taken (see claimVideos).
+const RUNNING_STATUSES = ['resolving', 'downloading', 'indexing']
 const MAX_ATTEMPTS = 3
 // yt-dlp messages for uploads that cannot be played from here at all (region
 // block, removed, private): retrying the same link is pointless.
@@ -113,6 +116,12 @@ export function createDownloadBridge({
   const events = new EventEmitter()
   events.setMaxListeners(100)
   const resolving = new Set()
+  // "user:video" → the download fetching that YouTube video now. The same
+  // song is often listed as several releases (a single re-released, a remix
+  // single with the original on it); each maps to the same video.
+  const videoClaims = new Map()
+  // A download whose songs another one fetches looks again after this.
+  const duplicateWaitMs = pollMs * 5
   let timer = null
   let ticking = false
   let stopped = false
@@ -120,8 +129,8 @@ export function createDownloadBridge({
   const stmt = {
     get: db.prepare('SELECT * FROM downloads WHERE id = ?'),
     insert: db.prepare(`INSERT INTO downloads (id, user_id, kind, provider, source_url, requested_url, title, artist, album, artwork_url, isrc, duration,
-      expected_tracks, status, progress, phase, result_track_ids, playlist_id, created_at, updated_at, completed_at, upgrade_target, only_tracks, group_id)
-      VALUES ($id, $user, $kind, $provider, $url, $requested, $title, $artist, $album, $art, $isrc, $duration, $expected, $status, $progress, $phase, $ids, $playlist, $ts, $ts, $completed, $upgrade, $only, $group)`),
+      expected_tracks, status, progress, phase, result_track_ids, playlist_id, created_at, updated_at, completed_at, upgrade_target, only_tracks, group_id, forced)
+      VALUES ($id, $user, $kind, $provider, $url, $requested, $title, $artist, $album, $art, $isrc, $duration, $expected, $status, $progress, $phase, $ids, $playlist, $ts, $ts, $completed, $upgrade, $only, $group, $forced)`),
     activeBySource: db.prepare(`SELECT * FROM downloads WHERE (source_url = $u OR requested_url = $u) AND status IN ('queued','resolving','downloading','indexing') ORDER BY created_at LIMIT 1`),
     activeByTarget: db.prepare(`SELECT * FROM downloads WHERE (source_url = $u OR requested_url = $u) AND upgrade_target IS $upgrade AND status IN ('queued','resolving','downloading','indexing') ORDER BY created_at LIMIT 1`),
     doneBySource: db.prepare(`SELECT result_track_ids, completed_at, updated_at FROM downloads WHERE (source_url = $u OR requested_url = $u) AND status = 'completed' ORDER BY COALESCE(completed_at, updated_at) DESC LIMIT 5`),
@@ -130,6 +139,9 @@ export function createDownloadBridge({
       JOIN tracks t ON t.id = result.value
       WHERE ${visibleSql('t')} AND t.added_at <= $completed
       ORDER BY result.key`),
+    activeOfUser: db.prepare(`SELECT source_url, requested_url, only_tracks, group_id FROM downloads WHERE user_id = ? AND upgrade_target IS NULL
+      AND status IN ('queued','resolving','downloading','indexing')`),
+    groupsWaitingOfUser: db.prepare(`SELECT id, pending FROM download_groups WHERE user_id = ? AND status = 'active' AND pending <> '[]'`),
     activeCountForUser: db.prepare(`SELECT COUNT(*) AS n FROM downloads WHERE user_id = ? AND status IN ('queued','resolving','downloading','indexing')`),
     inCore: db.prepare(`SELECT COUNT(*) AS n FROM downloads WHERE status IN ('resolving','downloading','indexing')`),
     dueQueued: db.prepare(`SELECT * FROM downloads WHERE status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY created_at LIMIT ?`),
@@ -157,6 +169,7 @@ export function createDownloadBridge({
     const params = { $id: id, $updated_at: now() }
     for (const k of keys) params[`$${k}`] = fields[k]
     db.prepare(`UPDATE downloads SET ${sets}, updated_at = $updated_at WHERE id = $id`).run(params)
+    if (fields.status && !RUNNING_STATUSES.includes(fields.status)) releaseVideos(id)
     const row = stmt.get.get(id)
     events.emit('update', serializeDownload(row))
     if (row?.group_id) emitGroup(row.group_id)
@@ -215,6 +228,51 @@ export function createDownloadBridge({
       ORDER BY COALESCE(t.disc_no,1), COALESCE(t.track_no,9999)`).all(Number(albumId)).map((r) => r.id)
   }
 
+  // What the library already has of a download. `only`: the songs an album
+  // or playlist download is limited to; the ones the library has meanwhile
+  // (or that an earlier download of this link brought) are left out.
+  // `complete`: nothing is left to download, `owned` are its tracks then.
+  async function libraryHas({ kind, url, rawUrl = url, title, artist, album, isrc, duration, expected, only = [], force = false }, userId, signal) {
+    if (!matcher) return { complete: false, owned: [], only }
+    if (only.length) {
+      const owned = []
+      let links = []
+      try { links = await mappedLinks(url) } catch {}
+      signal?.throwIfAborted()
+      const rest = only.filter((song) => {
+        // An album's songs belong to that album (older clients do not send it).
+        const id = matcher.findTrack({ ...song, album: song.album || (kind === 'album' ? title : null) }, userId) ||
+          linkedTrack(matcher, links, song, userId)
+        if (id) owned.push(id)
+        return !id
+      })
+      return { complete: !rest.length, owned, only: rest }
+    }
+    if (force) return { complete: false, owned: [], only }
+    let existingIds = []
+    if (kind === 'track') {
+      const id = matcher.findTrack({ title, artist, album, isrc, duration }, userId)
+      if (id) existingIds = [id]
+    } else if (kind === 'album') {
+      const found = matcher.findAlbum({ title, artist }, userId)
+      if (found && (!expected || found.trackCount >= expected)) existingIds = albumTrackIds(found.id, userId)
+    }
+    // The same link was downloaded before and its songs are still there.
+    if (!existingIds.length) existingIds = previousResult(url, userId).concat(rawUrl && rawUrl !== url ? previousResult(rawUrl, userId) : [])
+    existingIds = [...new Set(existingIds)]
+    const complete = existingIds.length > 0 && (kind === 'track' || !expected || existingIds.length >= expected)
+    return { complete, owned: complete ? existingIds : [], only }
+  }
+
+  // Does a waiting download (`only`: its songs) already cover these songs?
+  // Songs are compared by store id or link, then by title and artist.
+  function covers(only, wanted) {
+    if (!only.length) return true
+    if (!wanted.length) return false
+    const keys = new Set(only.flatMap((song) => [song.id && `id:${song.id}`, song.url && `url:${song.url}`, `t:${songKey(song.title, song.artist)}`].filter(Boolean)))
+    return wanted.every((song) => (song.id && keys.has(`id:${song.id}`)) || (song.url && keys.has(`url:${song.url}`)) || keys.has(`t:${songKey(song.title, song.artist)}`))
+  }
+
   // Creates a download request. Returns the (possibly pre-existing) record.
   async function request(user, input = {}, { playlistId = null, force = false, signal, onRequested, upgrade = null, groupId = null } = {}) {
     signal?.throwIfAborted()
@@ -250,6 +308,7 @@ export function createDownloadBridge({
       $upgrade: upgrade ? JSON.stringify(upgrade) : null,
       $only: null,
       $group: groupId || null,
+      $forced: force ? 1 : 0,
       $ts: ts
     }
     if (base.$playlist && catalog) {
@@ -258,62 +317,33 @@ export function createDownloadBridge({
       if (!pl.editable) throw new BridgeError('FORBIDDEN', 'Only the owner can add to this playlist.', { status: 403 })
     }
 
-    // 1) Already in the library → no download.
-    if (only.length && matcher) {
-      // The client's list can be stale: songs that arrived meanwhile are skipped,
-      // and so are songs an earlier download of this link already brought.
-      const owned = []
-      let links = []
-      try { links = await mappedLinks(info.url) } catch {}
-      signal?.throwIfAborted()
-      only = only.filter((song) => {
-        // An album's songs belong to that album (older clients do not send it).
-        const id = matcher.findTrack({ ...song, album: song.album || (kind === 'album' ? input.title : null) }, user.id) ||
-          linkedTrack(matcher, links, song, user.id)
-        if (id) owned.push(id)
-        return !id
-      })
-      if (!only.length) {
-        const id = crypto.randomUUID()
-        stmt.insert.run({ ...base, $id: id, $status: 'exists', $progress: 100, $phase: null, $ids: JSON.stringify(owned), $completed: ts })
-        attachPlaylist(user.id, base.$playlist, owned)
-        const row = serializeDownload(stmt.get.get(id))
-        events.emit('update', row)
-        if (groupId) emitGroup(groupId)
-        return row
-      }
+    // 1) Already in the library → no download. The client's list can be
+    // stale: songs that arrived meanwhile are skipped.
+    const has = await libraryHas({
+      kind, url: info.url, rawUrl, title: input.title, artist: input.artist, album: base.$album, isrc: base.$isrc,
+      duration: base.$duration, expected: base.$expected, only, force
+    }, user.id, signal)
+    signal?.throwIfAborted()
+    if (has.complete) {
+      const id = crypto.randomUUID()
+      stmt.insert.run({ ...base, $id: id, $status: 'exists', $progress: 100, $phase: null, $ids: JSON.stringify(has.owned), $completed: ts })
+      attachPlaylist(user.id, base.$playlist, has.owned)
+      const row = serializeDownload(stmt.get.get(id))
+      events.emit('update', row)
+      if (groupId) emitGroup(groupId)
+      return row
     }
+    only = has.only
     if (only.length) {
       base.$only = JSON.stringify(only)
       base.$expected = only.length
     }
-    if (!force && !only.length && matcher) {
-      let existingIds = []
-      if (kind === 'track') {
-        const id = matcher.findTrack({ title: input.title, artist: input.artist, album: base.$album, isrc: base.$isrc, duration: base.$duration }, user.id)
-        if (id) existingIds = [id]
-      } else if (kind === 'album') {
-        const album = matcher.findAlbum({ title: input.title, artist: input.artist }, user.id)
-        if (album && (!base.$expected || album.trackCount >= base.$expected)) existingIds = albumTrackIds(album.id, user.id)
-      }
-      // The same link was downloaded before and its songs are still there.
-      if (!existingIds.length) existingIds = previousResult(info.url, user.id).concat(info.url !== rawUrl ? previousResult(rawUrl, user.id) : [])
-      existingIds = [...new Set(existingIds)]
-      if (existingIds.length && (kind === 'track' || !base.$expected || existingIds.length >= base.$expected)) {
-        const id = crypto.randomUUID()
-        stmt.insert.run({ ...base, $id: id, $status: 'exists', $progress: 100, $phase: null, $ids: JSON.stringify(existingIds), $completed: ts })
-        attachPlaylist(user.id, base.$playlist, existingIds)
-        const row = serializeDownload(stmt.get.get(id))
-        events.emit('update', row)
-        if (groupId) emitGroup(groupId)
-        return row
-      }
-    }
 
-    // 2) The same link is already on its way → join it (a download of only
-    // some songs cannot stand in for the whole album or playlist).
+    // 2) The same link is already on its way → join it when it brings these
+    // songs (a download of only some songs cannot stand in for the whole
+    // album, nor for other songs of it).
     const running = stmt.activeByTarget.get({ $u: info.url, $upgrade: base.$upgrade })
-    if (running && (only.length || !running.only_tracks)) {
+    if (running && covers(parseOnly(running.only_tracks), only)) {
       if (base.$playlist && !running.playlist_id && running.user_id === user.id) update(running.id, { playlist_id: base.$playlist })
       // A song of this group that was already on its way on its own joins it.
       if (groupId && !running.group_id && running.user_id === user.id) update(running.id, { group_id: groupId })
@@ -446,6 +476,18 @@ export function createDownloadBridge({
       return true
     })
     if (!items.length) throw new BridgeError('SOURCE_URL_REQUIRED', 'A source link is required.')
+    // Songs already on their way (asked for again, e.g. the discography
+    // wizard opened twice) are not a new group.
+    const flight = inFlight(user.id)
+    const already = []
+    const fresh = items.filter((item) => {
+      const there = flight.get(item.url)
+      if (!there || !covers(there.only || [], item.only || [])) return true
+      already.push(item.url)
+      return false
+    })
+    if (!fresh.length) throw new BridgeError('ALREADY_DOWNLOADING', 'These songs are already being downloaded.', { status: 409 })
+    items.splice(0, items.length, ...fresh)
     if (items.length > GROUP_MAX) throw new BridgeError('TOO_MANY_ITEMS', `At most ${GROUP_MAX} songs can be downloaded at once.`)
     const playlist = Number(playlistId) > 0 ? Number(playlistId) : null
     if (playlist && catalog) {
@@ -464,7 +506,28 @@ export function createDownloadBridge({
       $ts: now()
     })
     feedGroup(id)
-    return groupSummary(id, { pendingUrls: true })
+    return { ...groupSummary(id, { pendingUrls: true }), alreadyQueuedUrls: already }
+  }
+
+  // What a user has on its way, by link: queued and running downloads and
+  // the songs waiting in their groups. `only`: those songs (null: all of it).
+  function inFlight(userId) {
+    const out = new Map()
+    const add = (url, only) => {
+      if (!url) return
+      const known = out.get(url)
+      if (known && !known.only) return
+      out.set(url, { only: only.length ? [...(known?.only || []), ...only] : null })
+    }
+    for (const row of stmt.activeOfUser.all(userId)) {
+      const only = parseOnly(row.only_tracks)
+      add(row.source_url, only)
+      if (row.requested_url && row.requested_url !== row.source_url) add(row.requested_url, only)
+    }
+    for (const g of stmt.groupsWaitingOfUser.all(userId)) {
+      for (const item of parseList(g.pending)) add(item?.url, onlyTracks(item?.only))
+    }
+    return out
   }
 
   // One feeder per group at a time; a request meanwhile runs it once more.
@@ -605,12 +668,74 @@ export function createDownloadBridge({
     fail(current, UNAVAILABLE_RE.test(message) ? new BridgeError(error?.code || 'SOURCE_UNAVAILABLE', message, { permanent: true }) : error)
   }
 
+  function releaseVideos(id) {
+    for (const [key, holder] of videoClaims) if (holder === id) videoClaims.delete(key)
+  }
+
+  // The skipVideos hook of a download (see the core adapter): videos the
+  // library has or another running download of the user fetches are left
+  // out, the rest are taken by this download. `found` collects what was left out.
+  function claimVideos(row, found) {
+    return (ids) => {
+      const skip = new Set()
+      const wanted = [...new Set(ids.filter(Boolean))]
+      for (const video of wanted) {
+        const holder = videoClaims.get(`${row.user_id}:${video}`)
+        if (holder && holder !== row.id && RUNNING_STATUSES.includes(stmt.get.get(holder)?.status)) {
+          skip.add(video)
+          found.elsewhere = true
+          continue
+        }
+        const trackId = matcher?.findTrack({ url: `https://www.youtube.com/watch?v=${video}` }, row.user_id)
+        if (trackId) {
+          skip.add(video)
+          found.owned.push(trackId)
+        }
+      }
+      for (const video of wanted) if (!skip.has(video)) videoClaims.set(`${row.user_id}:${video}`, row.id)
+      return skip
+    }
+  }
+
+  function markExists(row, trackIds) {
+    const ids = [...new Set(trackIds)]
+    update(row.id, { status: 'exists', phase: null, progress: 100, job_id: null, result_track_ids: JSON.stringify(ids), error_code: null, error: null, completed_at: now() })
+    attachPlaylist(row.user_id, row.playlist_id, ids)
+  }
+
+  // A queued download can wait a long time (queue limit, a big group): what
+  // arrived meanwhile — often the same song from another release of the same
+  // group — is not downloaded again. "Download anyway" and quality upgrades
+  // are left alone.
+  async function skipOwned(row) {
+    if (row.forced || row.upgrade_target) return false
+    const only = parseOnly(row.only_tracks)
+    const has = await libraryHas({
+      kind: row.kind, url: row.source_url, rawUrl: row.requested_url || row.source_url, title: row.title, artist: row.artist,
+      album: row.album, isrc: row.isrc, duration: row.duration, expected: row.expected_tracks, only
+    }, row.user_id)
+    if (stmt.get.get(row.id)?.status !== 'resolving') return true
+    if (has.complete) {
+      markExists(row, has.owned)
+      return true
+    }
+    if (only.length && has.only.length < only.length) {
+      update(row.id, { only_tracks: JSON.stringify(has.only), expected_tracks: has.only.length })
+      attachPlaylist(row.user_id, row.playlist_id, has.owned)
+    }
+    return false
+  }
+
   async function begin(row) {
     resolving.add(row.id)
     update(row.id, { status: 'resolving', phase: 'resolving', next_attempt_at: null })
+    const found = { owned: [], elsewhere: false }
     try {
+      if (await skipOwned(row)) return
+      const current = stmt.get.get(row.id)
       const cfg = getConfig()
-      const only = parseOnly(row.only_tracks)
+      const only = parseOnly(current.only_tracks)
+      const watch = !row.forced && !row.upgrade_target
       const { jobId } = await core.createAndEnqueue({
         url: row.source_url,
         kind: row.kind,
@@ -621,17 +746,27 @@ export function createDownloadBridge({
           lyrics: cfg.downloadLyrics
         },
         tag: row.id,
-        isCanceled: () => stmt.get.get(row.id)?.status !== 'resolving'
+        isCanceled: () => stmt.get.get(row.id)?.status !== 'resolving',
+        ...(watch ? { skipVideos: claimVideos(row, found) } : {})
       })
-      const current = stmt.get.get(row.id)
-      if (current?.status !== 'resolving') {
+      const latest = stmt.get.get(row.id)
+      if (latest?.status !== 'resolving') {
         await core.cancel(jobId).catch(() => {})
         return
       }
+      attachPlaylist(row.user_id, row.playlist_id, found.owned)
       update(row.id, { status: 'downloading', phase: 'queued', job_id: jobId, progress: 0 })
     } catch (error) {
       const current = stmt.get.get(row.id)
-      if (current?.status === 'resolving') await failOrSwitch(current, error)
+      if (current?.status !== 'resolving') return
+      if (error?.code === 'NOTHING_NEW') {
+        // Another download fetches (some of) its songs: look again once that
+        // one is in the library; if it fails, this one downloads them.
+        if (found.elsewhere) update(row.id, { status: 'queued', phase: 'waiting-duplicate', next_attempt_at: now() + duplicateWaitMs })
+        else markExists(row, found.owned)
+        return
+      }
+      await failOrSwitch(current, error)
     } finally {
       resolving.delete(row.id)
     }
@@ -848,6 +983,6 @@ export function createDownloadBridge({
 
   return {
     request, get, completedUpgrades, list, cancel, retry, activeBySources, libraryBySources, start, stop, tick, purgeOld, events, canDownload,
-    requestMany, getGroup, listGroups, cancelGroup, retryGroup
+    requestMany, getGroup, listGroups, cancelGroup, retryGroup, inFlight
   }
 }

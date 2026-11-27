@@ -28,8 +28,14 @@ function createFakeCore({ outputDir }) {
       // Mimic URL normalisation by the real core.
       return { provider, url: url.replace('music.youtube.com', 'www.youtube.com'), isPlaylist: !url.includes('/watch') && !url.includes('/track/') }
     },
-    async createAndEnqueue({ url, preset, tag, only = null }) {
+    async createAndEnqueue({ url, preset, tag, only = null, skipVideos = null }) {
       if (core.failResolve) throw core.failResolve
+      // Like the real adapter: the YouTube videos a link maps to (`videos`).
+      const videos = core.videos.get(url)
+      if (videos && skipVideos) {
+        const skip = skipVideos(videos)
+        if (videos.every((v) => skip.has(v))) throw new BridgeError('NOTHING_NEW', 'nothing new')
+      }
       const id = `job-${++seq}`
       jobs.set(id, { status: 'queued', progress: 0, phase: 'queued', error: null, outputs: [], url, preset, tag })
       calls.created.push({ id, url, preset, tag, only })
@@ -46,6 +52,7 @@ function createFakeCore({ outputDir }) {
       if (job) job.status = 'canceled'
     },
     // ---- test controls ----
+    videos: new Map(),
     jobs,
     calls,
     progress(id, progress) { Object.assign(jobs.get(id), { status: 'processing', progress, phase: 'downloading' }) },
@@ -954,6 +961,79 @@ test('a download group can be canceled (waiting songs too) and its failures retr
   assert.equal(g.counts.canceled, 0)
   // Someone else's group is not visible.
   assert.equal((await call('GET', '/downloads/groups/nope', { token: admin })).status, 404)
+})
+
+test('asking again for songs already on their way adds no new group', async (t) => {
+  const { call, admin } = await setup(t, { config: { maxParallelDownloads: 1, maxQueuedPerUser: 1 } })
+  const items = [1, 2, 3].map((n) => ytTrack(`w${n}`, `Bekleyen ${n}`, 'Sanatçı'))
+  const first = await call('POST', '/downloads/groups', { token: admin, body: { title: 'İlk', items } })
+  assert.equal(first.status, 202)
+  await waitFor(async () => (await call('GET', `/downloads/groups/${first.body.id}`, { token: admin })).body.counts.waiting === 2, { label: 'one queued, two waiting' })
+
+  // The same songs again (queued or waiting in the first group): no new group.
+  const again = await call('POST', '/downloads/groups', { token: admin, body: { title: 'Tekrar', items } })
+  assert.equal(again.status, 409)
+  assert.equal(again.body.error.code, 'ALREADY_DOWNLOADING')
+
+  // With one new song: a group of only that song.
+  const more = await call('POST', '/downloads/groups', { token: admin, body: { title: 'Bir yeni', items: [...items, ytTrack('w4', 'Yeni', 'Sanatçı')] } })
+  assert.equal(more.status, 202)
+  assert.equal(more.body.counts.total, 1)
+  assert.deepEqual(more.body.alreadyQueuedUrls.sort(), items.map((i) => i.url).sort())
+  const groups = (await call('GET', '/downloads/groups', { token: admin })).body.items
+  assert.equal(groups.length, 2)
+})
+
+test('the same song on two releases (same YouTube video) is downloaded once', async (t) => {
+  const { call, admin, core, downloads } = await setup(t, { config: { maxParallelDownloads: 2, maxQueuedPerUser: 5 } })
+  // A single re-released under another store id: both map to one video.
+  const a = 'https://www.deezer.com/album/501'
+  const b = 'https://www.deezer.com/album/502'
+  core.videos.set(a, ['vidSameSong'])
+  core.videos.set(b, ['vidSameSong'])
+  const single = (url) => ({ kind: 'album', url, title: 'No Sweat', artist: 'Ilkay Sencan', trackCount: 1 })
+  const g = await call('POST', '/downloads/groups', { token: admin, body: { title: 'Diskografi', items: [single(a), single(b)] } })
+  assert.equal(g.status, 202)
+  const rows = async () => (await call('GET', `/downloads?group=${g.body.id}`, { token: admin })).body.items
+  // The second waits for the first instead of fetching the same video.
+  const waiting = await waitFor(async () => (await rows()).find((d) => d.phase === 'waiting-duplicate'), { label: 'second waits' })
+  assert.equal(core.calls.created.length, 1)
+  const firstId = (await rows()).find((d) => d.id !== waiting.id).id
+
+  const file = await writeTrack(path.join(downloads, 'Ilkay Sencan - No Sweat.mp3'), { title: 'No Sweat', artist: 'Ilkay Sencan', album: 'No Sweat' }, { fresh: true })
+  core.complete(core.calls.created[0].id, [file])
+  const done = await waitStatus(call, admin, firstId, 'completed')
+  const second = await waitStatus(call, admin, waiting.id, 'exists')
+  assert.deepEqual(second.trackIds, done.trackIds)
+  assert.equal(core.calls.created.length, 1, 'one download for both releases')
+})
+
+test('a queued download finds songs that arrived while it waited', async (t) => {
+  const { call, admin, core, downloads, service } = await setup(t, { config: { maxParallelDownloads: 1, maxQueuedPerUser: 5 } })
+  const first = await call('POST', '/downloads', { token: admin, body: { item: ytTrack('q1', 'Önce', 'Sanatçı') } })
+  await waitStatus(call, admin, first.body.id, 'downloading')
+  const later = await call('POST', '/downloads', { token: admin, body: { item: ytTrack('q2', 'Sonra', 'Sanatçı') } })
+  assert.equal(later.body.status, 'queued')
+  // "Sonra" reaches the library some other way while it waits.
+  await writeTrack(path.join(downloads, 'Sanatçı - Sonra.mp3'), { title: 'Sonra', artist: 'Sanatçı' })
+  await service.context.scanner.requestScan('all')
+  const file = await writeTrack(path.join(downloads, 'Sanatçı - Önce.mp3'), { title: 'Önce', artist: 'Sanatçı' }, { fresh: true })
+  core.complete(core.calls.created[0].id, [file])
+  await waitStatus(call, admin, first.body.id, 'completed')
+  const skipped = await waitStatus(call, admin, later.body.id, 'exists')
+  assert.equal(skipped.trackIds.length, 1)
+  assert.equal(core.calls.created.length, 1)
+})
+
+test('other songs of an album that is downloading are not merged into it', async (t) => {
+  const { call, admin } = await setup(t, { config: { maxParallelDownloads: 1, maxQueuedPerUser: 5 } })
+  const album = (only) => ({ kind: 'album', url: 'https://www.deezer.com/album/600', title: 'Origin', artist: 'Ilkay Sencan', trackCount: 6, only })
+  const song = (n) => ({ id: String(n), title: `Parça ${n}`, artist: 'Ilkay Sencan' })
+  const a = await call('POST', '/downloads', { token: admin, body: { item: album([song(1), song(2)]) } })
+  const same = await call('POST', '/downloads', { token: admin, body: { item: album([song(2)]) } })
+  assert.equal(same.body.id, a.body.id, 'songs it brings anyway join it')
+  const other = await call('POST', '/downloads', { token: admin, body: { item: album([song(3)]) } })
+  assert.notEqual(other.body.id, a.body.id, 'another song of it is a download of its own')
 })
 
 test('download permissions and library guards', async (t) => {

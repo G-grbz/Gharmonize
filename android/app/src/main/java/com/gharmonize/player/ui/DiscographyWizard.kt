@@ -80,11 +80,14 @@ import org.json.JSONObject
  * the list is read, so the sheet opens complete instead of with a loader.
  */
 
+/** Already on its way (picked earlier, still downloading): shown, not pickable. */
+private val OnlineItem.downloading: Boolean get() = raw.optBoolean("downloading")
+
 private class GapRelease(val item: OnlineItem, val recordType: String, val year: Int?, val trackCount: Int, val missing: Int, val tracks: List<OnlineItem>) {
-  val songs: List<OnlineItem> = tracks.filter { it.libraryTrackId == null }
+  val songs: List<OnlineItem> = tracks.filter { it.libraryTrackId == null && !it.downloading }
 }
 
-private class Gaps(val artistTitle: String, val releases: List<GapRelease>, val popular: List<OnlineItem>)
+private class Gaps(val artistTitle: String, val releases: List<GapRelease>, val popular: List<OnlineItem>, val downloadingTracks: Int)
 
 private fun parseGaps(o: JSONObject): Gaps {
   val releases = o.optJSONArray("releases").mapObjects { r ->
@@ -97,7 +100,7 @@ private fun parseGaps(o: JSONObject): Gaps {
       tracks = r.optJSONArray("tracks").mapObjects(::parseOnline),
     )
   }
-  return Gaps(o.optJSONObject("artist")?.optString("title").orEmpty(), releases, o.optJSONArray("popular").mapObjects(::parseOnline))
+  return Gaps(o.optJSONObject("artist")?.optString("title").orEmpty(), releases, o.optJSONArray("popular").mapObjects(::parseOnline), o.optInt("downloadingTracks"))
 }
 
 private val GROUPS = listOf(
@@ -167,7 +170,8 @@ fun DiscographyCard(state: AppState, online: JSONObject, artistName: String, qui
         // One full round of the animation even when the answer was cached.
         val wait = 650 - (System.currentTimeMillis() - began)
         if (wait > 0) delay(wait)
-        if (loaded.releases.isEmpty() && loaded.popular.isEmpty()) state.message(nothing)
+        // Everything missing may already be on its way (the wizard was used before).
+        if (loaded.releases.isEmpty() && loaded.popular.isEmpty()) state.message(if (loaded.downloadingTracks > 0) state.text(R.string.gaps_all_downloading, loaded.downloadingTracks) else nothing)
         else {
           ready = true
           delay(180)
@@ -249,10 +253,11 @@ private fun DiscographySheet(state: AppState, gaps: Gaps, onDismiss: () -> Unit)
     }
   }
   val open = remember(gaps) { mutableStateMapOf<String, Boolean>() }
-  val albumSongs = remember(gaps) { gaps.releases.filter { it.recordType != "single" }.flatMap { it.songs }.map { it.url }.toSet() }
-  // A single's song that a picked album song covers is downloaded once.
+  val releaseSongs = remember(gaps) { gaps.releases.flatMap { it.songs }.map { it.url }.toSet() }
+  // A single's song that a picked copy on another release (an album, an
+  // earlier single) covers is downloaded once.
   fun covered(song: OnlineItem): Boolean {
-    val twin = song.raw.optString("sameAs").takeIf { it.isNotBlank() && it in albumSongs } ?: return false
+    val twin = song.raw.optString("sameAs").takeIf { it.isNotBlank() && it in releaseSongs } ?: return false
     return picked[twin] == true
   }
   fun isPicked(song: OnlineItem) = picked[song.url] == true
@@ -265,7 +270,7 @@ private fun DiscographySheet(state: AppState, gaps: Gaps, onDismiss: () -> Unit)
   val popularChosen = gaps.popular.filter(::isPicked)
   val trackTotal = chosen.sumOf { it.second.size } + popularChosen.size
   val releaseTotal = chosen.count { it.second.isNotEmpty() }
-  val lead = remember(gaps) { gaps.releases.sumOf { r -> r.songs.count { s -> s.raw.optString("sameAs").let { it.isBlank() || it !in albumSongs } } } + gaps.popular.size }
+  val lead = remember(gaps) { gaps.releases.sumOf { r -> r.songs.count { s -> s.raw.optString("sameAs").let { it.isBlank() || it !in releaseSongs } } } + gaps.popular.size }
   val everything = remember(gaps) { gaps.releases.flatMap { it.songs } + gaps.popular }
   val groupTitle = stringResource(R.string.gaps_group_title, gaps.artistTitle)
 
@@ -279,7 +284,9 @@ private fun DiscographySheet(state: AppState, gaps: Gaps, onDismiss: () -> Unit)
         }
         IconButton(onClick = onDismiss) { Icon(FluentIcons.Close, stringResource(R.string.close)) }
       }
-      Text(stringResource(R.string.gaps_lead, lead), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+      val leadText = stringResource(R.string.gaps_lead, lead) +
+        if (gaps.downloadingTracks > 0) " " + stringResource(R.string.gaps_lead_downloading, gaps.downloadingTracks) else ""
+      Text(leadText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
       Row(Modifier.fillMaxWidth().clickable { setAll(everything, tri(everything) != ToggleableState.On) }.padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
@@ -387,19 +394,20 @@ private fun ReleaseRow(
 @Composable
 private fun SongRow(song: OnlineItem, number: Int?, checked: Boolean, onPick: (Boolean) -> Unit) {
   val owned = song.libraryTrackId != null
+  val fixed = owned || song.downloading
   Row(
-    Modifier.fillMaxWidth().clickable(enabled = !owned) { onPick(!checked) }.padding(end = 16.dp),
+    Modifier.fillMaxWidth().clickable(enabled = !fixed) { onPick(!checked) }.padding(end = 16.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    Checkbox(checked = checked, onCheckedChange = if (owned) null else onPick, enabled = !owned)
+    Checkbox(checked = checked && !song.downloading, onCheckedChange = if (fixed) null else onPick, enabled = !fixed)
     if (number != null) {
       Text("$number", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.width(24.dp))
     }
     Column(Modifier.weight(1f)) {
       Text(song.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-        color = if (owned) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-      if (owned) Text(stringResource(R.string.gaps_owned), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        color = if (fixed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+      if (fixed) Text(stringResource(if (owned) R.string.gaps_owned else R.string.gaps_downloading), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
     }
     if (song.duration > 0) Text(fmtTime(song.duration), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
   }

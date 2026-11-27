@@ -31,6 +31,7 @@
   <string name="connect_player_disabled">Gharmonize Player is turned off on this server.</string>
   <string name="count_songs">%1$d tracks</string>
   <string name="dl_queued">Queued</string>
+  <string name="dl_waiting_duplicate">Same song in another download; waiting</string>
   <string name="dl_resolving">Finding source</string>
   <string name="dl_downloading">Downloading %1$d%%</string>
   <string name="dl_indexing">Adding to library</string>
@@ -517,6 +518,8 @@
   <string name="dl_converting">Converting %1$d%%</string>
   <string name="dl_preparing">Preparing</string>
   <string name="group_queued">%1$d songs added to the download list.</string>
+  <string name="group_queued_some">%1$d songs added to the download list; %2$d were already downloading.</string>
+  <string name="group_already_downloading">All of the selected songs are already being downloaded.</string>
   <string name="group_untitled">Selected songs</string>
   <string name="group_done">“%1$s” finished: %2$d songs are in the library.</string>
   <string name="group_done_failed">“%1$s” finished: %2$d songs in the library, %3$d could not be downloaded.</string>
@@ -550,8 +553,10 @@
   <string name="gaps_cta">Pick what’s missing</string>
   <string name="gaps_preparing">Scanning the discography…</string>
   <string name="gaps_nothing">Nothing is missing — the discography is complete.</string>
+  <string name="gaps_all_downloading">All %1$d missing songs are already being downloaded.</string>
   <string name="gaps_complete">The whole discography is in your library</string>
   <string name="gaps_lead">%1$d tracks are not in your library. Everything is selected; untick what you don’t want.</string>
+  <string name="gaps_lead_downloading">%1$d songs are already being downloaded and cannot be picked again.</string>
   <string name="gaps_group_albums">Albums</string>
   <string name="gaps_group_eps">EPs</string>
   <string name="gaps_group_singles">Singles</string>
@@ -561,6 +566,7 @@
   <string name="gaps_missing_of">%1$d of %2$d tracks missing</string>
   <string name="gaps_picked_of">%1$d/%2$d selected</string>
   <string name="gaps_owned">In library</string>
+  <string name="gaps_downloading">Downloading</string>
   <string name="gaps_show_songs">Show tracks</string>
   <string name="gaps_hide_songs">Hide tracks</string>
   <string name="gaps_select_all">Select all</string>

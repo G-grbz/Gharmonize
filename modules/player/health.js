@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { artistCredits, songKey } from './songKey.js'
-import { albumBaseKey, artistsMatch } from './matching.js'
+import { albumBaseKey, artistsMatch, sameRecordingLength } from './matching.js'
 import { getSetting, setSetting, transaction } from './db.js'
 import { encodeSidecarLyrics, hasLyricsTimestamps } from './lyrics.js'
 import { AUDIO_EXTENSIONS } from './scanner.js'
@@ -135,7 +135,28 @@ function matchesUpgradePreset(row, { downloadFormat, downloadBitrate }) {
   return Math.abs(row.bitrate - Number.parseInt(downloadBitrate, 10) * 1000) <= 1000
 }
 
-/** Groups of the same song (same title + artist, about the same length). */
+// Are two files of the same song (same title + artist) copies of each other?
+// The album is the album tag, never the folder: a song in "Karışık" and in
+// "Başım Belada" tagged with the same album is one album song twice, while
+// the same title on two albums can be another recording (a live take, a
+// re-recording) even in one folder. Like the download side's library check:
+//  - same album tag (edition names aside): about the same length;
+//  - an album tag missing on one side: practically the same length (or the
+//    same source video), and not two different ISRCs;
+//  - two different album tags: not copies.
+function sameCopy(a, b) {
+  const da = Number(a.duration) || 0
+  const db = Number(b.duration) || 0
+  const albumA = albumBaseKey(a.album_title)
+  const albumB = albumBaseKey(b.album_title)
+  if (albumA && albumB) return albumA === albumB && Math.abs(da - db) <= DUPLICATE_SECONDS
+  const isrcA = String(a.isrc || '').trim().toUpperCase()
+  const isrcB = String(b.isrc || '').trim().toUpperCase()
+  if (isrcA && isrcB && isrcA !== isrcB) return false
+  return Boolean(a.source_key && a.source_key === b.source_key) || sameRecordingLength(da, db)
+}
+
+/** Groups of copies of the same song (see sameCopy), best copy first. */
 export function findDuplicates(rows) {
   const byKey = new Map()
   for (const row of rows) {
@@ -147,15 +168,16 @@ export function findDuplicates(rows) {
   const groups = []
   for (const list of byKey.values()) {
     if (list.length < 2) continue
-    const sorted = [...list].sort((a, b) => (Number(a.duration) || 0) - (Number(b.duration) || 0))
-    let cluster = [sorted[0]]
-    const flush = () => { if (cluster.length > 1) groups.push(cluster.sort((a, b) => quality(b) - quality(a))) }
-    for (const row of sorted.slice(1)) {
-      const prev = cluster[cluster.length - 1]
-      if (Math.abs((Number(row.duration) || 0) - (Number(prev.duration) || 0)) <= DUPLICATE_SECONDS) cluster.push(row)
-      else { flush(); cluster = [row] }
+    // Best files first, so each group is built around the copy it keeps; a
+    // file joins a group only when it is a copy of every file in it (a file
+    // without an album tag must not tie two albums together).
+    const clusters = []
+    for (const row of [...list].sort((a, b) => quality(b) - quality(a))) {
+      const home = clusters.find((cluster) => cluster.every((other) => sameCopy(row, other)))
+      if (home) home.push(row)
+      else clusters.push([row])
     }
-    flush()
+    for (const cluster of clusters) if (cluster.length > 1) groups.push(cluster)
   }
   return groups
 }

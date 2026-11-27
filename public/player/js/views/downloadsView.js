@@ -12,6 +12,7 @@ import { ACTIVE_DOWNLOAD_STATUSES } from '../downloads.js'
 // "Downloading", "Converting" ... for a core phase, else the status.
 function phaseText(status, phase) {
   if (phase === 'waiting-folder') return t('player.health.waitingFolder')
+  if (phase === 'waiting-duplicate' && status === 'queued') return t('player.downloads.waitingDuplicate')
   if (['preparing', 'downloading', 'converting'].includes(phase) && status === 'downloading') return t(`player.downloads.phase.${phase}`)
   return t(`player.downloads.status.${status}`)
 }

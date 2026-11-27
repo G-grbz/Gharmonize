@@ -173,6 +173,8 @@ data class DownloadGroup(
   val errors: List<String>,
   val pendingUrls: List<String>?,
   val createdAt: Long,
+  /** Links of the request that were already on their way (not added again). */
+  val alreadyQueuedUrls: List<String> = emptyList(),
 )
 
 data class AlbumMissing(val found: Boolean, val total: Int, val missing: List<OnlineItem>, val onlineAlbum: OnlineItem?)
@@ -343,6 +345,7 @@ fun parseDownloadGroup(o: JSONObject): DownloadGroup {
     } ?: emptyList(),
     pendingUrls = o.optJSONArray("pendingUrls")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } },
     createdAt = o.optLong("createdAt"),
+    alreadyQueuedUrls = o.optJSONArray("alreadyQueuedUrls")?.let { arr -> (0 until arr.length()).map { arr.optString(it) } } ?: emptyList(),
   )
 }
 

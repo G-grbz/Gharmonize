@@ -74,5 +74,10 @@ export function createAnnotator({ matcher, bridge, catalog, mappedLinks = async 
     return list.map((shelf) => ({ ...shelf, items: items(shelf.items, userId) }))
   }
 
-  return { items, shelves, links }
+  // Links a user has on their way (see bridge.inFlight).
+  function inFlight(userId) {
+    return bridge.inFlight ? bridge.inFlight(userId) : new Map()
+  }
+
+  return { items, shelves, links, inFlight }
 }

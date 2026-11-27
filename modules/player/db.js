@@ -388,6 +388,11 @@ const MIGRATIONS = [
   ALTER TABLE downloads ADD COLUMN group_id TEXT;
   ALTER TABLE downloads ADD COLUMN steps TEXT;
   CREATE INDEX downloads_group_idx ON downloads(group_id);
+  `,
+  // v17: "download anyway" requests skip the library checks made when a
+  // queued download starts (the same song may be asked for on another release).
+  `
+  ALTER TABLE downloads ADD COLUMN forced INTEGER NOT NULL DEFAULT 0;
   `
 ]
 

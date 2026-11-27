@@ -79,7 +79,8 @@ export function discographyCard(data, { name = null, topCount = 10, quietWhenCom
       const wait = 650 - (performance.now() - started)
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
       if (!gaps.releases.length && !gaps.popular.length) {
-        toast(t('player.gaps.nothing'), { type: 'success' })
+        // Everything missing may already be on its way (the wizard was used before).
+        toast(gaps.downloadingTracks ? t('player.gaps.allDownloading', { n: gaps.downloadingTracks }) : t('player.gaps.nothing'), { type: 'success' })
       } else {
         card.classList.add('is-ready')
         await new Promise((resolve) => setTimeout(resolve, 180))
@@ -107,9 +108,10 @@ function openWizard(gaps) {
 }
 
 function wizardBody(gaps, close) {
-  // Only missing songs can be picked; every one of them starts picked.
+  // Only missing songs can be picked (not owned, not already downloading);
+  // every one of them starts picked.
   const picked = new Set()
-  const releases = gaps.releases.map((release) => ({ release, songs: release.tracks.filter((tr) => !tr.library) }))
+  const releases = gaps.releases.map((release) => ({ release, songs: release.tracks.filter((tr) => !tr.library && !tr.downloading) }))
   for (const { songs } of releases) for (const song of songs) picked.add(song)
   for (const song of gaps.popular) picked.add(song)
 
@@ -135,16 +137,18 @@ function wizardBody(gaps, close) {
 
   const songRow = (song, index) => {
     const owned = Boolean(song.library)
-    const box = h('input', { type: 'checkbox', class: 'gap-check', disabled: owned, checked: owned, 'aria-label': song.title })
-    if (!owned) {
+    const fixed = owned || Boolean(song.downloading)
+    const box = h('input', { type: 'checkbox', class: 'gap-check', disabled: fixed, checked: owned, 'aria-label': song.title })
+    if (!fixed) {
       box.addEventListener('change', () => setMany([song], box.checked))
       painters.push(() => { box.checked = picked.has(song) })
     }
-    return h('label', { class: ['gap-song', owned && 'is-owned'] },
+    const tag = owned ? t('player.gaps.owned') : song.downloading ? t('player.gaps.downloading') : null
+    return h('label', { class: ['gap-song', fixed && 'is-owned'] },
       box,
       h('span', { class: 'gap-song__no', text: index != null ? String(index + 1) : '' }),
       h('span', { class: 'gap-song__title' }, h('span', { text: song.title }),
-        owned ? h('small', { class: 'gap-song__tag', text: t('player.gaps.owned') }) : null),
+        tag ? h('small', { class: 'gap-song__tag', text: tag }) : null),
       h('span', { class: 'gap-song__time', text: song.duration ? fmtTime(song.duration) : '' }))
   }
 
@@ -220,7 +224,10 @@ function wizardBody(gaps, close) {
   })
   repaint()
   return h('div', { class: 'gap-wizard' },
-    h('p', { class: 'muted gap-wizard__lead', text: t('player.gaps.lead', { tracks: countPicked(releases, gaps.popular, picked).tracks }) }),
+    h('p', { class: 'muted gap-wizard__lead', text: [
+      t('player.gaps.lead', { tracks: countPicked(releases, gaps.popular, picked).tracks }),
+      gaps.downloadingTracks ? t('player.gaps.leadDownloading', { n: gaps.downloadingTracks }) : ''
+    ].filter(Boolean).join(' ') }),
     all,
     ...sections,
     h('div', { class: 'gap-footer' }, status,
