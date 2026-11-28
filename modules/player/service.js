@@ -18,6 +18,7 @@ import { createAccess } from './access.js'
 import { createOnlineCache } from './onlineCache.js'
 import { createAnnotator } from './annotate.js'
 import { createDiscovery } from './discovery.js'
+import { createYouTubeMusicMixReader } from './ytMusicMix.js'
 import { createDeezerSource, createYouTubeSource, createSpotifySource, createAppleSource } from './discoverySources.js'
 import { createFollows } from './follows.js'
 import { createReleaseWatch } from './releases.js'
@@ -147,13 +148,14 @@ export async function startPlayerService({ env = process.env, logger = console, 
   const lyrics = createLyricsService({ libraries, getOnlineAllowed: () => config.onlineLyrics, logger })
   const matcher = createLibraryMatcher(db)
   const online = createOnlineSearch({ getEnabledProviders: () => config.onlineProviders, logger, ...onlineOptions })
-  const downloadCore = core || createCoreAdapter({ logger })
+  const onlineCache = createOnlineCache(db, { logger })
+  const readYouTubeMusicMix = createYouTubeMusicMixReader(onlineCache)
+  const downloadCore = core || createCoreAdapter({ logger, readYouTubeMusicMix })
   const mappedLinks = async (url) => (await downloadCore.mappedLinks?.(url)) || []
   const bridge = createDownloadBridge({ db, core: downloadCore, scanner, matcher, catalog, getConfig, getDownloadTarget: libraries.downloadTarget, getUpgradeTarget: libraries.upgradeTarget, mappedLinks, logger, pollMs: bridgePollMs })
-  const onlineCache = createOnlineCache(db, { logger })
   const annotator = createAnnotator({ matcher, bridge, catalog, mappedLinks })
   const searchHistory = createSearchHistory(db, { catalog, annotator })
-  const sources = discoverySources || { deezer: createDeezerSource(), youtube: createYouTubeSource(), spotify: createSpotifySource({ env }), apple: createAppleSource() }
+  const sources = discoverySources || { deezer: createDeezerSource(), youtube: createYouTubeSource({ readYouTubeMusicMix }), spotify: createSpotifySource({ env }), apple: createAppleSource() }
   const discovery = createDiscovery({
     db,
     cache: onlineCache,

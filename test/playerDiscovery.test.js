@@ -584,13 +584,16 @@ test('home never waits for mix lookups: cached ones show, the rest arrive on a l
 })
 
 test('personal shelves come from a wide artist pool: a different pick per day / refresh, stable within one', async (t) => {
-  const { call, admin, service } = await setup(t)
+  const { call, admin, service, fake } = await setup(t)
   const root = path.dirname(service.context.libraries.list().find((l) => l.isDefault)?.path || '')
   for (let i = 1; i <= 12; i++) {
     const name = `Seed ${String(i).padStart(2, '0')}`
     await writeTrack(path.join(root, 'outputs', name, 'Album', '01.mp3'), { title: `Song ${i}`, artist: name, album: 'Album' })
   }
   await service.context.scanner.requestScan('all')
+  fake.sources.youtube.artistMixes = async (name) => ({
+    mix: { provider: 'youtube', kind: 'playlist', id: name, title: `${name} Mix`, artist: 'YouTube Music' }
+  })
   const picks = async (round) => {
     const r = await call('GET', `/discover?scope=personal&round=${round}`, { token: admin })
     return r.body.shelves.filter((s) => s.id.startsWith('fans-')).map((s) => s.seed).sort()
@@ -601,6 +604,8 @@ test('personal shelves come from a wide artist pool: a different pick per day / 
   const seen = new Set(first)
   for (let round = 1; round <= 6; round++) for (const name of await picks(round)) seen.add(name)
   assert.ok(seen.size > 4, `refreshing brings other artists (${[...seen].join(', ')})`)
+  const shelves = (await call('GET', '/discover?scope=personal', { token: admin })).body.shelves
+  assert.equal(byId(shelves, 'mixes-youtube').items.length, 12)
 })
 
 test('followed playlists: library songs added, new ones downloaded into it, removed ones stay removed', async (t) => {

@@ -63,8 +63,10 @@ function mappedSource(m, url) {
 // the entries, clean each title/uploader exactly like the classic preview,
 // then apply the core's YouTube Music album normalisation. Without this the
 // core only sees bare playlist indexes and cannot name, match or tag tracks.
-export async function prepareYouTubePlaylist(m, url, { isAutomix = false } = {}) {
-  const all = isAutomix ? await m.yt.extractAutomixAllFlat(url) : await m.yt.extractPlaylistAllFlat(url)
+export async function prepareYouTubePlaylist(m, url, { isAutomix = false, readYouTubeMusicMix = null } = {}) {
+  const all = isAutomix
+    ? (await readYouTubeMusicMix?.(url)) || await m.yt.extractAutomixAllFlat(url)
+    : await m.yt.extractPlaylistAllFlat(url)
   const items = Array.isArray(all?.items) ? all.items.filter(Boolean) : []
   if (!items.length) return null
   const playlistTitle = String(all?.title || '').trim()
@@ -186,7 +188,7 @@ export function pickAlternativeVideo(entries, { title, artist, duration = 0, exc
 
 const nothingNew = () => new BridgeError('NOTHING_NEW', 'Every song of this download is in the library or on its way in another download.')
 
-export function createCoreAdapter({ logger = console } = {}) {
+export function createCoreAdapter({ logger = console, readYouTubeMusicMix = null } = {}) {
   async function inspect(url) {
     const m = await loadCore()
     let safe
@@ -253,7 +255,7 @@ export function createCoreAdapter({ logger = console } = {}) {
       }
       if (info.isPlaylist) {
         let prepared
-        try { prepared = await prepareYouTubePlaylist(m, info.url, { isAutomix }) } catch (error) {
+        try { prepared = await prepareYouTubePlaylist(m, info.url, { isAutomix, readYouTubeMusicMix }) } catch (error) {
           // Transient (network / YouTube); the bridge retries with backoff.
           throw new BridgeError('SOURCE_RESOLVE_FAILED', String(error?.message || error).slice(0, 300))
         }

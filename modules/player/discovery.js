@@ -3,6 +3,7 @@ import { normalizeKey } from './scanner.js'
 import { primaryArtistKey, albumBaseKey, artistsMatch, cleanTitleForMatch, sameRecordingLength } from './matching.js'
 import { songKey, artistCredits, artistCreditNames, artistCreditKeys } from './songKey.js'
 import { seededRandom, seededShuffle, localDayKey } from './mixes.js'
+import { youTubeMusicMixRef } from './ytMusicMix.js'
 
 export const MOOD_PRESETS = ['energizing', 'workout', 'feel-good', 'relax', 'sad', 'romance', 'commute', 'party', 'focus', 'sleep']
 
@@ -127,7 +128,10 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
   const yt = {
     home: (lang) => cache.wrap(`yt:home:${lang}`, TTL.ytHome, () => youtube.home({ lang, shelves: 10, limit: 20 })),
     discover: (preset, lang) => cache.wrap(`yt:discover:${preset}:${lang}`, TTL.ytDiscover, () => youtube.discover(preset, { lang, limit: 24 })),
-    playlist: (url, artist, automix = false) => cache.wrap(`yt:playlist:${url}`, TTL.ytPlaylist, () => youtube.playlist(url, { artist, automix })),
+    playlist: (url, artist, automix = false) => {
+      const load = () => youtube.playlist(url, { artist, automix })
+      return automix && youTubeMusicMixRef(url) ? load() : cache.wrap(`yt:playlist:${url}`, TTL.ytPlaylist, load)
+    },
     artistMixes: (name, lang) => cache.wrap(...mixSpec.yt(name, lang))
   }
   const sp = {
@@ -294,10 +298,11 @@ export function createDiscovery({ db, cache, sources, annotator, getConfig, logg
     const cached = (names, spec) => names.map((name) => cachedOrWarm(spec(name))).filter(Boolean)
     if (enabled('youtube')) {
       builders.push(async () => {
-        const found = cached(today.slice(0, 6), (name) => mixSpec.yt(name, lang))
-        const mixes = shelf('mixes-youtube', 'youtube', 'playlists', found.map((r) => r.mix).filter(Boolean), { titleKey: 'player.discover.ytMixes' })
+        const names = pickSeeds(userId, 12, round)
+        const lookups = names.map((name) => cachedOrWarm(mixSpec.yt(name, lang)))
+        const mixes = shelf('mixes-youtube', 'youtube', 'playlists', lookups.map((r) => r?.mix).filter(Boolean), { titleKey: 'player.discover.ytMixes' })
         // "Featured on" lists of each artist, taking turns between artists.
-        const lists = found.map((r) => r.shelves?.[0]?.items || [])
+        const lists = lookups.slice(0, 6).map((r) => r?.shelves?.[0]?.items || [])
         const items = []
         const seen = new Set()
         for (let i = 0; i < 6; i++) {

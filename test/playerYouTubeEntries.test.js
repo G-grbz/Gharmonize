@@ -5,6 +5,10 @@ import vm from 'node:vm'
 
 import { cleanUploader, pickTrackTitle, pickTrackArtist, parseTitleArtistPair, toFrozenEntries } from '../modules/player/ytTitles.js'
 import { prepareYouTubePlaylist } from '../modules/player/coreAdapter.js'
+import { openPlayerDatabase } from '../modules/player/db.js'
+import { createOnlineCache } from '../modules/player/onlineCache.js'
+import { createYouTubeSource } from '../modules/player/discoverySources.js'
+import { createYouTubeMusicMixReader } from '../modules/player/ytMusicMix.js'
 import * as ytMusic from '../modules/ytMusicMetadata.js'
 
 // The classic UI's own implementation, loaded as-is from the browser file.
@@ -75,4 +79,51 @@ test('YouTube playlists reach the core with cleaned entries, title and ids', asy
   const partial = await prepareYouTubePlaylist({ yt: { extractPlaylistAllFlat: async () => ({ title: 'x', items: [{ index: 1, id: 'a', title: 'A' }, { index: 2, title: 'B' }] }) }, ytMusic }, url)
   assert.equal(partial.selectedIds, null)
   assert.equal(await prepareYouTubePlaylist({ yt: { extractPlaylistAllFlat: async () => ({ title: 'x', items: [] }) }, ytMusic }, url), null)
+})
+
+test('Player shows and pins the same YouTube Music songs from a Mix queue', async (t) => {
+  const db = await openPlayerDatabase(null, { fileName: ':memory:' })
+  t.after(() => db.close())
+  const yt = await import('../modules/yt.js')
+  const playlistId = 'RDEM6i1py2fquamcp919Y9Uxiw'
+  const videoId = 'zboteRYJqPM'
+  const url = `https://music.youtube.com/watch?v=${videoId}&list=${playlistId}`
+  const row = (id, title, type) => ({
+    videoId: id,
+    title: { runs: [{ text: title }] },
+    shortBylineText: { runs: [{ text: 'Gazapizm' }] },
+    lengthText: { runs: [{ text: '3:22' }] },
+    navigationEndpoint: { watchEndpoint: { watchEndpointMusicSupportedConfigs: { watchEndpointMusicConfig: { musicVideoType: type } } } }
+  })
+  const clip = { playlistPanelVideoRenderer: row('B8ysnUYw3us', 'Pisliğin Üstüne Basmışlar (Official Video)', 'MUSIC_VIDEO_TYPE_OMV') }
+  const song = row('iSi9GVyuSoc', 'Pisliğin Üstüne Basmışlar', 'MUSIC_VIDEO_TYPE_ATV')
+  const queuedSong = { playlistPanelVideoWrapperRenderer: { primaryRenderer: { playlistPanelVideoRenderer: song } } }
+  const queue = { content: { playlistPanelRenderer: { contents: [clip, queuedSong, { playlistPanelVideoRenderer: song }] } } }
+  let calls = 0
+  t.mock.method(globalThis, 'fetch', async (endpoint, request) => {
+    calls += 1
+    assert.equal(endpoint, 'https://music.youtube.com/youtubei/v1/next?prettyPrint=false')
+    const body = JSON.parse(request.body)
+    assert.equal(body.playlistId, playlistId)
+    assert.equal(body.videoId, videoId)
+    assert.equal(body.isAudioOnly, true)
+    assert.equal(new Headers(request.headers).has('cookie'), false)
+    const tabs = [{ tabRenderer: { content: { musicQueueRenderer: queue } } }]
+    return Response.json({ contents: { singleColumnMusicWatchNextResultsRenderer: {
+      tabbedRenderer: { watchNextTabbedResultsRenderer: { tabs } }
+    } } })
+  })
+  const readYouTubeMusicMix = createYouTubeMusicMixReader(createOnlineCache(db), async () => yt)
+  const source = createYouTubeSource({ yt, readYouTubeMusicMix })
+  const listing = await source.playlist(url, { automix: true })
+  const prepared = await prepareYouTubePlaylist({ yt, ytMusic }, yt.normalizeYouTubeUrl(url), {
+    isAutomix: true, readYouTubeMusicMix
+  })
+  assert.equal(listing.count, 1)
+  assert.deepEqual(prepared.selectedIds, ['iSi9GVyuSoc'])
+  assert.equal(listing.tracks[0].url, prepared.frozenEntries[0].webpage_url)
+  assert.equal(listing.tracks[0].duration, 202)
+  assert.equal(calls, 1)
+  assert.equal(await readYouTubeMusicMix(url.replace('music.youtube.com', 'www.youtube.com')), null)
+  assert.equal(await readYouTubeMusicMix('https://music.youtube.com/playlist?list=RDCLAK1'), null)
 })

@@ -1388,6 +1388,56 @@ async function postPublicYtm(endpoint, payload, { lang = "", region = "" } = {})
   }), { timeoutMs, retries: 0 });
 }
 
+export async function extractYouTubeMusicMix({ playlistId, videoId }) {
+  const data = await postPublicYtm("next", {
+    playlistId,
+    ...(videoId ? { videoId } : {}),
+    enablePersistentPlaylistPanel: true,
+    isAudioOnly: true,
+    tunerSettingValue: "AUTOMIX_SETTING_NORMAL"
+  });
+  const tabs = data?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer
+    ?.watchNextTabbedResultsRenderer?.tabs;
+  if (!Array.isArray(tabs)) return null;
+  const queue = tabs.find((tab) => tab?.tabRenderer?.content?.musicQueueRenderer)
+    ?.tabRenderer.content.musicQueueRenderer;
+  const panel = queue?.content?.playlistPanelRenderer;
+  if (!Array.isArray(panel?.contents)) return null;
+
+  const entries = new Map();
+  for (const item of panel.contents) {
+    const row = item?.playlistPanelVideoRenderer || item?.playlistPanelVideoWrapperRenderer
+      ?.primaryRenderer?.playlistPanelVideoRenderer;
+    const watch = row?.navigationEndpoint?.watchEndpoint;
+    const id = row?.videoId || watch?.videoId;
+    const title = textFromRuns(row?.title);
+    if (!isLikelyYouTubeVideoId(id) || !title || entries.has(id)) continue;
+
+    const musicVideoType = watch?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType;
+    const length = textFromRuns(row.lengthText);
+    const duration = /^\d{1,3}(?::\d{2}){1,2}$/.test(length)
+      ? length.split(":").reduce((seconds, part) => seconds * 60 + Number(part), 0)
+      : null;
+    const album = row.longBylineText?.runs?.find((run) => run.navigationEndpoint?.browseEndpoint
+      ?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType === "MUSIC_PAGE_TYPE_ALBUM");
+    const artist = textFromRuns(row.shortBylineText);
+    entries.set(id, {
+      id, title, track: title, artist, uploader: artist, duration, musicVideoType,
+      album: album?.text || null,
+      thumbnail: findYtmThumbnail(row),
+      webpage_url: `${YTM_ORIGIN}/watch?v=${id}`
+    });
+  }
+  if (!entries.size) return null;
+
+  const all = [...entries.values()];
+  const songs = all.filter((entry) => entry.musicVideoType === "MUSIC_VIDEO_TYPE_ATV");
+  const items = (songs.length ? songs : all).map((entry, index) => ({ ...entry, index: index + 1 }));
+  const title = textFromRuns(queue.header?.musicQueueHeaderRenderer?.subtitle)
+    || textFromRuns(panel.title) || "YouTube Music Mix";
+  return { title, items, count: items.length };
+}
+
 // Artist rows of a YouTube Music search answer: channel id + name. (The
 // generic item normaliser prefers the row's shuffle endpoint and drops it.)
 function collectYtmArtistRows(data) {

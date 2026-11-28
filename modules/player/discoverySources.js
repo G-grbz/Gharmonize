@@ -96,10 +96,10 @@ export function createDeezerSource({ fetchImpl } = {}) {
 }
 
 // ---- YouTube Music (YTLive's tested functions: cache, 429 guard) ----------
-// The Player never uses the YouTube account (home, discovery, artist pages);
-// only personal mixes (list=RD…) are read with it, like the downloader does.
+// Discovery and Music queues use the public client. The legacy mix reader
+// can use the account for personal lists, like the download pipeline.
 
-export function createYouTubeSource({ yt = null } = {}) {
+export function createYouTubeSource({ yt = null, readYouTubeMusicMix = null } = {}) {
   const mod = async () => yt || import('../yt.js')
   const anonymous = async (fn) => {
     const m = await mod()
@@ -124,11 +124,11 @@ export function createYouTubeSource({ yt = null } = {}) {
       const result = await anonymous(() => discoverYouTubeContent({ preset, lang, limit }))
       return (result?.items || []).map((item) => mapYouTubeItem(item)).filter(Boolean)
     },
-    // Album (browse/MPRE…) or playlist (?list=) track listing. Mixes
-    // (list=RD…) are read like the download pipeline reads them.
     async playlist(url, { artist = null, automix = false } = {}) {
       const m = await mod()
-      const result = automix ? await m.extractAutomixAllFlat(url) : await anonymous(() => m.extractPlaylistAllFlat(url))
+      const result = automix
+        ? (await readYouTubeMusicMix?.(url)) || await m.extractAutomixAllFlat(url)
+        : await anonymous(() => m.extractPlaylistAllFlat(url))
       const tracks = (result?.items || []).map((entry) => {
         const mapped = mapYouTubeItem({ ...entry, type: 'track', uploader: entry.artist || entry.uploader || artist || '' }, 'track')
         if (!mapped) return null
